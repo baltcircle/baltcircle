@@ -1,0 +1,19 @@
+services:
+  baltcircle:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: baltcircle-mvp
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_PATH: /app/data/data.db
+    ports:
+      - "5000:5000"
+    volumes:
+      - baltcircle_data:/app/data
+
+volumes:
+  baltcircle_data:
+

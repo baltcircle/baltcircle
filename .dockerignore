@@ -1,0 +1,15 @@
+node_modules
+dist
+.vite
+.git
+.env
+.env.*
+!.env.example
+data.db
+data.db-shm
+data.db-wal
+data.db-journal
+*.log
+.DS_Store
+qa_*.png
+

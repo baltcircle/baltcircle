@@ -1,0 +1,433 @@
+import {
+  bikes, parkings, zones, rides, tickets, payments, wallet,
+} from "@shared/schema";
+import type {
+  Bike, Parking, ZoneRow, Ride, Ticket, Payment, Wallet,
+} from "@shared/schema";
+import {
+  PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES, pointInPolygon,
+} from "@shared/geo";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import Database from "better-sqlite3";
+import { eq, desc, sql } from "drizzle-orm";
+
+const sqlite = new Database(process.env.DATABASE_PATH || "data.db");
+sqlite.pragma("journal_mode = WAL");
+export const db = drizzle(sqlite);
+
+// ---------- Schema bootstrap (since we skip drizzle migrations) ----------
+sqlite.exec(`
+CREATE TABLE IF NOT EXISTS bikes (
+  id TEXT PRIMARY KEY,
+  model TEXT NOT NULL,
+  status TEXT NOT NULL,
+  battery INTEGER NOT NULL,
+  lat REAL NOT NULL,
+  lng REAL NOT NULL,
+  last_seen INTEGER NOT NULL,
+  idle_hours REAL NOT NULL,
+  flagged INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS parkings (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL,
+  lat REAL NOT NULL, lng REAL NOT NULL,
+  capacity INTEGER NOT NULL, occupied INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS zones (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL,
+  kind TEXT NOT NULL, polygon TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rides (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bike_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  start_lat REAL NOT NULL,
+  start_lng REAL NOT NULL,
+  end_lat REAL, end_lng REAL,
+  track TEXT NOT NULL,
+  distance_m REAL NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0,
+  tariff TEXT NOT NULL,
+  status TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tickets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bike_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  message TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  amount REAL NOT NULL,
+  kind TEXT NOT NULL,
+  description TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS wallet (
+  user_id TEXT PRIMARY KEY,
+  balance REAL NOT NULL DEFAULT 0,
+  active_tariff TEXT NOT NULL DEFAULT 'payg',
+  tariff_expires_at INTEGER
+);
+`);
+
+const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
+
+function seedRng(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 0xffffffff;
+  };
+}
+
+function seed() {
+  const count = sqlite.prepare("SELECT COUNT(*) AS c FROM bikes").get() as { c: number };
+  if (count.c > 0) return;
+  const rng = seedRng(20260525);
+  const now = Date.now();
+
+  // Bikes — scatter inside the operating polygon, mostly near parkings
+  const insertBike = sqlite.prepare(
+    "INSERT INTO bikes VALUES (?,?,?,?,?,?,?,?,?)"
+  );
+  for (let i = 1; i <= 100; i++) {
+    const id = `BC-${String(i).padStart(3, "0")}`;
+    const model = MODELS[i % MODELS.length];
+    // 65% near parking, 30% drifting, 5% near forbidden zone edge
+    let x = 500, y = 350;
+    const r = rng();
+    if (r < 0.65) {
+      const p = PARKINGS[i % PARKINGS.length];
+      x = p.x + (rng() - 0.5) * 18;
+      y = p.y + (rng() - 0.5) * 18;
+    } else if (r < 0.95) {
+      // random inside operating polygon
+      for (let tries = 0; tries < 30; tries++) {
+        x = 150 + rng() * 740;
+        y = 130 + rng() * 510;
+        if (pointInPolygon([x, y], OPERATING_ZONE)) break;
+      }
+    } else {
+      const fz = FORBIDDEN_ZONES[i % FORBIDDEN_ZONES.length];
+      const c = fz.polygon[0];
+      x = c[0] + 4;
+      y = c[1] + 4;
+    }
+
+    const battery = Math.max(0, Math.min(100, Math.round(20 + rng() * 80)));
+    const idleHours = +(rng() * 96).toFixed(1);
+
+    let status = "available";
+    if (battery < 18) status = "maintenance";
+    else if (idleHours > 72) status = "offline";
+    else if (rng() < 0.10) status = "rented";
+    else if (rng() < 0.05) status = "reserved";
+
+    const flagged = (idleHours > 80 || battery < 15) ? 1 : 0;
+    const lastSeen = now - Math.round(idleHours * 3600 * 1000);
+
+    insertBike.run(id, model, status, battery, y, x, lastSeen, idleHours, flagged);
+  }
+
+  // Parkings
+  const insertP = sqlite.prepare("INSERT INTO parkings VALUES (?,?,?,?,?,?)");
+  for (const p of PARKINGS) {
+    const occupied = Math.min(p.capacity, Math.floor(rng() * p.capacity * 0.9));
+    insertP.run(p.id, p.name, p.y, p.x, p.capacity, occupied);
+  }
+
+  // Zones
+  const insertZ = sqlite.prepare("INSERT INTO zones VALUES (?,?,?,?)");
+  insertZ.run("Z-OP", "Зона обслуживания", "operating", JSON.stringify(OPERATING_ZONE));
+  for (const s of SLOW_ZONES) insertZ.run(s.id, s.name, "slow", JSON.stringify(s.polygon));
+  for (const f of FORBIDDEN_ZONES) insertZ.run(f.id, f.name, "forbidden", JSON.stringify(f.polygon));
+
+  // Wallet — single demo user (seeded with a top-up so MVP can be exercised immediately)
+  sqlite.prepare(
+    "INSERT INTO wallet (user_id, balance, active_tariff, tariff_expires_at) VALUES ('demo', 500, 'payg', NULL)"
+  ).run();
+
+  // Seed maintenance tickets
+  const lows = sqlite.prepare("SELECT id FROM bikes WHERE battery < 25 LIMIT 6").all() as { id: string }[];
+  const idles = sqlite.prepare("SELECT id FROM bikes WHERE idle_hours > 60 LIMIT 4").all() as { id: string }[];
+  const insertT = sqlite.prepare("INSERT INTO tickets (bike_id, kind, message, status, created_at) VALUES (?,?,?,?,?)");
+  for (const b of lows) insertT.run(b.id, "low_battery", "Заряд замка ниже 25%, требуется визит механика", "open", now - Math.floor(rng() * 86400000));
+  for (const b of idles) insertT.run(b.id, "suspicious_idle", "Велосипед не используется более 60 часов", "open", now - Math.floor(rng() * 86400000));
+  insertT.run("BC-007", "repair_request", "Пользователь сообщил: спущено колесо", "open", now - 5400000);
+  insertT.run("BC-042", "repair_request", "Пользователь сообщил: не фиксируется замок", "in_progress", now - 86400000);
+  insertT.run("BC-068", "out_of_zone", "Завершение поездки вне зоны обслуживания", "resolved", now - 172800000);
+
+  // Seed some past payments and rides to give analytics a baseline
+  const insertPay = sqlite.prepare("INSERT INTO payments (user_id, amount, kind, description, created_at) VALUES (?,?,?,?,?)");
+  insertPay.run("demo", 500, "topup", "Пополнение через банковскую карту •• 4242", now - 86400000 * 6);
+
+  const insertR = sqlite.prepare(
+    "INSERT INTO rides (bike_id, user_id, started_at, ended_at, start_lat, start_lng, end_lat, end_lng, track, distance_m, cost, tariff, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+  );
+  const rideUsers = ["demo", "user-2", "user-3", "user-4", "user-5"];
+  for (let i = 0; i < 240; i++) {
+    const bikeIdx = 1 + Math.floor(rng() * 100);
+    const bikeId = `BC-${String(bikeIdx).padStart(3, "0")}`;
+    const user = rideUsers[Math.floor(rng() * rideUsers.length)];
+    const daysAgo = Math.floor(rng() * 28);
+    const startedAt = now - daysAgo * 86400000 - Math.floor(rng() * 86400000);
+    const duration = Math.floor(180000 + rng() * 1800000); // 3–33 min
+    const endedAt = startedAt + duration;
+    const sp = PARKINGS[Math.floor(rng() * PARKINGS.length)];
+    const ep = PARKINGS[Math.floor(rng() * PARKINGS.length)];
+    const trackPts: [number, number, number][] = [];
+    const steps = 8;
+    for (let k = 0; k <= steps; k++) {
+      const t = k / steps;
+      const x = sp.x + (ep.x - sp.x) * t + (rng() - 0.5) * 14;
+      const y = sp.y + (ep.y - sp.y) * t + (rng() - 0.5) * 14;
+      trackPts.push([x, y, startedAt + (duration * t)]);
+    }
+    const distance = Math.floor(800 + rng() * 5200);
+    const minutes = duration / 60000;
+    const cost = Math.round(50 + minutes * 6);
+    insertR.run(
+      bikeId, user, startedAt, endedAt,
+      sp.y, sp.x, ep.y, ep.x,
+      JSON.stringify(trackPts), distance, cost, "payg", "completed",
+    );
+  }
+}
+seed();
+
+// ---------- Storage interface ----------
+
+export interface IStorage {
+  // bikes
+  listBikes(): Bike[];
+  getBike(id: string): Bike | undefined;
+  updateBike(id: string, patch: Partial<Bike>): Bike | undefined;
+  // parkings
+  listParkings(): Parking[];
+  // zones
+  listZones(): ZoneRow[];
+  // rides
+  startRide(input: { bikeId: string; userId: string; tariff: string }): Ride | { error: string };
+  appendRidePoint(rideId: number, x: number, y: number): Ride | undefined;
+  endRide(rideId: number): Ride | undefined;
+  getActiveRide(userId: string): Ride | undefined;
+  listRides(opts?: { userId?: string; limit?: number }): Ride[];
+  // payments / wallet
+  getWallet(userId: string): Wallet;
+  topUp(userId: string, amount: number): { wallet: Wallet; payment: Payment };
+  purchaseTariff(userId: string, tariff: string, price: number, durationMs: number): { wallet: Wallet; payment: Payment };
+  listPayments(userId: string): Payment[];
+  // tickets
+  listTickets(): Ticket[];
+  createTicket(input: { bikeId: string; kind: string; message: string }): Ticket;
+  updateTicketStatus(id: number, status: string): Ticket | undefined;
+  // analytics
+  analytics(): any;
+}
+
+export class DatabaseStorage implements IStorage {
+  listBikes() { return db.select().from(bikes).all() as Bike[]; }
+  getBike(id: string) { return db.select().from(bikes).where(eq(bikes.id, id)).get() as Bike | undefined; }
+  updateBike(id: string, patch: Partial<Bike>) {
+    db.update(bikes).set(patch as any).where(eq(bikes.id, id)).run();
+    return this.getBike(id);
+  }
+  listParkings() { return db.select().from(parkings).all() as Parking[]; }
+  listZones() { return db.select().from(zones).all() as ZoneRow[]; }
+
+  startRide({ bikeId, userId, tariff }: { bikeId: string; userId: string; tariff: string }) {
+    const bike = this.getBike(bikeId);
+    if (!bike) return { error: "Велосипед не найден" };
+    if (bike.status !== "available" && bike.status !== "reserved") {
+      return { error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` };
+    }
+    if (bike.battery < 18) return { error: "Низкий заряд замка, выберите другой велосипед" };
+    const active = this.getActiveRide(userId);
+    if (active) return { error: "У вас уже есть активная поездка" };
+
+    const startedAt = Date.now();
+    const track: [number, number, number][] = [[bike.lng, bike.lat, startedAt]];
+    const row = db.insert(rides).values({
+      bikeId, userId, startedAt,
+      startLat: bike.lat, startLng: bike.lng,
+      track: JSON.stringify(track), distanceM: 0, cost: 0, tariff, status: "active",
+    }).returning().get() as Ride;
+    this.updateBike(bikeId, { status: "rented" });
+    return row;
+  }
+
+  appendRidePoint(rideId: number, x: number, y: number) {
+    const r = db.select().from(rides).where(eq(rides.id, rideId)).get() as Ride | undefined;
+    if (!r || r.status !== "active") return undefined;
+    const pts: [number, number, number][] = JSON.parse(r.track);
+    const last = pts[pts.length - 1];
+    const dx = x - last[0], dy = y - last[1];
+    const dMap = Math.sqrt(dx * dx + dy * dy);
+    // 1 map unit ≈ 14 metres (≈14km city width across 1000 units)
+    const addedMeters = dMap * 14;
+    pts.push([x, y, Date.now()]);
+    const newDistance = r.distanceM + addedMeters;
+    const minutes = (Date.now() - r.startedAt) / 60000;
+    const newCost = Math.max(50, Math.round(50 + minutes * 6));
+    db.update(rides).set({
+      track: JSON.stringify(pts), distanceM: newDistance, cost: newCost,
+    }).where(eq(rides.id, rideId)).run();
+    db.update(bikes).set({ lat: y, lng: x, lastSeen: Date.now(), idleHours: 0 } as any)
+      .where(eq(bikes.id, r.bikeId)).run();
+    return db.select().from(rides).where(eq(rides.id, rideId)).get() as Ride;
+  }
+
+  endRide(rideId: number) {
+    const r = db.select().from(rides).where(eq(rides.id, rideId)).get() as Ride | undefined;
+    if (!r || r.status !== "active") return undefined;
+    const pts: [number, number, number][] = JSON.parse(r.track);
+    const last = pts[pts.length - 1];
+    const endedAt = Date.now();
+    const minutes = (endedAt - r.startedAt) / 60000;
+    const cost = Math.max(50, Math.round(50 + minutes * 6));
+    db.update(rides).set({
+      endedAt, status: "completed", cost,
+      endLat: last[1], endLng: last[0],
+    }).where(eq(rides.id, rideId)).run();
+    db.update(bikes).set({ status: "available", lat: last[1], lng: last[0], lastSeen: endedAt, idleHours: 0 } as any)
+      .where(eq(bikes.id, r.bikeId)).run();
+    // charge wallet
+    const w = this.getWallet(r.userId);
+    const newBalance = w.balance - cost;
+    db.update(wallet).set({ balance: newBalance }).where(eq(wallet.userId, r.userId)).run();
+    db.insert(payments).values({
+      userId: r.userId, amount: -cost, kind: "ride_charge",
+      description: `Поездка ${r.bikeId} • ${Math.round(minutes)} мин`, createdAt: endedAt,
+    }).run();
+    return db.select().from(rides).where(eq(rides.id, rideId)).get() as Ride;
+  }
+
+  getActiveRide(userId: string) {
+    return db.select().from(rides)
+      .where(sql`${rides.userId} = ${userId} AND ${rides.status} = 'active'`)
+      .get() as Ride | undefined;
+  }
+
+  listRides(opts?: { userId?: string; limit?: number }) {
+    const limit = opts?.limit ?? 50;
+    if (opts?.userId) {
+      return db.select().from(rides)
+        .where(eq(rides.userId, opts.userId))
+        .orderBy(desc(rides.startedAt))
+        .limit(limit)
+        .all() as Ride[];
+    }
+    return db.select().from(rides).orderBy(desc(rides.startedAt)).limit(limit).all() as Ride[];
+  }
+
+  getWallet(userId: string) {
+    let w = db.select().from(wallet).where(eq(wallet.userId, userId)).get() as Wallet | undefined;
+    if (!w) {
+      db.insert(wallet).values({ userId, balance: 0, activeTariff: "payg", tariffExpiresAt: null } as any).run();
+      w = db.select().from(wallet).where(eq(wallet.userId, userId)).get() as Wallet;
+    }
+    return w;
+  }
+
+  topUp(userId: string, amount: number) {
+    const w = this.getWallet(userId);
+    const newBal = w.balance + amount;
+    db.update(wallet).set({ balance: newBal }).where(eq(wallet.userId, userId)).run();
+    const pay = db.insert(payments).values({
+      userId, amount, kind: "topup",
+      description: `Пополнение баланса карты •• 4242`, createdAt: Date.now(),
+    }).returning().get() as Payment;
+    return { wallet: this.getWallet(userId), payment: pay };
+  }
+
+  purchaseTariff(userId: string, tariff: string, price: number, durationMs: number) {
+    const w = this.getWallet(userId);
+    const newBal = w.balance - price;
+    const expires = Date.now() + durationMs;
+    db.update(wallet).set({ balance: newBal, activeTariff: tariff, tariffExpiresAt: expires } as any)
+      .where(eq(wallet.userId, userId)).run();
+    const pay = db.insert(payments).values({
+      userId, amount: -price, kind: "tariff_purchase",
+      description: `Подключён тариф «${tariff}»`, createdAt: Date.now(),
+    }).returning().get() as Payment;
+    return { wallet: this.getWallet(userId), payment: pay };
+  }
+
+  listPayments(userId: string) {
+    return db.select().from(payments)
+      .where(eq(payments.userId, userId))
+      .orderBy(desc(payments.createdAt))
+      .all() as Payment[];
+  }
+
+  listTickets() { return db.select().from(tickets).orderBy(desc(tickets.createdAt)).all() as Ticket[]; }
+
+  createTicket({ bikeId, kind, message }: { bikeId: string; kind: string; message: string }) {
+    return db.insert(tickets).values({
+      bikeId, kind, message, status: "open", createdAt: Date.now(),
+    }).returning().get() as Ticket;
+  }
+
+  updateTicketStatus(id: number, status: string) {
+    db.update(tickets).set({ status }).where(eq(tickets.id, id)).run();
+    return db.select().from(tickets).where(eq(tickets.id, id)).get() as Ticket | undefined;
+  }
+
+  analytics() {
+    const total = (sqlite.prepare("SELECT COUNT(*) AS c FROM rides").get() as any).c;
+    const completed = (sqlite.prepare("SELECT COUNT(*) AS c FROM rides WHERE status='completed'").get() as any).c;
+    const revenue = (sqlite.prepare("SELECT COALESCE(SUM(cost),0) AS s FROM rides WHERE status='completed'").get() as any).s;
+    const avgDuration = (sqlite.prepare("SELECT COALESCE(AVG((ended_at-started_at)/60000.0),0) AS a FROM rides WHERE status='completed'").get() as any).a;
+    const avgDistance = (sqlite.prepare("SELECT COALESCE(AVG(distance_m),0) AS a FROM rides WHERE status='completed'").get() as any).a;
+
+    const byDay = sqlite.prepare(`
+      SELECT strftime('%Y-%m-%d', started_at/1000, 'unixepoch') AS day,
+             COUNT(*) AS rides_count,
+             COALESCE(SUM(cost),0) AS revenue
+      FROM rides
+      GROUP BY day
+      ORDER BY day DESC
+      LIMIT 14
+    `).all().reverse();
+
+    // popular parkings — proximity of ride start
+    const allParkings = this.listParkings();
+    const allRides = sqlite.prepare("SELECT start_lat, start_lng FROM rides").all() as any[];
+    const parkingCounts = allParkings.map(p => {
+      let c = 0;
+      for (const r of allRides) {
+        const dx = r.start_lng - p.lng;
+        const dy = r.start_lat - p.lat;
+        if (Math.sqrt(dx*dx+dy*dy) < 30) c++;
+      }
+      return { ...p, rideStarts: c };
+    }).sort((a, b) => b.rideStarts - a.rideStarts);
+
+    const utilisation = sqlite.prepare(`
+      SELECT bike_id, COUNT(*) AS rides
+      FROM rides
+      GROUP BY bike_id
+      ORDER BY rides DESC
+      LIMIT 8
+    `).all();
+
+    const problemBikes = sqlite.prepare(`
+      SELECT * FROM bikes
+      WHERE flagged = 1 OR battery < 25 OR idle_hours > 60
+      ORDER BY idle_hours DESC
+      LIMIT 12
+    `).all();
+
+    const idleAvg = (sqlite.prepare("SELECT AVG(idle_hours) AS a FROM bikes").get() as any).a;
+
+    return { total, completed, revenue, avgDuration, avgDistance, byDay, parkingCounts, utilisation, problemBikes, idleAvg };
+  }
+}
+
+export const storage = new DatabaseStorage();
