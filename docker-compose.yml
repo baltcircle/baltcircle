@@ -1,4 +1,4 @@
-name: baltcircle
+name: baltcicl
 
 services:
   baltcircle:
@@ -18,4 +18,4 @@ services:
 
 volumes:
   baltcircle_data:
-    name: baltcircle_data
+    name: baltcicl_baltcircle_data
