@@ -9,6 +9,11 @@ RUN npm ci
 FROM deps AS build
 WORKDIR /app
 COPY . .
+# Vite inlines import.meta.env.VITE_* at build time, so the Yandex Maps key
+# must be present during `npm run build`. Passed in as a build arg; only the
+# resulting client bundle (not a persistent env layer) carries the value.
+ARG VITE_YANDEX_MAPS_API_KEY=""
+ENV VITE_YANDEX_MAPS_API_KEY=$VITE_YANDEX_MAPS_API_KEY
 RUN npm run build
 RUN npm prune --omit=dev
 

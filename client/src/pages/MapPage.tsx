@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState, useMemo, useEffect } from "react";
 import { Link } from "wouter";
 import type { Bike, Parking, ZoneRow, Ride } from "@shared/schema";
-import { CoastMap } from "@/components/CoastMap";
+import { YandexMap } from "@/components/YandexMap";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -60,7 +60,7 @@ export function MapPage() {
 
       <div className="grid lg:grid-cols-[1fr_360px] gap-4 lg:gap-6 px-4 lg:px-10 py-6 lg:py-8">
         <div>
-          <CoastMap
+          <YandexMap
             bikes={bikesQ.data ?? []}
             parkings={parkingsQ.data ?? []}
             zones={zonesQ.data ?? []}

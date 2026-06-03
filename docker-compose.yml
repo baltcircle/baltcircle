@@ -5,6 +5,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Read from the host env at build time (set by the deploy workflow from
+        # the GitHub Actions secret). Empty -> app falls back to the demo map.
+        VITE_YANDEX_MAPS_API_KEY: ${VITE_YANDEX_MAPS_API_KEY:-}
     container_name: baltcircle-mvp
     restart: unless-stopped
     environment:

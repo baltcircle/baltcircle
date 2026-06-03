@@ -149,6 +149,28 @@ export const FORBIDDEN_ZONES = [
   },
 ];
 
+// --- Real-world geo anchoring -------------------------------------------
+// The stylized map above uses an abstract 1000x700 SVG space. To render the
+// same overlays on a real Yandex map we anchor that space to the three launch
+// towns' true coordinates and derive an affine transform (exact at the three
+// anchors). Coefficients were solved from the TOWN svg positions above mapped
+// to these real [lng, lat] pairs:
+//   Светлогорск  -> 20.1547, 54.9430
+//   Пионерский   -> 20.2330, 54.9520
+//   Зеленоградск -> 20.4750, 54.9600
+// lng = LNG.a*x + LNG.b*y + LNG.c ; lat = LAT.a*x + LAT.b*y + LAT.c
+const LNG = { a: 5.2087403599e-4, b: 1.5588688946e-3, c: 19.497107969 };
+const LAT = { a: 2.9305912596e-5, b: -1.4395886889e-5, c: 54.941737789 };
+
+/** Convert a stylized map point (x = lng-field, y = lat-field) into a real
+ *  [lat, lng] pair for Yandex Maps (which expects [lat, lng] order). */
+export function svgToLatLng(x: number, y: number): [number, number] {
+  return [LAT.a * x + LAT.b * y + LAT.c, LNG.a * x + LNG.b * y + LNG.c];
+}
+
+// Real center of the coastal launch area (≈ Пионерский, between the towns).
+export const REAL_CENTER: [number, number] = svgToLatLng(500, 330);
+
 export function pointInPolygon(p: [number, number], poly: number[][]): boolean {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
