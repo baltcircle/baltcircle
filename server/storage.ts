@@ -78,6 +78,70 @@ CREATE TABLE IF NOT EXISTS wallet (
 
 const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
 
+// Bump this whenever the demo geography/seed data changes so existing
+// prototype databases get refreshed automatically on next startup
+// (MVP demo data — safe to wipe & reseed, no real user data).
+const DEMO_DATA_VERSION = 2;
+
+// ---------- Demo data migration (MVP prototype only) ----------
+//
+// Older prototype DBs were seeded with Kaliningrad demo parkings. The map was
+// refocused on the Baltic coastal towns (Светлогорск / Пионерский /
+// Зеленоградск), so an existing DB must be refreshed to the new demo data.
+// We persist a version marker; if it's missing or stale (or we detect the old
+// parking layout), we clear and reseed all demo tables. This avoids manual SSH.
+function migrateDemoData() {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+
+  const row = sqlite.prepare("SELECT value FROM meta WHERE key = 'demo_data_version'").get() as
+    | { value: string }
+    | undefined;
+  const storedVersion = row ? parseInt(row.value, 10) : 0;
+
+  // Detect legacy data: any parking whose name doesn't belong to the current
+  // coastal towns indicates an old (e.g. Kaliningrad) seed.
+  const coastalTowns = ["Светлогорск", "Пионерский", "Зеленоградск"];
+  const parkingCount = (sqlite.prepare("SELECT COUNT(*) AS c FROM parkings").get() as { c: number }).c;
+  let hasLegacyParkings = false;
+  if (parkingCount > 0) {
+    const names = sqlite.prepare("SELECT name FROM parkings").all() as { name: string }[];
+    hasLegacyParkings = names.some((p) => !coastalTowns.some((t) => p.name.includes(t)));
+  }
+
+  const needsReseed = storedVersion < DEMO_DATA_VERSION || hasLegacyParkings;
+  if (!needsReseed) return;
+
+  // Wipe demo tables and reseed. Wrapped in a transaction so startup either
+  // sees the old data or the fully refreshed data, never a partial state.
+  const reset = sqlite.transaction(() => {
+    sqlite.exec(`
+      DELETE FROM rides;
+      DELETE FROM tickets;
+      DELETE FROM payments;
+      DELETE FROM wallet;
+      DELETE FROM zones;
+      DELETE FROM parkings;
+      DELETE FROM bikes;
+    `);
+    // Reset AUTOINCREMENT counters for rides/tickets/payments if present.
+    try {
+      sqlite.exec("DELETE FROM sqlite_sequence WHERE name IN ('rides','tickets','payments')");
+    } catch {
+      // sqlite_sequence only exists once an AUTOINCREMENT table has rows; ignore.
+    }
+    populateDemoData();
+    sqlite
+      .prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('demo_data_version', ?)")
+      .run(String(DEMO_DATA_VERSION));
+  });
+  reset();
+}
+
 function seedRng(seed: number) {
   let s = seed >>> 0;
   return () => {
@@ -86,9 +150,7 @@ function seedRng(seed: number) {
   };
 }
 
-function seed() {
-  const count = sqlite.prepare("SELECT COUNT(*) AS c FROM bikes").get() as { c: number };
-  if (count.c > 0) return;
+function populateDemoData() {
   const rng = seedRng(20260525);
   const now = Date.now();
 
@@ -199,7 +261,27 @@ function seed() {
     );
   }
 }
-seed();
+
+// On a fresh DB, seed once and record the current demo data version.
+// On an existing DB, migrate/refresh stale or legacy (Kaliningrad) demo data.
+function bootstrapDemoData() {
+  const count = sqlite.prepare("SELECT COUNT(*) AS c FROM bikes").get() as { c: number };
+  if (count.c === 0) {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `);
+    populateDemoData();
+    sqlite
+      .prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('demo_data_version', ?)")
+      .run(String(DEMO_DATA_VERSION));
+    return;
+  }
+  migrateDemoData();
+}
+bootstrapDemoData();
 
 // ---------- Storage interface ----------
 

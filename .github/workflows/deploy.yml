@@ -31,5 +31,22 @@ jobs:
       - name: Smoke test local app
         run: |
           set -e
-          curl --fail --max-time 30 http://127.0.0.1:5000 >/dev/null
-          curl --fail --max-time 30 http://127.0.0.1:5000/api/bikes >/dev/null
+          # The container may still be restarting right after `compose up`,
+          # so retry each endpoint for up to ~120s instead of failing instantly.
+          wait_for() {
+            local url="$1"
+            local label="$2"
+            local deadline=$(( $(date +%s) + 120 ))
+            until curl --fail --silent --max-time 10 "$url" >/dev/null; do
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                echo "Smoke test failed: $label ($url) not healthy within 120s"
+                exit 1
+              fi
+              echo "Waiting for $label ($url)..."
+              sleep 5
+            done
+            echo "OK: $label ($url)"
+          }
+          wait_for http://127.0.0.1:5000 "app root"
+          wait_for http://127.0.0.1:5000/api/bikes "bikes API"
+          wait_for http://127.0.0.1:5000/api/parkings "parkings API"
