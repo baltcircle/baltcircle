@@ -12,33 +12,24 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy to Yandex Cloud VM
-    runs-on: ubuntu-latest
+    name: Deploy on Yandex Cloud VM
+    runs-on:
+      - self-hosted
+      - baltcircle-prod
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Upload project to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          source: "."
-          target: "/home/${{ secrets.SERVER_USER }}/baltcicl"
-          rm: true
-          overwrite: true
-
       - name: Rebuild and restart Docker app
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script: |
-            set -e
-            cd /home/${{ secrets.SERVER_USER }}/baltcicl
-            docker compose up -d --build
-            docker image prune -f
-            docker ps --filter "name=baltcircle"
+        run: |
+          set -e
+          docker compose up -d --build
+          docker image prune -f
+          docker ps --filter "name=baltcircle"
+
+      - name: Smoke test local app
+        run: |
+          set -e
+          curl --fail --max-time 30 http://127.0.0.1:5000 >/dev/null
+          curl --fail --max-time 30 http://127.0.0.1:5000/api/bikes >/dev/null
