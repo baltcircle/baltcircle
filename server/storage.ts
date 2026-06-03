@@ -144,7 +144,7 @@ function seed() {
 
   // Zones
   const insertZ = sqlite.prepare("INSERT INTO zones VALUES (?,?,?,?)");
-  insertZ.run("Z-OP", "Зона обслуживания", "operating", JSON.stringify(OPERATING_ZONE));
+  insertZ.run("Z-OP", "Зона обслуживания побережья", "operating", JSON.stringify(OPERATING_ZONE));
   for (const s of SLOW_ZONES) insertZ.run(s.id, s.name, "slow", JSON.stringify(s.polygon));
   for (const f of FORBIDDEN_ZONES) insertZ.run(f.id, f.name, "forbidden", JSON.stringify(f.polygon));
 
@@ -269,8 +269,8 @@ export class DatabaseStorage implements IStorage {
     const last = pts[pts.length - 1];
     const dx = x - last[0], dy = y - last[1];
     const dMap = Math.sqrt(dx * dx + dy * dy);
-    // 1 map unit ≈ 14 metres (≈14km city width across 1000 units)
-    const addedMeters = dMap * 14;
+    // 1 map unit ≈ 30 metres (≈30km coastal span across 1000 units, demo scale)
+    const addedMeters = dMap * 30;
     pts.push([x, y, Date.now()]);
     const newDistance = r.distanceM + addedMeters;
     const minutes = (Date.now() - r.startedAt) / 60000;

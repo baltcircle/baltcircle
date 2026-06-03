@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { Bike, Parking, ZoneRow, Ride } from "@shared/schema";
-import { MAP_W, MAP_H } from "@shared/geo";
+import { MAP_W, MAP_H, ROUTES, TOWNS } from "@shared/geo";
 
 interface Props {
   bikes?: Bike[];
@@ -35,19 +35,21 @@ function zoneLabel(zone: ZoneRow) {
 }
 
 function parkingLabelProps(id: string) {
-  const overrides: Record<string, { x: number; y: number; anchor?: "start" | "end" }> = {
-    "P-01": { x: -18, y: -16, anchor: "end" },
-    "P-02": { x: 18, y: -18, anchor: "start" },
-    "P-06": { x: 18, y: -14, anchor: "start" },
-    "P-07": { x: 18, y: 21, anchor: "start" },
-    "P-08": { x: 20, y: 17, anchor: "start" },
-    "P-13": { x: 20, y: -13, anchor: "start" },
-    "P-15": { x: -18, y: 19, anchor: "end" },
+  const overrides: Record<string, { x: number; y: number; anchor: "start" | "end" | "middle" }> = {
+    "P-03": { x: -18, y: 2, anchor: "end" },
+    "P-05": { x: 0, y: -16, anchor: "middle" },
+    "P-09": { x: -18, y: 2, anchor: "end" },
+    "P-13": { x: -18, y: 2, anchor: "end" },
+    "P-15": { x: 18, y: 18, anchor: "start" },
   };
   return overrides[id] ?? { x: 12, y: 2, anchor: "start" as const };
 }
 
-export function KaliningradMap({
+function polyline(points: [number, number][]) {
+  return points.map((p, i) => (i === 0 ? "M" : "L") + p[0] + " " + p[1]).join(" ");
+}
+
+export function CoastMap({
   bikes = [], parkings = [], zones = [], ride = null,
   selectedBikeId, onSelectBike, height = 520, showLabels = true,
   interactive = true, liveLocation = null,
@@ -66,9 +68,9 @@ export function KaliningradMap({
         data-testid="map-svg"
       >
         <defs>
-          <linearGradient id="seaGradient" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%"  stopColor="hsl(var(--brand-sea-soft))" />
-            <stop offset="100%" stopColor="hsl(var(--brand-sea) / 0.30)" />
+          <linearGradient id="seaGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"  stopColor="hsl(var(--brand-sea))" stopOpacity="0.45" />
+            <stop offset="100%" stopColor="hsl(var(--brand-sea-soft))" />
           </linearGradient>
           <linearGradient id="landGradient" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%"  stopColor="hsl(var(--brand-sand-soft))" />
@@ -85,35 +87,96 @@ export function KaliningradMap({
         {/* base land */}
         <rect width={MAP_W} height={MAP_H} fill="url(#landGradient)" />
 
-        {/* Baltic bay — west water */}
+        {/* Baltic Sea — runs along the top, with a gently curved shoreline */}
         <path
-          d="M0 0 L150 0 C 130 100, 110 220, 140 320 C 165 410, 130 520, 80 600 L 0 640 Z"
+          d="M0 0 H1000 V150
+             C 900 175, 800 200, 700 195
+             C 600 190, 540 165, 470 175
+             C 380 188, 300 235, 215 235
+             C 140 235, 70 205, 0 200 Z"
           fill="url(#seaGradient)"
+          data-testid="map-sea"
         />
-        {/* Pregolya river ribbon */}
+        {/* foamy shoreline accent */}
         <path
-          d="M0 430 C 200 460, 360 380, 450 430 C 540 480, 620 440, 760 470 C 880 495, 950 470, 1000 480 L 1000 510 C 950 500, 880 525, 760 500 C 620 470, 540 510, 450 460 C 360 410, 200 490, 0 460 Z"
-          fill="hsl(var(--brand-sea-soft))"
+          d="M0 200 C 70 205, 140 235, 215 235
+             C 300 235, 380 188, 470 175
+             C 540 165, 600 190, 700 195
+             C 800 200, 900 175, 1000 150"
+          fill="none"
+          stroke="hsl(var(--brand-foam))"
+          strokeWidth="3"
+          opacity="0.8"
+        />
+
+        {/* Curonian Spit (Куршская коса) — sandy peninsula to the east */}
+        <path
+          d="M905 360 C 935 300, 950 240, 940 180 C 936 160, 922 150, 916 168 C 924 240, 905 300, 890 350 Z"
+          fill="hsl(var(--brand-sand-soft))"
+          stroke="hsl(var(--brand-sand-deep) / 0.5)"
           opacity="0.9"
         />
-        {/* Island of Kant - middle */}
-        <ellipse cx="460" cy="465" rx="55" ry="20" fill="hsl(var(--brand-sand-soft))" stroke="hsl(var(--brand-sand-deep) / 0.6)" />
-        {/* parks */}
-        <ellipse cx="665" cy="220" rx="55" ry="34" fill="hsl(174 40% 70% / 0.45)" />
-        <ellipse cx="320" cy="200" rx="45" ry="28" fill="hsl(174 40% 70% / 0.35)" />
-        <ellipse cx="830" cy="380" rx="42" ry="26" fill="hsl(174 40% 70% / 0.35)" />
 
-        {/* Road lattice */}
-        <g stroke="hsl(var(--brand-sand-deep) / 0.45)" strokeWidth="1.2" fill="none">
-          <path d="M 180 130 L 220 550" />
-          <path d="M 340 110 L 360 620" />
-          <path d="M 520 110 L 500 640" />
-          <path d="M 720 130 L 700 620" />
-          <path d="M 860 200 L 820 560" />
-          <path d="M 140 280 L 900 320" />
-          <path d="M 150 420 L 890 450" />
-          <path d="M 220 550 L 820 560" />
-          <path d="M 180 180 L 860 200" />
+        {/* green belts / coastal pine forest near towns */}
+        <ellipse cx="215" cy="430" rx="80" ry="34" fill="hsl(174 40% 70% / 0.30)" />
+        <ellipse cx="470" cy="440" rx="70" ry="30" fill="hsl(174 40% 70% / 0.30)" />
+        <ellipse cx="800" cy="450" rx="80" ry="34" fill="hsl(174 40% 70% / 0.30)" />
+
+        {/* Coastal road lattice (light reference grid) */}
+        <g stroke="hsl(var(--brand-sand-deep) / 0.40)" strokeWidth="1.2" fill="none">
+          <path d="M120 400 C 360 470, 640 470, 950 400" />
+          <path d="M150 320 L 220 480" />
+          <path d="M500 280 L 500 470" />
+          <path d="M820 300 L 850 470" />
+        </g>
+
+        {/* Cycling routes (велодорожки) — drawn under markers, above base map */}
+        <g data-testid="routes">
+          {ROUTES.map((r) => {
+            const d = polyline(r.points);
+            const mid = r.points[Math.floor(r.points.length / 2)];
+            return (
+              <g key={r.id} data-testid={`route-${r.id}`}>
+                {/* casing */}
+                <path d={d} fill="none" stroke="hsl(var(--brand-foam))" strokeWidth="8"
+                  strokeLinecap="round" strokeLinejoin="round" opacity="0.9" />
+                {/* route line */}
+                <path d={d} fill="none" stroke="hsl(174 64% 38%)" strokeWidth="4"
+                  strokeLinecap="round" strokeLinejoin="round" strokeDasharray="1 9" />
+                <path d={d} fill="none" stroke="hsl(174 64% 38%)" strokeWidth="4"
+                  strokeLinecap="round" strokeLinejoin="round" opacity="0.45" />
+                {showLabels && (
+                  <g transform={`translate(${mid[0]} ${mid[1] - 12})`}>
+                    <text fontSize="10" textAnchor="middle" stroke="hsl(var(--brand-foam))"
+                      strokeWidth="3" strokeLinejoin="round" className="font-semibold">
+                      {r.name} · {r.distanceKm} км
+                    </text>
+                    <text fontSize="10" textAnchor="middle" fill="hsl(174 64% 26%)" className="font-semibold">
+                      {r.name} · {r.distanceKm} км
+                    </text>
+                  </g>
+                )}
+              </g>
+            );
+          })}
+        </g>
+
+        {/* Town anchors + names */}
+        <g data-testid="towns">
+          {TOWNS.map(t => (
+            <g key={t.id} transform={`translate(${t.x} ${t.y})`} data-testid={`town-${t.id}`}>
+              <circle r="6" fill="hsl(var(--brand-sea))" stroke="hsl(var(--brand-foam))" strokeWidth="2" />
+              <text x="0" y="-12" fontSize="14" textAnchor="middle"
+                stroke="hsl(var(--brand-foam))" strokeWidth="3.5" strokeLinejoin="round"
+                className="font-display font-semibold">
+                {t.name}
+              </text>
+              <text x="0" y="-12" fontSize="14" textAnchor="middle"
+                fill="hsl(var(--brand-bark))" className="font-display font-semibold">
+                {t.name}
+              </text>
+            </g>
+          ))}
         </g>
 
         {/* Zones */}

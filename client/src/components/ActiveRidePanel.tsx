@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Bike, Parking, ZoneRow, Ride } from "@shared/schema";
-import { KaliningradMap } from "./KaliningradMap";
+import { CoastMap } from "./CoastMap";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
@@ -107,7 +107,7 @@ export function ActiveRidePanel({ ride }: { ride: Ride }) {
       </header>
 
       <div className="grid lg:grid-cols-[1fr_360px] gap-5">
-        <KaliningradMap
+        <CoastMap
           bikes={bikes.data ?? []}
           parkings={parkings.data ?? []}
           zones={zones.data ?? []}

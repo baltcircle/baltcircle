@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState, useMemo, useEffect } from "react";
 import { Link } from "wouter";
 import type { Bike, Parking, ZoneRow, Ride } from "@shared/schema";
-import { KaliningradMap } from "@/components/KaliningradMap";
+import { CoastMap } from "@/components/CoastMap";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -40,10 +40,11 @@ export function MapPage() {
       <div className="relative bg-primary text-primary-foreground px-6 py-6 lg:px-10 lg:py-7 overflow-hidden">
         <div className="relative z-10 flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.28em] opacity-80">Калининград · сейчас</div>
+            <div className="text-[11px] uppercase tracking-[0.28em] opacity-80">Балтийское побережье · сейчас</div>
             <h1 className="font-display text-2xl lg:text-[28px] mt-1 font-light tracking-tight">
-              Где ваш велосипед — рядом
+              Велошеринг побережья — рядом
             </h1>
+            <div className="text-xs mt-1 opacity-80">Зеленоградск · Пионерский · Светлогорск</div>
           </div>
           <div className="flex items-center gap-3">
             <StatPill label="Доступно" value={availableBikes.length.toString()} />
@@ -59,7 +60,7 @@ export function MapPage() {
 
       <div className="grid lg:grid-cols-[1fr_360px] gap-4 lg:gap-6 px-4 lg:px-10 py-6 lg:py-8">
         <div>
-          <KaliningradMap
+          <CoastMap
             bikes={bikesQ.data ?? []}
             parkings={parkingsQ.data ?? []}
             zones={zonesQ.data ?? []}
@@ -163,6 +164,7 @@ function LegendRow() {
       <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-primary" />В аренде</span>
       <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-500" />Бронь</span>
       <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-rose-500" />Сервис</span>
+      <span className="inline-flex items-center gap-1.5"><span className="w-4 h-0.5 rounded bg-teal-600" />Велодорожка</span>
       <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-amber-300/60 border border-amber-500/60" />Ограничение 15 км/ч</span>
       <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-rose-300/40 border border-rose-500/60" />Запрещённая зона</span>
     </div>
