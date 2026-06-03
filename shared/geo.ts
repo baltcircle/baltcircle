@@ -110,6 +110,81 @@ export const ROUTES: Route[] = [
   },
 ];
 
+// --- Realistic coastal GPS routes ---------------------------------------
+// Hand-encoded approximate [lat, lng] paths tracing the Baltic shore cycling
+// corridor between the three launch towns. These are manual approximations of
+// the coastal road/велодорожка alignment (NOT copied from any proprietary map
+// dataset) so the Yandex base map shows believable on-road geometry rather
+// than the abstract affine-transformed SVG polylines. Distance/time are
+// approximate signposted values.
+export interface CoastRoute {
+  id: string;
+  name: string;
+  distanceKm: number;
+  minutes: number;        // approx. easy-pace cycling time
+  color: string;
+  path: [number, number][]; // [lat, lng]
+}
+
+export const COAST_ROUTES: CoastRoute[] = [
+  {
+    id: "C-01",
+    name: "Светлогорск → Пионерский",
+    distanceKm: 6,
+    minutes: 22,
+    color: "#1f9e93",
+    path: [
+      [54.9430, 20.1547], // Светлогорск (promenade)
+      [54.9452, 20.1640],
+      [54.9468, 20.1755],
+      [54.9486, 20.1880],
+      [54.9501, 20.2010],
+      [54.9512, 20.2140],
+      [54.9518, 20.2250],
+      [54.9520, 20.2330], // Пионерский
+    ],
+  },
+  {
+    id: "C-02",
+    name: "Пионерский → Зеленоградск",
+    distanceKm: 12,
+    minutes: 42,
+    color: "#1d6f8e",
+    path: [
+      [54.9520, 20.2330], // Пионерский
+      [54.9534, 20.2520],
+      [54.9550, 20.2740],
+      [54.9560, 20.2980],
+      [54.9568, 20.3240],
+      [54.9576, 20.3520],
+      [54.9584, 20.3820],
+      [54.9590, 20.4120],
+      [54.9596, 20.4420],
+      [54.9600, 20.4750], // Зеленоградск
+    ],
+  },
+  {
+    id: "C-03",
+    name: "Приморское велокольцо",
+    distanceKm: 26,
+    minutes: 95,
+    color: "#26a884",
+    path: [
+      [54.9430, 20.1547], // Светлогорск
+      [54.9520, 20.2330], // Пионерский
+      [54.9600, 20.4750], // Зеленоградск
+      [54.9540, 20.4690], // turn inland / south leg back west
+      [54.9460, 20.4400],
+      [54.9400, 20.3900],
+      [54.9360, 20.3300],
+      [54.9350, 20.2700],
+      [54.9360, 20.2100],
+      [54.9390, 20.1700],
+      [54.9430, 20.1547], // close loop at Светлогорск
+    ],
+  },
+];
+
 // Operating zone (coastal strip covering all three towns)
 export const OPERATING_ZONE = [
   [110, 200], [260, 180], [470, 200], [620, 200], [780, 230],

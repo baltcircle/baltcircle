@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Bike, Parking, ZoneRow, Ride } from "@shared/schema";
-import { ROUTES, TOWNS, REAL_CENTER, svgToLatLng } from "@shared/geo";
+import { COAST_ROUTES, TOWNS, REAL_CENTER, svgToLatLng } from "@shared/geo";
 import { CoastMap } from "./CoastMap";
 
 interface Props {
@@ -19,7 +19,6 @@ interface Props {
 // Resolved brand-ish colors (Yandex overlays can't read CSS variables).
 const SEA = "#1d6f8e";
 const FOAM = "#ffffff";
-const ROUTE = "#1f9e93";
 
 function bikeColor(status: string) {
   switch (status) {
@@ -203,17 +202,17 @@ function drawStatic(ymaps: any, map: any, zones: ZoneRow[]) {
     map.geoObjects.add(polygon);
   }
 
-  // Cycling routes — prominent teal polylines connecting the towns.
-  for (const r of ROUTES) {
-    const coords = r.points.map(([x, y]) => svgToLatLng(x, y));
-    // casing
-    map.geoObjects.add(new ymaps.Polyline(coords, {}, {
+  // Cycling routes — realistic coastal GPS polylines connecting the towns.
+  for (const r of COAST_ROUTES) {
+    // white casing for contrast
+    map.geoObjects.add(new ymaps.Polyline(r.path, {}, {
       strokeColor: FOAM, strokeWidth: 9, strokeOpacity: 0.9, zIndex: 90,
     }));
-    map.geoObjects.add(new ymaps.Polyline(coords, {
-      hintContent: `${r.name} · ${r.distanceKm} км`,
+    map.geoObjects.add(new ymaps.Polyline(r.path, {
+      hintContent: `${r.name} · ${r.distanceKm} км · ~${r.minutes} мин`,
+      balloonContent: `<b>${r.name}</b><br>${r.distanceKm} км · ~${r.minutes} мин`,
     }, {
-      strokeColor: ROUTE, strokeWidth: 5, strokeOpacity: 1, zIndex: 100,
+      strokeColor: r.color, strokeWidth: 5, strokeOpacity: 1, zIndex: 100,
     }));
   }
 

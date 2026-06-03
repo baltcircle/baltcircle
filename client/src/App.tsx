@@ -1,4 +1,4 @@
-import { Switch, Route, Router } from "wouter";
+import { Switch, Route, Router, Redirect } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -18,13 +18,21 @@ import NotFound from "@/pages/not-found";
 function AppRouter() {
   return (
     <Switch>
+      {/* Customer / rider interface */}
       <Route path="/" component={MapPage} />
       <Route path="/rent" component={RentPage} />
       <Route path="/tariffs" component={TariffsPage} />
       <Route path="/rides" component={RidesPage} />
+
+      {/* Admin / operator interface */}
       <Route path="/admin" component={AdminPage} />
-      <Route path="/analytics" component={AnalyticsPage} />
-      <Route path="/maintenance" component={MaintenancePage} />
+      <Route path="/admin/analytics" component={AnalyticsPage} />
+      <Route path="/admin/maintenance" component={MaintenancePage} />
+
+      {/* Legacy admin deep-links — redirect to the namespaced routes */}
+      <Route path="/analytics"><Redirect to="/admin/analytics" /></Route>
+      <Route path="/maintenance"><Redirect to="/admin/maintenance" /></Route>
+
       <Route component={NotFound} />
     </Switch>
   );

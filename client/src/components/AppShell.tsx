@@ -3,30 +3,39 @@ import { Logo } from "./Logo";
 import { useTheme } from "@/lib/theme";
 import {
   Map, QrCode, Wallet, Route, ShieldCheck, Wrench, BarChart3,
-  Sun, Moon, Bike, ChevronRight,
+  Sun, Moon, Bike, ChevronRight, ArrowLeft,
 } from "lucide-react";
 
 interface NavItem {
   href: string;
   label: string;
   icon: typeof Map;
-  group: "rider" | "ops";
   testId: string;
 }
-const NAV: NavItem[] = [
-  { href: "/",          label: "Карта",        icon: Map,         group: "rider", testId: "nav-map" },
-  { href: "/rent",      label: "Аренда",       icon: QrCode,      group: "rider", testId: "nav-rent" },
-  { href: "/tariffs",   label: "Тарифы",       icon: Wallet,      group: "rider", testId: "nav-tariffs" },
-  { href: "/rides",     label: "Поездки",      icon: Route,       group: "rider", testId: "nav-rides" },
-  { href: "/admin",     label: "Парк",         icon: ShieldCheck, group: "ops",   testId: "nav-admin" },
-  { href: "/analytics", label: "Аналитика",    icon: BarChart3,   group: "ops",   testId: "nav-analytics" },
-  { href: "/maintenance", label: "Сервис",     icon: Wrench,      group: "ops",   testId: "nav-maintenance" },
+
+// Customer / rider interface — the default experience.
+const RIDER_NAV: NavItem[] = [
+  { href: "/",        label: "Карта",   icon: Map,    testId: "nav-map" },
+  { href: "/rent",    label: "Аренда",  icon: QrCode, testId: "nav-rent" },
+  { href: "/tariffs", label: "Тарифы",  icon: Wallet, testId: "nav-tariffs" },
+  { href: "/rides",   label: "Поездки", icon: Route,  testId: "nav-rides" },
+];
+
+// Operator / admin interface — separated under /admin.
+const OPS_NAV: NavItem[] = [
+  { href: "/admin",             label: "Парк",      icon: ShieldCheck, testId: "nav-admin" },
+  { href: "/admin/analytics",   label: "Аналитика", icon: BarChart3,   testId: "nav-analytics" },
+  { href: "/admin/maintenance", label: "Сервис",    icon: Wrench,      testId: "nav-maintenance" },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [loc] = useLocation();
   const { theme, toggle } = useTheme();
-  const matchActive = (href: string) => href === "/" ? loc === "/" : loc.startsWith(href);
+
+  const isAdmin = loc === "/admin" || loc.startsWith("/admin/");
+  const nav = isAdmin ? OPS_NAV : RIDER_NAV;
+  const matchActive = (href: string) =>
+    href === "/" ? loc === "/" : loc === href || loc.startsWith(href + "/");
 
   return (
     <div className="min-h-screen flex flex-col lg:flex-row bg-background text-foreground">
@@ -36,13 +45,42 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         data-testid="sidebar"
       >
         <div className="px-5 py-6 border-b border-sidebar-border/40">
-          <Link href="/" data-testid="link-home"><Logo /></Link>
+          <Link href={isAdmin ? "/admin" : "/"} data-testid="link-home"><Logo /></Link>
+          {isAdmin && (
+            <div
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-sidebar-accent/60 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em]"
+              data-testid="admin-badge"
+            >
+              <ShieldCheck className="w-3 h-3" /> Операторская панель
+            </div>
+          )}
         </div>
         <nav className="flex-1 px-3 py-4 space-y-6 overflow-y-auto">
-          <SidebarGroup label="Пользователь" items={NAV.filter(n => n.group === "rider")} isActive={matchActive} />
-          <SidebarGroup label="Операционный центр" items={NAV.filter(n => n.group === "ops")} isActive={matchActive} />
+          <SidebarGroup
+            label={isAdmin ? "Операторская панель" : "Пользователь"}
+            items={nav}
+            isActive={matchActive}
+          />
         </nav>
         <div className="px-3 py-4 border-t border-sidebar-border/40 space-y-2">
+          {/* Cross-link between the two interfaces (no auth yet). */}
+          {isAdmin ? (
+            <Link
+              href="/"
+              data-testid="link-exit-admin"
+              className="w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
+            >
+              <ArrowLeft className="w-4 h-4 opacity-80" /> К приложению
+            </Link>
+          ) : (
+            <Link
+              href="/admin"
+              data-testid="link-admin"
+              className="w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
+            >
+              <ShieldCheck className="w-4 h-4 opacity-80" /> Операторская
+            </Link>
+          )}
           <button
             onClick={toggle}
             className="w-full flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
@@ -63,25 +101,38 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Mobile top header */}
       <header className="lg:hidden sticky top-0 z-30 bg-sidebar text-sidebar-foreground border-b border-sidebar-border flex items-center justify-between px-4 h-14">
-        <Link href="/" data-testid="link-home-mobile"><Logo /></Link>
-        <button
-          onClick={toggle}
-          className="p-2 rounded-md hover-elevate"
-          aria-label="Сменить тему"
-          data-testid="button-theme-toggle-mobile"
-        >
-          {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-        </button>
+        <Link href={isAdmin ? "/admin" : "/"} data-testid="link-home-mobile" className="flex items-center gap-2">
+          <Logo />
+          {isAdmin && <span className="text-[10px] uppercase tracking-[0.18em] opacity-80">Оператор</span>}
+        </Link>
+        <div className="flex items-center gap-1">
+          <Link
+            href={isAdmin ? "/" : "/admin"}
+            data-testid={isAdmin ? "link-exit-admin-mobile" : "link-admin-mobile"}
+            aria-label={isAdmin ? "К приложению" : "Операторская"}
+            className="p-2 rounded-md hover-elevate"
+          >
+            {isAdmin ? <ArrowLeft className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
+          </Link>
+          <button
+            onClick={toggle}
+            className="p-2 rounded-md hover-elevate"
+            aria-label="Сменить тему"
+            data-testid="button-theme-toggle-mobile"
+          >
+            {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          </button>
+        </div>
       </header>
 
       <main className="flex-1 min-w-0 pb-24 lg:pb-0">{children}</main>
 
-      {/* Mobile bottom tabs */}
+      {/* Mobile bottom tabs — scoped to the active interface. */}
       <nav
-        className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-card border-t border-card-border h-16 grid grid-cols-5 px-1"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-card border-t border-card-border h-16 flex px-1"
         data-testid="bottom-nav"
       >
-        {[NAV[0], NAV[1], NAV[2], NAV[4], NAV[5]].map(item => {
+        {nav.map(item => {
           const Icon = item.icon;
           const active = matchActive(item.href);
           return (
@@ -89,7 +140,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               key={item.href}
               href={item.href}
               data-testid={item.testId + "-mobile"}
-              className={`flex flex-col items-center justify-center gap-0.5 text-[10px] ${active ? "text-primary" : "text-muted-foreground"}`}
+              className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] ${active ? "text-primary" : "text-muted-foreground"}`}
             >
               <Icon className="w-5 h-5" />
               {item.label}
