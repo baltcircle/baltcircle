@@ -110,6 +110,25 @@ export const ROUTES: Route[] = [
   },
 ];
 
+// --- Real-world geo (Yandex map) ----------------------------------------
+// Real city-centre coordinates [lat, lng] for the three launch towns
+// (Самбийский полуостров, Калининградская область). Used directly by the
+// Yandex map so towns/parkings/routes/zones render in their true positions
+// instead of being squeezed through an abstract affine transform.
+export const REAL_TOWNS = {
+  svetlogorsk: [54.9442, 20.1561],
+  pionersky: [54.9429, 20.2216],
+  zelenogradsk: [54.9440, 20.4644],
+} as const;
+
+/** Real [lat, lng] anchor for a town id. */
+export function townLatLng(id: keyof typeof REAL_TOWNS): readonly [number, number] {
+  return REAL_TOWNS[id];
+}
+
+// Real center of the coastal launch area (midpoint of the three towns).
+export const REAL_CENTER: [number, number] = [54.945, 20.275];
+
 // --- Realistic coastal GPS routes ---------------------------------------
 // Hand-encoded approximate [lat, lng] paths tracing the Baltic shore cycling
 // corridor between the three launch towns. These are manual approximations of
@@ -134,14 +153,12 @@ export const COAST_ROUTES: CoastRoute[] = [
     minutes: 22,
     color: "#1f9e93",
     path: [
-      [54.9430, 20.1547], // Светлогорск (promenade)
-      [54.9452, 20.1640],
-      [54.9468, 20.1755],
-      [54.9486, 20.1880],
-      [54.9501, 20.2010],
-      [54.9512, 20.2140],
-      [54.9518, 20.2250],
-      [54.9520, 20.2330], // Пионерский
+      [54.9442, 20.1561], // Светлогорск
+      [54.9446, 20.1700],
+      [54.9448, 20.1850],
+      [54.9446, 20.2000],
+      [54.9438, 20.2130],
+      [54.9429, 20.2216], // Пионерский
     ],
   },
   {
@@ -151,16 +168,14 @@ export const COAST_ROUTES: CoastRoute[] = [
     minutes: 42,
     color: "#1d6f8e",
     path: [
-      [54.9520, 20.2330], // Пионерский
-      [54.9534, 20.2520],
-      [54.9550, 20.2740],
-      [54.9560, 20.2980],
-      [54.9568, 20.3240],
-      [54.9576, 20.3520],
-      [54.9584, 20.3820],
-      [54.9590, 20.4120],
-      [54.9596, 20.4420],
-      [54.9600, 20.4750], // Зеленоградск
+      [54.9429, 20.2216], // Пионерский
+      [54.9436, 20.2500],
+      [54.9444, 20.2850],
+      [54.9448, 20.3250],
+      [54.9450, 20.3700],
+      [54.9448, 20.4150],
+      [54.9444, 20.4450],
+      [54.9440, 20.4644], // Зеленоградск
     ],
   },
   {
@@ -170,17 +185,119 @@ export const COAST_ROUTES: CoastRoute[] = [
     minutes: 95,
     color: "#26a884",
     path: [
-      [54.9430, 20.1547], // Светлогорск
-      [54.9520, 20.2330], // Пионерский
-      [54.9600, 20.4750], // Зеленоградск
-      [54.9540, 20.4690], // turn inland / south leg back west
-      [54.9460, 20.4400],
-      [54.9400, 20.3900],
-      [54.9360, 20.3300],
-      [54.9350, 20.2700],
-      [54.9360, 20.2100],
-      [54.9390, 20.1700],
-      [54.9430, 20.1547], // close loop at Светлогорск
+      [54.9442, 20.1561], // Светлогорск
+      [54.9429, 20.2216], // Пионерский
+      [54.9440, 20.4644], // Зеленоградск
+      [54.9360, 20.4500], // south leg back west
+      [54.9300, 20.3900],
+      [54.9290, 20.3200],
+      [54.9310, 20.2500],
+      [54.9360, 20.1900],
+      [54.9442, 20.1561], // close loop at Светлогорск
+    ],
+  },
+];
+
+// Ordered real waypoints for Yandex route construction (multiRouter):
+// Светлогорск ↔ Пионерский ↔ Зеленоградск.
+export const ROUTE_WAYPOINTS: [number, number][] = [
+  [...REAL_TOWNS.svetlogorsk],
+  [...REAL_TOWNS.pionersky],
+  [...REAL_TOWNS.zelenogradsk],
+];
+
+// --- Real-coordinate zones (Yandex map) ---------------------------------
+// Clean [lat, lng] polygons covering the real coastal corridor. These render
+// directly on the Yandex base map (no affine distortion). The abstract-space
+// OPERATING_ZONE/SLOW_ZONES/FORBIDDEN_ZONES above remain for the stylized
+// CoastMap fallback and for checkZoneState (which runs in abstract space).
+export interface RealZone {
+  id: string;
+  name: string;
+  kind: "operating" | "slow" | "forbidden";
+  polygon: [number, number][]; // [lat, lng]
+}
+
+export const REAL_ZONES: RealZone[] = [
+  {
+    id: "Z-OP",
+    name: "Зона обслуживания побережья",
+    kind: "operating",
+    polygon: [
+      [54.9560, 20.1400],
+      [54.9540, 20.2300],
+      [54.9520, 20.3400],
+      [54.9510, 20.4750],
+      [54.9360, 20.4850],
+      [54.9280, 20.3600],
+      [54.9300, 20.2300],
+      [54.9360, 20.1450],
+    ],
+  },
+  {
+    id: "S-01",
+    name: "Светлогорск · Променад",
+    kind: "slow",
+    polygon: [
+      [54.9470, 20.1490],
+      [54.9470, 20.1640],
+      [54.9420, 20.1640],
+      [54.9420, 20.1490],
+    ],
+  },
+  {
+    id: "S-02",
+    name: "Пионерский · Набережная",
+    kind: "slow",
+    polygon: [
+      [54.9455, 20.2120],
+      [54.9455, 20.2300],
+      [54.9405, 20.2300],
+      [54.9405, 20.2120],
+    ],
+  },
+  {
+    id: "S-03",
+    name: "Зеленоградск · Курортный пр.",
+    kind: "slow",
+    polygon: [
+      [54.9470, 20.4540],
+      [54.9470, 20.4740],
+      [54.9415, 20.4740],
+      [54.9415, 20.4540],
+    ],
+  },
+  {
+    id: "F-01",
+    name: "Пляжная зона (заезд запрещён)",
+    kind: "forbidden",
+    polygon: [
+      [54.9495, 20.1520],
+      [54.9495, 20.1660],
+      [54.9475, 20.1660],
+      [54.9475, 20.1520],
+    ],
+  },
+  {
+    id: "F-02",
+    name: "Порт Пионерский",
+    kind: "forbidden",
+    polygon: [
+      [54.9475, 20.2150],
+      [54.9475, 20.2280],
+      [54.9455, 20.2280],
+      [54.9455, 20.2150],
+    ],
+  },
+  {
+    id: "F-03",
+    name: "Куршская коса (нац. парк)",
+    kind: "forbidden",
+    polygon: [
+      [54.9500, 20.4780],
+      [54.9500, 20.4950],
+      [54.9400, 20.4950],
+      [54.9400, 20.4780],
     ],
   },
 ];
@@ -224,27 +341,42 @@ export const FORBIDDEN_ZONES = [
   },
 ];
 
-// --- Real-world geo anchoring -------------------------------------------
-// The stylized map above uses an abstract 1000x700 SVG space. To render the
-// same overlays on a real Yandex map we anchor that space to the three launch
-// towns' true coordinates and derive an affine transform (exact at the three
-// anchors). Coefficients were solved from the TOWN svg positions above mapped
-// to these real [lng, lat] pairs:
-//   Светлогорск  -> 20.1547, 54.9430
-//   Пионерский   -> 20.2330, 54.9520
-//   Зеленоградск -> 20.4750, 54.9600
-// lng = LNG.a*x + LNG.b*y + LNG.c ; lat = LAT.a*x + LAT.b*y + LAT.c
-const LNG = { a: 5.2087403599e-4, b: 1.5588688946e-3, c: 19.497107969 };
-const LAT = { a: 2.9305912596e-5, b: -1.4395886889e-5, c: 54.941737789 };
+// --- Abstract → real mapping for stored bike/parking points -------------
+// The backend still stores positions in the stylized 1000x700 space (lat=y,
+// lng=x). Rather than shear that whole space onto the globe with a single
+// affine (which made everything look crooked), we anchor each stored point to
+// the *nearest* town centre and apply only its small local offset, scaled to
+// metres. This keeps clusters tight and upright around the correct town.
+// Per-town clusters span only tens of svg-units, so a gentle metres-per-unit
+// factor keeps each town's stations within a few hundred metres of centre.
+const SVG_TOWNS: { id: keyof typeof REAL_TOWNS; x: number; y: number }[] = [
+  { id: "svetlogorsk", x: 215, y: 350 },
+  { id: "pionersky", x: 500, y: 305 },
+  { id: "zelenogradsk", x: 800, y: 360 },
+];
 
-/** Convert a stylized map point (x = lng-field, y = lat-field) into a real
- *  [lat, lng] pair for Yandex Maps (which expects [lat, lng] order). */
-export function svgToLatLng(x: number, y: number): [number, number] {
-  return [LAT.a * x + LAT.b * y + LAT.c, LNG.a * x + LNG.b * y + LNG.c];
+const METERS_PER_UNIT = 9; // ~9 m per stylized unit for local cluster spread
+const M_PER_DEG_LAT = 111_320;
+const M_PER_DEG_LNG = 111_320 * Math.cos((54.944 * Math.PI) / 180);
+
+/** Map a stored abstract point (x = lng-field, y = lat-field) to a real
+ *  [lat, lng] near its nearest launch town. Used for bikes & parkings so the
+ *  backend's x/y storage stays unchanged but markers land in the right place. */
+export function mapToReal(x: number, y: number): [number, number] {
+  let best = SVG_TOWNS[0];
+  let bestD = Infinity;
+  for (const t of SVG_TOWNS) {
+    const d = (t.x - x) ** 2 + (t.y - y) ** 2;
+    if (d < bestD) { bestD = d; best = t; }
+  }
+  const [baseLat, baseLng] = REAL_TOWNS[best.id];
+  const eastM = (x - best.x) * METERS_PER_UNIT;   // +x = east
+  const northM = (best.y - y) * METERS_PER_UNIT;  // +y = south, so invert
+  return [
+    baseLat + northM / M_PER_DEG_LAT,
+    baseLng + eastM / M_PER_DEG_LNG,
+  ];
 }
-
-// Real center of the coastal launch area (≈ Пионерский, between the towns).
-export const REAL_CENTER: [number, number] = svgToLatLng(500, 330);
 
 export function pointInPolygon(p: [number, number], poly: number[][]): boolean {
   let inside = false;
