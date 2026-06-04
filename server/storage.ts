@@ -1,8 +1,9 @@
 import {
-  bikes, parkings, zones, rides, tickets, payments, wallet,
+  bikes, parkings, zones, rides, tickets, payments, wallet, mapObjects,
 } from "@shared/schema";
 import type {
   Bike, Parking, ZoneRow, Ride, Ticket, Payment, Wallet,
+  MapObject, InsertMapObject,
 } from "@shared/schema";
 import {
   PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES, pointInPolygon,
@@ -73,6 +74,15 @@ CREATE TABLE IF NOT EXISTS wallet (
   balance REAL NOT NULL DEFAULT 0,
   active_tariff TEXT NOT NULL DEFAULT 'payg',
   tariff_expires_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS map_objects (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  color TEXT NOT NULL DEFAULT '#1d6f8e',
+  points TEXT NOT NULL,
+  created_at INTEGER NOT NULL
 );
 `);
 
@@ -309,6 +319,10 @@ export interface IStorage {
   listTickets(): Ticket[];
   createTicket(input: { bikeId: string; kind: string; message: string }): Ticket;
   updateTicketStatus(id: number, status: string): Ticket | undefined;
+  // map objects (operator-drawn routes/zones)
+  listMapObjects(): MapObject[];
+  createMapObject(input: InsertMapObject): MapObject;
+  deleteMapObject(id: number): boolean;
   // analytics
   analytics(): any;
 }
@@ -459,6 +473,26 @@ export class DatabaseStorage implements IStorage {
   updateTicketStatus(id: number, status: string) {
     db.update(tickets).set({ status }).where(eq(tickets.id, id)).run();
     return db.select().from(tickets).where(eq(tickets.id, id)).get() as Ticket | undefined;
+  }
+
+  listMapObjects() {
+    return db.select().from(mapObjects).orderBy(desc(mapObjects.createdAt)).all() as MapObject[];
+  }
+
+  createMapObject(input: InsertMapObject) {
+    return db.insert(mapObjects).values({
+      name: input.name,
+      type: input.type,
+      kind: input.kind,
+      color: input.color,
+      points: JSON.stringify(input.points),
+      createdAt: Date.now(),
+    }).returning().get() as MapObject;
+  }
+
+  deleteMapObject(id: number) {
+    const res = db.delete(mapObjects).where(eq(mapObjects.id, id)).run();
+    return res.changes > 0;
   }
 
   analytics() {

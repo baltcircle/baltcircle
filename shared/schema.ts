@@ -42,6 +42,31 @@ export const zones = sqliteTable("zones", {
 });
 export type ZoneRow = typeof zones.$inferSelect;
 
+/* ------- MAP OBJECTS (visual editor) ------- */
+/** Operator-drawn routes & zones for the Yandex map.
+ *  type   = "route" | "operating" | "slow" | "forbidden"
+ *  kind   = "route" (polyline) | "zone" (polygon)
+ *  points = JSON array of [lat, lng] coordinates
+ */
+export const mapObjects = sqliteTable("map_objects", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  type: text("type").notNull(),
+  kind: text("kind").notNull(),
+  color: text("color").notNull().default("#1d6f8e"),
+  points: text("points").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+export type MapObject = typeof mapObjects.$inferSelect;
+export const insertMapObjectSchema = z.object({
+  name: z.string().min(1).max(120),
+  type: z.enum(["route", "operating", "slow", "forbidden"]),
+  kind: z.enum(["route", "zone"]),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#1d6f8e"),
+  points: z.array(z.tuple([z.number(), z.number()])).min(2),
+});
+export type InsertMapObject = z.infer<typeof insertMapObjectSchema>;
+
 /* ------- RIDES ------- */
 export const rides = sqliteTable("rides", {
   id: integer("id").primaryKey({ autoIncrement: true }),

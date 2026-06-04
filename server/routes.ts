@@ -4,6 +4,7 @@ import type { Server } from "node:http";
 import { storage } from "./storage";
 import { z } from "zod";
 import { TARIFFS } from "@shared/geo";
+import { insertMapObjectSchema } from "@shared/schema";
 
 const USER_ID = "demo";
 
@@ -102,6 +103,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const t = storage.updateTicketStatus(Number(req.params.id), parsed.data.status);
     if (!t) return res.status(404).json({ error: "Заявка не найдена" });
     res.json(t);
+  });
+
+  // -------------- Map objects (operator-drawn routes/zones) --------------
+  app.get("/api/map-objects", (_req, res) => res.json(storage.listMapObjects()));
+  app.post("/api/map-objects", (req, res) => {
+    const parsed = insertMapObjectSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Bad request" });
+    res.json(storage.createMapObject(parsed.data));
+  });
+  app.delete("/api/map-objects/:id", (req, res) => {
+    const ok = storage.deleteMapObject(Number(req.params.id));
+    if (!ok) return res.status(404).json({ error: "Объект не найден" });
+    res.json({ ok: true });
   });
 
   // -------------- Analytics --------------

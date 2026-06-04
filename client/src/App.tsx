@@ -13,6 +13,7 @@ import { RidesPage } from "@/pages/RidesPage";
 import { AdminPage } from "@/pages/AdminPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
 import { MaintenancePage } from "@/pages/MaintenancePage";
+import { MapEditorPage } from "@/pages/MapEditorPage";
 import NotFound from "@/pages/not-found";
 
 function AppRouter() {
@@ -26,6 +27,7 @@ function AppRouter() {
 
       {/* Admin / operator interface */}
       <Route path="/admin" component={AdminPage} />
+      <Route path="/admin/map" component={MapEditorPage} />
       <Route path="/admin/analytics" component={AnalyticsPage} />
       <Route path="/admin/maintenance" component={MaintenancePage} />
 

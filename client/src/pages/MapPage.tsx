@@ -1,19 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState, useMemo, useEffect } from "react";
 import { Link } from "wouter";
-import type { Bike, Parking, ZoneRow, Ride } from "@shared/schema";
+import type { Bike, Parking, ZoneRow, Ride, MapObject } from "@shared/schema";
 import { YandexMap } from "@/components/YandexMap";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Battery, Bike as BikeIcon, MapPin, QrCode, Sparkles, AlertTriangle, Route as RouteIcon, Clock } from "lucide-react";
+import { Battery, Bike as BikeIcon, MapPin, QrCode, Sparkles, AlertTriangle } from "lucide-react";
 import { fmtRelative } from "@/lib/format";
-import { checkZoneState, COAST_ROUTES } from "@shared/geo";
+import { checkZoneState } from "@shared/geo";
 
 export function MapPage() {
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
   const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
   const zonesQ = useQuery<ZoneRow[]>({ queryKey: ["/api/zones"] });
+  const mapObjectsQ = useQuery<MapObject[]>({ queryKey: ["/api/map-objects"] });
   const rideQ = useQuery<Ride | null>({ queryKey: ["/api/rides/active"], refetchInterval: 4000 });
 
   const [selected, setSelected] = useState<string | null>(null);
@@ -64,6 +65,7 @@ export function MapPage() {
             bikes={bikesQ.data ?? []}
             parkings={parkingsQ.data ?? []}
             zones={zonesQ.data ?? []}
+            mapObjects={mapObjectsQ.data ?? []}
             ride={rideQ.data ?? null}
             selectedBikeId={selected}
             onSelectBike={setSelected}
@@ -71,7 +73,6 @@ export function MapPage() {
             showLabels={false}
           />
           <LegendRow />
-          <RouteCards />
         </div>
 
         {/* Side panel */}
@@ -158,30 +159,6 @@ function Tile({ icon, label, value, tone = "neutral" }: {
   );
 }
 
-function RouteCards() {
-  return (
-    <div className="mt-4" data-testid="route-cards">
-      <div className="flex items-center gap-2 mb-2 text-xs uppercase tracking-widest text-muted-foreground">
-        <RouteIcon className="w-3.5 h-3.5" /> Велодорожки побережья
-      </div>
-      <div className="grid sm:grid-cols-3 gap-3">
-        {COAST_ROUTES.map(r => (
-          <Card key={r.id} className="p-3" data-testid={`route-card-${r.id}`}>
-            <div className="flex items-center gap-2">
-              <span className="w-3 h-1 rounded" style={{ backgroundColor: r.color }} />
-              <div className="text-sm font-light">{r.name}</div>
-            </div>
-            <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1"><MapPin className="w-3 h-3" />{r.distanceKm} км</span>
-              <span className="inline-flex items-center gap-1"><Clock className="w-3 h-3" />~{r.minutes} мин</span>
-            </div>
-          </Card>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function LegendRow() {
   return (
     <div className="flex flex-wrap items-center gap-3 mt-3 text-xs text-muted-foreground" data-testid="map-legend">
@@ -189,9 +166,6 @@ function LegendRow() {
       <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-primary" />В аренде</span>
       <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-500" />Бронь</span>
       <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-rose-500" />Сервис</span>
-      <span className="inline-flex items-center gap-1.5"><span className="w-4 h-0.5 rounded bg-teal-600" />Велодорожка</span>
-      <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-amber-300/60 border border-amber-500/60" />Ограничение 15 км/ч</span>
-      <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-rose-300/40 border border-rose-500/60" />Запрещённая зона</span>
     </div>
   );
 }
