@@ -11,7 +11,8 @@ import { useToast } from "@/hooks/use-toast";
 import { fmtRub, fmtDate } from "@/lib/format";
 import { TARIFFS } from "@shared/geo";
 import type { Tariff } from "@shared/geo";
-import { Wallet as WalletIcon, CreditCard, Plus, Check, Sparkles, Receipt, ShieldCheck } from "lucide-react";
+import { TEST_PAYMENT_QR_LOCAL, TEST_PAYMENT_QR_REMOTE } from "@/lib/payment";
+import { Wallet as WalletIcon, CreditCard, Plus, Check, Sparkles, Receipt, ShieldCheck, QrCode, ExternalLink } from "lucide-react";
 
 const tariffDurations: Record<string, number> = {
   payg: 0,
@@ -26,6 +27,7 @@ export function TariffsPage() {
 
   const [topupOpen, setTopupOpen] = useState(false);
   const [topupAmount, setTopupAmount] = useState(500);
+  const [payMethod, setPayMethod] = useState<"card" | "qr">("card");
   const [confirmTariff, setConfirmTariff] = useState<null | Tariff>(null);
 
   const topupMut = useMutation({
@@ -112,19 +114,82 @@ export function TariffsPage() {
                   onChange={e => setTopupAmount(Math.max(0, Number(e.target.value)))}
                   data-testid="input-topup-amount"
                 />
-                <div className="rounded-md bg-muted/60 p-3 text-sm flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-muted-foreground" />
-                  <span className="font-mono">•••• •••• •••• 4242</span>
-                  <span className="ml-auto text-xs text-muted-foreground">Visa</span>
+
+                {/* Payment method switch */}
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant={payMethod === "card" ? "default" : "outline"}
+                    onClick={() => setPayMethod("card")}
+                    data-testid="button-method-card"
+                  >
+                    <CreditCard className="w-4 h-4 mr-2" /> Карта (симуляция)
+                  </Button>
+                  <Button
+                    variant={payMethod === "qr" ? "default" : "outline"}
+                    onClick={() => setPayMethod("qr")}
+                    data-testid="button-method-qr"
+                  >
+                    <QrCode className="w-4 h-4 mr-2" /> Тестовая оплата
+                  </Button>
                 </div>
-                <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
-                  <ShieldCheck className="w-3 h-3" /> Платёж имитируется. Деньги не списываются.
-                </div>
+
+                {payMethod === "card" ? (
+                  <>
+                    <div className="rounded-md bg-muted/60 p-3 text-sm flex items-center gap-2">
+                      <CreditCard className="w-4 h-4 text-muted-foreground" />
+                      <span className="font-mono">•••• •••• •••• 4242</span>
+                      <span className="ml-auto text-xs text-muted-foreground">Visa</span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                      <ShieldCheck className="w-3 h-3" /> Платёж имитируется. Деньги не списываются.
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-md border border-card-border p-4 space-y-3" data-testid="block-test-payment">
+                    <div className="text-sm font-medium flex items-center gap-1.5">
+                      <QrCode className="w-4 h-4 text-muted-foreground" /> Тестовая оплата по QR
+                    </div>
+                    <a
+                      href={TEST_PAYMENT_QR_REMOTE}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block mx-auto w-48"
+                      data-testid="link-test-qr"
+                    >
+                      <img
+                        src={TEST_PAYMENT_QR_LOCAL}
+                        alt="QR для тестовой оплаты"
+                        className="w-48 h-auto rounded-md border border-card-border bg-white"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).src = TEST_PAYMENT_QR_REMOTE; }}
+                      />
+                    </a>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Отсканируйте QR или откройте оплату, переведите {fmtRub(topupAmount)} на карту/СБП,
+                      затем нажмите «Я оплатил». Подтверждение баланса в этом MVP делается вручную.
+                    </p>
+                    <Button
+                      asChild
+                      variant="outline"
+                      className="w-full"
+                      data-testid="button-open-payment"
+                    >
+                      <a href={TEST_PAYMENT_QR_REMOTE} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink className="w-4 h-4 mr-2" /> Открыть оплату
+                      </a>
+                    </Button>
+                  </div>
+                )}
               </div>
               <DialogFooter>
-                <Button onClick={() => topupMut.mutate()} disabled={topupMut.isPending} data-testid="button-confirm-topup">
-                  Оплатить {fmtRub(topupAmount)}
-                </Button>
+                {payMethod === "qr" ? (
+                  <Button onClick={() => topupMut.mutate()} disabled={topupMut.isPending} data-testid="button-paid-confirm">
+                    <Check className="w-4 h-4 mr-2" /> Я оплатил
+                  </Button>
+                ) : (
+                  <Button onClick={() => topupMut.mutate()} disabled={topupMut.isPending} data-testid="button-confirm-topup">
+                    Оплатить {fmtRub(topupAmount)}
+                  </Button>
+                )}
               </DialogFooter>
             </DialogContent>
           </Dialog>
