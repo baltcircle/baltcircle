@@ -82,17 +82,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <ShieldCheck className="w-4 h-4 opacity-80" /> Операторская
             </Link>
           )}
-          <button
-            onClick={toggle}
-            className="w-full flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
-            data-testid="button-theme-toggle"
-          >
-            <span className="flex items-center gap-2 opacity-90">
-              {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-              {theme === "dark" ? "Светлая тема" : "Тёмная тема"}
-            </span>
-            <ChevronRight className="w-4 h-4 opacity-50" />
-          </button>
+          {isAdmin ? (
+            <button
+              onClick={toggle}
+              className="w-full flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
+              data-testid="button-theme-toggle"
+            >
+              <span className="flex items-center gap-2 opacity-90">
+                {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                {theme === "dark" ? "Светлая тема" : "Тёмная тема"}
+              </span>
+              <ChevronRight className="w-4 h-4 opacity-50" />
+            </button>
+          ) : (
+            <Link
+              href="/profile"
+              data-testid="link-profile"
+              className="w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
+            >
+              <User className="w-4 h-4 opacity-80" /> Профиль
+            </Link>
+          )}
           <div className="px-3 py-2 text-xs opacity-70">
             <div className="flex items-center gap-1.5"><Bike className="w-3 h-3" /> демо-аккаунт</div>
             <div className="mt-1 opacity-70">demo@baltcircle.app</div>
@@ -107,28 +117,30 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {isAdmin && <span className="text-[10px] uppercase tracking-[0.18em] opacity-80">Оператор</span>}
         </Link>
         <div className="flex items-center gap-1">
-          <button
-            onClick={toggle}
-            className="p-2 rounded-md hover-elevate"
-            aria-label="Сменить тему"
-            data-testid="button-theme-toggle-mobile"
-          >
-            {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
           {isAdmin ? (
-            <Link
-              href="/"
-              data-testid="link-exit-admin-mobile"
-              aria-label="К приложению"
-              className="p-2 rounded-md hover-elevate"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </Link>
+            <>
+              <button
+                onClick={toggle}
+                className="p-2 rounded-md hover-elevate"
+                aria-label="Сменить тему"
+                data-testid="button-theme-toggle-mobile"
+              >
+                {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              </button>
+              <Link
+                href="/"
+                data-testid="link-exit-admin-mobile"
+                aria-label="К приложению"
+                className="p-2 rounded-md hover-elevate"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </Link>
+            </>
           ) : (
             <Link
-              href="/rides"
+              href="/profile"
               data-testid="link-profile-mobile"
-              aria-label="Профиль и поездки"
+              aria-label="Профиль"
               className="p-1 rounded-full hover-elevate"
             >
               <span className="flex items-center justify-center w-8 h-8 rounded-full bg-sidebar-accent/70 text-sidebar-foreground">

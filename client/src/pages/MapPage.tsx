@@ -37,33 +37,35 @@ export function MapPage() {
   };
 
   return (
-    <div className="relative h-[calc(100vh-3.5rem)] lg:h-screen">
-      {/* Map fills the screen behind the action sheet. */}
-      <YandexMap
-        bikes={bikesQ.data ?? []}
-        parkings={parkingsQ.data ?? []}
-        zones={zonesQ.data ?? []}
-        mapObjects={mapObjectsQ.data ?? []}
-        ride={rideQ.data ?? null}
-        selectedBikeId={selected}
-        onSelectBike={setSelected}
-        height="100%"
-        showLabels={false}
-      />
+    <div className="flex flex-col h-[calc(100vh-3.5rem)] lg:h-screen">
+      {/* Map occupies the main area at the top. */}
+      <div className="flex-1 min-h-0" data-testid="map-area">
+        <YandexMap
+          bikes={bikesQ.data ?? []}
+          parkings={parkingsQ.data ?? []}
+          zones={zonesQ.data ?? []}
+          mapObjects={mapObjectsQ.data ?? []}
+          ride={rideQ.data ?? null}
+          selectedBikeId={selected}
+          onSelectBike={setSelected}
+          height="100%"
+          showLabels={false}
+        />
+      </div>
 
-      {/* Bottom action sheet — left: multi-bike option, right: round QR rent button. */}
-      <div
-        className="absolute inset-x-0 bottom-0 z-20 px-4 pb-5 pt-3 pointer-events-none"
+      {/* Action section — sits below the map, not overlaying it. */}
+      <section
+        className="shrink-0 bg-card border-t border-card-border px-4 pt-3 pb-5 lg:pb-6"
         data-testid="action-sheet"
       >
-        <div className="mx-auto max-w-md flex items-stretch gap-3 pointer-events-auto">
+        <div className="mx-auto max-w-md flex items-stretch gap-3">
           {/* Secondary option card */}
           <button
             type="button"
             onClick={() => goRent(true)}
             disabled={!canRent}
             data-testid="button-rent-two-bikes"
-            className="flex-1 rounded-2xl bg-card/95 backdrop-blur border border-card-border shadow-lg px-4 py-3 text-left hover-elevate disabled:opacity-50 disabled:pointer-events-none"
+            className="flex-1 rounded-2xl bg-background border border-card-border shadow-sm px-4 py-3 text-left hover-elevate disabled:opacity-50 disabled:pointer-events-none"
           >
             <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-muted-foreground">
               <BikeIcon className="w-4 h-4" />
@@ -95,7 +97,7 @@ export function MapPage() {
             Выберите доступный велосипед на карте.
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
