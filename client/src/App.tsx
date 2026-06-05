@@ -11,6 +11,8 @@ import { RentPage } from "@/pages/RentPage";
 import { TariffsPage } from "@/pages/TariffsPage";
 import { RidesPage } from "@/pages/RidesPage";
 import { ProfilePage } from "@/pages/ProfilePage";
+import { SettingsPage } from "@/pages/SettingsPage";
+import { SafetyPage } from "@/pages/SafetyPage";
 import { AdminPage } from "@/pages/AdminPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
 import { MaintenancePage } from "@/pages/MaintenancePage";
@@ -26,6 +28,8 @@ function AppRouter() {
       <Route path="/tariffs" component={TariffsPage} />
       <Route path="/rides" component={RidesPage} />
       <Route path="/profile" component={ProfilePage} />
+      <Route path="/settings" component={SettingsPage} />
+      <Route path="/safety" component={SafetyPage} />
 
       {/* Admin / operator interface */}
       <Route path="/admin" component={AdminPage} />

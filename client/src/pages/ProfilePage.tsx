@@ -3,12 +3,11 @@ import { useState } from "react";
 import { Link } from "wouter";
 import type { Ride } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
-import { useTheme } from "@/lib/theme";
 import { fmtDistance } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import {
   CreditCard as CreditCardIcon, Route as RouteIcon, ShieldCheck, HelpCircle, Settings,
-  ChevronRight, CreditCard, Sun, Moon, User, Smartphone, Check,
+  ChevronRight, CreditCard, User, Smartphone, Check,
 } from "lucide-react";
 
 function greeting(d = new Date()) {
@@ -20,7 +19,6 @@ function greeting(d = new Date()) {
 }
 
 export function ProfilePage() {
-  const { theme, toggle } = useTheme();
   const toast = useToast();
 
   // MVP payment-method state — no real card data is collected or stored.
@@ -118,27 +116,9 @@ export function ProfilePage() {
         <nav className="rounded-2xl border border-card-border bg-card overflow-hidden divide-y divide-card-border">
           <MenuRow href="/tariffs" icon={CreditCardIcon} label="Тарифы" testId="menu-tariffs" />
           <MenuRow href="/rides" icon={RouteIcon} label="История" testId="menu-history" />
-          <MenuRow href="/tariffs" icon={ShieldCheck} label="Центр безопасности" testId="menu-safety" />
+          <MenuRow href="/safety" icon={ShieldCheck} label="Центр безопасности" testId="menu-safety" />
           <MenuRow href="/tariffs" icon={HelpCircle} label="Помощь" testId="menu-help" />
-          <MenuRow href="/tariffs" icon={Settings} label="Настройки" testId="menu-settings" />
-
-          {/* Theme toggle lives in the profile. */}
-          <button
-            type="button"
-            onClick={toggle}
-            data-testid="button-theme-toggle"
-            className="w-full flex items-center gap-3 px-4 py-4 text-left hover-elevate"
-          >
-            <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
-              {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-            </span>
-            <span className="flex-1 font-light">
-              {theme === "dark" ? "Светлая тема" : "Тёмная тема"}
-            </span>
-            <span className="text-xs text-muted-foreground">
-              {theme === "dark" ? "Вкл." : "Выкл."}
-            </span>
-          </button>
+          <MenuRow href="/settings" icon={Settings} label="Настройки" testId="menu-settings" />
         </nav>
 
         <div className="mt-6 px-1 text-xs text-muted-foreground" data-testid="text-account">
