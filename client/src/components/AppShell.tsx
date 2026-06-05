@@ -1,6 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { Logo } from "./Logo";
 import { useTheme } from "@/lib/theme";
+import { useAppViewport } from "@/hooks/use-app-viewport";
 import {
   Map, QrCode, Wallet, Route, ShieldCheck, Wrench, BarChart3,
   Sun, Moon, Bike, ChevronRight, ArrowLeft, User,
@@ -39,15 +40,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     href === "/" ? loc === "/" : loc === href || loc.startsWith(href + "/");
 
   // The customer map page is a single-screen, non-scrolling layout: lock the
-  // shell to the exact viewport height and clip overflow. All other routes
+  // shell to the exact visible viewport and clip overflow. All other routes
   // (admin, profile, tariffs, …) keep the default min-h-screen scroll behaviour.
   const isCustomerMap = loc === "/";
+  useAppViewport(isCustomerMap);
 
   return (
     <div
+      data-testid="app-shell"
+      style={
+        isCustomerMap
+          ? { height: "var(--app-height, 100svh)" }
+          : undefined
+      }
       className={`flex flex-col lg:flex-row bg-background text-foreground ${
         isCustomerMap
-          ? "h-screen h-[100dvh] overflow-hidden"
+          ? "h-[100svh] [@supports(height:100dvh)]:h-[100dvh] overflow-hidden"
           : "min-h-screen"
       }`}
     >

@@ -198,6 +198,16 @@
     @apply font-sans antialiased bg-background text-foreground;
     font-feature-settings: "cv11", "ss01", "ss03";
   }
+  /* Customer map route: pin to the visible viewport and kill page scroll /
+   * rubber-band overscroll. Scoped via .route-locked so /profile, /tariffs,
+   * /rides and /admin/* keep normal document scrolling. */
+  html.route-locked,
+  body.route-locked {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+    position: relative;
+  }
   h1, h2, h3, h4, h5 {
     letter-spacing: -0.012em;
   }

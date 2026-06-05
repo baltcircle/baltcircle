@@ -53,9 +53,14 @@ export function MapPage() {
         />
       </div>
 
-      {/* Action section — sits below the map, not overlaying it. */}
+      {/* Action section — sits below the map, not overlaying it. Padding
+          respects the device safe-area (home indicator / notch) and stays
+          compact on short viewports so the scan button is never clipped. */}
       <section
-        className="shrink-0 bg-card border-t border-card-border px-4 pt-3 pb-5 lg:pb-6"
+        className="shrink-0 bg-card border-t border-card-border px-4 pt-2 [@media(min-height:700px)]:pt-3"
+        style={{
+          paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))",
+        }}
         data-testid="action-sheet"
       >
         <div className="mx-auto max-w-md flex items-stretch gap-3">
@@ -65,13 +70,13 @@ export function MapPage() {
             onClick={() => goRent(true)}
             disabled={!canRent}
             data-testid="button-rent-two-bikes"
-            className="flex-1 rounded-2xl bg-background border border-card-border shadow-sm px-4 py-3 text-left hover-elevate disabled:opacity-50 disabled:pointer-events-none"
+            className="flex-1 rounded-2xl bg-background border border-card-border shadow-sm px-4 py-2.5 [@media(min-height:700px)]:py-3 text-left hover-elevate disabled:opacity-50 disabled:pointer-events-none"
           >
             <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-muted-foreground">
               <BikeIcon className="w-4 h-4" />
               Доп. опция
             </div>
-            <div className="font-display text-base font-light mt-0.5 leading-tight">
+            <div className="font-display text-sm [@media(min-height:700px)]:text-base font-light mt-0.5 leading-tight">
               Взять два велосипеда
             </div>
           </button>
@@ -83,9 +88,9 @@ export function MapPage() {
             disabled={!canRent}
             aria-label="Арендовать"
             data-testid="button-rent-qr"
-            className="shrink-0 w-20 h-20 rounded-full bg-brand-sand-deep text-brand-bark shadow-xl flex flex-col items-center justify-center gap-1 hover-elevate active:scale-95 transition-transform disabled:opacity-50 disabled:pointer-events-none"
+            className="shrink-0 w-16 h-16 [@media(min-height:700px)]:w-20 [@media(min-height:700px)]:h-20 rounded-full bg-brand-sand-deep text-brand-bark shadow-xl flex flex-col items-center justify-center gap-0.5 [@media(min-height:700px)]:gap-1 hover-elevate active:scale-95 transition-transform disabled:opacity-50 disabled:pointer-events-none"
           >
-            <QrCode className="w-7 h-7" />
+            <QrCode className="w-6 h-6 [@media(min-height:700px)]:w-7 [@media(min-height:700px)]:h-7" />
             <span className="text-[10px] uppercase tracking-widest font-medium">Скан</span>
           </button>
         </div>
