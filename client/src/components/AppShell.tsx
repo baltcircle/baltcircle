@@ -3,7 +3,7 @@ import { Logo } from "./Logo";
 import { useTheme } from "@/lib/theme";
 import { useAppViewport } from "@/hooks/use-app-viewport";
 import {
-  Map, QrCode, Wallet, Route, ShieldCheck, Wrench, BarChart3,
+  Map, QrCode, CreditCard, Route, ShieldCheck, Wrench, BarChart3,
   Sun, Moon, Bike, ChevronRight, ArrowLeft, User,
 } from "lucide-react";
 
@@ -18,7 +18,7 @@ interface NavItem {
 const RIDER_NAV: NavItem[] = [
   { href: "/",        label: "Карта",   icon: Map,    testId: "nav-map" },
   { href: "/rent",    label: "Аренда",  icon: QrCode, testId: "nav-rent" },
-  { href: "/tariffs", label: "Тарифы",  icon: Wallet, testId: "nav-tariffs" },
+  { href: "/tariffs", label: "Тарифы",  icon: CreditCard, testId: "nav-tariffs" },
   { href: "/rides",   label: "Поездки", icon: Route,  testId: "nav-rides" },
 ];
 

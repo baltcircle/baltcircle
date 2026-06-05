@@ -2,21 +2,19 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Bike, Ride, Wallet } from "@shared/schema";
+import type { Bike, Ride } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { fmtRub, fmtDistance, fmtDuration } from "@/lib/format";
 import { ActiveRidePanel } from "@/components/ActiveRidePanel";
-import { QrCode, Camera, Wallet as WalletIcon, Battery, MapPin, Clock, Sparkles } from "lucide-react";
+import { QrCode, Camera, Battery, MapPin, Clock, Sparkles } from "lucide-react";
 
 export function RentPage() {
   const [loc] = useLocation();
   const toast = useToast();
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
-  const walletQ = useQuery<Wallet>({ queryKey: ["/api/wallet"] });
   const activeQ = useQuery<Ride | null>({ queryKey: ["/api/rides/active"], refetchInterval: 4000 });
 
   const [scanState, setScanState] = useState<"idle" | "scanning" | "success" | "error">("idle");
@@ -32,7 +30,7 @@ export function RentPage() {
 
   const startMut = useMutation<Ride, Error, string>({
     mutationFn: async (bikeId: string) => {
-      const res = await apiRequest("POST", "/api/rides/start", { bikeId, tariff: walletQ.data?.activeTariff ?? "payg" });
+      const res = await apiRequest("POST", "/api/rides/start", { bikeId, tariff: "payg" });
       return res.json();
     },
     onSuccess: () => {
@@ -100,7 +98,7 @@ export function RentPage() {
           </div>
         </Card>
 
-        {/* Right column: input + bike preview + wallet */}
+        {/* Right column: input + bike preview + payment summary */}
         <div className="space-y-4">
           <Card className="p-5">
             <div className="text-sm font-medium mb-2">Код велосипеда</div>
@@ -139,17 +137,13 @@ export function RentPage() {
             </Card>
           )}
 
-          <Card className="p-5" data-testid="card-wallet-summary">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <WalletIcon className="w-4 h-4 text-primary" />
-                <span className="font-medium">Баланс</span>
-              </div>
-              <div className="font-display text-lg font-light">{fmtRub(walletQ.data?.balance ?? 0)}</div>
+          <Card className="p-5" data-testid="card-payment-summary">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-primary" />
+              <span className="font-medium">Оплата картой / СБП</span>
             </div>
-            <div className="mt-2 text-xs text-muted-foreground flex items-center gap-1.5">
-              <Sparkles className="w-3 h-3" />
-              Тариф: <span className="font-medium text-foreground">{tariffLabel(walletQ.data?.activeTariff ?? "payg")}</span>
+            <div className="mt-2 text-xs text-muted-foreground">
+              Стоимость поездки спишется с привязанного способа оплаты. Привязать карту можно в профиле.
             </div>
           </Card>
 
@@ -167,9 +161,6 @@ export function RentPage() {
 function pickAvailable(bikes: Bike[]) {
   const a = bikes.find(b => b.status === "available");
   return a?.id ?? "";
-}
-function tariffLabel(t: string) {
-  return t === "day" ? "Дневной" : t === "month" ? "Месячный" : "По минутам";
 }
 function Mini({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (

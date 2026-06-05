@@ -1,12 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link } from "wouter";
 import type { Ride } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { useTheme } from "@/lib/theme";
 import { fmtDistance } from "@/lib/format";
+import { useToast } from "@/hooks/use-toast";
 import {
-  Wallet, Route as RouteIcon, ShieldCheck, HelpCircle, Settings,
-  ChevronRight, CreditCard, Sun, Moon, User,
+  CreditCard as CreditCardIcon, Route as RouteIcon, ShieldCheck, HelpCircle, Settings,
+  ChevronRight, CreditCard, Sun, Moon, User, Smartphone, Check,
 } from "lucide-react";
 
 function greeting(d = new Date()) {
@@ -19,6 +21,11 @@ function greeting(d = new Date()) {
 
 export function ProfilePage() {
   const { theme, toggle } = useTheme();
+  const toast = useToast();
+
+  // MVP payment-method state — no real card data is collected or stored.
+  const [cardBound, setCardBound] = useState(false);
+  const [sbpBound, setSbpBound] = useState(false);
 
   const ridesQ = useQuery<Ride[]>({
     queryKey: ["/api/rides", { userId: "demo" }],
@@ -68,32 +75,48 @@ export function ProfilePage() {
           />
         </div>
 
-        {/* Payment prompt card */}
-        <Link
-          href="/tariffs"
-          data-testid="card-add-payment"
-          className="block rounded-2xl bg-brand-sand-deep text-brand-bark p-5 mb-7 shadow-sm hover-elevate"
-        >
-          <div className="flex items-start gap-3">
-            <CreditCard className="w-6 h-6 mt-0.5 shrink-0" />
-            <div className="flex-1">
-              <div className="font-display text-lg font-light leading-snug">
-                Добавьте способ оплаты, чтобы начать поездку
-              </div>
-              <span
-                className="inline-flex items-center gap-1 mt-3 rounded-full bg-brand-bark/10 px-4 py-1.5 text-sm font-medium"
-                data-testid="button-add-payment"
-              >
-                Добавить оплату
-                <ChevronRight className="w-4 h-4" />
-              </span>
-            </div>
+        {/* Payment-methods section — replaces the old wallet. MVP/test binding
+            only: no real card data is collected or stored. */}
+        <section className="mb-7" data-testid="section-payment-methods">
+          <div className="flex items-center gap-2 mb-3 px-1">
+            <CreditCardIcon className="w-4 h-4 text-muted-foreground" />
+            <h2 className="font-display text-lg font-light">Способы оплаты</h2>
           </div>
-        </Link>
+          <div className="rounded-2xl border border-card-border bg-card overflow-hidden divide-y divide-card-border">
+            <PaymentMethodRow
+              icon={CreditCard}
+              label={cardBound ? "Карта •••• 4242 (тест)" : "Привязать карту"}
+              hint={cardBound ? "MVP — тестовая привязка, без реальных данных" : "Списание после поездки"}
+              bound={cardBound}
+              testId="button-bind-card"
+              onClick={() => {
+                setCardBound((v) => !v);
+                toast.toast({
+                  title: cardBound ? "Карта отвязана" : "Карта привязана (тест)",
+                  description: cardBound ? undefined : "MVP-привязка. Реальные данные карты не сохраняются.",
+                });
+              }}
+            />
+            <PaymentMethodRow
+              icon={Smartphone}
+              label="Оплата по СБП"
+              hint={sbpBound ? "MVP — тестовое подключение" : "Система быстрых платежей"}
+              bound={sbpBound}
+              testId="button-sbp-payment"
+              onClick={() => {
+                setSbpBound((v) => !v);
+                toast.toast({
+                  title: sbpBound ? "СБП отключён" : "СБП подключён (тест)",
+                  description: sbpBound ? undefined : "MVP-подключение. Реальная оплата не производится.",
+                });
+              }}
+            />
+          </div>
+        </section>
 
         {/* Menu */}
         <nav className="rounded-2xl border border-card-border bg-card overflow-hidden divide-y divide-card-border">
-          <MenuRow href="/tariffs" icon={Wallet} label="Кошелёк" testId="menu-wallet" />
+          <MenuRow href="/tariffs" icon={CreditCardIcon} label="Тарифы" testId="menu-tariffs" />
           <MenuRow href="/rides" icon={RouteIcon} label="История" testId="menu-history" />
           <MenuRow href="/tariffs" icon={ShieldCheck} label="Центр безопасности" testId="menu-safety" />
           <MenuRow href="/tariffs" icon={HelpCircle} label="Помощь" testId="menu-help" />
@@ -135,11 +158,44 @@ function Stat({ value, label, testId }: { value: string; label: string; testId: 
   );
 }
 
+function PaymentMethodRow({
+  icon: Icon, label, hint, bound, testId, onClick,
+}: {
+  icon: typeof CreditCard;
+  label: string;
+  hint?: string;
+  bound: boolean;
+  testId: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testId}
+      className="w-full flex items-center gap-3 px-4 py-4 text-left hover-elevate"
+    >
+      <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
+        <Icon className="w-5 h-5" />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block font-light truncate">{label}</span>
+        {hint && <span className="block text-xs text-muted-foreground truncate">{hint}</span>}
+      </span>
+      {bound ? (
+        <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+      ) : (
+        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+      )}
+    </button>
+  );
+}
+
 function MenuRow({
   href, icon: Icon, label, testId,
 }: {
   href: string;
-  icon: typeof Wallet;
+  icon: typeof CreditCard;
   label: string;
   testId: string;
 }) {

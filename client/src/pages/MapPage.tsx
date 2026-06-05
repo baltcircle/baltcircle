@@ -1,12 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState, useMemo, useEffect } from "react";
-import { useLocation } from "wouter";
 import type { Bike, Parking, ZoneRow, Ride, MapObject } from "@shared/schema";
 import { YandexMap } from "@/components/YandexMap";
+import { RentalStartModal } from "@/components/RentalStartModal";
 import { QrCode, Bike as BikeIcon } from "lucide-react";
 
 export function MapPage() {
-  const [, navigate] = useLocation();
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
   const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
   const zonesQ = useQuery<ZoneRow[]>({ queryKey: ["/api/zones"] });
@@ -31,9 +30,12 @@ export function MapPage() {
 
   const canRent = !!bike && bike.status === "available";
 
+  const [rentalOpen, setRentalOpen] = useState(false);
+  const [rentalMulti, setRentalMulti] = useState(false);
+
   const goRent = (multi = false) => {
-    if (!bike) return;
-    navigate(`/rent?bike=${bike.id}${multi ? "&multi=1" : ""}`);
+    setRentalMulti(multi);
+    setRentalOpen(true);
   };
 
   return (
@@ -81,14 +83,14 @@ export function MapPage() {
             </div>
           </button>
 
-          {/* Primary round QR scan / rent button */}
+          {/* Primary round QR scan / rent button — always tappable so it can
+              demonstrate the rental flow; the modal handles the no-bike case. */}
           <button
             type="button"
             onClick={() => goRent(false)}
-            disabled={!canRent}
-            aria-label="Арендовать"
+            aria-label="Сканировать QR"
             data-testid="button-rent-qr"
-            className="shrink-0 w-16 h-16 [@media(min-height:700px)]:w-20 [@media(min-height:700px)]:h-20 rounded-full bg-brand-sand-deep text-brand-bark shadow-xl flex flex-col items-center justify-center gap-0.5 [@media(min-height:700px)]:gap-1 hover-elevate active:scale-95 transition-transform disabled:opacity-50 disabled:pointer-events-none"
+            className="shrink-0 w-16 h-16 [@media(min-height:700px)]:w-20 [@media(min-height:700px)]:h-20 rounded-full bg-brand-sand-deep text-brand-bark shadow-xl flex flex-col items-center justify-center gap-0.5 [@media(min-height:700px)]:gap-1 hover-elevate active:scale-95 transition-transform"
           >
             <QrCode className="w-6 h-6 [@media(min-height:700px)]:w-7 [@media(min-height:700px)]:h-7" />
             <span className="text-[10px] uppercase tracking-widest font-medium">Скан</span>
@@ -103,6 +105,13 @@ export function MapPage() {
           </div>
         )}
       </section>
+
+      <RentalStartModal
+        open={rentalOpen}
+        onOpenChange={setRentalOpen}
+        bike={bike ?? availableBikes[0] ?? null}
+        multi={rentalMulti}
+      />
     </div>
   );
 }
