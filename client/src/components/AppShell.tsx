@@ -3,7 +3,7 @@ import { Logo } from "./Logo";
 import { useTheme } from "@/lib/theme";
 import {
   Map, QrCode, Wallet, Route, ShieldCheck, Wrench, BarChart3,
-  Sun, Moon, Bike, ChevronRight, ArrowLeft,
+  Sun, Moon, Bike, ChevronRight, ArrowLeft, User,
 } from "lucide-react";
 
 interface NavItem {
@@ -107,14 +107,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {isAdmin && <span className="text-[10px] uppercase tracking-[0.18em] opacity-80">Оператор</span>}
         </Link>
         <div className="flex items-center gap-1">
-          <Link
-            href={isAdmin ? "/" : "/admin"}
-            data-testid={isAdmin ? "link-exit-admin-mobile" : "link-admin-mobile"}
-            aria-label={isAdmin ? "К приложению" : "Операторская"}
-            className="p-2 rounded-md hover-elevate"
-          >
-            {isAdmin ? <ArrowLeft className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
-          </Link>
           <button
             onClick={toggle}
             className="p-2 rounded-md hover-elevate"
@@ -123,32 +115,56 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           >
             {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
           </button>
+          {isAdmin ? (
+            <Link
+              href="/"
+              data-testid="link-exit-admin-mobile"
+              aria-label="К приложению"
+              className="p-2 rounded-md hover-elevate"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </Link>
+          ) : (
+            <Link
+              href="/rides"
+              data-testid="link-profile-mobile"
+              aria-label="Профиль и поездки"
+              className="p-1 rounded-full hover-elevate"
+            >
+              <span className="flex items-center justify-center w-8 h-8 rounded-full bg-sidebar-accent/70 text-sidebar-foreground">
+                <User className="w-5 h-5" />
+              </span>
+            </Link>
+          )}
         </div>
       </header>
 
-      <main className="flex-1 min-w-0 pb-24 lg:pb-0">{children}</main>
+      {/* Customer UI is map-first with no bottom tabs; admin keeps tab bar. */}
+      <main className={`flex-1 min-w-0 ${isAdmin ? "pb-24" : "pb-0"} lg:pb-0`}>{children}</main>
 
-      {/* Mobile bottom tabs — scoped to the active interface. */}
-      <nav
-        className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-card border-t border-card-border h-16 flex px-1"
-        data-testid="bottom-nav"
-      >
-        {nav.map(item => {
-          const Icon = item.icon;
-          const active = matchActive(item.href);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              data-testid={item.testId + "-mobile"}
-              className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] ${active ? "text-primary" : "text-muted-foreground"}`}
-            >
-              <Icon className="w-5 h-5" />
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
+      {/* Mobile bottom tabs — operator interface only. */}
+      {isAdmin && (
+        <nav
+          className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-card border-t border-card-border h-16 flex px-1"
+          data-testid="bottom-nav"
+        >
+          {nav.map(item => {
+            const Icon = item.icon;
+            const active = matchActive(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                data-testid={item.testId + "-mobile"}
+                className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] ${active ? "text-primary" : "text-muted-foreground"}`}
+              >
+                <Icon className="w-5 h-5" />
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+      )}
     </div>
   );
 }
