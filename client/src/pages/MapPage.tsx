@@ -37,7 +37,7 @@ export function MapPage() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3.5rem)] lg:h-screen">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden">
       {/* Map occupies the main area at the top. */}
       <div className="flex-1 min-h-0" data-testid="map-area">
         <YandexMap

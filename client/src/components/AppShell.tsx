@@ -38,8 +38,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const matchActive = (href: string) =>
     href === "/" ? loc === "/" : loc === href || loc.startsWith(href + "/");
 
+  // The customer map page is a single-screen, non-scrolling layout: lock the
+  // shell to the exact viewport height and clip overflow. All other routes
+  // (admin, profile, tariffs, …) keep the default min-h-screen scroll behaviour.
+  const isCustomerMap = loc === "/";
+
   return (
-    <div className="min-h-screen flex flex-col lg:flex-row bg-background text-foreground">
+    <div
+      className={`flex flex-col lg:flex-row bg-background text-foreground ${
+        isCustomerMap
+          ? "h-screen h-[100dvh] overflow-hidden"
+          : "min-h-screen"
+      }`}
+    >
       {/* Sidebar — desktop */}
       <aside
         className="hidden lg:flex lg:flex-col w-64 shrink-0 bg-sidebar text-sidebar-foreground border-r border-sidebar-border"
@@ -152,7 +163,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </header>
 
       {/* Customer UI is map-first with no bottom tabs; admin keeps tab bar. */}
-      <main className={`flex-1 min-w-0 ${isAdmin ? "pb-24" : "pb-0"} lg:pb-0`}>{children}</main>
+      <main
+        className={`flex-1 min-w-0 ${isAdmin ? "pb-24" : "pb-0"} lg:pb-0 ${
+          isCustomerMap ? "min-h-0 overflow-hidden" : ""
+        }`}
+      >
+        {children}
+      </main>
 
       {/* Mobile bottom tabs — operator interface only. */}
       {isAdmin && (
