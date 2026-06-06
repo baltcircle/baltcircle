@@ -1,18 +1,24 @@
-import { useMemo } from "react";
-import type { Bike, Parking, ZoneRow, Ride } from "@shared/schema";
-import { MAP_W, MAP_H, ROUTES, TOWNS } from "@shared/geo";
+import { useMemo, useRef } from "react";
+import type { Bike, Parking, ZoneRow, Ride, MapObject } from "@shared/schema";
+import { MAP_W, MAP_H, ROUTES, TOWNS, svgToLatLng, latLngToSvg } from "@shared/geo";
 
 interface Props {
   bikes?: Bike[];
   parkings?: Parking[];
   zones?: ZoneRow[];
   ride?: Ride | null;
+  mapObjects?: MapObject[];
   selectedBikeId?: string | null;
   onSelectBike?: (id: string) => void;
+  onMapClick?: (coords: [number, number]) => void;
   height?: number | string;
   showLabels?: boolean;
   interactive?: boolean;
   liveLocation?: { x: number; y: number } | null;
+}
+
+function fillFromColor(color: string) {
+  return `${color}22`; // ~13% alpha
 }
 
 function zoneFill(kind: string) {
@@ -50,22 +56,55 @@ function polyline(points: [number, number][]) {
 }
 
 export function CoastMap({
-  bikes = [], parkings = [], zones = [], ride = null,
-  selectedBikeId, onSelectBike, height = 520, showLabels = true,
+  bikes = [], parkings = [], zones = [], ride = null, mapObjects = [],
+  selectedBikeId, onSelectBike, onMapClick, height = 520, showLabels = true,
   interactive = true, liveLocation = null,
 }: Props) {
+
+  const svgRef = useRef<SVGSVGElement | null>(null);
 
   const parsedZones = useMemo(() => zones.map(z => ({
     ...z, points: JSON.parse(z.polygon) as [number, number][],
   })), [zones]);
 
+  // Operator-drawn objects: convert stored [lat,lng] points to SVG pixels.
+  const savedObjects = useMemo(() => {
+    return mapObjects.flatMap((o) => {
+      let pts: [number, number][];
+      try {
+        pts = JSON.parse(o.points) as [number, number][];
+      } catch {
+        return [];
+      }
+      if (!Array.isArray(pts) || pts.length < 2) return [];
+      const px = pts.map(([lat, lng]) => latLngToSvg(lat, lng));
+      return [{ id: o.id, kind: o.kind, color: o.color, px }];
+    });
+  }, [mapObjects]);
+
+  function handleClick(e: React.MouseEvent<SVGSVGElement>) {
+    if (!onMapClick) return;
+    const svg = svgRef.current;
+    if (!svg) return;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const local = pt.matrixTransform(ctm.inverse());
+    onMapClick(svgToLatLng(local.x, local.y));
+  }
+
   return (
     <div className="relative w-full overflow-hidden rounded-xl border border-card-border bg-card" style={{ height }}>
       <svg
+        ref={svgRef}
         viewBox={`0 0 ${MAP_W} ${MAP_H}`}
         className="w-full h-full"
         preserveAspectRatio="xMidYMid slice"
         data-testid="map-svg"
+        onClick={onMapClick ? handleClick : undefined}
+        style={onMapClick ? { cursor: "crosshair" } : undefined}
       >
         <defs>
           <linearGradient id="seaGradient" x1="0" y1="0" x2="0" y2="1">
@@ -280,6 +319,25 @@ export function CoastMap({
             <circle cx={liveLocation.x} cy={liveLocation.y} r="5" fill="hsl(var(--brand-sea))" stroke="hsl(var(--brand-foam))" strokeWidth="1.8" />
           </g>
         )}
+
+        {/* Operator-drawn routes & zones (incl. live editor draft) */}
+        <g data-testid="map-objects">
+          {savedObjects.map((o) => {
+            if (o.kind === "zone") {
+              const d = o.px.map((p, i) => (i === 0 ? "M" : "L") + p[0] + " " + p[1]).join(" ") + " Z";
+              return (
+                <path key={o.id} d={d} fill={fillFromColor(o.color)} stroke={o.color}
+                  strokeWidth="2" strokeLinejoin="round" data-testid={`map-object-${o.id}`} />
+              );
+            }
+            const d = o.px.map((p, i) => (i === 0 ? "M" : "L") + p[0] + " " + p[1]).join(" ");
+            return (
+              <path key={o.id} d={d} fill="none" stroke={o.color} strokeWidth="5"
+                strokeLinecap="round" strokeLinejoin="round" opacity="0.95"
+                data-testid={`map-object-${o.id}`} />
+            );
+          })}
+        </g>
       </svg>
     </div>
   );

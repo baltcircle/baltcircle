@@ -378,6 +378,26 @@ export function mapToReal(x: number, y: number): [number, number] {
   ];
 }
 
+// Linear span of the stylized SVG viewBox over real coordinates, centred on
+// REAL_CENTER. Used by the SVG fallback map (no Yandex key) so operators can
+// still click to add route/zone points and saved objects can be rendered back.
+const SVG_LAT_SPAN = 0.18; // degrees latitude top-to-bottom of the SVG
+const SVG_LNG_SPAN = 0.36; // degrees longitude left-to-right of the SVG
+
+/** SVG pixel (x in 0..MAP_W, y in 0..MAP_H) -> real [lat, lng]. */
+export function svgToLatLng(x: number, y: number): [number, number] {
+  const lng = REAL_CENTER[1] + (x / MAP_W - 0.5) * SVG_LNG_SPAN;
+  const lat = REAL_CENTER[0] - (y / MAP_H - 0.5) * SVG_LAT_SPAN; // +y = south
+  return [lat, lng];
+}
+
+/** Real [lat, lng] -> SVG pixel [x, y] (inverse of svgToLatLng). */
+export function latLngToSvg(lat: number, lng: number): [number, number] {
+  const x = ((lng - REAL_CENTER[1]) / SVG_LNG_SPAN + 0.5) * MAP_W;
+  const y = (0.5 - (lat - REAL_CENTER[0]) / SVG_LAT_SPAN) * MAP_H;
+  return [x, y];
+}
+
 export function pointInPolygon(p: [number, number], poly: number[][]): boolean {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
