@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { Bike, Parking, ZoneRow, Ride, MapObject } from "@shared/schema";
 import { MAP_W, MAP_H, ROUTES, TOWNS, svgToLatLng, latLngToSvg } from "@shared/geo";
 
@@ -11,6 +11,7 @@ interface Props {
   selectedBikeId?: string | null;
   onSelectBike?: (id: string) => void;
   onMapClick?: (coords: [number, number]) => void;
+  onCenterGetter?: (getCenter: () => [number, number]) => void;
   height?: number | string;
   showLabels?: boolean;
   interactive?: boolean;
@@ -57,11 +58,17 @@ function polyline(points: [number, number][]) {
 
 export function CoastMap({
   bikes = [], parkings = [], zones = [], ride = null, mapObjects = [],
-  selectedBikeId, onSelectBike, onMapClick, height = 520, showLabels = true,
+  selectedBikeId, onSelectBike, onMapClick, onCenterGetter, height = 520, showLabels = true,
   interactive = true, liveLocation = null,
 }: Props) {
 
   const svgRef = useRef<SVGSVGElement | null>(null);
+
+  // The SVG fallback map is static; its centre maps to the centre of the
+  // viewBox. Expose it so the editor can add a point at the map centre.
+  useEffect(() => {
+    onCenterGetter?.(() => svgToLatLng(MAP_W / 2, MAP_H / 2));
+  }, [onCenterGetter]);
 
   const parsedZones = useMemo(() => zones.map(z => ({
     ...z, points: JSON.parse(z.polygon) as [number, number][],

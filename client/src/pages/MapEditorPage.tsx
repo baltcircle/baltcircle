@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { MapObject } from "@shared/schema";
 import { YandexMap } from "@/components/YandexMap";
 import { Card } from "@/components/ui/card";
@@ -8,13 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Map as MapIcon, Trash2, Save, Eraser, Route as RouteIcon, Hexagon } from "lucide-react";
+import { Map as MapIcon, Trash2, Save, Eraser, Route as RouteIcon, Hexagon, Crosshair } from "lucide-react";
 
 type ObjType = "route" | "operating" | "slow" | "forbidden";
 
 const TYPE_OPTIONS: { id: ObjType; label: string; kind: "route" | "zone"; color: string }[] = [
   { id: "route",     label: "Маршрут",            kind: "route", color: "#1d6f8e" },
-  { id: "operating", label: "Зона обслуживания",  kind: "zone",  color: "#1f9e93" },
+  { id: "operating", label: "Ограничение парковки", kind: "zone",  color: "#1f9e93" },
   { id: "slow",      label: "Тихая зона (15 км/ч)", kind: "zone", color: "#c9831f" },
   { id: "forbidden", label: "Запрещённая зона",   kind: "zone",  color: "#d64545" },
 ];
@@ -31,6 +31,7 @@ export function MapEditorPage() {
   const [name, setName] = useState("");
   const [color, setColor] = useState(TYPE_OPTIONS[0].color);
   const [draft, setDraft] = useState<[number, number][]>([]);
+  const centerGetterRef = useRef<(() => [number, number]) | null>(null);
 
   const activeType = TYPE_OPTIONS.find((o) => o.id === type) ?? TYPE_OPTIONS[0];
   const minPoints = activeType.kind === "zone" ? 3 : 2;
@@ -86,7 +87,45 @@ export function MapEditorPage() {
     onError: (e: Error) => toast({ title: "Не удалось удалить", description: e.message, variant: "destructive" }),
   });
 
-  const canSave = name.trim().length > 0 && draft.length >= minPoints && !saveM.isPending;
+  // Validate on click instead of disabling the button: a disabled button looks
+  // "silently dead" in real browsers, which is exactly the reported bug. We keep
+  // the button clickable and explain via a toast what is still required.
+  function handleSave() {
+    if (saveM.isPending) return;
+    if (name.trim().length === 0) {
+      toast({
+        title: "Введите название",
+        description: "Укажите название объекта перед сохранением.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (draft.length < minPoints) {
+      toast({
+        title: "Недостаточно точек",
+        description:
+          activeType.kind === "zone"
+            ? `Для зоны нужно минимум 3 точки. Сейчас: ${draft.length}. Кликайте по карте или используйте «Точка в центре карты».`
+            : `Для маршрута нужно минимум 2 точки. Сейчас: ${draft.length}. Кликайте по карте или используйте «Точка в центре карты».`,
+        variant: "destructive",
+      });
+      return;
+    }
+    saveM.mutate();
+  }
+
+  function addCenterPoint() {
+    const getCenter = centerGetterRef.current;
+    if (!getCenter) {
+      toast({
+        title: "Карта ещё не готова",
+        description: "Подождите, пока загрузится карта, и попробуйте снова.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setDraft((d) => [...d, getCenter()]);
+  }
 
   function chooseType(id: ObjType) {
     const opt = TYPE_OPTIONS.find((o) => o.id === id)!;
@@ -113,14 +152,30 @@ export function MapEditorPage() {
             mapObjects={previewObjects}
             height="64vh"
             onMapClick={(coords) => setDraft((d) => [...d, coords])}
+            onCenterGetter={(fn) => { centerGetterRef.current = fn; }}
           />
-          <div className="mt-2 text-xs text-muted-foreground" data-testid="editor-draft-info">
-            Точек в черновике: <span className="font-medium text-foreground">{draft.length}</span>
-            {draft.length > 0 && draft.length < minPoints && (
-              <span className="ml-2 text-amber-600 dark:text-amber-400">
-                нужно минимум {minPoints}
-              </span>
-            )}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={addCenterPoint}
+              data-testid="editor-add-center"
+            >
+              <Crosshair className="w-4 h-4 mr-2" /> Точка в центре карты
+            </Button>
+            <span className="text-xs text-muted-foreground" data-testid="editor-draft-info">
+              Точек в черновике: <span className="font-medium text-foreground">{draft.length}</span>
+              {" / "}нужно {minPoints}
+              {draft.length > 0 && draft.length < minPoints && (
+                <span className="ml-2 text-amber-600 dark:text-amber-400">
+                  добавьте ещё {minPoints - draft.length}
+                </span>
+              )}
+              {draft.length >= minPoints && (
+                <span className="ml-2 text-emerald-600 dark:text-emerald-400">готово к сохранению</span>
+              )}
+            </span>
           </div>
         </div>
 
@@ -176,13 +231,15 @@ export function MapEditorPage() {
 
             <div className="flex flex-wrap gap-2">
               <Button
-                onClick={() => saveM.mutate()}
-                disabled={!canSave}
+                type="button"
+                onClick={handleSave}
+                disabled={saveM.isPending}
                 data-testid="editor-save"
               >
-                <Save className="w-4 h-4 mr-2" /> Сохранить
+                <Save className="w-4 h-4 mr-2" /> {saveM.isPending ? "Сохранение…" : "Сохранить"}
               </Button>
               <Button
+                type="button"
                 variant="outline"
                 onClick={() => setDraft([])}
                 disabled={draft.length === 0}

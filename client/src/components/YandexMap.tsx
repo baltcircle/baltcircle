@@ -20,6 +20,9 @@ interface Props {
   liveLocation?: { x: number; y: number } | null;
   /** When the user clicks the map, receive [lat, lng]. Enables editor mode. */
   onMapClick?: (coords: [number, number]) => void;
+  /** Receives a function that returns the current map center as [lat, lng].
+   *  Lets the editor add a point at the map center without a map click. */
+  onCenterGetter?: (getCenter: () => [number, number]) => void;
 }
 
 // Resolved brand-ish colors (Yandex overlays can't read CSS variables).
@@ -44,7 +47,7 @@ export function YandexMap(props: Props) {
   const {
     bikes = [], parkings = [], ride = null, mapObjects = [],
     selectedBikeId, onSelectBike, height = 520,
-    interactive = true, onMapClick,
+    interactive = true, onMapClick, onCenterGetter,
   } = props;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -56,6 +59,8 @@ export function YandexMap(props: Props) {
   onSelectRef.current = onSelectBike;
   const onMapClickRef = useRef(onMapClick);
   onMapClickRef.current = onMapClick;
+  const onCenterGetterRef = useRef(onCenterGetter);
+  onCenterGetterRef.current = onCenterGetter;
 
   const [failed, setFailed] = useState(false);
 
@@ -104,6 +109,8 @@ export function YandexMap(props: Props) {
           const coords = e.get("coords") as [number, number];
           onMapClickRef.current?.(coords);
         });
+
+        onCenterGetterRef.current?.(() => map.getCenter() as [number, number]);
 
         setFailed(false);
         renderSavedObjects();
