@@ -75,10 +75,16 @@ export function YandexMap(props: Props) {
           {
             center: REAL_CENTER,
             zoom: 12,
-            controls: interactive ? ["zoomControl", "geolocationControl"] : [],
+            controls: [],
           },
           { suppressMapOpenBlock: true },
         );
+        if (interactive) {
+          map.controls.add("geolocationControl", {
+            float: "none",
+            position: { bottom: 16, right: 16 },
+          });
+        }
         if (!interactive) {
           map.behaviors.disable(["scrollZoom", "drag", "dblClickZoom", "multiTouch"]);
         }
