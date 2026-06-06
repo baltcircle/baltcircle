@@ -6,7 +6,7 @@ import type {
   MapObject, InsertMapObject,
 } from "@shared/schema";
 import {
-  PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES, pointInPolygon,
+  PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES,
 } from "@shared/geo";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -91,7 +91,11 @@ const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
 // Bump this whenever the demo geography/seed data changes so existing
 // prototype databases get refreshed automatically on next startup
 // (MVP demo data — safe to wipe & reseed, no real user data).
-const DEMO_DATA_VERSION = 2;
+const DEMO_DATA_VERSION = 3;
+
+// Demo fleet size — kept small (a handful of sample bikes) so QR/rental flow
+// and admin tables have data without flooding the map/tables with 100 bikes.
+const DEMO_BIKE_COUNT = 5;
 
 // ---------- Demo data migration (MVP prototype only) ----------
 //
@@ -164,44 +168,23 @@ function populateDemoData() {
   const rng = seedRng(20260525);
   const now = Date.now();
 
-  // Bikes — scatter inside the operating polygon, mostly near parkings
+  // Bikes — a small sample fleet placed near parkings. All seeded as
+  // "available" with healthy batteries so the QR/rental demo flow always has a
+  // bike to pick, while still giving admin tables real sample rows.
   const insertBike = sqlite.prepare(
     "INSERT INTO bikes VALUES (?,?,?,?,?,?,?,?,?)"
   );
-  for (let i = 1; i <= 100; i++) {
+  for (let i = 1; i <= DEMO_BIKE_COUNT; i++) {
     const id = `BC-${String(i).padStart(3, "0")}`;
     const model = MODELS[i % MODELS.length];
-    // 65% near parking, 30% drifting, 5% near forbidden zone edge
-    let x = 500, y = 350;
-    const r = rng();
-    if (r < 0.65) {
-      const p = PARKINGS[i % PARKINGS.length];
-      x = p.x + (rng() - 0.5) * 18;
-      y = p.y + (rng() - 0.5) * 18;
-    } else if (r < 0.95) {
-      // random inside operating polygon
-      for (let tries = 0; tries < 30; tries++) {
-        x = 150 + rng() * 740;
-        y = 130 + rng() * 510;
-        if (pointInPolygon([x, y], OPERATING_ZONE)) break;
-      }
-    } else {
-      const fz = FORBIDDEN_ZONES[i % FORBIDDEN_ZONES.length];
-      const c = fz.polygon[0];
-      x = c[0] + 4;
-      y = c[1] + 4;
-    }
+    const p = PARKINGS[i % PARKINGS.length];
+    const x = p.x + (rng() - 0.5) * 18;
+    const y = p.y + (rng() - 0.5) * 18;
 
-    const battery = Math.max(0, Math.min(100, Math.round(20 + rng() * 80)));
-    const idleHours = +(rng() * 96).toFixed(1);
-
-    let status = "available";
-    if (battery < 18) status = "maintenance";
-    else if (idleHours > 72) status = "offline";
-    else if (rng() < 0.10) status = "rented";
-    else if (rng() < 0.05) status = "reserved";
-
-    const flagged = (idleHours > 80 || battery < 15) ? 1 : 0;
+    const battery = Math.max(45, Math.min(100, Math.round(60 + rng() * 40)));
+    const idleHours = +(rng() * 6).toFixed(1);
+    const status = "available";
+    const flagged = 0;
     const lastSeen = now - Math.round(idleHours * 3600 * 1000);
 
     insertBike.run(id, model, status, battery, y, x, lastSeen, idleHours, flagged);
@@ -225,15 +208,13 @@ function populateDemoData() {
     "INSERT INTO wallet (user_id, balance, active_tariff, tariff_expires_at) VALUES ('demo', 500, 'payg', NULL)"
   ).run();
 
-  // Seed maintenance tickets
-  const lows = sqlite.prepare("SELECT id FROM bikes WHERE battery < 25 LIMIT 6").all() as { id: string }[];
-  const idles = sqlite.prepare("SELECT id FROM bikes WHERE idle_hours > 60 LIMIT 4").all() as { id: string }[];
+  // Seed a couple of maintenance tickets against existing sample bikes so the
+  // admin tickets table has data without referencing bikes that no longer exist.
+  const sampleBikeIds = sqlite.prepare("SELECT id FROM bikes ORDER BY id").all() as { id: string }[];
   const insertT = sqlite.prepare("INSERT INTO tickets (bike_id, kind, message, status, created_at) VALUES (?,?,?,?,?)");
-  for (const b of lows) insertT.run(b.id, "low_battery", "Заряд замка ниже 25%, требуется визит механика", "open", now - Math.floor(rng() * 86400000));
-  for (const b of idles) insertT.run(b.id, "suspicious_idle", "Велосипед не используется более 60 часов", "open", now - Math.floor(rng() * 86400000));
-  insertT.run("BC-007", "repair_request", "Пользователь сообщил: спущено колесо", "open", now - 5400000);
-  insertT.run("BC-042", "repair_request", "Пользователь сообщил: не фиксируется замок", "in_progress", now - 86400000);
-  insertT.run("BC-068", "out_of_zone", "Завершение поездки вне зоны обслуживания", "resolved", now - 172800000);
+  if (sampleBikeIds[0]) insertT.run(sampleBikeIds[0].id, "repair_request", "Пользователь сообщил: спущено колесо", "open", now - 5400000);
+  if (sampleBikeIds[1]) insertT.run(sampleBikeIds[1].id, "repair_request", "Пользователь сообщил: не фиксируется замок", "in_progress", now - 86400000);
+  if (sampleBikeIds[2]) insertT.run(sampleBikeIds[2].id, "out_of_zone", "Завершение поездки вне зоны обслуживания", "resolved", now - 172800000);
 
   // Seed some past payments and rides to give analytics a baseline
   const insertPay = sqlite.prepare("INSERT INTO payments (user_id, amount, kind, description, created_at) VALUES (?,?,?,?,?)");
@@ -244,7 +225,7 @@ function populateDemoData() {
   );
   const rideUsers = ["demo", "user-2", "user-3", "user-4", "user-5"];
   for (let i = 0; i < 240; i++) {
-    const bikeIdx = 1 + Math.floor(rng() * 100);
+    const bikeIdx = 1 + Math.floor(rng() * DEMO_BIKE_COUNT);
     const bikeId = `BC-${String(bikeIdx).padStart(3, "0")}`;
     const user = rideUsers[Math.floor(rng() * rideUsers.length)];
     const daysAgo = Math.floor(rng() * 28);

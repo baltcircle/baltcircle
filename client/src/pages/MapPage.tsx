@@ -1,16 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState, useMemo, useEffect } from "react";
-import type { Bike, Parking, ZoneRow, Ride, MapObject } from "@shared/schema";
+import type { Bike, MapObject } from "@shared/schema";
 import { YandexMap } from "@/components/YandexMap";
 import { RentalStartModal } from "@/components/RentalStartModal";
 import { QrCode, Bike as BikeIcon } from "lucide-react";
 
 export function MapPage() {
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
-  const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
-  const zonesQ = useQuery<ZoneRow[]>({ queryKey: ["/api/zones"] });
   const mapObjectsQ = useQuery<MapObject[]>({ queryKey: ["/api/map-objects"] });
-  const rideQ = useQuery<Ride | null>({ queryKey: ["/api/rides/active"], refetchInterval: 4000 });
 
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -40,16 +37,13 @@ export function MapPage() {
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
-      {/* Map occupies the main area at the top. */}
+      {/* Map occupies the main area at the top. The public map shows only the
+          base Yandex map plus operator-drawn objects saved in /admin/map — no
+          app-drawn bike or parking markers. Bike data is still loaded above to
+          drive the QR / rental flow. */}
       <div className="flex-1 min-h-0" data-testid="map-area">
         <YandexMap
-          bikes={bikesQ.data ?? []}
-          parkings={parkingsQ.data ?? []}
-          zones={zonesQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
-          ride={rideQ.data ?? null}
-          selectedBikeId={selected}
-          onSelectBike={setSelected}
           height="100%"
           showLabels={false}
         />
