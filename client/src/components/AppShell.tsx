@@ -2,6 +2,7 @@ import { Link, useLocation } from "wouter";
 import { Logo } from "./Logo";
 import { useTheme } from "@/lib/theme";
 import { useAppViewport } from "@/hooks/use-app-viewport";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import {
   Map, QrCode, CreditCard, Route, ShieldCheck, Wrench, BarChart3,
   Sun, Moon, Bike, ChevronRight, ArrowLeft, User,
@@ -33,6 +34,10 @@ const OPS_NAV: NavItem[] = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [loc] = useLocation();
   const { theme, toggle } = useTheme();
+  // Hide operator entry points until the session resolves and the role is
+  // known to be operator/admin. Defaulting to hidden avoids a flash of the
+  // admin link for unregistered or regular riders.
+  const { isStaff } = useCurrentUser();
 
   const isAdmin = loc === "/admin" || loc.startsWith("/admin/");
   const nav = isAdmin ? OPS_NAV : RIDER_NAV;
@@ -92,7 +97,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               <ArrowLeft className="w-4 h-4 opacity-80" /> К приложению
             </Link>
-          ) : (
+          ) : isStaff ? (
             <Link
               href="/admin"
               data-testid="link-admin"
@@ -100,7 +105,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               <ShieldCheck className="w-4 h-4 opacity-80" /> Операторская
             </Link>
-          )}
+          ) : null}
           {isAdmin ? (
             <button
               onClick={toggle}

@@ -18,7 +18,7 @@ function greeting(d = new Date()) {
 }
 
 export function ProfilePage() {
-  const { user } = useCurrentUser();
+  const { user, isStaff } = useCurrentUser();
 
   const ridesQ = useQuery<Ride[]>({
     queryKey: ["/api/rides", { userId: "demo" }],
@@ -76,6 +76,10 @@ export function ProfilePage() {
           <MenuRow href="/safety" icon={ShieldCheck} label="Центр безопасности" testId="menu-safety" />
           <MenuRow href="/tariffs" icon={HelpCircle} label="Помощь" testId="menu-help" />
           <MenuRow href="/settings" icon={Settings} label="Настройки" testId="menu-settings" />
+          {/* Operator entry point — only for operator/admin roles. */}
+          {isStaff && (
+            <MenuRow href="/admin" icon={ShieldCheck} label="Операторская" testId="menu-admin" />
+          )}
         </nav>
 
         <div className="mt-6 px-1 text-xs text-muted-foreground" data-testid="text-account">
