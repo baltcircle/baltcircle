@@ -1,14 +1,44 @@
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { storage } from "./storage";
 import { z } from "zod";
 import { TARIFFS } from "@shared/geo";
-import { insertMapObjectSchema } from "@shared/schema";
+import { insertMapObjectSchema, registerUserSchema } from "@shared/schema";
 
-const USER_ID = "demo";
+// Resolve the active rider id. A registered rider has their user id stored in
+// the session; everyone else shares the seeded "demo" account so the public
+// MVP (map, demo rides, analytics) keeps working without registration.
+function riderId(req: Request): string {
+  return req.session?.userId ?? "demo";
+}
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  // -------------- Rider registration --------------
+  app.post("/api/users/register", (req, res) => {
+    const parsed = registerUserSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+    const result = storage.createUser(parsed.data);
+    if ("error" in result) return res.status(400).json(result);
+    req.session.userId = result.id;
+    res.status(201).json(result);
+  });
+
+  app.get("/api/users/current", (req, res) => {
+    const id = req.session?.userId;
+    if (!id) return res.json(null);
+    const user = storage.getUser(id);
+    if (!user) {
+      // Session points at a user that no longer exists (e.g. DB reset). Clear
+      // the stale id so the client falls back to the unregistered state.
+      req.session.userId = undefined;
+      return res.json(null);
+    }
+    res.json(user);
+  });
   // -------------- Bikes / Parkings / Zones --------------
   app.get("/api/bikes", (_req, res) => res.json(storage.listBikes()));
   app.get("/api/bikes/:id", (req, res) => {
@@ -30,15 +60,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const limit = req.query.limit ? Number(req.query.limit) : 100;
     res.json(storage.listRides({ userId, limit }));
   });
-  app.get("/api/rides/active", (_req, res) => {
-    const ride = storage.getActiveRide(USER_ID);
+  app.get("/api/rides/active", (req, res) => {
+    const ride = storage.getActiveRide(riderId(req));
     res.json(ride ?? null);
   });
   app.post("/api/rides/start", (req, res) => {
     const schema = z.object({ bikeId: z.string(), tariff: z.string().default("payg") });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-    const r = storage.startRide({ bikeId: parsed.data.bikeId, userId: USER_ID, tariff: parsed.data.tariff });
+    const r = storage.startRide({ bikeId: parsed.data.bikeId, userId: riderId(req), tariff: parsed.data.tariff });
     if ("error" in r) return res.status(400).json(r);
     res.json(r);
   });
@@ -57,12 +87,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // -------------- Wallet / Payments --------------
-  app.get("/api/wallet", (_req, res) => res.json(storage.getWallet(USER_ID)));
+  app.get("/api/wallet", (req, res) => res.json(storage.getWallet(riderId(req))));
   app.post("/api/wallet/topup", (req, res) => {
     const schema = z.object({ amount: z.number().positive().max(50000) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-    res.json(storage.topUp(USER_ID, parsed.data.amount));
+    res.json(storage.topUp(riderId(req), parsed.data.amount));
   });
   app.post("/api/wallet/tariff", (req, res) => {
     const schema = z.object({
@@ -76,13 +106,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const durationMs = parsed.data.tariff === "day" ? 24 * 60 * 60 * 1000
       : parsed.data.tariff === "month" ? 30 * 24 * 60 * 60 * 1000
       : 0;
-    const w = storage.getWallet(USER_ID);
+    const w = storage.getWallet(riderId(req));
     if (w.balance < tariffDef.price) {
       return res.status(400).json({ error: "Недостаточно средств на балансе" });
     }
-    res.json(storage.purchaseTariff(USER_ID, parsed.data.tariff, tariffDef.price, durationMs));
+    res.json(storage.purchaseTariff(riderId(req), parsed.data.tariff, tariffDef.price, durationMs));
   });
-  app.get("/api/payments", (_req, res) => res.json(storage.listPayments(USER_ID)));
+  app.get("/api/payments", (req, res) => res.json(storage.listPayments(riderId(req))));
 
   // -------------- Maintenance tickets --------------
   app.get("/api/tickets", (_req, res) => res.json(storage.listTickets()));

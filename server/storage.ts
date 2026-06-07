@@ -1,10 +1,11 @@
 import {
-  bikes, parkings, zones, rides, tickets, payments, wallet, mapObjects,
+  bikes, parkings, zones, rides, tickets, payments, wallet, mapObjects, users,
 } from "@shared/schema";
 import type {
   Bike, Parking, ZoneRow, Ride, Ticket, Payment, Wallet,
-  MapObject, InsertMapObject,
+  MapObject, InsertMapObject, User,
 } from "@shared/schema";
+import { randomUUID } from "node:crypto";
 import {
   PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES,
 } from "@shared/geo";
@@ -82,6 +83,12 @@ CREATE TABLE IF NOT EXISTS map_objects (
   kind TEXT NOT NULL,
   color TEXT NOT NULL DEFAULT '#1d6f8e',
   points TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  phone TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
 `);
@@ -276,7 +283,24 @@ bootstrapDemoData();
 
 // ---------- Storage interface ----------
 
+// Normalize a user-entered phone to a storable canonical form: keep digits and
+// a single optional leading "+". A Russian "8XXXXXXXXXX" national number is
+// converted to "+7XXXXXXXXXX" so duplicates and display stay consistent.
+export function normalizePhone(raw: string): string {
+  const trimmed = raw.trim();
+  const hasPlus = trimmed.startsWith("+");
+  let digits = trimmed.replace(/\D/g, "");
+  if (!hasPlus && digits.length === 11 && digits.startsWith("8")) {
+    digits = "7" + digits.slice(1);
+    return "+" + digits;
+  }
+  return hasPlus ? "+" + digits : digits;
+}
+
 export interface IStorage {
+  // users
+  createUser(input: { name: string; phone: string }): User | { error: string };
+  getUser(id: string): User | undefined;
   // bikes
   listBikes(): Bike[];
   getBike(id: string): Bike | undefined;
@@ -309,6 +333,25 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  createUser({ name, phone }: { name: string; phone: string }) {
+    const cleanName = name.trim();
+    const cleanPhone = normalizePhone(phone);
+    const digits = cleanPhone.replace(/\D/g, "");
+    if (cleanName.length < 2) return { error: "Имя должно содержать минимум 2 символа" };
+    if (digits.length < 10) return { error: "Введите корректный номер телефона" };
+    const row = db.insert(users).values({
+      id: randomUUID(),
+      name: cleanName,
+      phone: cleanPhone,
+      createdAt: Date.now(),
+    }).returning().get() as User;
+    return row;
+  }
+
+  getUser(id: string) {
+    return db.select().from(users).where(eq(users.id, id)).get() as User | undefined;
+  }
+
   listBikes() { return db.select().from(bikes).all() as Bike[]; }
   getBike(id: string) { return db.select().from(bikes).where(eq(bikes.id, id)).get() as Bike | undefined; }
   updateBike(id: string, patch: Partial<Bike>) {

@@ -2,6 +2,33 @@ import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+/* ------- USERS (rider registration) ------- */
+// Minimal rider identity captured at first rental. No sensitive payment data
+// is ever stored here — only a display name and a contact phone. Phone is not
+// ownership-verified yet (no SMS/OTP), so it is contact info, not auth.
+export const users = sqliteTable("users", {
+  id: text("id").primaryKey(),               // generated server-side
+  name: text("name").notNull(),
+  phone: text("phone").notNull(),            // normalized to digits with optional leading +
+  createdAt: integer("created_at").notNull(),
+});
+export type User = typeof users.$inferSelect;
+
+// Public-facing zod schema for the registration form. Validation messages are
+// in Russian so they can surface directly in the UI.
+export const registerUserSchema = z.object({
+  name: z
+    .string({ required_error: "Введите имя" })
+    .trim()
+    .min(2, "Имя должно содержать минимум 2 символа")
+    .max(80, "Имя слишком длинное"),
+  phone: z
+    .string({ required_error: "Введите номер телефона" })
+    .trim()
+    .min(1, "Введите номер телефона"),
+});
+export type RegisterUserInput = z.infer<typeof registerUserSchema>;
+
 /* ------- BIKES ------- */
 export const bikes = sqliteTable("bikes", {
   id: text("id").primaryKey(),               // e.g. "BC-014"

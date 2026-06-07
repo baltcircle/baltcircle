@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { ActiveRidePanel } from "@/components/ActiveRidePanel";
+import { RegistrationModal } from "@/components/RegistrationModal";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import { QrCode, Camera, Battery, MapPin, Clock, Sparkles } from "lucide-react";
 
 export function RentPage() {
@@ -16,9 +18,11 @@ export function RentPage() {
   const toast = useToast();
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
   const activeQ = useQuery<Ride | null>({ queryKey: ["/api/rides/active"], refetchInterval: 4000 });
+  const { isRegistered } = useCurrentUser();
 
   const [scanState, setScanState] = useState<"idle" | "scanning" | "success" | "error">("idle");
   const [code, setCode] = useState("");
+  const [regOpen, setRegOpen] = useState(false);
 
   // Preselect from query
   useEffect(() => {
@@ -45,7 +49,14 @@ export function RentPage() {
     },
   });
 
-  function startScan() {
+  function startScan(skipGate = false) {
+    // Registration gate: unregistered riders must register before scanning.
+    // skipGate is used to resume right after a successful registration, when
+    // the cached isRegistered flag may not have refreshed in this closure yet.
+    if (!skipGate && !isRegistered) {
+      setRegOpen(true);
+      return;
+    }
     setScanState("scanning");
     const candidate = code.trim() || pickAvailable(bikesQ.data ?? []);
     setTimeout(() => {
@@ -66,6 +77,12 @@ export function RentPage() {
   const bike = bikesQ.data?.find(b => b.id === code.trim().toUpperCase());
 
   return (
+    <>
+    <RegistrationModal
+      open={regOpen}
+      onOpenChange={setRegOpen}
+      onRegistered={() => startScan(true)}
+    />
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-5xl mx-auto" data-testid="page-rent">
       <header className="mb-6">
         <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Аренда</div>
@@ -110,7 +127,7 @@ export function RentPage() {
                 data-testid="input-bike-code"
                 className="font-mono"
               />
-              <Button onClick={startScan} disabled={scanState === "scanning" || startMut.isPending} data-testid="button-start-scan">
+              <Button onClick={() => startScan()} disabled={scanState === "scanning" || startMut.isPending} data-testid="button-start-scan">
                 <Camera className="w-4 h-4 mr-2" />
                 Сканировать
               </Button>
@@ -155,6 +172,7 @@ export function RentPage() {
         </div>
       </div>
     </div>
+    </>
   );
 }
 

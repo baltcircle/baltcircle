@@ -5,6 +5,7 @@ import type { Ride } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { fmtDistance } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import {
   CreditCard as CreditCardIcon, Route as RouteIcon, ShieldCheck, HelpCircle, Settings,
   ChevronRight, CreditCard, User, Smartphone, Check,
@@ -20,6 +21,7 @@ function greeting(d = new Date()) {
 
 export function ProfilePage() {
   const toast = useToast();
+  const { user } = useCurrentUser();
 
   // MVP payment-method state — no real card data is collected or stored.
   const [cardBound, setCardBound] = useState(false);
@@ -53,7 +55,7 @@ export function ProfilePage() {
                 className="font-display text-2xl font-light leading-tight"
                 data-testid="text-greeting"
               >
-                {greeting()}
+                {user ? `${greeting()}, ${user.name}` : greeting()}
               </h1>
             </div>
           </div>
@@ -122,7 +124,7 @@ export function ProfilePage() {
         </nav>
 
         <div className="mt-6 px-1 text-xs text-muted-foreground" data-testid="text-account">
-          демо-аккаунт · demo@baltcircle.app
+          {user ? `${user.name} · ${user.phone}` : "демо-аккаунт · demo@baltcircle.app"}
         </div>
       </div>
     </div>

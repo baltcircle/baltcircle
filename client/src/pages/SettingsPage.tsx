@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { useTheme, type ThemeMode } from "@/lib/theme";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -11,12 +12,21 @@ import { ArrowLeft, User, Moon, Bell, Save } from "lucide-react";
 export function SettingsPage() {
   const { mode, setMode } = useTheme();
   const toast = useToast();
+  const { user } = useCurrentUser();
 
-  // Basic profile fields — MVP, local React state only. No real persistence and
-  // no sensitive secrets are collected.
+  // Basic profile fields. Name/phone prefill from the registered rider when
+  // available; edits stay local for now (no PATCH endpoint yet) — email
+  // remains an MVP placeholder since it isn't collected at registration.
   const [name, setName] = useState("Гость");
   const [phone, setPhone] = useState("+7 900 000-00-00");
   const [email, setEmail] = useState("demo@baltcircle.app");
+
+  useEffect(() => {
+    if (user) {
+      setName(user.name);
+      setPhone(user.phone);
+    }
+  }, [user]);
 
   // Notification preferences — MVP switches, local state only.
   const [pushOn, setPushOn] = useState(true);

@@ -1,13 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import type { Bike, MapObject } from "@shared/schema";
 import { YandexMap } from "@/components/YandexMap";
 import { RentalStartModal } from "@/components/RentalStartModal";
+import { RegistrationModal } from "@/components/RegistrationModal";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import { QrCode, Bike as BikeIcon } from "lucide-react";
+
+// Marks that the first-visit registration prompt was already shown on this
+// device, so closing it does not re-open on every refresh. Registration itself
+// is still enforced server-side via the rent button gate.
+const INTRO_SHOWN_KEY = "bc.registration.intro.shown";
 
 export function MapPage() {
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
   const mapObjectsQ = useQuery<MapObject[]>({ queryKey: ["/api/map-objects"] });
+  const { isRegistered, isLoading: userLoading } = useCurrentUser();
 
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -29,10 +37,35 @@ export function MapPage() {
 
   const [rentalOpen, setRentalOpen] = useState(false);
   const [rentalMulti, setRentalMulti] = useState(false);
+  const [regOpen, setRegOpen] = useState(false);
 
-  const goRent = (multi = false) => {
+  // Remembers a rental action interrupted by the registration gate, so we can
+  // resume it automatically once the rider finishes registering.
+  const pendingMulti = useRef<boolean | null>(null);
+
+  // First-visit prompt: once user state has loaded, if the visitor isn't
+  // registered and hasn't seen the intro yet, show the closable modal.
+  useEffect(() => {
+    if (userLoading || isRegistered) return;
+    if (localStorage.getItem(INTRO_SHOWN_KEY)) return;
+    localStorage.setItem(INTRO_SHOWN_KEY, "1");
+    setRegOpen(true);
+  }, [userLoading, isRegistered]);
+
+  const openRental = (multi: boolean) => {
     setRentalMulti(multi);
     setRentalOpen(true);
+  };
+
+  const goRent = (multi = false) => {
+    // Registration gate: unregistered riders must register before the rental
+    // flow opens. The attempted action is resumed after successful sign-up.
+    if (!isRegistered) {
+      pendingMulti.current = multi;
+      setRegOpen(true);
+      return;
+    }
+    openRental(multi);
   };
 
   return (
@@ -99,6 +132,22 @@ export function MapPage() {
           </div>
         )}
       </section>
+
+      <RegistrationModal
+        open={regOpen}
+        onOpenChange={(open) => {
+          setRegOpen(open);
+          if (!open) pendingMulti.current = null;
+        }}
+        onRegistered={() => {
+          // Resume the rental action that triggered the gate, if any.
+          if (pendingMulti.current !== null) {
+            const multi = pendingMulti.current;
+            pendingMulti.current = null;
+            openRental(multi);
+          }
+        }}
+      />
 
       <RentalStartModal
         open={rentalOpen}
