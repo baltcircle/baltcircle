@@ -7,6 +7,8 @@ import { TARIFFS } from "@shared/geo";
 import {
   insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
   adminSetRoleSchema, adminSetBlockedSchema,
+  phoneChangeStartSchema, phoneChangeVerifySchema,
+  linkPaymentMethodSchema, createSupportTicketSchema,
 } from "@shared/schema";
 import type { UserRole } from "@shared/schema";
 import { sendOtpSms } from "./sms";
@@ -127,6 +129,79 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const result = storage.updateProfile(id, parsed.data);
     if ("error" in result) return res.status(400).json(result);
     res.json(result.user);
+  });
+
+  // -------------- Phone change (SMS OTP, existing account) --------------
+  // The current rider changes their phone number. This is the ONLY way to
+  // change a phone — the profile PATCH endpoint never touches it. Step 1 sends a
+  // code to the new number; step 2 verifies it and applies the change.
+  app.post("/api/users/me/phone/start", async (req, res) => {
+    const id = req.session?.userId;
+    if (!id) return res.status(401).json({ error: "Требуется вход" });
+    const parsed = phoneChangeStartSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+    const result = storage.startPhoneChange({ userId: id, phone: parsed.data.phone });
+    if ("error" in result) {
+      const status = result.retryAfterSec ? 429 : 400;
+      return res.status(status).json(result);
+    }
+    try {
+      const { devEcho } = await sendOtpSms(result.phone, result.code);
+      res.json({
+        phone: result.phone,
+        resendInSec: result.resendInSec,
+        ...(devEcho ? { devCode: result.code } : {}),
+      });
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message ?? "Не удалось отправить SMS. Попробуйте позже." });
+    }
+  });
+
+  app.post("/api/users/me/phone/verify", (req, res) => {
+    const id = req.session?.userId;
+    if (!id) return res.status(401).json({ error: "Требуется вход" });
+    const parsed = phoneChangeVerifySchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+    const result = storage.verifyPhoneChange({ userId: id, code: parsed.data.code });
+    if ("error" in result) return res.status(400).json(result);
+    res.json(result.user);
+  });
+
+  // -------------- Payment methods (MVP metadata only) --------------
+  // Per-user linked payment methods. No card numbers / CVC are ever accepted or
+  // stored — only the method kind, a masked label, and a status. No real
+  // acquiring is performed.
+  app.get("/api/payment-methods", (req, res) => {
+    res.json(storage.listPaymentMethods(riderId(req)));
+  });
+  app.post("/api/payment-methods", (req, res) => {
+    const parsed = linkPaymentMethodSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Bad request" });
+    res.status(201).json(storage.linkPaymentMethod(riderId(req), parsed.data.type));
+  });
+  app.delete("/api/payment-methods/:id", (req, res) => {
+    const ok = storage.unlinkPaymentMethod(riderId(req), Number(req.params.id));
+    if (!ok) return res.status(404).json({ error: "Способ оплаты не найден" });
+    res.json({ ok: true });
+  });
+
+  // -------------- Support tickets (rider help requests) --------------
+  app.get("/api/support/tickets", (req, res) => {
+    res.json(storage.listSupportTickets(riderId(req)));
+  });
+  app.post("/api/support/tickets", (req, res) => {
+    const parsed = createSupportTicketSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+    res.status(201).json(storage.createSupportTicket({ userId: riderId(req), ...parsed.data }));
   });
 
   // -------------- Admin: user management --------------

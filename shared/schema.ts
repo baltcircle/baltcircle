@@ -102,6 +102,40 @@ export const otpVerifySchema = z.object({
 });
 export type OtpVerifyInput = z.infer<typeof otpVerifySchema>;
 
+/* ------- PHONE CHANGE (SMS OTP for an existing account) ------- */
+// A logged-in rider changing their phone. Verification mirrors registration
+// OTP but is keyed by the user id (not the phone) and carries the *new* phone
+// through to the update. Only the HMAC of the code is stored. A row is
+// created/replaced when the rider requests a code and consumed on success.
+export const phoneChangeRequests = sqliteTable("phone_change_requests", {
+  userId: text("user_id").primaryKey(),      // the rider changing their number
+  newPhone: text("new_phone").notNull(),     // normalized +7… target number
+  codeHash: text("code_hash").notNull(),     // HMAC-SHA256 of the OTP, never plaintext
+  expiresAt: integer("expires_at").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  lastSentAt: integer("last_sent_at").notNull(),
+  consumed: integer("consumed", { mode: "boolean" }).notNull().default(false),
+});
+export type PhoneChangeRequest = typeof phoneChangeRequests.$inferSelect;
+
+// Step 1: request a code sent to the new number.
+export const phoneChangeStartSchema = z.object({
+  phone: z
+    .string({ required_error: "Введите номер телефона" })
+    .trim()
+    .min(1, "Введите номер телефона"),
+});
+export type PhoneChangeStartInput = z.infer<typeof phoneChangeStartSchema>;
+
+// Step 2: verify the code sent to the new number.
+export const phoneChangeVerifySchema = z.object({
+  code: z
+    .string({ required_error: "Введите код из SMS" })
+    .trim()
+    .regex(/^\d{4}$/, "Код состоит из 4 цифр"),
+});
+export type PhoneChangeVerifyInput = z.infer<typeof phoneChangeVerifySchema>;
+
 /* ------- BIKES ------- */
 export const bikes = sqliteTable("bikes", {
   id: text("id").primaryKey(),               // e.g. "BC-014"
@@ -217,6 +251,54 @@ export const wallet = sqliteTable("wallet", {
   tariffExpiresAt: integer("tariff_expires_at"),
 });
 export type Wallet = typeof wallet.$inferSelect;
+
+/* ------- PAYMENT METHODS (MVP placeholders, no card data) ------- */
+// A rider's linked payment methods. Strictly metadata: we record the *kind*
+// (card / sbp), a human label (e.g. masked test pan), and a status — never a
+// real card number, CVC, or token. No real acquiring is performed.
+export const paymentMethods = sqliteTable("payment_methods", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: text("user_id").notNull(),
+  type: text("type").notNull(),              // card | sbp
+  label: text("label").notNull(),            // display label, e.g. "•••• 4242" / "СБП"
+  status: text("status").notNull().default("linked"), // linked
+  createdAt: integer("created_at").notNull(),
+});
+export type PaymentMethod = typeof paymentMethods.$inferSelect;
+
+// Link a payment method. Only the type is client-supplied; the label/status are
+// derived server-side so no card data can be smuggled in through the label.
+export const linkPaymentMethodSchema = z.object({
+  type: z.enum(["card", "sbp"]),
+});
+export type LinkPaymentMethodInput = z.infer<typeof linkPaymentMethodSchema>;
+
+/* ------- SUPPORT TICKETS (rider help requests) ------- */
+// Lightweight contact form persistence for the current user. Riders can submit
+// a subject + message; staff handling happens out-of-band for the MVP.
+export const supportTickets = sqliteTable("support_tickets", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: text("user_id").notNull(),
+  subject: text("subject").notNull(),
+  message: text("message").notNull(),
+  status: text("status").notNull().default("open"), // open | resolved
+  createdAt: integer("created_at").notNull(),
+});
+export type SupportTicket = typeof supportTickets.$inferSelect;
+
+export const createSupportTicketSchema = z.object({
+  subject: z
+    .string({ required_error: "Укажите тему обращения" })
+    .trim()
+    .min(3, "Тема должна содержать минимум 3 символа")
+    .max(120, "Слишком длинная тема"),
+  message: z
+    .string({ required_error: "Опишите вопрос" })
+    .trim()
+    .min(5, "Опишите вопрос подробнее (минимум 5 символов)")
+    .max(2000, "Сообщение слишком длинное"),
+});
+export type CreateSupportTicketInput = z.infer<typeof createSupportTicketSchema>;
 
 /* ------- TYPES for API payloads ------- */
 export type TariffId = "h1" | "h2" | "h3";

@@ -57,6 +57,7 @@ const server = spawn(
     env: {
       ...process.env,
       NODE_ENV: "development",
+      API_ONLY: "1",
       PORT: String(PORT),
       DATABASE_PATH: DB_PATH,
       SMS_PROVIDER: "",

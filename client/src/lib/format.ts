@@ -1,4 +1,13 @@
 import { TARIFFS } from "@shared/geo";
+import type { UserRole } from "@shared/schema";
+
+// Russian-facing role labels. "rider" is shown as «Клиент» in the UI even
+// though the stored/internal role string stays "rider".
+export const ROLE_LABEL: Record<UserRole, string> = {
+  rider: "Клиент",
+  operator: "Оператор",
+  admin: "Администратор",
+};
 
 export function fmtRub(value: number) {
   const n = Math.round(value);

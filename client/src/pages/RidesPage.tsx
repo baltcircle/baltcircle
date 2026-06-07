@@ -3,13 +3,19 @@ import type { Ride } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { fmtDate, fmtDistance, fmtDuration, fmtRub, fmtTariff } from "@/lib/format";
 import { apiRequest } from "@/lib/queryClient";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import { Route, Clock, MapPin, Receipt } from "lucide-react";
 
 export function RidesPage() {
+  // Show the signed-in rider's own history; guests fall back to the seeded
+  // "demo" account so the public MVP still shows sample rides.
+  const { user } = useCurrentUser();
+  const userId = user?.id ?? "demo";
+
   const ridesQ = useQuery<Ride[]>({
-    queryKey: ["/api/rides", { userId: "demo" }],
+    queryKey: ["/api/rides", { userId, limit: 40 }],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/rides?userId=demo&limit=40");
+      const res = await apiRequest("GET", `/api/rides?userId=${encodeURIComponent(userId)}&limit=40`);
       return res.json();
     },
   });

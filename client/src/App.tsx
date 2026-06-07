@@ -14,6 +14,7 @@ import { RidesPage } from "@/pages/RidesPage";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { PaymentMethodsPage } from "@/pages/PaymentMethodsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { SupportPage } from "@/pages/SupportPage";
 import { SafetyPage } from "@/pages/SafetyPage";
 import { PrivacyPage } from "@/pages/PrivacyPage";
 import { ConsentPage } from "@/pages/ConsentPage";
@@ -35,6 +36,7 @@ function AppRouter() {
       <Route path="/profile" component={ProfilePage} />
       <Route path="/payment-methods" component={PaymentMethodsPage} />
       <Route path="/settings" component={SettingsPage} />
+      <Route path="/support" component={SupportPage} />
       <Route path="/safety" component={SafetyPage} />
       <Route path="/privacy" component={PrivacyPage} />
       <Route path="/consent" component={ConsentPage} />

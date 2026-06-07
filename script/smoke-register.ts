@@ -58,7 +58,7 @@ const server = spawn(
   ["node_modules/tsx/dist/cli.mjs", "server/index.ts"],
   {
     // SMS_PROVIDER intentionally unset -> dev fallback echoes the code.
-    env: { ...process.env, NODE_ENV: "development", PORT: String(PORT), DATABASE_PATH: DB_PATH, SMS_PROVIDER: "" },
+    env: { ...process.env, NODE_ENV: "development", API_ONLY: "1", PORT: String(PORT), DATABASE_PATH: DB_PATH, SMS_PROVIDER: "" },
     stdio: ["ignore", "ignore", "inherit"],
   },
 );

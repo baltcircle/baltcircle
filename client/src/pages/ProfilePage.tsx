@@ -19,11 +19,12 @@ function greeting(d = new Date()) {
 
 export function ProfilePage() {
   const { user, isStaff } = useCurrentUser();
+  const userId = user?.id ?? "demo";
 
   const ridesQ = useQuery<Ride[]>({
-    queryKey: ["/api/rides", { userId: "demo" }],
+    queryKey: ["/api/rides", { userId, limit: 100 }],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/rides?userId=demo&limit=100");
+      const res = await apiRequest("GET", `/api/rides?userId=${encodeURIComponent(userId)}&limit=100`);
       return res.json();
     },
   });
@@ -74,7 +75,7 @@ export function ProfilePage() {
           <MenuRow href="/tariffs" icon={CreditCardIcon} label="Тарифы" testId="menu-tariffs" />
           <MenuRow href="/rides" icon={RouteIcon} label="История" testId="menu-history" />
           <MenuRow href="/safety" icon={ShieldCheck} label="Центр безопасности" testId="menu-safety" />
-          <MenuRow href="/tariffs" icon={HelpCircle} label="Помощь" testId="menu-help" />
+          <MenuRow href="/support" icon={HelpCircle} label="Помощь" testId="menu-help" />
           <MenuRow href="/settings" icon={Settings} label="Настройки" testId="menu-settings" />
           {/* Operator entry point — only for operator/admin roles. */}
           {isStaff && (

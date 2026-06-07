@@ -11,7 +11,9 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, User, Moon, Bell, Save, Lock } from "lucide-react";
+import { PhoneChangeModal } from "@/components/PhoneChangeModal";
+import { fmtDate } from "@/lib/format";
+import { ArrowLeft, User, Moon, Bell, Save, Lock, Smartphone, ShieldCheck } from "lucide-react";
 
 export function SettingsPage() {
   const { mode, setMode } = useTheme();
@@ -32,6 +34,7 @@ export function SettingsPage() {
   }, [user]);
 
   const phone = user?.phone ?? "—";
+  const [phoneModalOpen, setPhoneModalOpen] = useState(false);
 
   const saveProfile = useMutation<UserType, Error, void>({
     mutationFn: async () => {
@@ -119,6 +122,17 @@ export function SettingsPage() {
                 <Lock className="w-3 h-3" />
                 Смена номера требует подтверждения по SMS.
               </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                disabled={!isRegistered}
+                onClick={() => setPhoneModalOpen(true)}
+                data-testid="button-change-phone"
+              >
+                <Smartphone className="w-4 h-4 mr-2" />
+                Изменить телефон
+              </Button>
             </Field>
             <Field>
               <Label htmlFor="settings-email">Почта</Label>
@@ -142,6 +156,23 @@ export function SettingsPage() {
               <Save className="w-4 h-4 mr-2" />
               {saveProfile.isPending ? "Сохранение…" : "Сохранить"}
             </Button>
+
+            {isRegistered && (
+              <div
+                className="rounded-md bg-muted/50 p-3 text-xs flex items-start gap-2"
+                data-testid="text-consent-status"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 mt-0.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                {user?.consentAcceptedAt ? (
+                  <span className="text-muted-foreground">
+                    Согласие на обработку данных принято {fmtDate(user.consentAcceptedAt)}
+                    {user.consentVersion ? ` · версия ${user.consentVersion}` : ""}.
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">Согласие на обработку данных не зафиксировано.</span>
+                )}
+              </div>
+            )}
           </div>
         </Section>
 
@@ -211,6 +242,8 @@ export function SettingsPage() {
           </div>
         </Section>
       </div>
+
+      <PhoneChangeModal open={phoneModalOpen} onOpenChange={setPhoneModalOpen} />
     </div>
   );
 }

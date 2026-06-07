@@ -15,15 +15,10 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Search, Users, ShieldCheck, Ban, Check, AlertTriangle } from "lucide-react";
-import { fmtDate } from "@/lib/format";
+import { fmtDate, ROLE_LABEL } from "@/lib/format";
 
 const USERS_KEY = ["/api/admin/users"];
 
-const ROLE_LABEL: Record<UserRole, string> = {
-  rider: "Райдер",
-  operator: "Оператор",
-  admin: "Администратор",
-};
 const ROLE_TONE: Record<UserRole, string> = {
   rider: "",
   operator: "text-primary border-primary/40",
@@ -188,7 +183,7 @@ function UserRowItem({ u, isSelf, actorRole, onRole, onBlockToggle, busy }: {
       </TableCell>
       <TableCell>
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className={ROLE_TONE[role]}>{ROLE_LABEL[role]}</Badge>
+          <Badge variant="outline" className={ROLE_TONE[role]} data-testid={`role-label-${u.id}`}>{ROLE_LABEL[role]}</Badge>
           <Select
             value={role}
             onValueChange={(v) => onRole(v as UserRole)}

@@ -1,10 +1,11 @@
 import {
   bikes, parkings, zones, rides, tickets, payments, wallet, mapObjects, users,
-  otpRequests,
+  otpRequests, phoneChangeRequests, paymentMethods, supportTickets,
 } from "@shared/schema";
 import type {
   Bike, Parking, ZoneRow, Ride, Ticket, Payment, Wallet,
   MapObject, InsertMapObject, User, OtpRequest, UserRole, UpdateProfileInput,
+  PhoneChangeRequest, PaymentMethod, SupportTicket,
 } from "@shared/schema";
 import { CONSENT_VERSION } from "@shared/schema";
 import { randomUUID, createHmac, randomInt, timingSafeEqual } from "node:crypto";
@@ -112,6 +113,31 @@ CREATE TABLE IF NOT EXISTS otp_requests (
   attempts INTEGER NOT NULL DEFAULT 0,
   last_sent_at INTEGER NOT NULL,
   consumed INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS phone_change_requests (
+  user_id TEXT PRIMARY KEY,
+  new_phone TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_sent_at INTEGER NOT NULL,
+  consumed INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS payment_methods (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  label TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'linked',
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS support_tickets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  message TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at INTEGER NOT NULL
 );
 `);
 
@@ -412,6 +438,18 @@ export interface IStorage {
     | { ok: true; phone: string; code: string; resendInSec: number }
     | { error: string; retryAfterSec?: number };
   verifyOtp(input: { phone: string; code: string; consentIp?: string }): { user: User } | { error: string };
+  // phone change (SMS OTP for an existing account)
+  startPhoneChange(input: { userId: string; phone: string }):
+    | { ok: true; phone: string; code: string; resendInSec: number }
+    | { error: string; retryAfterSec?: number };
+  verifyPhoneChange(input: { userId: string; code: string }): { user: User } | { error: string };
+  // payment methods (MVP metadata only — no card data)
+  listPaymentMethods(userId: string): PaymentMethod[];
+  linkPaymentMethod(userId: string, type: "card" | "sbp"): PaymentMethod;
+  unlinkPaymentMethod(userId: string, id: number): boolean;
+  // support tickets (rider help requests)
+  listSupportTickets(userId: string): SupportTicket[];
+  createSupportTicket(input: { userId: string; subject: string; message: string }): SupportTicket;
   // bikes
   listBikes(): Bike[];
   getBike(id: string): Bike | undefined;
@@ -615,6 +653,121 @@ export class DatabaseStorage implements IStorage {
       updatedAt: now,
     } as any).run();
     return { user: this.getUserByPhone(cleanPhone)! };
+  }
+
+  // ---------- Phone change (SMS OTP, existing account) ----------
+  // Step 1: a logged-in rider requests a code sent to a NEW number. The pending
+  // request is keyed by the user id and stores the target phone; the code is
+  // stored only as an HMAC. Enforces the same per-request resend lock as
+  // registration and refuses a number already used by another account.
+  startPhoneChange({ userId, phone }: { userId: string; phone: string }) {
+    const user = db.select().from(users).where(eq(users.id, userId)).get() as User | undefined;
+    if (!user) return { error: "Пользователь не найден" };
+
+    const newPhone = normalizePhone(phone);
+    const digits = newPhone.replace(/\D/g, "");
+    if (digits.length < 10) return { error: "Введите корректный номер телефона" };
+    if (newPhone === user.phone) return { error: "Это уже ваш текущий номер" };
+
+    // Don't allow merging into another account's number.
+    const taken = db.select().from(users).where(eq(users.phone, newPhone)).get() as User | undefined;
+    if (taken && taken.id !== userId) {
+      return { error: "Этот номер уже используется другим аккаунтом" };
+    }
+
+    const now = Date.now();
+    const existing = db.select().from(phoneChangeRequests)
+      .where(eq(phoneChangeRequests.userId, userId)).get() as PhoneChangeRequest | undefined;
+    if (existing && !existing.consumed) {
+      const sinceLast = now - existing.lastSentAt;
+      if (sinceLast < OTP_RESEND_LOCK_MS) {
+        const retryAfterSec = Math.ceil((OTP_RESEND_LOCK_MS - sinceLast) / 1000);
+        return { error: `Повторная отправка кода будет доступна через ${retryAfterSec} с`, retryAfterSec };
+      }
+    }
+
+    const code = generateOtp();
+    const codeHash = hashOtp(newPhone, code);
+    const expiresAt = now + OTP_TTL_MS;
+    db.insert(phoneChangeRequests)
+      .values({ userId, newPhone, codeHash, expiresAt, attempts: 0, lastSentAt: now, consumed: false })
+      .onConflictDoUpdate({
+        target: phoneChangeRequests.userId,
+        set: { newPhone, codeHash, expiresAt, attempts: 0, lastSentAt: now, consumed: false },
+      })
+      .run();
+
+    return { ok: true as const, phone: newPhone, code, resendInSec: OTP_RESEND_LOCK_MS / 1000 };
+  }
+
+  // Step 2: verify the code sent to the new number and, on success, update the
+  // user's phone. The request row is consumed so the code can't be reused.
+  verifyPhoneChange({ userId, code }: { userId: string; code: string }) {
+    const req = db.select().from(phoneChangeRequests)
+      .where(eq(phoneChangeRequests.userId, userId)).get() as PhoneChangeRequest | undefined;
+    if (!req || req.consumed) return { error: "Запросите код подтверждения заново" };
+    if (Date.now() > req.expiresAt) return { error: "Срок действия кода истёк. Запросите новый код" };
+    if (req.attempts >= OTP_MAX_ATTEMPTS) return { error: "Слишком много попыток. Запросите новый код" };
+
+    const provided = hashOtp(req.newPhone, code.trim());
+    if (!safeEqualHex(provided, req.codeHash)) {
+      const attempts = req.attempts + 1;
+      db.update(phoneChangeRequests).set({ attempts }).where(eq(phoneChangeRequests.userId, userId)).run();
+      const left = OTP_MAX_ATTEMPTS - attempts;
+      return {
+        error: left > 0 ? `Неверный код. Осталось попыток: ${left}` : "Слишком много попыток. Запросите новый код",
+      };
+    }
+
+    // Re-check the number is still free (another account could have claimed it
+    // between request and verify), then apply the change.
+    const taken = db.select().from(users).where(eq(users.phone, req.newPhone)).get() as User | undefined;
+    if (taken && taken.id !== userId) {
+      return { error: "Этот номер уже используется другим аккаунтом" };
+    }
+
+    db.update(phoneChangeRequests).set({ consumed: true }).where(eq(phoneChangeRequests.userId, userId)).run();
+    db.update(users).set({ phone: req.newPhone, updatedAt: Date.now() } as any).where(eq(users.id, userId)).run();
+    return { user: this.getUser(userId)! };
+  }
+
+  // ---------- Payment methods (MVP metadata only) ----------
+  listPaymentMethods(userId: string) {
+    return db.select().from(paymentMethods)
+      .where(eq(paymentMethods.userId, userId))
+      .orderBy(desc(paymentMethods.createdAt))
+      .all() as PaymentMethod[];
+  }
+
+  // Link a method. Label/status are derived server-side so no card data can be
+  // injected via the client. A masked test pan is used for "card" — never a
+  // real number — and a fixed label for SBP.
+  linkPaymentMethod(userId: string, type: "card" | "sbp") {
+    const label = type === "card" ? "•••• 4242" : "СБП";
+    return db.insert(paymentMethods).values({
+      userId, type, label, status: "linked", createdAt: Date.now(),
+    }).returning().get() as PaymentMethod;
+  }
+
+  unlinkPaymentMethod(userId: string, id: number) {
+    const res = db.delete(paymentMethods)
+      .where(sql`${paymentMethods.id} = ${id} AND ${paymentMethods.userId} = ${userId}`)
+      .run();
+    return res.changes > 0;
+  }
+
+  // ---------- Support tickets ----------
+  listSupportTickets(userId: string) {
+    return db.select().from(supportTickets)
+      .where(eq(supportTickets.userId, userId))
+      .orderBy(desc(supportTickets.createdAt))
+      .all() as SupportTicket[];
+  }
+
+  createSupportTicket({ userId, subject, message }: { userId: string; subject: string; message: string }) {
+    return db.insert(supportTickets).values({
+      userId, subject: subject.trim(), message: message.trim(), status: "open", createdAt: Date.now(),
+    }).returning().get() as SupportTicket;
   }
 
   listBikes() { return db.select().from(bikes).all() as Bike[]; }

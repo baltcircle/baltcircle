@@ -1,17 +1,55 @@
 import { useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import type { PaymentMethod } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { fmtDate } from "@/lib/format";
 import { TEST_PAYMENT_QR_LOCAL, TEST_PAYMENT_QR_REMOTE } from "@/lib/payment";
-import { CreditCard, Smartphone, ShieldCheck, QrCode, ExternalLink } from "lucide-react";
+import { CreditCard, Smartphone, ShieldCheck, QrCode, ExternalLink, Trash2 } from "lucide-react";
+
+const METHODS_KEY = ["/api/payment-methods"];
 
 export function PaymentMethodsPage() {
   const toast = useToast();
 
-  // MVP payment-method state — no real card data is collected or stored.
+  // MVP payment-method state — no real card data is collected or stored. The
+  // linked methods themselves persist per user via the backend.
   const [method, setMethod] = useState<"card" | "sbp">("card");
-  const [cardBound, setCardBound] = useState(false);
-  const [sbpBound, setSbpBound] = useState(false);
+
+  const methodsQ = useQuery<PaymentMethod[]>({ queryKey: METHODS_KEY });
+  const methods = methodsQ.data ?? [];
+  const hasCard = methods.some((m) => m.type === "card");
+  const hasSbp = methods.some((m) => m.type === "sbp");
+
+  const linkMut = useMutation({
+    mutationFn: async (type: "card" | "sbp") => {
+      const res = await apiRequest("POST", "/api/payment-methods", { type });
+      return res.json();
+    },
+    onSuccess: (_d, type) => {
+      queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+      toast.toast({
+        title: type === "card" ? "Карта привязана (тест)" : "СБП подключён (тест)",
+        description: "MVP-привязка. Данные карты не сохраняются, списание не выполняется.",
+      });
+    },
+    onError: (e: Error) => toast.toast({ title: "Не удалось привязать", description: cleanErr(e), variant: "destructive" }),
+  });
+
+  const unlinkMut = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/payment-methods/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+      toast.toast({ title: "Способ оплаты отвязан" });
+    },
+    onError: (e: Error) => toast.toast({ title: "Не удалось отвязать", description: cleanErr(e), variant: "destructive" }),
+  });
+
+  const busy = linkMut.isPending || unlinkMut.isPending;
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-2xl mx-auto" data-testid="page-payment-methods">
@@ -23,7 +61,43 @@ export function PaymentMethodsPage() {
         </p>
       </header>
 
-      {/* Payment method card — card binding + SBP (MVP placeholders) */}
+      {/* Linked methods (persisted per user) */}
+      <Card className="p-6 mb-5" data-testid="card-linked-methods">
+        <div className="text-sm font-medium mb-3">Привязанные способы</div>
+        {methodsQ.isLoading ? (
+          <div className="text-sm text-muted-foreground" data-testid="methods-loading">Загрузка…</div>
+        ) : methods.length === 0 ? (
+          <div className="text-sm text-muted-foreground" data-testid="methods-empty">
+            Пока нет привязанных способов оплаты.
+          </div>
+        ) : (
+          <ul className="space-y-2" data-testid="methods-list">
+            {methods.map((m) => (
+              <li
+                key={m.id}
+                className="flex items-center gap-3 rounded-md bg-muted/60 p-3 text-sm"
+                data-testid={`method-row-${m.id}`}
+              >
+                {m.type === "card" ? <CreditCard className="w-4 h-4 text-muted-foreground" /> : <Smartphone className="w-4 h-4 text-muted-foreground" />}
+                <span className="font-mono">{m.label}</span>
+                <span className="text-xs text-muted-foreground">{m.type === "card" ? "Visa · тест" : "СБП · тест"}</span>
+                <span className="ml-auto text-xs text-muted-foreground">{fmtDate(m.createdAt)}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => unlinkMut.mutate(m.id)}
+                  data-testid={`button-unlink-${m.id}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      {/* Add a payment method — card binding + SBP (MVP placeholders) */}
       <Card className="p-6" data-testid="card-payment-method">
         <div className="grid sm:grid-cols-2 gap-2 mb-4">
           <Button
@@ -46,22 +120,16 @@ export function PaymentMethodsPage() {
           <div className="space-y-3" data-testid="block-card">
             <div className="rounded-md bg-muted/60 p-3 text-sm flex items-center gap-2">
               <CreditCard className="w-4 h-4 text-muted-foreground" />
-              <span className="font-mono">{cardBound ? "•••• •••• •••• 4242" : "Карта не привязана"}</span>
-              {cardBound && <span className="ml-auto text-xs text-muted-foreground">Visa · тест</span>}
+              <span className="font-mono">{hasCard ? "•••• •••• •••• 4242" : "Карта не привязана"}</span>
+              {hasCard && <span className="ml-auto text-xs text-muted-foreground">Visa · тест</span>}
             </div>
             <Button
               className="w-full"
-              variant={cardBound ? "outline" : "default"}
-              onClick={() => {
-                setCardBound((v) => !v);
-                toast.toast({
-                  title: cardBound ? "Карта отвязана" : "Карта привязана (тест)",
-                  description: cardBound ? undefined : "MVP-привязка. Данные карты не сохраняются.",
-                });
-              }}
+              disabled={busy || hasCard}
+              onClick={() => linkMut.mutate("card")}
               data-testid="button-bind-card"
             >
-              {cardBound ? "Отвязать карту" : "Привязать карту"}
+              {hasCard ? "Карта уже привязана" : "Привязать карту"}
             </Button>
             <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
               <ShieldCheck className="w-3 h-3" /> MVP: номер карты и CVC не собираются. Реальное списание не выполняется.
@@ -88,17 +156,11 @@ export function PaymentMethodsPage() {
             </a>
             <Button
               className="w-full"
-              variant={sbpBound ? "outline" : "default"}
-              onClick={() => {
-                setSbpBound((v) => !v);
-                toast.toast({
-                  title: sbpBound ? "СБП отключён" : "СБП подключён (тест)",
-                  description: sbpBound ? undefined : "MVP-подключение. Реальная оплата не производится.",
-                });
-              }}
+              disabled={busy || hasSbp}
+              onClick={() => linkMut.mutate("sbp")}
               data-testid="button-sbp-payment"
             >
-              {sbpBound ? "Отключить СБП" : "Подключить СБП"}
+              {hasSbp ? "СБП уже подключён" : "Подключить СБП"}
             </Button>
             <Button asChild variant="outline" className="w-full" data-testid="button-open-payment">
               <a href={TEST_PAYMENT_QR_REMOTE} target="_blank" rel="noopener noreferrer">
@@ -113,4 +175,17 @@ export function PaymentMethodsPage() {
       </Card>
     </div>
   );
+}
+
+// apiRequest throws "<status>: <body>" — pull a human message out of the body.
+function cleanErr(e: Error): string {
+  const m = e.message.match(/^\d+:\s*([\s\S]*)$/);
+  const body = m ? m[1] : e.message;
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed?.error) return parsed.error;
+  } catch {
+    // body wasn't JSON; fall through
+  }
+  return body;
 }

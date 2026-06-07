@@ -12,7 +12,8 @@
     "smoke:register": "tsx script/smoke-register.ts",
     "smoke:session": "tsx script/smoke-session.ts",
     "smoke:profile": "tsx script/smoke-profile.ts",
-    "smoke:admin-users": "tsx script/smoke-admin-users.ts"
+    "smoke:admin-users": "tsx script/smoke-admin-users.ts",
+    "smoke:account": "tsx script/smoke-account.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

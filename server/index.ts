@@ -119,8 +119,12 @@ app.use((req, res, next) => {
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (process.env.NODE_ENV === "production") {
+  // doesn't interfere with the other routes.
+  // API_ONLY skips the client layer entirely (no vite, no static) — used by the
+  // API smoke tests, which only exercise JSON endpoints.
+  if (process.env.API_ONLY === "1") {
+    // no client middleware
+  } else if (process.env.NODE_ENV === "production") {
     serveStatic(app);
   } else {
     const { setupVite } = await import("./vite");
