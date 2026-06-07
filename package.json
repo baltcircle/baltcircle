@@ -9,7 +9,8 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push",
-    "smoke:register": "tsx script/smoke-register.ts"
+    "smoke:register": "tsx script/smoke-register.ts",
+    "smoke:session": "tsx script/smoke-session.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -44,6 +45,7 @@
     "@supabase/supabase-js": "^2.49.4",
     "@tanstack/react-query": "^5.60.5",
     "better-sqlite3": "^11.7.0",
+    "better-sqlite3-session-store": "^0.1.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -57,7 +59,6 @@
     "framer-motion": "^11.13.1",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.453.0",
-    "memorystore": "^1.6.7",
     "next-themes": "^0.4.6",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",

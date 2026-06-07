@@ -2,7 +2,8 @@ import "dotenv/config";
 import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
 import session from "express-session";
-import createMemoryStore from "memorystore";
+import createSqliteStore from "better-sqlite3-session-store";
+import { sqliteDb } from "./storage";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
@@ -12,11 +13,13 @@ const httpServer = createServer(app);
 
 // Session-based rider identity. The session id lives in an httpOnly cookie that
 // survives refresh on the same device, so a registered rider stays recognized
-// without any SMS/auth provider. Sessions are kept in an in-memory store
-// (single-instance self-hosted deploy); restarting the server clears sessions
-// but the user row persists in SQLite, so re-registration just creates a new
-// row — acceptable for the current MVP.
-const MemoryStore = createMemoryStore(session);
+// without any SMS/auth provider. Sessions are persisted in a `sessions` table
+// inside the same SQLite file as the rest of the app (data.db), reusing the
+// single better-sqlite3 connection. Because the Docker volume already persists
+// data.db, sessions now survive Node/Docker restarts and redeploys — a
+// registered rider stays logged in across deploys without re-registering.
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
+const SqliteStore = createSqliteStore(session);
 app.set("trust proxy", 1);
 app.use(
   session({
@@ -24,12 +27,17 @@ app.use(
     secret: process.env.SESSION_SECRET || "baltcircle-dev-session-secret",
     resave: false,
     saveUninitialized: false,
-    store: new MemoryStore({ checkPeriod: 24 * 60 * 60 * 1000 }),
+    store: new SqliteStore({
+      client: sqliteDb,
+      // Sweep expired rows hourly; expiry itself is enforced per-row via the
+      // `expire` column written from the cookie maxAge below.
+      expired: { clear: true, intervalMs: 60 * 60 * 1000 },
+    }),
     cookie: {
       httpOnly: true,
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
-      maxAge: 1000 * 60 * 60 * 24 * 180, // 180 days
+      maxAge: SESSION_TTL_MS,
     },
   }),
 );

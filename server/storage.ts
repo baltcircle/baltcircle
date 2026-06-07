@@ -17,6 +17,9 @@ import { eq, desc, sql } from "drizzle-orm";
 const sqlite = new Database(process.env.DATABASE_PATH || "data.db");
 sqlite.pragma("journal_mode = WAL");
 export const db = drizzle(sqlite);
+// Exposed so the express-session store can reuse this single connection,
+// keeping session rows in the same data.db that the Docker volume persists.
+export const sqliteDb = sqlite;
 
 // ---------- Schema bootstrap (since we skip drizzle migrations) ----------
 sqlite.exec(`
