@@ -207,7 +207,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
               <Label htmlFor="consent" className="text-xs font-normal leading-snug text-muted-foreground">
                 Я согласен на обработку персональных данных и принимаю{" "}
                 <a
-                  href="#/privacy"
+                  href="#/legal/privacy"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline hover:text-foreground"
@@ -217,7 +217,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
                 </a>{" "}
                 и{" "}
                 <a
-                  href="#/consent"
+                  href="#/legal/consent"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline hover:text-foreground"

@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { PhoneChangeModal } from "@/components/PhoneChangeModal";
 import { fmtDate } from "@/lib/format";
-import { ArrowLeft, User, Moon, Bell, Save, Lock, Smartphone, ShieldCheck } from "lucide-react";
+import { ArrowLeft, User, Moon, Bell, Save, Lock, Smartphone, ShieldCheck, Scale, ChevronRight } from "lucide-react";
 
 export function SettingsPage() {
   const { mode, setMode } = useTheme();
@@ -174,6 +174,23 @@ export function SettingsPage() {
               </div>
             )}
           </div>
+        </Section>
+
+        {/* Правовые документы */}
+        <Section icon={Scale} title="Правовые документы" testId="section-legal">
+          <Link
+            href="/legal"
+            data-testid="link-settings-legal"
+            className="flex items-center gap-3 -m-1 rounded-xl p-3 hover-elevate"
+          >
+            <span className="flex-1 min-w-0">
+              <span className="block font-light">Правовые документы</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                Соглашение, правила проката, конфиденциальность, оплата
+              </span>
+            </span>
+            <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+          </Link>
         </Section>
 
         {/* Тема */}

@@ -6,7 +6,7 @@ import { fmtDistance } from "@/lib/format";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import {
   CreditCard as CreditCardIcon, Route as RouteIcon, ShieldCheck, HelpCircle, Settings,
-  ChevronRight, CreditCard, User, Wallet,
+  ChevronRight, CreditCard, User, Wallet, Scale,
 } from "lucide-react";
 
 function greeting(d = new Date()) {
@@ -76,6 +76,7 @@ export function ProfilePage() {
           <MenuRow href="/rides" icon={RouteIcon} label="История" testId="menu-history" />
           <MenuRow href="/safety" icon={ShieldCheck} label="Центр безопасности" testId="menu-safety" />
           <MenuRow href="/support" icon={HelpCircle} label="Помощь" testId="menu-help" />
+          <MenuRow href="/legal" icon={Scale} label="Правовые документы" testId="menu-legal" />
           <MenuRow href="/settings" icon={Settings} label="Настройки" testId="menu-settings" />
           {/* Operator entry point — only for operator/admin roles. */}
           {isStaff && (

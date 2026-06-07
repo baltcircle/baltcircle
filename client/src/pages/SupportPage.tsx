@@ -10,7 +10,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { fmtDate } from "@/lib/format";
-import { LifeBuoy, Mail, Phone, Send, MessageCircle } from "lucide-react";
+import { Link } from "wouter";
+import { LifeBuoy, Mail, Phone, Send, MessageCircle, Scale, ChevronRight } from "lucide-react";
 
 const TICKETS_KEY = ["/api/support/tickets"];
 
@@ -147,6 +148,24 @@ export function SupportPage() {
           </Button>
         </form>
       </Card>
+
+      {/* Legal documents */}
+      <Link
+        href="/legal"
+        data-testid="link-support-legal"
+        className="flex items-center gap-3 rounded-xl border bg-card p-4 mb-5 hover:bg-muted/50"
+      >
+        <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
+          <Scale className="w-5 h-5" />
+        </span>
+        <span className="flex-1 min-w-0">
+          <span className="block font-light">Правовые документы</span>
+          <span className="block text-xs text-muted-foreground mt-0.5">
+            Соглашение, правила проката, конфиденциальность, оплата
+          </span>
+        </span>
+        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+      </Link>
 
       {/* Submitted tickets */}
       <Card className="p-5" data-testid="card-support-tickets">

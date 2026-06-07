@@ -16,8 +16,8 @@ import { PaymentMethodsPage } from "@/pages/PaymentMethodsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SupportPage } from "@/pages/SupportPage";
 import { SafetyPage } from "@/pages/SafetyPage";
-import { PrivacyPage } from "@/pages/PrivacyPage";
-import { ConsentPage } from "@/pages/ConsentPage";
+import { LegalIndexPage } from "@/pages/LegalIndexPage";
+import { LegalDocPage } from "@/pages/LegalDocPage";
 import { AdminPage } from "@/pages/AdminPage";
 import { UsersPage } from "@/pages/UsersPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
@@ -38,8 +38,14 @@ function AppRouter() {
       <Route path="/settings" component={SettingsPage} />
       <Route path="/support" component={SupportPage} />
       <Route path="/safety" component={SafetyPage} />
-      <Route path="/privacy" component={PrivacyPage} />
-      <Route path="/consent" component={ConsentPage} />
+
+      {/* Legal documents */}
+      <Route path="/legal" component={LegalIndexPage} />
+      <Route path="/legal/:slug">{(params) => <LegalDocPage slug={params.slug} />}</Route>
+
+      {/* Legacy legal routes — keep existing registration links working */}
+      <Route path="/privacy"><Redirect to="/legal/privacy" /></Route>
+      <Route path="/consent"><Redirect to="/legal/consent" /></Route>
 
       {/* Admin / operator interface — gated to operator/admin roles */}
       <Route path="/admin"><AdminGuard><AdminPage /></AdminGuard></Route>
