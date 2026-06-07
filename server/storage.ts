@@ -4,8 +4,9 @@ import {
 } from "@shared/schema";
 import type {
   Bike, Parking, ZoneRow, Ride, Ticket, Payment, Wallet,
-  MapObject, InsertMapObject, User, OtpRequest,
+  MapObject, InsertMapObject, User, OtpRequest, UserRole, UpdateProfileInput,
 } from "@shared/schema";
+import { CONSENT_VERSION } from "@shared/schema";
 import { randomUUID, createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import {
   PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES,
@@ -93,7 +94,13 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   phone TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  email TEXT,
+  role TEXT NOT NULL DEFAULT 'rider',
+  consent_accepted_at INTEGER,
+  consent_version TEXT,
+  consent_ip TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS otp_requests (
   phone TEXT PRIMARY KEY,
@@ -105,6 +112,27 @@ CREATE TABLE IF NOT EXISTS otp_requests (
   consumed INTEGER NOT NULL DEFAULT 0
 );
 `);
+
+// ---------- Users column migration (production user fields) ----------
+// Older prototype DBs created the users table with only id/name/phone/created_at.
+// Real-user fields (email, role, consent metadata, updated_at) are added in
+// place via ALTER TABLE so existing rider rows are preserved. SQLite has no
+// "ADD COLUMN IF NOT EXISTS", so we inspect the table and add what's missing.
+function migrateUsersTable() {
+  const cols = (sqlite.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  const addColumn = (name: string, ddl: string) => {
+    if (!cols.includes(name)) sqlite.exec(`ALTER TABLE users ADD COLUMN ${ddl}`);
+  };
+  addColumn("email", "email TEXT");
+  addColumn("role", "role TEXT NOT NULL DEFAULT 'rider'");
+  addColumn("consent_accepted_at", "consent_accepted_at INTEGER");
+  addColumn("consent_version", "consent_version TEXT");
+  addColumn("consent_ip", "consent_ip TEXT");
+  addColumn("updated_at", "updated_at INTEGER");
+}
+migrateUsersTable();
 
 const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
 
@@ -339,15 +367,43 @@ export function normalizePhone(raw: string): string {
   return hasPlus ? "+" + digits : digits;
 }
 
+// Temporary admin bootstrap. ADMIN_PHONE_NUMBERS is a comma-separated list of
+// phone numbers (any format) that should be granted the admin role. Nothing is
+// hardcoded: with the env unset the set is empty and no one is auto-promoted.
+// Each entry is normalized the same way rider phones are, so "8…" / "+7…" /
+// spaced forms all match. This is a stopgap until a proper role-admin UI exists.
+function adminPhoneSet(): Set<string> {
+  const raw = process.env.ADMIN_PHONE_NUMBERS || "";
+  return new Set(
+    raw
+      .split(",")
+      .map((p) => normalizePhone(p))
+      .filter((p) => p.replace(/\D/g, "").length >= 10),
+  );
+}
+
+export function isAdminPhone(phone: string): boolean {
+  return adminPhoneSet().has(normalizePhone(phone));
+}
+
+// Resolve the role a user should currently have. The ADMIN_PHONE_NUMBERS env
+// takes precedence so a phone added to the list is promoted on next lookup even
+// if the stored row predates the list; otherwise the persisted role is used.
+export function resolveRole(user: User): UserRole {
+  if (isAdminPhone(user.phone)) return "admin";
+  return (user.role as UserRole) ?? "rider";
+}
+
 export interface IStorage {
   // users
   getUser(id: string): User | undefined;
   getUserByPhone(phone: string): User | undefined;
+  updateProfile(id: string, patch: UpdateProfileInput): { user: User } | { error: string };
   // OTP verification
   startOtp(input: { name: string; phone: string }):
     | { ok: true; phone: string; code: string; resendInSec: number }
     | { error: string; retryAfterSec?: number };
-  verifyOtp(input: { phone: string; code: string }): { user: User } | { error: string };
+  verifyOtp(input: { phone: string; code: string; consentIp?: string }): { user: User } | { error: string };
   // bikes
   listBikes(): Bike[];
   getBike(id: string): Bike | undefined;
@@ -380,13 +436,38 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  // Apply the env-driven admin override so callers always see the effective
+  // role without each one re-checking ADMIN_PHONE_NUMBERS.
+  private withResolvedRole(user: User | undefined): User | undefined {
+    if (!user) return user;
+    return { ...user, role: resolveRole(user) };
+  }
+
   getUser(id: string) {
-    return db.select().from(users).where(eq(users.id, id)).get() as User | undefined;
+    const u = db.select().from(users).where(eq(users.id, id)).get() as User | undefined;
+    return this.withResolvedRole(u);
   }
 
   getUserByPhone(phone: string) {
     const normalized = normalizePhone(phone);
-    return db.select().from(users).where(eq(users.phone, normalized)).get() as User | undefined;
+    const u = db.select().from(users).where(eq(users.phone, normalized)).get() as User | undefined;
+    return this.withResolvedRole(u);
+  }
+
+  // Self-service profile update for the current user. Only name/email are
+  // mutable here; phone changes must go through SMS OTP (not this endpoint).
+  updateProfile(id: string, patch: UpdateProfileInput) {
+    const existing = db.select().from(users).where(eq(users.id, id)).get() as User | undefined;
+    if (!existing) return { error: "Пользователь не найден" };
+
+    const set: Partial<User> = { updatedAt: Date.now() };
+    if (patch.name !== undefined) set.name = patch.name.trim();
+    if (patch.email !== undefined) {
+      const email = patch.email.trim();
+      set.email = email.length > 0 ? email : null;
+    }
+    db.update(users).set(set as any).where(eq(users.id, id)).run();
+    return { user: this.getUser(id)! };
   }
 
   // ---------- OTP verification ----------
@@ -432,7 +513,7 @@ export class DatabaseStorage implements IStorage {
 
   // Step 2: verify a submitted code. On success the rider is created (or reused
   // if the phone already registered) and the request row is consumed.
-  verifyOtp({ phone, code }: { phone: string; code: string }) {
+  verifyOtp({ phone, code, consentIp }: { phone: string; code: string; consentIp?: string }) {
     const cleanPhone = normalizePhone(phone);
     const req = db.select().from(otpRequests)
       .where(eq(otpRequests.phone, cleanPhone)).get() as OtpRequest | undefined;
@@ -461,22 +542,43 @@ export class DatabaseStorage implements IStorage {
     // Correct code — consume the request so it can't be reused.
     db.update(otpRequests).set({ consumed: true }).where(eq(otpRequests.phone, cleanPhone)).run();
 
+    // Consent was accepted at OTP start (the API requires consent: true before
+    // a code is sent), so record the consent metadata on verify when the rider
+    // row is created/refreshed. The verified phone IS the proof of consent.
+    const now = Date.now();
+    const role: UserRole = isAdminPhone(cleanPhone) ? "admin" : "rider";
+
     // Reuse an existing rider for this phone (keeps rides/wallet) or create one.
-    let user = this.getUserByPhone(cleanPhone);
-    if (user) {
-      if (user.name !== req.name) {
-        db.update(users).set({ name: req.name }).where(eq(users.id, user.id)).run();
-        user = this.getUser(user.id)!;
-      }
-      return { user };
+    const existing = db.select().from(users).where(eq(users.phone, cleanPhone)).get() as
+      | User
+      | undefined;
+    if (existing) {
+      const set: Partial<User> = {
+        updatedAt: now,
+        consentAcceptedAt: now,
+        consentVersion: CONSENT_VERSION,
+        consentIp: consentIp ?? existing.consentIp ?? null,
+        // Keep an already-elevated role (e.g. operator) but ensure admin phones
+        // are promoted. Never silently demote a stored operator/admin.
+        role: role === "admin" ? "admin" : (existing.role as UserRole),
+      };
+      if (existing.name !== req.name) set.name = req.name;
+      db.update(users).set(set as any).where(eq(users.id, existing.id)).run();
+      return { user: this.getUser(existing.id)! };
     }
-    const row = db.insert(users).values({
+    db.insert(users).values({
       id: randomUUID(),
       name: req.name,
       phone: cleanPhone,
-      createdAt: Date.now(),
-    }).returning().get() as User;
-    return { user: row };
+      email: null,
+      role,
+      consentAcceptedAt: now,
+      consentVersion: CONSENT_VERSION,
+      consentIp: consentIp ?? null,
+      createdAt: now,
+      updatedAt: now,
+    } as any).run();
+    return { user: this.getUserByPhone(cleanPhone)! };
   }
 
   listBikes() { return db.select().from(bikes).all() as Bike[]; }

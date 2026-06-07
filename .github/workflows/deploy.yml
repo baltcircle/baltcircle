@@ -33,6 +33,10 @@ jobs:
           SMSRU_API_ID: ${{ secrets.SMSRU_API_ID }}
           OTP_SECRET: ${{ secrets.OTP_SECRET }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          # Comma-separated phone numbers granted the admin role (temporary
+          # bootstrap). Passed through to the container at runtime, never
+          # hardcoded. Empty when the secret is unset -> no auto-admins.
+          ADMIN_PHONE_NUMBERS: ${{ secrets.ADMIN_PHONE_NUMBERS }}
         run: |
           set -e
           docker compose up -d --build

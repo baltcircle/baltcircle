@@ -1,10 +1,13 @@
-import type { Express, Request } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { storage } from "./storage";
 import { z } from "zod";
 import { TARIFFS } from "@shared/geo";
-import { insertMapObjectSchema, otpStartSchema, otpVerifySchema } from "@shared/schema";
+import {
+  insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
+} from "@shared/schema";
+import type { UserRole } from "@shared/schema";
 import { sendOtpSms } from "./sms";
 
 // Resolve the active rider id. A registered rider has their user id stored in
@@ -12,6 +15,42 @@ import { sendOtpSms } from "./sms";
 // MVP (map, demo rides, analytics) keeps working without registration.
 function riderId(req: Request): string {
   return req.session?.userId ?? "demo";
+}
+
+// Best-effort client IP for consent auditing. Honours the first X-Forwarded-For
+// hop (we set `trust proxy` in index.ts) and falls back to the socket address.
+function clientIp(req: Request): string | undefined {
+  const fwd = req.headers["x-forwarded-for"];
+  if (typeof fwd === "string" && fwd.length > 0) return fwd.split(",")[0].trim();
+  return req.ip || req.socket?.remoteAddress || undefined;
+}
+
+// Guard for operator/admin-only endpoints. Resolves the session user and checks
+// the effective role (which honours the ADMIN_PHONE_NUMBERS env override).
+// 401 when not registered, 403 when registered but not privileged.
+function requireRole(...roles: UserRole[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const id = req.session?.userId;
+    const user = id ? storage.getUser(id) : undefined;
+    if (!user) return res.status(401).json({ error: "Требуется вход" });
+    if (!roles.includes(user.role as UserRole)) {
+      return res.status(403).json({ error: "Нет доступа" });
+    }
+    next();
+  };
+}
+
+// Admin guard for operator-facing mutation endpoints. To avoid locking the
+// operator UI (map editor, tickets) out of local dev — where no admin exists —
+// the guard is only enforced when ADMIN_PHONE_NUMBERS is configured. With the
+// env set (staging/prod) it requires an operator/admin session; without it the
+// endpoints stay open so the MVP map editor remains testable.
+function requireAdminWhenConfigured() {
+  const guard = requireRole("operator", "admin");
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!process.env.ADMIN_PHONE_NUMBERS) return next();
+    return guard(req, res, next);
+  };
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
@@ -51,7 +90,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
       return res.status(400).json({ error: msg });
     }
-    const result = storage.verifyOtp({ phone: parsed.data.phone, code: parsed.data.code });
+    const result = storage.verifyOtp({
+      phone: parsed.data.phone,
+      code: parsed.data.code,
+      consentIp: clientIp(req),
+    });
     if ("error" in result) return res.status(400).json(result);
     req.session.userId = result.user.id;
     res.status(201).json(result.user);
@@ -68,6 +111,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.json(null);
     }
     res.json(user);
+  });
+
+  // Self-service profile update for the logged-in rider. Name and email only —
+  // phone changes are intentionally not accepted here (they need SMS OTP).
+  app.patch("/api/users/me", (req, res) => {
+    const id = req.session?.userId;
+    if (!id) return res.status(401).json({ error: "Требуется вход" });
+    const parsed = updateProfileSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+    const result = storage.updateProfile(id, parsed.data);
+    if ("error" in result) return res.status(400).json(result);
+    res.json(result.user);
   });
   // -------------- Bikes / Parkings / Zones --------------
   app.get("/api/bikes", (_req, res) => res.json(storage.listBikes()));
@@ -154,7 +212,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     res.json(storage.createTicket(parsed.data));
   });
-  app.patch("/api/tickets/:id", (req, res) => {
+  app.patch("/api/tickets/:id", requireAdminWhenConfigured(), (req, res) => {
     const schema = z.object({ status: z.enum(["open", "in_progress", "resolved"]) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
@@ -165,12 +223,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // -------------- Map objects (operator-drawn routes/zones) --------------
   app.get("/api/map-objects", (_req, res) => res.json(storage.listMapObjects()));
-  app.post("/api/map-objects", (req, res) => {
+  app.post("/api/map-objects", requireAdminWhenConfigured(), (req, res) => {
     const parsed = insertMapObjectSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     res.json(storage.createMapObject(parsed.data));
   });
-  app.delete("/api/map-objects/:id", (req, res) => {
+  app.delete("/api/map-objects/:id", requireAdminWhenConfigured(), (req, res) => {
     const ok = storage.deleteMapObject(Number(req.params.id));
     if (!ok) return res.status(404).json({ error: "Объект не найден" });
     res.json({ ok: true });

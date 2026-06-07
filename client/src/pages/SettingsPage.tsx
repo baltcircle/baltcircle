@@ -1,32 +1,59 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
+import { useMutation } from "@tanstack/react-query";
 import { useTheme, type ThemeMode } from "@/lib/theme";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { CURRENT_USER_KEY } from "@/hooks/use-current-user";
+import type { User as UserType } from "@shared/schema";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, User, Moon, Bell, Save } from "lucide-react";
+import { ArrowLeft, User, Moon, Bell, Save, Lock } from "lucide-react";
 
 export function SettingsPage() {
   const { mode, setMode } = useTheme();
   const toast = useToast();
-  const { user } = useCurrentUser();
+  const { user, isRegistered } = useCurrentUser();
 
-  // Basic profile fields. Name/phone prefill from the registered rider when
-  // available; edits stay local for now (no PATCH endpoint yet) — email
-  // remains an MVP placeholder since it isn't collected at registration.
-  const [name, setName] = useState("Гость");
-  const [phone, setPhone] = useState("+7 900 000-00-00");
-  const [email, setEmail] = useState("demo@baltcircle.app");
+  // Profile fields. Name/email persist to the backend for a registered rider.
+  // Phone is read-only here — changing it requires SMS confirmation, which is
+  // not part of this step, so the field is shown but locked.
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
 
   useEffect(() => {
     if (user) {
       setName(user.name);
-      setPhone(user.phone);
+      setEmail(user.email ?? "");
     }
   }, [user]);
+
+  const phone = user?.phone ?? "—";
+
+  const saveProfile = useMutation<UserType, Error, void>({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", "/api/users/me", {
+        name: name.trim(),
+        email: email.trim(),
+      });
+      return res.json();
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData(CURRENT_USER_KEY, updated);
+      queryClient.invalidateQueries({ queryKey: CURRENT_USER_KEY });
+      toast.toast({ title: "Сохранено", description: "Профиль обновлён." });
+    },
+    onError: (err) => {
+      toast.toast({
+        title: "Не удалось сохранить",
+        description: err?.message?.replace(/^\d+:\s*/, "") ?? "Попробуйте позже.",
+        variant: "destructive",
+      });
+    },
+  });
 
   // Notification preferences — MVP switches, local state only.
   const [pushOn, setPushOn] = useState(true);
@@ -60,6 +87,11 @@ export function SettingsPage() {
         {/* Основные */}
         <Section icon={User} title="Основные" testId="section-general">
           <div className="space-y-4">
+            {!isRegistered && (
+              <p className="text-xs text-muted-foreground" data-testid="text-settings-guest">
+                Войдите, чтобы сохранять имя и почту. Гостевые данные не сохраняются.
+              </p>
+            )}
             <Field>
               <Label htmlFor="settings-name">Имя</Label>
               <Input
@@ -67,6 +99,7 @@ export function SettingsPage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Ваше имя"
+                disabled={!isRegistered}
                 data-testid="input-name"
               />
             </Field>
@@ -77,10 +110,15 @@ export function SettingsPage() {
                 type="tel"
                 inputMode="tel"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="+7 900 000-00-00"
+                readOnly
+                disabled
+                className="opacity-70"
                 data-testid="input-phone"
               />
+              <p className="text-xs text-muted-foreground flex items-center gap-1" data-testid="text-phone-note">
+                <Lock className="w-3 h-3" />
+                Смена номера требует подтверждения по SMS.
+              </p>
             </Field>
             <Field>
               <Label htmlFor="settings-email">Почта</Label>
@@ -91,20 +129,18 @@ export function SettingsPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
+                disabled={!isRegistered}
                 data-testid="input-email"
               />
             </Field>
             <Button
               className="w-full"
               data-testid="button-save-general"
-              onClick={() =>
-                toast.toast({
-                  title: "Сохранено",
-                  description: "MVP: данные сохранены локально, без отправки на сервер.",
-                })
-              }
+              disabled={!isRegistered || saveProfile.isPending}
+              onClick={() => saveProfile.mutate()}
             >
-              <Save className="w-4 h-4 mr-2" /> Сохранить
+              <Save className="w-4 h-4 mr-2" />
+              {saveProfile.isPending ? "Сохранение…" : "Сохранить"}
             </Button>
           </div>
         </Section>

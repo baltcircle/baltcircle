@@ -25,6 +25,10 @@ services:
       # SESSION_SECRET when unset.
       OTP_SECRET: ${OTP_SECRET:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
+      # Comma-separated list of phone numbers granted the admin role. Temporary
+      # bootstrap until a role-admin UI exists. Read from the host env (set by
+      # the deploy workflow from a GitHub secret). Empty -> no auto-admins.
+      ADMIN_PHONE_NUMBERS: ${ADMIN_PHONE_NUMBERS:-}
     ports:
       - "5000:5000"
     volumes:

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { User } from "@shared/schema";
+import type { User, UserRole } from "@shared/schema";
 
 export const CURRENT_USER_KEY = ["/api/users/current"] as const;
 
@@ -12,9 +12,14 @@ export function useCurrentUser() {
     staleTime: 1000 * 60,
   });
 
+  const user = query.data ?? null;
+  const role = (user?.role as UserRole | undefined) ?? null;
+
   return {
-    user: query.data ?? null,
-    isRegistered: !!query.data,
+    user,
+    role,
+    isRegistered: !!user,
+    isStaff: role === "operator" || role === "admin",
     isLoading: query.isLoading,
   };
 }

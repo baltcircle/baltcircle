@@ -10,9 +10,35 @@ export const users = sqliteTable("users", {
   id: text("id").primaryKey(),               // generated server-side
   name: text("name").notNull(),
   phone: text("phone").notNull(),            // normalized to digits with optional leading +
+  email: text("email"),                      // optional, rider-supplied; validated on update
+  role: text("role").notNull().default("rider"), // rider | operator | admin
+  consentAcceptedAt: integer("consent_accepted_at"), // unix ms when consent was accepted
+  consentVersion: text("consent_version"),   // e.g. "v1-2026-06-07"
+  consentIp: text("consent_ip"),             // best-effort client IP captured at consent time
   createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at"),          // unix ms of last profile mutation
 });
 export type User = typeof users.$inferSelect;
+export type UserRole = "rider" | "operator" | "admin";
+
+// Consent terms version currently in force. Bump (and update the privacy/consent
+// copy) whenever the terms change so we can tell who accepted which version.
+export const CONSENT_VERSION = "v1-2026-06-07";
+
+// Profile self-service update: a rider may change their display name and email.
+// Phone is intentionally excluded here — changing it must go through SMS OTP.
+export const updateProfileSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, "Имя должно содержать минимум 2 символа")
+    .max(80, "Имя слишком длинное")
+    .optional(),
+  email: z
+    .union([z.string().trim().email("Введите корректный email").max(120), z.literal("")])
+    .optional(),
+});
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 
 /* ------- OTP REQUESTS (SMS phone verification) ------- */
 // One pending verification per phone. The code is never stored in plaintext —

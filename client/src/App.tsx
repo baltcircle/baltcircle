@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
 import { AppShell } from "@/components/AppShell";
+import { AdminGuard } from "@/components/AdminGuard";
 import { MapPage } from "@/pages/MapPage";
 import { RentPage } from "@/pages/RentPage";
 import { TariffsPage } from "@/pages/TariffsPage";
@@ -37,11 +38,11 @@ function AppRouter() {
       <Route path="/privacy" component={PrivacyPage} />
       <Route path="/consent" component={ConsentPage} />
 
-      {/* Admin / operator interface */}
-      <Route path="/admin" component={AdminPage} />
-      <Route path="/admin/map" component={MapEditorPage} />
-      <Route path="/admin/analytics" component={AnalyticsPage} />
-      <Route path="/admin/maintenance" component={MaintenancePage} />
+      {/* Admin / operator interface — gated to operator/admin roles */}
+      <Route path="/admin"><AdminGuard><AdminPage /></AdminGuard></Route>
+      <Route path="/admin/map"><AdminGuard><MapEditorPage /></AdminGuard></Route>
+      <Route path="/admin/analytics"><AdminGuard><AnalyticsPage /></AdminGuard></Route>
+      <Route path="/admin/maintenance"><AdminGuard><MaintenancePage /></AdminGuard></Route>
 
       {/* Legacy admin deep-links — redirect to the namespaced routes */}
       <Route path="/analytics"><Redirect to="/admin/analytics" /></Route>
