@@ -6,6 +6,7 @@ import { z } from "zod";
 import { TARIFFS } from "@shared/geo";
 import {
   insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
+  adminSetRoleSchema, adminSetBlockedSchema,
 } from "@shared/schema";
 import type { UserRole } from "@shared/schema";
 import { sendOtpSms } from "./sms";
@@ -127,6 +128,63 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if ("error" in result) return res.status(400).json(result);
     res.json(result.user);
   });
+
+  // -------------- Admin: user management --------------
+  // All endpoints require an operator/admin session (401 unregistered, 403
+  // registered-but-not-staff). Granting/revoking the admin role additionally
+  // requires the caller to be an admin — operators may manage rider/operator
+  // roles but cannot create or remove admins.
+  app.get("/api/admin/users", requireRole("operator", "admin"), (_req, res) => {
+    res.json(storage.listUsers());
+  });
+
+  app.patch("/api/admin/users/:id/role", requireRole("operator", "admin"), (req, res) => {
+    const parsed = adminSetRoleSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Bad request" });
+
+    const targetId = String(req.params.id);
+    const actor = storage.getUser(req.session!.userId!)!;
+    const target = storage.getUser(targetId);
+    if (!target) return res.status(404).json({ error: "Пользователь не найден" });
+
+    // Only an admin may grant admin or change an existing admin's role.
+    const touchesAdmin = parsed.data.role === "admin" || target.role === "admin";
+    if (touchesAdmin && actor.role !== "admin") {
+      return res.status(403).json({ error: "Только администратор может назначать роль администратора" });
+    }
+    // An admin can't demote themselves — avoids accidentally locking the last
+    // admin out of the operator panel.
+    if (actor.id === target.id && actor.role === "admin" && parsed.data.role !== "admin") {
+      return res.status(400).json({ error: "Нельзя снять роль администратора с самого себя" });
+    }
+
+    const result = storage.setUserRole(targetId, parsed.data.role);
+    if ("error" in result) return res.status(404).json(result);
+    res.json(result.user);
+  });
+
+  app.patch("/api/admin/users/:id/status", requireRole("operator", "admin"), (req, res) => {
+    const parsed = adminSetBlockedSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Bad request" });
+
+    const targetId = String(req.params.id);
+    const actor = storage.getUser(req.session!.userId!)!;
+    const target = storage.getUser(targetId);
+    if (!target) return res.status(404).json({ error: "Пользователь не найден" });
+
+    if (actor.id === target.id) {
+      return res.status(400).json({ error: "Нельзя заблокировать самого себя" });
+    }
+    // Blocking an admin requires admin privileges.
+    if (target.role === "admin" && actor.role !== "admin") {
+      return res.status(403).json({ error: "Недостаточно прав для блокировки администратора" });
+    }
+
+    const result = storage.setUserBlocked(targetId, parsed.data.blocked, parsed.data.reason);
+    if ("error" in result) return res.status(404).json(result);
+    res.json(result.user);
+  });
+
   // -------------- Bikes / Parkings / Zones --------------
   app.get("/api/bikes", (_req, res) => res.json(storage.listBikes()));
   app.get("/api/bikes/:id", (req, res) => {
@@ -156,6 +214,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const schema = z.object({ bikeId: z.string(), tariff: z.string().default("payg") });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
+    // A blocked account may stay logged in but cannot start new rentals.
+    const sessUser = req.session?.userId ? storage.getUser(req.session.userId) : undefined;
+    if (sessUser?.blockedAt) {
+      return res.status(403).json({ error: "Аккаунт заблокирован. Обратитесь в поддержку." });
+    }
     const r = storage.startRide({ bikeId: parsed.data.bikeId, userId: riderId(req), tariff: parsed.data.tariff });
     if ("error" in r) return res.status(400).json(r);
     res.json(r);

@@ -15,11 +15,31 @@ export const users = sqliteTable("users", {
   consentAcceptedAt: integer("consent_accepted_at"), // unix ms when consent was accepted
   consentVersion: text("consent_version"),   // e.g. "v1-2026-06-07"
   consentIp: text("consent_ip"),             // best-effort client IP captured at consent time
+  blockedAt: integer("blocked_at"),          // unix ms when an operator blocked the account; null = active
+  blockedReason: text("blocked_reason"),     // optional operator-supplied note shown in the admin UI
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at"),          // unix ms of last profile mutation
 });
 export type User = typeof users.$inferSelect;
 export type UserRole = "rider" | "operator" | "admin";
+
+// Admin role assignment. Restricted to the three known roles so an operator
+// can't store an arbitrary string. Promotion to "admin" is gated server-side
+// (only an admin may grant admin) — this schema just validates the value.
+export const adminSetRoleSchema = z.object({
+  role: z.enum(["rider", "operator", "admin"]),
+});
+export type AdminSetRoleInput = z.infer<typeof adminSetRoleSchema>;
+
+// Admin block/unblock. `blocked: true` disables the account; an optional reason
+// is stored for the audit trail and shown back in the admin table.
+export const adminSetBlockedSchema = z.object({
+  blocked: z.boolean(),
+  reason: z
+    .union([z.string().trim().max(200), z.literal("")])
+    .optional(),
+});
+export type AdminSetBlockedInput = z.infer<typeof adminSetBlockedSchema>;
 
 // Consent terms version currently in force. Bump (and update the privacy/consent
 // copy) whenever the terms change so we can tell who accepted which version.

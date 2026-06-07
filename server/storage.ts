@@ -99,6 +99,8 @@ CREATE TABLE IF NOT EXISTS users (
   consent_accepted_at INTEGER,
   consent_version TEXT,
   consent_ip TEXT,
+  blocked_at INTEGER,
+  blocked_reason TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER
 );
@@ -130,6 +132,8 @@ function migrateUsersTable() {
   addColumn("consent_accepted_at", "consent_accepted_at INTEGER");
   addColumn("consent_version", "consent_version TEXT");
   addColumn("consent_ip", "consent_ip TEXT");
+  addColumn("blocked_at", "blocked_at INTEGER");
+  addColumn("blocked_reason", "blocked_reason TEXT");
   addColumn("updated_at", "updated_at INTEGER");
 }
 migrateUsersTable();
@@ -399,6 +403,10 @@ export interface IStorage {
   getUser(id: string): User | undefined;
   getUserByPhone(phone: string): User | undefined;
   updateProfile(id: string, patch: UpdateProfileInput): { user: User } | { error: string };
+  // admin user management
+  listUsers(): User[];
+  setUserRole(id: string, role: UserRole): { user: User } | { error: string };
+  setUserBlocked(id: string, blocked: boolean, reason?: string): { user: User } | { error: string };
   // OTP verification
   startOtp(input: { name: string; phone: string }):
     | { ok: true; phone: string; code: string; resendInSec: number }
@@ -466,6 +474,34 @@ export class DatabaseStorage implements IStorage {
       const email = patch.email.trim();
       set.email = email.length > 0 ? email : null;
     }
+    db.update(users).set(set as any).where(eq(users.id, id)).run();
+    return { user: this.getUser(id)! };
+  }
+
+  // ---------- Admin user management ----------
+  // List every registered user, newest first, with effective roles applied so
+  // the admin table shows the same role the rest of the app enforces (the
+  // ADMIN_PHONE_NUMBERS override can make a stored "rider" effectively admin).
+  listUsers() {
+    const rows = db.select().from(users).orderBy(desc(users.createdAt)).all() as User[];
+    return rows.map((u) => this.withResolvedRole(u)!);
+  }
+
+  setUserRole(id: string, role: UserRole) {
+    const existing = db.select().from(users).where(eq(users.id, id)).get() as User | undefined;
+    if (!existing) return { error: "Пользователь не найден" };
+    db.update(users).set({ role, updatedAt: Date.now() } as any).where(eq(users.id, id)).run();
+    return { user: this.getUser(id)! };
+  }
+
+  setUserBlocked(id: string, blocked: boolean, reason?: string) {
+    const existing = db.select().from(users).where(eq(users.id, id)).get() as User | undefined;
+    if (!existing) return { error: "Пользователь не найден" };
+    const set: Partial<User> = {
+      blockedAt: blocked ? Date.now() : null,
+      blockedReason: blocked ? (reason?.trim() || null) : null,
+      updatedAt: Date.now(),
+    };
     db.update(users).set(set as any).where(eq(users.id, id)).run();
     return { user: this.getUser(id)! };
   }

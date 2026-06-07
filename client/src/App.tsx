@@ -18,6 +18,7 @@ import { SafetyPage } from "@/pages/SafetyPage";
 import { PrivacyPage } from "@/pages/PrivacyPage";
 import { ConsentPage } from "@/pages/ConsentPage";
 import { AdminPage } from "@/pages/AdminPage";
+import { UsersPage } from "@/pages/UsersPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
 import { MaintenancePage } from "@/pages/MaintenancePage";
 import { MapEditorPage } from "@/pages/MapEditorPage";
@@ -40,6 +41,7 @@ function AppRouter() {
 
       {/* Admin / operator interface — gated to operator/admin roles */}
       <Route path="/admin"><AdminGuard><AdminPage /></AdminGuard></Route>
+      <Route path="/admin/users"><AdminGuard><UsersPage /></AdminGuard></Route>
       <Route path="/admin/map"><AdminGuard><MapEditorPage /></AdminGuard></Route>
       <Route path="/admin/analytics"><AdminGuard><AnalyticsPage /></AdminGuard></Route>
       <Route path="/admin/maintenance"><AdminGuard><MaintenancePage /></AdminGuard></Route>

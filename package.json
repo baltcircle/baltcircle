@@ -11,7 +11,8 @@
     "db:push": "drizzle-kit push",
     "smoke:register": "tsx script/smoke-register.ts",
     "smoke:session": "tsx script/smoke-session.ts",
-    "smoke:profile": "tsx script/smoke-profile.ts"
+    "smoke:profile": "tsx script/smoke-profile.ts",
+    "smoke:admin-users": "tsx script/smoke-admin-users.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

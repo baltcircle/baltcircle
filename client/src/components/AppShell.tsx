@@ -5,7 +5,7 @@ import { useAppViewport } from "@/hooks/use-app-viewport";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import {
   Map, QrCode, CreditCard, Route, ShieldCheck, Wrench, BarChart3,
-  Sun, Moon, Bike, ChevronRight, ArrowLeft, User,
+  Sun, Moon, Bike, ChevronRight, ArrowLeft, User, Users,
 } from "lucide-react";
 
 interface NavItem {
@@ -25,10 +25,11 @@ const RIDER_NAV: NavItem[] = [
 
 // Operator / admin interface — separated under /admin.
 const OPS_NAV: NavItem[] = [
-  { href: "/admin",             label: "Парк",      icon: ShieldCheck, testId: "nav-admin" },
-  { href: "/admin/map",         label: "Карта",     icon: Map,         testId: "nav-map-editor" },
-  { href: "/admin/analytics",   label: "Аналитика", icon: BarChart3,   testId: "nav-analytics" },
-  { href: "/admin/maintenance", label: "Сервис",    icon: Wrench,      testId: "nav-maintenance" },
+  { href: "/admin",             label: "Парк",         icon: ShieldCheck, testId: "nav-admin" },
+  { href: "/admin/users",       label: "Пользователи", icon: Users,       testId: "nav-users" },
+  { href: "/admin/map",         label: "Карта",        icon: Map,         testId: "nav-map-editor" },
+  { href: "/admin/analytics",   label: "Аналитика",    icon: BarChart3,   testId: "nav-analytics" },
+  { href: "/admin/maintenance", label: "Сервис",       icon: Wrench,      testId: "nav-maintenance" },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
