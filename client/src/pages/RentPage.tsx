@@ -34,7 +34,7 @@ export function RentPage() {
 
   const startMut = useMutation<Ride, Error, string>({
     mutationFn: async (bikeId: string) => {
-      const res = await apiRequest("POST", "/api/rides/start", { bikeId, tariff: "payg" });
+      const res = await apiRequest("POST", "/api/rides/start", { bikeId, tariff: "h1" });
       return res.json();
     },
     onSuccess: () => {

@@ -6,7 +6,7 @@ import { CoastMap } from "./CoastMap";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
-import { fmtDistance, fmtDuration, fmtRub } from "@/lib/format";
+import { fmtDistance, fmtDuration, fmtRub, fmtTariff } from "@/lib/format";
 import { Pause, Lock, MapPin, AlertTriangle, Sparkles, Gauge } from "lucide-react";
 import { checkZoneState } from "@shared/geo";
 import { useToast } from "@/hooks/use-toast";
@@ -139,7 +139,7 @@ export function ActiveRidePanel({ ride }: { ride: Ride }) {
             </div>
             <div className="flex items-center justify-between text-sm">
               <span className="flex items-center gap-2 text-muted-foreground"><Sparkles className="w-4 h-4" />Тариф</span>
-              <span className="font-display font-light">{tariffLabel(ride.tariff)}</span>
+              <span className="font-display font-light">{fmtTariff(ride.tariff)}</span>
             </div>
           </Card>
 
@@ -182,9 +182,6 @@ function lastPoint(ride: Ride): [number, number, number] | null {
     const pts = JSON.parse(ride.track) as [number, number, number][];
     return pts[pts.length - 1] ?? null;
   } catch { return null; }
-}
-function tariffLabel(t: string) {
-  return t === "day" ? "Дневной" : t === "month" ? "Месячный" : "По минутам";
 }
 function Big({ label, value, testId }: { label: string; value: string; testId: string }) {
   return (

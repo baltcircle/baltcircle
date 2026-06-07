@@ -1,14 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
 import { Link } from "wouter";
 import type { Ride } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { fmtDistance } from "@/lib/format";
-import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import {
   CreditCard as CreditCardIcon, Route as RouteIcon, ShieldCheck, HelpCircle, Settings,
-  ChevronRight, CreditCard, User, Smartphone, Check,
+  ChevronRight, CreditCard, User, Wallet,
 } from "lucide-react";
 
 function greeting(d = new Date()) {
@@ -20,12 +18,7 @@ function greeting(d = new Date()) {
 }
 
 export function ProfilePage() {
-  const toast = useToast();
   const { user } = useCurrentUser();
-
-  // MVP payment-method state — no real card data is collected or stored.
-  const [cardBound, setCardBound] = useState(false);
-  const [sbpBound, setSbpBound] = useState(false);
 
   const ridesQ = useQuery<Ride[]>({
     queryKey: ["/api/rides", { userId: "demo" }],
@@ -75,47 +68,9 @@ export function ProfilePage() {
           />
         </div>
 
-        {/* Payment-methods section — replaces the old wallet. MVP/test binding
-            only: no real card data is collected or stored. */}
-        <section className="mb-7" data-testid="section-payment-methods">
-          <div className="flex items-center gap-2 mb-3 px-1">
-            <CreditCardIcon className="w-4 h-4 text-muted-foreground" />
-            <h2 className="font-display text-lg font-light">Способы оплаты</h2>
-          </div>
-          <div className="rounded-2xl border border-card-border bg-card overflow-hidden divide-y divide-card-border">
-            <PaymentMethodRow
-              icon={CreditCard}
-              label={cardBound ? "Карта •••• 4242 (тест)" : "Привязать карту"}
-              hint={cardBound ? "MVP — тестовая привязка, без реальных данных" : "Списание после поездки"}
-              bound={cardBound}
-              testId="button-bind-card"
-              onClick={() => {
-                setCardBound((v) => !v);
-                toast.toast({
-                  title: cardBound ? "Карта отвязана" : "Карта привязана (тест)",
-                  description: cardBound ? undefined : "MVP-привязка. Реальные данные карты не сохраняются.",
-                });
-              }}
-            />
-            <PaymentMethodRow
-              icon={Smartphone}
-              label="Оплата по СБП"
-              hint={sbpBound ? "MVP — тестовое подключение" : "Система быстрых платежей"}
-              bound={sbpBound}
-              testId="button-sbp-payment"
-              onClick={() => {
-                setSbpBound((v) => !v);
-                toast.toast({
-                  title: sbpBound ? "СБП отключён" : "СБП подключён (тест)",
-                  description: sbpBound ? undefined : "MVP-подключение. Реальная оплата не производится.",
-                });
-              }}
-            />
-          </div>
-        </section>
-
         {/* Menu */}
         <nav className="rounded-2xl border border-card-border bg-card overflow-hidden divide-y divide-card-border">
+          <MenuRow href="/payment-methods" icon={Wallet} label="Способы оплаты" testId="menu-payment-methods" />
           <MenuRow href="/tariffs" icon={CreditCardIcon} label="Тарифы" testId="menu-tariffs" />
           <MenuRow href="/rides" icon={RouteIcon} label="История" testId="menu-history" />
           <MenuRow href="/safety" icon={ShieldCheck} label="Центр безопасности" testId="menu-safety" />
@@ -137,39 +92,6 @@ function Stat({ value, label, testId }: { value: string; label: string; testId: 
       <div className="font-display text-2xl font-light leading-tight">{value}</div>
       <div className="text-sm text-muted-foreground mt-0.5">{label}</div>
     </div>
-  );
-}
-
-function PaymentMethodRow({
-  icon: Icon, label, hint, bound, testId, onClick,
-}: {
-  icon: typeof CreditCard;
-  label: string;
-  hint?: string;
-  bound: boolean;
-  testId: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      data-testid={testId}
-      className="w-full flex items-center gap-3 px-4 py-4 text-left hover-elevate"
-    >
-      <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
-        <Icon className="w-5 h-5" />
-      </span>
-      <span className="flex-1 min-w-0">
-        <span className="block font-light truncate">{label}</span>
-        {hint && <span className="block text-xs text-muted-foreground truncate">{hint}</span>}
-      </span>
-      {bound ? (
-        <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-      ) : (
-        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-      )}
-    </button>
   );
 }
 

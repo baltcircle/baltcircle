@@ -1,3 +1,5 @@
+import { TARIFFS } from "@shared/geo";
+
 export function fmtRub(value: number) {
   const n = Math.round(value);
   return n.toLocaleString("ru-RU") + " ₽";
@@ -26,4 +28,16 @@ export function fmtRelative(ts: number) {
 }
 export function fmtDate(ts: number) {
   return new Date(ts).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+// Legacy tariff ids may still appear on older rides; keep readable fallbacks.
+const LEGACY_TARIFF_LABELS: Record<string, string> = {
+  payg: "По минутам",
+  day: "Дневной",
+  month: "Месячный",
+};
+export function fmtTariff(id: string) {
+  const t = TARIFFS.find((x) => x.id === id);
+  if (t) return t.name;
+  return LEGACY_TARIFF_LABELS[id] ?? id;
 }

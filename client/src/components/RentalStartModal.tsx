@@ -21,10 +21,10 @@ interface Props {
 
 export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
   const toast = useToast();
-  const [tariff, setTariff] = useState<Tariff["id"]>("payg");
+  const [tariff, setTariff] = useState<Tariff["id"]>("h1");
 
   useEffect(() => {
-    if (open) setTariff("payg");
+    if (open) setTariff("h1");
   }, [open]);
 
   const startMut = useMutation<Ride, Error, void>({
@@ -101,7 +101,7 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
-                      {t.id === "payg" ? "Минуты" : t.id === "day" ? "Сутки" : "Месяц"}
+                      Аренда
                     </span>
                     {active && <Check className="w-3.5 h-3.5 text-primary" />}
                   </div>

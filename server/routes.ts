@@ -126,16 +126,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
   app.post("/api/wallet/tariff", (req, res) => {
     const schema = z.object({
-      tariff: z.enum(["payg", "day", "month"]),
+      tariff: z.enum(["h1", "h2", "h3"]),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     // Look up authoritative price/duration server-side; never trust client-supplied values
     const tariffDef = TARIFFS.find((t) => t.id === parsed.data.tariff);
     if (!tariffDef) return res.status(400).json({ error: "Unknown tariff" });
-    const durationMs = parsed.data.tariff === "day" ? 24 * 60 * 60 * 1000
-      : parsed.data.tariff === "month" ? 30 * 24 * 60 * 60 * 1000
-      : 0;
+    const durationMs = tariffDef.durationHours * 60 * 60 * 1000;
     const w = storage.getWallet(riderId(req));
     if (w.balance < tariffDef.price) {
       return res.status(400).json({ error: "Недостаточно средств на балансе" });

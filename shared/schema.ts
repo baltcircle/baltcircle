@@ -173,15 +173,13 @@ export const wallet = sqliteTable("wallet", {
 export type Wallet = typeof wallet.$inferSelect;
 
 /* ------- TYPES for API payloads ------- */
-export type TariffId = "payg" | "day" | "month";
+export type TariffId = "h1" | "h2" | "h3";
 export interface TariffInfo {
   id: TariffId;
   name: string;
   price: number;
   unit: string;
-  perMinute?: number;
-  unlock?: number;
-  freeMinutes?: number;
+  durationHours: number;
   description: string;
   popular?: boolean;
 }

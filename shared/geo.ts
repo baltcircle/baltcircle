@@ -9,43 +9,40 @@ export const MAP_W = 1000;
 export const MAP_H = 700;
 
 export interface Tariff {
-  id: "payg" | "day" | "month";
+  id: "h1" | "h2" | "h3";
   name: string;
   price: number;
   unit: string;
-  unlock?: number;
-  perMinute?: number;
-  freeMinutes?: number;
+  durationHours: number;
   description: string;
   popular?: boolean;
 }
 
 export const TARIFFS: Tariff[] = [
   {
-    id: "payg",
-    name: "По минутам",
-    price: 50,
-    unit: "₽ + 6 ₽/мин",
-    unlock: 50,
-    perMinute: 6,
-    description: "Платите только за время поездки. Без подписки, без обязательств.",
+    id: "h1",
+    name: "1 час",
+    price: 350,
+    unit: "₽",
+    durationHours: 1,
+    description: "Аренда велосипеда на 1 час.",
   },
   {
-    id: "day",
-    name: "Дневной",
-    price: 390,
-    unit: "₽ / 24 часа",
-    freeMinutes: 60,
-    description: "60 бесплатных минут каждые 2 часа в течение суток.",
+    id: "h2",
+    name: "2 часа",
+    price: 600,
+    unit: "₽",
+    durationHours: 2,
+    description: "Аренда велосипеда на 2 часа.",
     popular: true,
   },
   {
-    id: "month",
-    name: "Месячный",
-    price: 1490,
-    unit: "₽ / 30 дней",
-    freeMinutes: 45,
-    description: "45 бесплатных минут на каждую поездку.",
+    id: "h3",
+    name: "3 часа",
+    price: 800,
+    unit: "₽",
+    durationHours: 3,
+    description: "Аренда велосипеда на 3 часа.",
   },
 ];
 

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Ride } from "@shared/schema";
 import { Card } from "@/components/ui/card";
-import { fmtDate, fmtDistance, fmtDuration, fmtRub } from "@/lib/format";
+import { fmtDate, fmtDistance, fmtDuration, fmtRub, fmtTariff } from "@/lib/format";
 import { apiRequest } from "@/lib/queryClient";
 import { Route, Clock, MapPin, Receipt } from "lucide-react";
 
@@ -41,7 +41,7 @@ export function RidesPage() {
               <div className="flex-1 grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
                 <Cell icon={<Clock className="w-3.5 h-3.5" />} label="Время" value={r.endedAt ? fmtDuration(r.endedAt - r.startedAt) : "Активна"} />
                 <Cell icon={<MapPin className="w-3.5 h-3.5" />} label="Дистанция" value={fmtDistance(r.distanceM)} />
-                <Cell icon={<Route className="w-3.5 h-3.5" />} label="Тариф" value={r.tariff === "day" ? "Дневной" : r.tariff === "month" ? "Месячный" : "По минутам"} />
+                <Cell icon={<Route className="w-3.5 h-3.5" />} label="Тариф" value={fmtTariff(r.tariff)} />
                 <Cell icon={<Receipt className="w-3.5 h-3.5" />} label="Стоимость" value={fmtRub(r.cost)} />
               </div>
             </div>
