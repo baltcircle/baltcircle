@@ -26,6 +26,13 @@ jobs:
           # Forwarded into the docker-compose build arg so Vite can inline it
           # into the client bundle at build time.
           VITE_YANDEX_MAPS_API_KEY: ${{ secrets.VITE_YANDEX_MAPS_API_KEY }}
+          # SMS OTP runtime config — consumed by the backend container at
+          # runtime (docker-compose `environment:`), never inlined into the
+          # client bundle. Secrets are passed through, not hardcoded.
+          SMS_PROVIDER: ${{ secrets.SMS_PROVIDER }}
+          SMSRU_API_ID: ${{ secrets.SMSRU_API_ID }}
+          OTP_SECRET: ${{ secrets.OTP_SECRET }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
         run: |
           set -e
           docker compose up -d --build

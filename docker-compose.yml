@@ -15,6 +15,16 @@ services:
       NODE_ENV: production
       PORT: 5000
       DATABASE_PATH: /app/data/data.db
+      # SMS OTP — backend-only runtime config (not inlined into the client
+      # bundle). Read from the host env (set by the deploy workflow from GitHub
+      # secrets). If SMS_PROVIDER is empty the app uses a dev fallback that logs
+      # codes instead of sending SMS, so production must set SMS_PROVIDER=smsru.
+      SMS_PROVIDER: ${SMS_PROVIDER:-}
+      SMSRU_API_ID: ${SMSRU_API_ID:-}
+      # Optional dedicated secret for hashing OTP codes; falls back to
+      # SESSION_SECRET when unset.
+      OTP_SECRET: ${OTP_SECRET:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
     ports:
       - "5000:5000"
     volumes:

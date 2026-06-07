@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { CURRENT_USER_KEY } from "@/hooks/use-current-user";
@@ -9,20 +9,23 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { UserPlus } from "lucide-react";
+import { UserPlus, ShieldCheck, ArrowLeft } from "lucide-react";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // Called after a successful registration so the caller can resume whatever
+  // Called after a successful verification so the caller can resume whatever
   // action the rider was attempting (e.g. open the rental modal).
   onRegistered?: (user: User) => void;
 }
 
+type StartResponse = { phone: string; resendInSec: number; devCode?: string };
+
 // Client-side mirror of the server validation so riders get instant feedback.
 // The server re-validates and is the source of truth.
-function validate(name: string, phone: string): string | null {
+function validateContact(name: string, phone: string): string | null {
   if (name.trim().length < 2) return "Введите имя (минимум 2 символа)";
   const digits = phone.replace(/\D/g, "");
   if (digits.length < 10) return "Введите корректный номер телефона";
@@ -31,19 +34,86 @@ function validate(name: string, phone: string): string | null {
 
 export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
   const toast = useToast();
+  const [step, setStep] = useState<"contact" | "code">("contact");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // Normalized phone returned by the server's start step — used verbatim for
+  // verify and resend so both sides agree on the canonical number.
+  const [verifiedPhone, setVerifiedPhone] = useState("");
+  const [resendIn, setResendIn] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Reset everything whenever the modal opens.
   useEffect(() => {
-    if (open) setError(null);
+    if (open) {
+      setStep("contact");
+      setName("");
+      setPhone("");
+      setConsent(false);
+      setCode("");
+      setError(null);
+      setVerifiedPhone("");
+      setResendIn(0);
+    }
   }, [open]);
 
-  const registerMut = useMutation<User, Error, void>({
+  // Resend countdown ticker.
+  useEffect(() => {
+    if (resendIn <= 0) {
+      if (timerRef.current) clearInterval(timerRef.current);
+      return;
+    }
+    timerRef.current = setInterval(() => {
+      setResendIn((s) => (s <= 1 ? 0 : s - 1));
+    }, 1000);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [resendIn]);
+
+  const startMut = useMutation<StartResponse, Error, void>({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/users/register", {
+      const res = await apiRequest("POST", "/api/auth/otp/start", {
         name: name.trim(),
         phone: phone.trim(),
+        consent,
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setVerifiedPhone(data.phone);
+      setResendIn(data.resendInSec ?? 60);
+      setStep("code");
+      setError(null);
+      setCode("");
+      if (data.devCode) {
+        // Dev fallback only: server has no SMS provider configured, so it echoes
+        // the code to make local testing possible.
+        toast.toast({
+          title: "Код подтверждения (dev)",
+          description: `SMS-провайдер не настроен. Код: ${data.devCode}`,
+        });
+      } else {
+        toast.toast({
+          title: "Код отправлен",
+          description: `SMS с кодом отправлено на ${data.phone}`,
+        });
+      }
+    },
+    onError: (err) => {
+      setError(err?.message?.replace(/^\d+:\s*/, "") ?? "Не удалось отправить код");
+    },
+  });
+
+  const verifyMut = useMutation<User, Error, void>({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/auth/otp/verify", {
+        phone: verifiedPhone,
+        code: code.trim(),
       });
       return res.json();
     },
@@ -51,26 +121,37 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
       queryClient.setQueryData(CURRENT_USER_KEY, user);
       queryClient.invalidateQueries({ queryKey: CURRENT_USER_KEY });
       toast.toast({
-        title: "Регистрация завершена",
+        title: "Номер подтверждён",
         description: `Добро пожаловать, ${user.name}!`,
       });
       onOpenChange(false);
       onRegistered?.(user);
     },
     onError: (err) => {
-      setError(err?.message?.replace(/^\d+:\s*/, "") ?? "Не удалось зарегистрироваться");
+      setError(err?.message?.replace(/^\d+:\s*/, "") ?? "Не удалось подтвердить код");
     },
   });
 
-  function submit(e: React.FormEvent) {
+  function submitContact(e: React.FormEvent) {
     e.preventDefault();
-    const v = validate(name, phone);
-    if (v) {
-      setError(v);
-      return;
-    }
+    const v = validateContact(name, phone);
+    if (v) return setError(v);
+    if (!consent) return setError("Необходимо согласие на обработку персональных данных");
     setError(null);
-    registerMut.mutate();
+    startMut.mutate();
+  }
+
+  function submitCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (!/^\d{4}$/.test(code.trim())) return setError("Код состоит из 4 цифр");
+    setError(null);
+    verifyMut.mutate();
+  }
+
+  function resend() {
+    if (resendIn > 0 || startMut.isPending) return;
+    setError(null);
+    startMut.mutate();
   }
 
   return (
@@ -78,64 +159,164 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
       <DialogContent data-testid="dialog-registration">
         <DialogHeader>
           <DialogTitle className="font-display font-light flex items-center gap-2">
-            <UserPlus className="w-5 h-5" /> Регистрация
+            {step === "contact" ? <UserPlus className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
+            {step === "contact" ? "Регистрация" : "Подтверждение номера"}
           </DialogTitle>
           <DialogDescription>
-            Укажите имя и номер телефона, чтобы арендовать велосипед. Данные карты
-            не запрашиваются на этом шаге.
+            {step === "contact"
+              ? "Укажите имя и номер телефона. Мы отправим SMS с кодом подтверждения. Данные карты не запрашиваются."
+              : `Введите код из SMS, отправленного на ${verifiedPhone}.`}
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={submit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="registration-name">Имя</Label>
-            <Input
-              id="registration-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Ваше имя"
-              autoComplete="name"
-              data-testid="input-registration-name"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="registration-phone">Номер телефона</Label>
-            <Input
-              id="registration-phone"
-              type="tel"
-              inputMode="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="+7 900 000-00-00"
-              autoComplete="tel"
-              data-testid="input-registration-phone"
-            />
-          </div>
+        {step === "contact" ? (
+          <form onSubmit={submitContact} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="registration-name">Имя</Label>
+              <Input
+                id="registration-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ваше имя"
+                autoComplete="name"
+                data-testid="input-registration-name"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="registration-phone">Номер телефона</Label>
+              <Input
+                id="registration-phone"
+                type="tel"
+                inputMode="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+7 900 000-00-00"
+                autoComplete="tel"
+                data-testid="input-registration-phone"
+              />
+            </div>
 
-          {error && (
-            <p className="text-sm text-destructive" data-testid="text-registration-error">
-              {error}
-            </p>
-          )}
+            <div className="flex items-start gap-2.5">
+              <Checkbox
+                id="consent"
+                checked={consent}
+                onCheckedChange={(v) => setConsent(v === true)}
+                className="mt-0.5"
+                data-testid="checkbox-personal-data-consent"
+              />
+              <Label htmlFor="consent" className="text-xs font-normal leading-snug text-muted-foreground">
+                Я согласен на обработку персональных данных и принимаю{" "}
+                <a
+                  href="#/privacy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-foreground"
+                  data-testid="link-privacy"
+                >
+                  Политику конфиденциальности
+                </a>{" "}
+                и{" "}
+                <a
+                  href="#/consent"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-foreground"
+                  data-testid="link-consent"
+                >
+                  Согласие на обработку данных
+                </a>
+                .
+              </Label>
+            </div>
 
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              data-testid="button-registration-close"
-            >
-              Закрыть
-            </Button>
-            <Button
-              type="submit"
-              disabled={registerMut.isPending}
-              data-testid="button-registration-submit"
-            >
-              {registerMut.isPending ? "Сохранение…" : "Зарегистрироваться"}
-            </Button>
-          </DialogFooter>
-        </form>
+            {error && (
+              <p className="text-sm text-destructive" data-testid="text-registration-error">
+                {error}
+              </p>
+            )}
+
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                data-testid="button-registration-close"
+              >
+                Закрыть
+              </Button>
+              <Button
+                type="submit"
+                disabled={startMut.isPending || !consent}
+                data-testid="button-send-otp"
+              >
+                {startMut.isPending ? "Отправка…" : "Получить код"}
+              </Button>
+            </DialogFooter>
+          </form>
+        ) : (
+          <form onSubmit={submitCode} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="registration-code">Код из SMS</Label>
+              <Input
+                id="registration-code"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={4}
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                placeholder="1234"
+                className="font-mono tracking-[0.5em] text-center text-lg"
+                data-testid="input-registration-code"
+              />
+            </div>
+
+            <div className="text-xs text-muted-foreground">
+              {resendIn > 0 ? (
+                <span data-testid="text-resend-timer">
+                  Повторная отправка через {resendIn} с
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={resend}
+                  disabled={startMut.isPending}
+                  className="underline hover:text-foreground disabled:opacity-50"
+                  data-testid="button-resend-otp"
+                >
+                  {startMut.isPending ? "Отправка…" : "Отправить код повторно"}
+                </button>
+              )}
+            </div>
+
+            {error && (
+              <p className="text-sm text-destructive" data-testid="text-registration-error">
+                {error}
+              </p>
+            )}
+
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setStep("contact");
+                  setError(null);
+                }}
+                data-testid="button-registration-back"
+              >
+                <ArrowLeft className="w-4 h-4 mr-1" /> Назад
+              </Button>
+              <Button
+                type="submit"
+                disabled={verifyMut.isPending || code.trim().length !== 4}
+                data-testid="button-verify-otp"
+              >
+                {verifyMut.isPending ? "Проверка…" : "Подтвердить"}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );

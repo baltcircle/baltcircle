@@ -13,6 +13,8 @@ import { RidesPage } from "@/pages/RidesPage";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SafetyPage } from "@/pages/SafetyPage";
+import { PrivacyPage } from "@/pages/PrivacyPage";
+import { ConsentPage } from "@/pages/ConsentPage";
 import { AdminPage } from "@/pages/AdminPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
 import { MaintenancePage } from "@/pages/MaintenancePage";
@@ -30,6 +32,8 @@ function AppRouter() {
       <Route path="/profile" component={ProfilePage} />
       <Route path="/settings" component={SettingsPage} />
       <Route path="/safety" component={SafetyPage} />
+      <Route path="/privacy" component={PrivacyPage} />
+      <Route path="/consent" component={ConsentPage} />
 
       {/* Admin / operator interface */}
       <Route path="/admin" component={AdminPage} />

@@ -4,7 +4,8 @@ import type { Server } from "node:http";
 import { storage } from "./storage";
 import { z } from "zod";
 import { TARIFFS } from "@shared/geo";
-import { insertMapObjectSchema, registerUserSchema } from "@shared/schema";
+import { insertMapObjectSchema, otpStartSchema, otpVerifySchema } from "@shared/schema";
+import { sendOtpSms } from "./sms";
 
 // Resolve the active rider id. A registered rider has their user id stored in
 // the session; everyone else shares the seeded "demo" account so the public
@@ -14,17 +15,46 @@ function riderId(req: Request): string {
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
-  // -------------- Rider registration --------------
-  app.post("/api/users/register", (req, res) => {
-    const parsed = registerUserSchema.safeParse(req.body);
+  // -------------- Rider registration (SMS OTP) --------------
+  // Step 1: rider submits name + phone + consent. We generate a code, persist
+  // its hash, and dispatch it by SMS. No session is created yet.
+  app.post("/api/auth/otp/start", async (req, res) => {
+    const parsed = otpStartSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
       return res.status(400).json({ error: msg });
     }
-    const result = storage.createUser(parsed.data);
+    const result = storage.startOtp({ name: parsed.data.name, phone: parsed.data.phone });
+    if ("error" in result) {
+      const status = result.retryAfterSec ? 429 : 400;
+      return res.status(status).json(result);
+    }
+    try {
+      const { devEcho } = await sendOtpSms(result.phone, result.code);
+      // In dev fallback (no SMS provider configured) we echo the code so the
+      // flow is testable locally. In production this is always undefined.
+      res.json({
+        phone: result.phone,
+        resendInSec: result.resendInSec,
+        ...(devEcho ? { devCode: result.code } : {}),
+      });
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message ?? "Не удалось отправить SMS. Попробуйте позже." });
+    }
+  });
+
+  // Step 2: rider submits the code. On success we create/activate the rider and
+  // bind the session, allowing rental/scan.
+  app.post("/api/auth/otp/verify", (req, res) => {
+    const parsed = otpVerifySchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+    const result = storage.verifyOtp({ phone: parsed.data.phone, code: parsed.data.code });
     if ("error" in result) return res.status(400).json(result);
-    req.session.userId = result.id;
-    res.status(201).json(result);
+    req.session.userId = result.user.id;
+    res.status(201).json(result.user);
   });
 
   app.get("/api/users/current", (req, res) => {

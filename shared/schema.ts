@@ -14,9 +14,23 @@ export const users = sqliteTable("users", {
 });
 export type User = typeof users.$inferSelect;
 
-// Public-facing zod schema for the registration form. Validation messages are
-// in Russian so they can surface directly in the UI.
-export const registerUserSchema = z.object({
+/* ------- OTP REQUESTS (SMS phone verification) ------- */
+// One pending verification per phone. The code is never stored in plaintext —
+// only an HMAC of the code is kept server-side. A row is created/replaced when
+// a rider asks for a code and consumed once verification succeeds.
+export const otpRequests = sqliteTable("otp_requests", {
+  phone: text("phone").primaryKey(),         // normalized +7… form
+  name: text("name").notNull(),              // carried through to user creation
+  codeHash: text("code_hash").notNull(),     // HMAC-SHA256 of the OTP, never plaintext
+  expiresAt: integer("expires_at").notNull(),// unix ms — code invalid after this
+  attempts: integer("attempts").notNull().default(0),     // wrong-code tries used
+  lastSentAt: integer("last_sent_at").notNull(),          // unix ms of last SMS, for resend lock
+  consumed: integer("consumed", { mode: "boolean" }).notNull().default(false),
+});
+export type OtpRequest = typeof otpRequests.$inferSelect;
+
+// Step 1: request a code. Consent must be accepted before any SMS is sent.
+export const otpStartSchema = z.object({
   name: z
     .string({ required_error: "Введите имя" })
     .trim()
@@ -26,8 +40,21 @@ export const registerUserSchema = z.object({
     .string({ required_error: "Введите номер телефона" })
     .trim()
     .min(1, "Введите номер телефона"),
+  consent: z.literal(true, {
+    errorMap: () => ({ message: "Необходимо согласие на обработку персональных данных" }),
+  }),
 });
-export type RegisterUserInput = z.infer<typeof registerUserSchema>;
+export type OtpStartInput = z.infer<typeof otpStartSchema>;
+
+// Step 2: verify the code the rider received by SMS.
+export const otpVerifySchema = z.object({
+  phone: z.string({ required_error: "Введите номер телефона" }).trim().min(1),
+  code: z
+    .string({ required_error: "Введите код из SMS" })
+    .trim()
+    .regex(/^\d{4}$/, "Код состоит из 4 цифр"),
+});
+export type OtpVerifyInput = z.infer<typeof otpVerifySchema>;
 
 /* ------- BIKES ------- */
 export const bikes = sqliteTable("bikes", {

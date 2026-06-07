@@ -1,11 +1,12 @@
 import {
   bikes, parkings, zones, rides, tickets, payments, wallet, mapObjects, users,
+  otpRequests,
 } from "@shared/schema";
 import type {
   Bike, Parking, ZoneRow, Ride, Ticket, Payment, Wallet,
-  MapObject, InsertMapObject, User,
+  MapObject, InsertMapObject, User, OtpRequest,
 } from "@shared/schema";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import {
   PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES,
 } from "@shared/geo";
@@ -90,6 +91,15 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   phone TEXT NOT NULL,
   created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS otp_requests (
+  phone TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_sent_at INTEGER NOT NULL,
+  consumed INTEGER NOT NULL DEFAULT 0
 );
 `);
 
@@ -286,6 +296,35 @@ bootstrapDemoData();
 // Normalize a user-entered phone to a storable canonical form: keep digits and
 // a single optional leading "+". A Russian "8XXXXXXXXXX" national number is
 // converted to "+7XXXXXXXXXX" so duplicates and display stay consistent.
+// ---------- OTP policy ----------
+export const OTP_TTL_MS = 5 * 60 * 1000;     // code valid 5 minutes
+export const OTP_MAX_ATTEMPTS = 5;           // wrong-code tries before lockout
+export const OTP_RESEND_LOCK_MS = 60 * 1000; // min seconds between SMS per phone
+
+// Secret used to HMAC the OTP before storage. Falls back to the session secret
+// (or a dev constant) so codes are never persisted in plaintext even locally.
+function otpSecret(): string {
+  return process.env.OTP_SECRET || process.env.SESSION_SECRET || "baltcircle-dev-otp-secret";
+}
+
+function hashOtp(phone: string, code: string): string {
+  // Bind the hash to the phone so a leaked hash can't be replayed against
+  // another number, and so identical codes for different phones differ.
+  return createHmac("sha256", otpSecret()).update(`${phone}:${code}`).digest("hex");
+}
+
+function generateOtp(): string {
+  // 4-digit numeric code (1000–9999) — matches the SMS copy and UI input.
+  return String(randomInt(1000, 10000));
+}
+
+function safeEqualHex(a: string, b: string): boolean {
+  const ba = Buffer.from(a, "hex");
+  const bb = Buffer.from(b, "hex");
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
+}
+
 export function normalizePhone(raw: string): string {
   const trimmed = raw.trim();
   const hasPlus = trimmed.startsWith("+");
@@ -299,8 +338,13 @@ export function normalizePhone(raw: string): string {
 
 export interface IStorage {
   // users
-  createUser(input: { name: string; phone: string }): User | { error: string };
   getUser(id: string): User | undefined;
+  getUserByPhone(phone: string): User | undefined;
+  // OTP verification
+  startOtp(input: { name: string; phone: string }):
+    | { ok: true; phone: string; code: string; resendInSec: number }
+    | { error: string; retryAfterSec?: number };
+  verifyOtp(input: { phone: string; code: string }): { user: User } | { error: string };
   // bikes
   listBikes(): Bike[];
   getBike(id: string): Bike | undefined;
@@ -333,23 +377,103 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
-  createUser({ name, phone }: { name: string; phone: string }) {
+  getUser(id: string) {
+    return db.select().from(users).where(eq(users.id, id)).get() as User | undefined;
+  }
+
+  getUserByPhone(phone: string) {
+    const normalized = normalizePhone(phone);
+    return db.select().from(users).where(eq(users.phone, normalized)).get() as User | undefined;
+  }
+
+  // ---------- OTP verification ----------
+  // Step 1: create/refresh a pending code for this phone and hand the plaintext
+  // back to the caller so it can be dispatched via SMS. The code itself is only
+  // stored as an HMAC. Enforces a per-phone resend lock.
+  startOtp({ name, phone }: { name: string; phone: string }) {
     const cleanName = name.trim();
     const cleanPhone = normalizePhone(phone);
     const digits = cleanPhone.replace(/\D/g, "");
     if (cleanName.length < 2) return { error: "Имя должно содержать минимум 2 символа" };
     if (digits.length < 10) return { error: "Введите корректный номер телефона" };
+
+    const now = Date.now();
+    const existing = db.select().from(otpRequests)
+      .where(eq(otpRequests.phone, cleanPhone)).get() as OtpRequest | undefined;
+
+    if (existing && !existing.consumed) {
+      const sinceLast = now - existing.lastSentAt;
+      if (sinceLast < OTP_RESEND_LOCK_MS) {
+        const retryAfterSec = Math.ceil((OTP_RESEND_LOCK_MS - sinceLast) / 1000);
+        return {
+          error: `Повторная отправка кода будет доступна через ${retryAfterSec} с`,
+          retryAfterSec,
+        };
+      }
+    }
+
+    const code = generateOtp();
+    const codeHash = hashOtp(cleanPhone, code);
+    const expiresAt = now + OTP_TTL_MS;
+
+    db.insert(otpRequests)
+      .values({ phone: cleanPhone, name: cleanName, codeHash, expiresAt, attempts: 0, lastSentAt: now, consumed: false })
+      .onConflictDoUpdate({
+        target: otpRequests.phone,
+        set: { name: cleanName, codeHash, expiresAt, attempts: 0, lastSentAt: now, consumed: false },
+      })
+      .run();
+
+    return { ok: true as const, phone: cleanPhone, code, resendInSec: OTP_RESEND_LOCK_MS / 1000 };
+  }
+
+  // Step 2: verify a submitted code. On success the rider is created (or reused
+  // if the phone already registered) and the request row is consumed.
+  verifyOtp({ phone, code }: { phone: string; code: string }) {
+    const cleanPhone = normalizePhone(phone);
+    const req = db.select().from(otpRequests)
+      .where(eq(otpRequests.phone, cleanPhone)).get() as OtpRequest | undefined;
+
+    if (!req || req.consumed) {
+      return { error: "Запросите код подтверждения заново" };
+    }
+    if (Date.now() > req.expiresAt) {
+      return { error: "Срок действия кода истёк. Запросите новый код" };
+    }
+    if (req.attempts >= OTP_MAX_ATTEMPTS) {
+      return { error: "Слишком много попыток. Запросите новый код" };
+    }
+
+    const expected = req.codeHash;
+    const provided = hashOtp(cleanPhone, code.trim());
+    if (!safeEqualHex(provided, expected)) {
+      const attempts = req.attempts + 1;
+      db.update(otpRequests).set({ attempts }).where(eq(otpRequests.phone, cleanPhone)).run();
+      const left = OTP_MAX_ATTEMPTS - attempts;
+      return {
+        error: left > 0 ? `Неверный код. Осталось попыток: ${left}` : "Слишком много попыток. Запросите новый код",
+      };
+    }
+
+    // Correct code — consume the request so it can't be reused.
+    db.update(otpRequests).set({ consumed: true }).where(eq(otpRequests.phone, cleanPhone)).run();
+
+    // Reuse an existing rider for this phone (keeps rides/wallet) or create one.
+    let user = this.getUserByPhone(cleanPhone);
+    if (user) {
+      if (user.name !== req.name) {
+        db.update(users).set({ name: req.name }).where(eq(users.id, user.id)).run();
+        user = this.getUser(user.id)!;
+      }
+      return { user };
+    }
     const row = db.insert(users).values({
       id: randomUUID(),
-      name: cleanName,
+      name: req.name,
       phone: cleanPhone,
       createdAt: Date.now(),
     }).returning().get() as User;
-    return row;
-  }
-
-  getUser(id: string) {
-    return db.select().from(users).where(eq(users.id, id)).get() as User | undefined;
+    return { user: row };
   }
 
   listBikes() { return db.select().from(bikes).all() as Bike[]; }
