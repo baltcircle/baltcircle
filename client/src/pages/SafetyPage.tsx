@@ -79,7 +79,7 @@ export function SafetyPage() {
           </Link>
           <div>
             <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
-              BaltCircle
+              TakeRide
             </div>
             <h1 className="font-display text-2xl font-light leading-tight">Центр безопасности</h1>
           </div>

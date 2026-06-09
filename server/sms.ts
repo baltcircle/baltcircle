@@ -25,7 +25,7 @@ export function isDevSmsFallback(): boolean {
 }
 
 export function otpMessage(code: string): string {
-  return `BaltCircle: код подтверждения ${code}. Никому не сообщайте код.`;
+  return `TakeRide: код подтверждения ${code}. Никому не сообщайте код.`;
 }
 
 // Sends the OTP SMS. Throws a user-friendly (Russian) Error on failure so the

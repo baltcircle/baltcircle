@@ -43,7 +43,7 @@ export function ProfilePage() {
             </span>
             <div>
               <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
-                BaltCircle
+                TakeRide
               </div>
               <h1
                 className="font-display text-2xl font-light leading-tight"
@@ -85,7 +85,7 @@ export function ProfilePage() {
         </nav>
 
         <div className="mt-6 px-1 text-xs text-muted-foreground" data-testid="text-account">
-          {user ? `${user.name} · ${user.phone}` : "демо-аккаунт · demo@baltcircle.app"}
+          {user ? `${user.name} · ${user.phone}` : "демо-аккаунт · demo@takeride.ru"}
         </div>
       </div>
     </div>

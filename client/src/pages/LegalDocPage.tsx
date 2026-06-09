@@ -25,7 +25,7 @@ function LegalDoc({ doc }: { doc: LegalDoc }) {
           </Link>
           <div>
             <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
-              BaltCircle
+              TakeRide
             </div>
             <h1 className="font-display text-2xl font-light leading-tight flex items-center gap-2">
               <Icon className="w-5 h-5 shrink-0" /> {doc.title}

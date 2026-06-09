@@ -17,7 +17,7 @@ export function LegalIndexPage() {
           </Link>
           <div>
             <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
-              BaltCircle
+              TakeRide
             </div>
             <h1 className="font-display text-2xl font-light leading-tight flex items-center gap-2">
               <LEGAL_INDEX_ICON className="w-5 h-5" /> Правовые документы

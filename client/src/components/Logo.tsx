@@ -1,12 +1,12 @@
 /**
- * BaltCircle logo
+ * TakeRide logo
  * — open circle with thin-line bicycle and a soft wave under the wordmark
  * — uses currentColor for line work, accepts "compact" (mark only)
  */
 export function Logo({ compact = false, className = "" }: { compact?: boolean; className?: string }) {
   if (compact) {
     return (
-      <svg viewBox="0 0 48 48" className={className} aria-label="BaltCircle" data-testid="logo-mark">
+      <svg viewBox="0 0 48 48" className={className} aria-label="TakeRide" data-testid="logo-mark">
         <circle cx="24" cy="24" r="22" fill="hsl(var(--brand-sea))" />
         <g stroke="hsl(var(--brand-foam))" strokeWidth="1.4" fill="none" strokeLinecap="round">
           {/* open ring */}
@@ -33,8 +33,8 @@ export function Logo({ compact = false, className = "" }: { compact?: boolean; c
         </g>
       </svg>
       <div className="flex flex-col leading-none">
-        <span className="text-[10px] uppercase tracking-[0.32em] text-current/70 font-light">Balt</span>
-        <span className="font-display text-lg font-light tracking-tight">Circle</span>
+        <span className="text-[10px] uppercase tracking-[0.32em] text-current/70 font-light">Take</span>
+        <span className="font-display text-lg font-light tracking-tight">Ride</span>
       </div>
     </div>
   );

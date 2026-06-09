@@ -87,8 +87,8 @@ export function SupportPage() {
       <Card className="p-5 mb-5" data-testid="card-support-contacts">
         <div className="text-sm font-medium mb-3">Контакты</div>
         <div className="space-y-2 text-sm">
-          <a href="mailto:support@baltcircle.app" className="flex items-center gap-2 hover:text-foreground text-muted-foreground" data-testid="link-support-email">
-            <Mail className="w-4 h-4" /> support@baltcircle.app
+          <a href="mailto:support@takeride.ru" className="flex items-center gap-2 hover:text-foreground text-muted-foreground" data-testid="link-support-email">
+            <Mail className="w-4 h-4" /> support@takeride.ru
           </a>
           <a href="tel:+78005550100" className="flex items-center gap-2 hover:text-foreground text-muted-foreground" data-testid="link-support-phone">
             <Phone className="w-4 h-4" /> 8 800 555-01-00

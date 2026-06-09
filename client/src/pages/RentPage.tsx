@@ -166,7 +166,7 @@ export function RentPage() {
 
           <ul className="text-xs text-muted-foreground space-y-1.5 px-1" data-testid="rent-help">
             <li className="flex gap-2"><Clock className="w-3 h-3 mt-0.5" />Бронь сохраняется 5 минут.</li>
-            <li className="flex gap-2"><MapPin className="w-3 h-3 mt-0.5" />Завершайте поездку на парковке BaltCircle, иначе будет штраф 100 ₽.</li>
+            <li className="flex gap-2"><MapPin className="w-3 h-3 mt-0.5" />Завершайте поездку на парковке TakeRide, иначе будет штраф 100 ₽.</li>
             <li className="flex gap-2"><Sparkles className="w-3 h-3 mt-0.5" />В тихих зонах скорость ограничена до 15 км/ч.</li>
           </ul>
         </div>

@@ -2,7 +2,7 @@ import {
   Scale, FileText, Bike, ShieldCheck, FileCheck, CreditCard,
 } from "lucide-react";
 
-// MVP legal texts for the BaltCircle bike-sharing service (Зеленоградск /
+// MVP legal texts for the TakeRide bike-sharing service (Зеленоградск /
 // Пионерский / Светлогорск). Operator legal details are intentionally left as
 // placeholders until the legal entity / ИП is finalized. Every document carries
 // a note that the text must be reviewed by a lawyer before public launch.
@@ -47,14 +47,14 @@ export const LEGAL_DOCS: LegalDoc[] = [
     slug: "terms",
     title: "Пользовательское соглашение",
     shortTitle: "Пользовательское соглашение",
-    description: "Условия использования сервиса аренды велосипедов BaltCircle.",
+    description: "Условия использования сервиса аренды велосипедов TakeRide.",
     icon: FileText,
     sections: [
       {
         paragraphs: [
           "Настоящее Пользовательское соглашение (далее — «Соглашение») регулирует " +
             "отношения между пользователем (далее — «Пользователь») и оператором сервиса " +
-            "аренды велосипедов BaltCircle (далее — «Сервис»), действующего в городах " +
+            "аренды велосипедов TakeRide (далее — «Сервис»), действующего в городах " +
             "Зеленоградск, Пионерский и Светлогорск Калининградской области.",
           OPERATOR_BLOCK,
           "Начиная использовать Сервис, Пользователь подтверждает, что ознакомлен с " +
@@ -150,7 +150,7 @@ export const LEGAL_DOCS: LegalDoc[] = [
     sections: [
       {
         paragraphs: [
-          "Настоящие Правила определяют порядок аренды велосипедов в сервисе BaltCircle " +
+          "Настоящие Правила определяют порядок аренды велосипедов в сервисе TakeRide " +
             "в городах Зеленоградск, Пионерский и Светлогорск.",
         ],
       },
@@ -216,7 +216,7 @@ export const LEGAL_DOCS: LegalDoc[] = [
         heading: "1. Общие положения",
         paragraphs: [
           "Настоящая Политика конфиденциальности описывает, какие персональные данные " +
-            "обрабатывает сервис аренды велосипедов BaltCircle (далее — «Сервис»), с " +
+            "обрабатывает сервис аренды велосипедов TakeRide (далее — «Сервис»), с " +
             "какой целью и на каком основании. Используя Сервис, вы соглашаетесь с " +
             "условиями настоящей Политики.",
         ],
@@ -309,7 +309,7 @@ export const LEGAL_DOCS: LegalDoc[] = [
     sections: [
       {
         paragraphs: [
-          "Регистрируясь в сервисе аренды велосипедов BaltCircle (далее — «Сервис») и " +
+          "Регистрируясь в сервисе аренды велосипедов TakeRide (далее — «Сервис») и " +
             "проставляя отметку о согласии, я, субъект персональных данных, свободно, " +
             "своей волей и в своём интересе даю согласие оператору на обработку моих " +
             "персональных данных на следующих условиях.",
@@ -377,7 +377,7 @@ export const LEGAL_DOCS: LegalDoc[] = [
       {
         paragraphs: [
           "Настоящие Условия оплаты определяют порядок расчётов за аренду велосипедов " +
-            "в сервисе BaltCircle.",
+            "в сервисе TakeRide.",
         ],
       },
       {

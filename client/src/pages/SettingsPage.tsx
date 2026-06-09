@@ -81,7 +81,7 @@ export function SettingsPage() {
           </Link>
           <div>
             <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
-              BaltCircle
+              TakeRide
             </div>
             <h1 className="font-display text-2xl font-light leading-tight">Настройки</h1>
           </div>
