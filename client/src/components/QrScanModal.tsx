@@ -6,7 +6,11 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { QrCode, Bike as BikeIcon, Camera, CameraOff } from "lucide-react";
+import { QrCode, Bike as BikeIcon, Flashlight, FlashlightOff } from "lucide-react";
+
+// Torch (flashlight) lives in non-standard MediaTrack types, so narrow locally.
+type TorchCapabilities = MediaTrackCapabilities & { torch?: boolean };
+type TorchConstraintSet = MediaTrackConstraintSet & { torch?: boolean };
 
 interface Props {
   open: boolean;
@@ -59,22 +63,56 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
   const [error, setError] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
   // Guards against double-resolving a bike from rapid successive decodes.
   const handledRef = useRef(false);
+  // True once a start has already been retried, so we retry at most once.
+  const retriedRef = useRef(false);
 
   const availableBikes = bikes.filter((b) => b.status === "available");
 
+  // The active video track carries both torch capability and constraints.
+  const getVideoTrack = useCallback((): MediaStreamTrack | null => {
+    const stream = videoRef.current?.srcObject as MediaStream | null;
+    return stream?.getVideoTracks()[0] ?? null;
+  }, []);
+
   const stopCamera = useCallback(() => {
+    // Best-effort torch-off before releasing the track.
+    const track = getVideoTrack();
+    if (track && torchOn) {
+      track
+        .applyConstraints({ advanced: [{ torch: false } as TorchConstraintSet] })
+        .catch(() => {});
+    }
     controlsRef.current?.stop();
     controlsRef.current = null;
     const stream = videoRef.current?.srcObject as MediaStream | null;
     stream?.getTracks().forEach((t) => t.stop());
     if (videoRef.current) videoRef.current.srcObject = null;
     setScanning(false);
-  }, []);
+    setTorchSupported(false);
+    setTorchOn(false);
+  }, [getVideoTrack, torchOn]);
+
+  const toggleTorch = useCallback(async () => {
+    const track = getVideoTrack();
+    if (!track) return;
+    const next = !torchOn;
+    try {
+      await track.applyConstraints({
+        advanced: [{ torch: next } as TorchConstraintSet],
+      });
+      setTorchOn(next);
+    } catch {
+      setTorchSupported(false);
+      setTorchOn(false);
+    }
+  }, [getVideoTrack, torchOn]);
 
   const resolveCode = useCallback(
     (rawCode: string): boolean => {
@@ -95,6 +133,39 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
     },
     [bikes, onBikeSelected, onOpenChange, stopCamera],
   );
+
+  // Nudge the video element into actually rendering frames. zxing attaches the
+  // stream and calls play(), but on a first open the element can stay blank
+  // (white) until it's forced to play once metadata is in. Calling play() and
+  // awaiting a real frame avoids the "stop then start" workaround users hit.
+  const ensureVideoPlaying = useCallback(async (): Promise<boolean> => {
+    const video = videoRef.current;
+    if (!video) return false;
+    try {
+      await video.play();
+    } catch {
+      // Autoplay can reject transiently; the frame wait below is the real test.
+    }
+    if (video.readyState >= 2 && video.videoWidth > 0) return true;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const done = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        video.removeEventListener("loadeddata", onReady);
+        video.removeEventListener("canplay", onReady);
+        resolve(ok);
+      };
+      const onReady = () => {
+        video.play().catch(() => {});
+        done(video.videoWidth > 0);
+      };
+      video.addEventListener("loadeddata", onReady);
+      video.addEventListener("canplay", onReady);
+      const timer = setTimeout(() => done(video.videoWidth > 0), 1500);
+    });
+  }, []);
 
   const startCamera = useCallback(async () => {
     setCameraError(null);
@@ -127,6 +198,27 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
         },
       );
       controlsRef.current = controls;
+
+      const playing = await ensureVideoPlaying();
+      // If no frame ever arrived, restart once — this mirrors the manual
+      // stop/start that previously "fixed" the blank viewport.
+      if (!playing && !retriedRef.current) {
+        retriedRef.current = true;
+        controlsRef.current?.stop();
+        controlsRef.current = null;
+        const stream = videoRef.current?.srcObject as MediaStream | null;
+        stream?.getTracks().forEach((t) => t.stop());
+        if (videoRef.current) videoRef.current.srcObject = null;
+        await startCamera();
+        return;
+      }
+
+      // Detect flashlight support on the active track.
+      const track = getVideoTrack();
+      const caps =
+        (track?.getCapabilities?.() as TorchCapabilities | undefined) ?? undefined;
+      setTorchSupported(Boolean(caps?.torch));
+      setTorchOn(false);
     } catch (err) {
       setScanning(false);
       const name = (err as { name?: string })?.name;
@@ -138,7 +230,7 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
         setCameraError("Не удалось запустить камеру. Введите код вручную");
       }
     }
-  }, [resolveCode]);
+  }, [resolveCode, ensureVideoPlaying, getVideoTrack]);
 
   // Auto-start the camera when the modal opens; clean everything up on close.
   useEffect(() => {
@@ -146,6 +238,7 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
       setCode("");
       setError(null);
       setCameraError(null);
+      retriedRef.current = false;
       startCamera();
     } else {
       stopCamera();
@@ -192,6 +285,7 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
             ref={videoRef}
             className="absolute inset-0 w-full h-full object-cover"
             muted
+            autoPlay
             playsInline
             data-testid="video-qr-camera"
           />
@@ -215,29 +309,33 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
           </div>
         )}
 
-        <div className="flex items-center justify-center gap-2">
-          {scanning ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={stopCamera}
-              data-testid="button-stop-camera"
-            >
-              <CameraOff className="w-4 h-4 mr-2" /> Остановить камеру
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={startCamera}
-              data-testid="button-start-camera"
-            >
-              <Camera className="w-4 h-4 mr-2" /> Включить камеру
-            </Button>
-          )}
-        </div>
+        {scanning && (
+          <div className="flex items-center justify-center gap-2">
+            {torchSupported ? (
+              <Button
+                type="button"
+                variant={torchOn ? "default" : "outline"}
+                size="sm"
+                onClick={toggleTorch}
+                data-testid="button-toggle-torch"
+              >
+                {torchOn ? (
+                  <FlashlightOff className="w-4 h-4 mr-2" />
+                ) : (
+                  <Flashlight className="w-4 h-4 mr-2" />
+                )}
+                Фонарик
+              </Button>
+            ) : (
+              <span
+                className="text-xs text-muted-foreground"
+                data-testid="status-torch-unavailable"
+              >
+                Фонарик недоступен
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Manual fallback: enter the code printed on the bike. */}
         <div className="space-y-2">
