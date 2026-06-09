@@ -6,11 +6,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { QrCode, Bike as BikeIcon, Flashlight, FlashlightOff } from "lucide-react";
-
-// Torch (flashlight) lives in non-standard MediaTrack types, so narrow locally.
-type TorchCapabilities = MediaTrackCapabilities & { torch?: boolean };
-type TorchConstraintSet = MediaTrackConstraintSet & { torch?: boolean };
+import { QrCode, Bike as BikeIcon, Loader2 } from "lucide-react";
 
 interface Props {
   open: boolean;
@@ -62,57 +58,28 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [scanning, setScanning] = useState(false);
-  const [torchSupported, setTorchSupported] = useState(false);
-  const [torchOn, setTorchOn] = useState(false);
+  // "loading" while acquiring the camera / waiting for the first frame,
+  // "scanning" once frames are flowing, "error" when start failed.
+  const [cameraState, setCameraState] = useState<"loading" | "scanning" | "error">("loading");
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
   // Guards against double-resolving a bike from rapid successive decodes.
   const handledRef = useRef(false);
-  // True once a start has already been retried, so we retry at most once.
-  const retriedRef = useRef(false);
 
   const availableBikes = bikes.filter((b) => b.status === "available");
 
-  // The active video track carries both torch capability and constraints.
-  const getVideoTrack = useCallback((): MediaStreamTrack | null => {
-    const stream = videoRef.current?.srcObject as MediaStream | null;
-    return stream?.getVideoTracks()[0] ?? null;
-  }, []);
-
   const stopCamera = useCallback(() => {
-    // Best-effort torch-off before releasing the track.
-    const track = getVideoTrack();
-    if (track && torchOn) {
-      track
-        .applyConstraints({ advanced: [{ torch: false } as TorchConstraintSet] })
-        .catch(() => {});
-    }
     controlsRef.current?.stop();
     controlsRef.current = null;
-    const stream = videoRef.current?.srcObject as MediaStream | null;
-    stream?.getTracks().forEach((t) => t.stop());
-    if (videoRef.current) videoRef.current.srcObject = null;
-    setScanning(false);
-    setTorchSupported(false);
-    setTorchOn(false);
-  }, [getVideoTrack, torchOn]);
-
-  const toggleTorch = useCallback(async () => {
-    const track = getVideoTrack();
-    if (!track) return;
-    const next = !torchOn;
-    try {
-      await track.applyConstraints({
-        advanced: [{ torch: next } as TorchConstraintSet],
-      });
-      setTorchOn(next);
-    } catch {
-      setTorchSupported(false);
-      setTorchOn(false);
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    const video = videoRef.current;
+    if (video) {
+      video.srcObject = null;
     }
-  }, [getVideoTrack, torchOn]);
+  }, []);
 
   const resolveCode = useCallback(
     (rawCode: string): boolean => {
@@ -134,93 +101,106 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
     [bikes, onBikeSelected, onOpenChange, stopCamera],
   );
 
-  // Nudge the video element into actually rendering frames. zxing attaches the
-  // stream and calls play(), but on a first open the element can stay blank
-  // (white) until it's forced to play once metadata is in. Calling play() and
-  // awaiting a real frame avoids the "stop then start" workaround users hit.
-  const ensureVideoPlaying = useCallback(async (): Promise<boolean> => {
-    const video = videoRef.current;
-    if (!video) return false;
-    try {
-      await video.play();
-    } catch {
-      // Autoplay can reject transiently; the frame wait below is the real test.
-    }
-    if (video.readyState >= 2 && video.videoWidth > 0) return true;
-    return new Promise<boolean>((resolve) => {
-      let settled = false;
-      const done = (ok: boolean) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        video.removeEventListener("loadeddata", onReady);
-        video.removeEventListener("canplay", onReady);
-        resolve(ok);
-      };
-      const onReady = () => {
-        video.play().catch(() => {});
-        done(video.videoWidth > 0);
-      };
-      video.addEventListener("loadeddata", onReady);
-      video.addEventListener("canplay", onReady);
-      const timer = setTimeout(() => done(video.videoWidth > 0), 1500);
-    });
-  }, []);
+  // Wait until the video element is actually decoding frames. The blank/white
+  // viewport on a first open comes from handing the element to the decoder
+  // before it has painted a frame, so we own the stream: attach it, play it,
+  // and only resolve once metadata is in and a real frame size is reported.
+  const waitForFirstFrame = useCallback(
+    (video: HTMLVideoElement): Promise<boolean> => {
+      const hasFrame = () => video.readyState >= 2 && video.videoWidth > 0;
+      if (hasFrame()) return Promise.resolve(true);
+      return new Promise<boolean>((resolve) => {
+        let settled = false;
+        const finish = (ok: boolean) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          video.removeEventListener("loadedmetadata", onReady);
+          video.removeEventListener("loadeddata", onReady);
+          video.removeEventListener("playing", onReady);
+          resolve(ok);
+        };
+        const onReady = () => {
+          video.play().catch(() => {});
+          if (hasFrame()) finish(true);
+        };
+        video.addEventListener("loadedmetadata", onReady);
+        video.addEventListener("loadeddata", onReady);
+        video.addEventListener("playing", onReady);
+        const timer = setTimeout(() => finish(hasFrame()), 6000);
+      });
+    },
+    [],
+  );
 
   const startCamera = useCallback(async () => {
     setCameraError(null);
     setError(null);
+    setCameraState("loading");
     handledRef.current = false;
 
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setCameraState("error");
       setCameraError("Камера не поддерживается в этом браузере");
       return;
     }
 
-    const reader = new BrowserQRCodeReader();
-    try {
-      setScanning(true);
-      const controls = await reader.decodeFromConstraints(
-        { video: { facingMode: { ideal: "environment" } } },
-        videoRef.current!,
-        (result) => {
-          if (!result || handledRef.current) return;
-          const bikeCode = extractBikeCode(result.getText());
-          if (!bikeCode) {
-            setError("Не удалось распознать код велосипеда");
-            return;
-          }
-          handledRef.current = true;
-          if (!resolveCode(bikeCode)) {
-            // Allow another attempt if this code wasn't usable.
-            handledRef.current = false;
-          }
-        },
-      );
-      controlsRef.current = controls;
+    // Tear down any prior attempt before acquiring a fresh stream.
+    stopCamera();
 
-      const playing = await ensureVideoPlaying();
-      // If no frame ever arrived, restart once — this mirrors the manual
-      // stop/start that previously "fixed" the blank viewport.
-      if (!playing && !retriedRef.current) {
-        retriedRef.current = true;
-        controlsRef.current?.stop();
-        controlsRef.current = null;
-        const stream = videoRef.current?.srcObject as MediaStream | null;
-        stream?.getTracks().forEach((t) => t.stop());
-        if (videoRef.current) videoRef.current.srcObject = null;
-        await startCamera();
+    try {
+      // Own the stream ourselves so we control attach/play/first-frame timing.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      streamRef.current = stream;
+
+      const video = videoRef.current;
+      if (!video) {
+        stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
         return;
       }
 
-      // Detect flashlight support on the active track.
-      const track = getVideoTrack();
-      const caps =
-        (track?.getCapabilities?.() as TorchCapabilities | undefined) ?? undefined;
-      setTorchSupported(Boolean(caps?.torch));
-      setTorchOn(false);
+      video.srcObject = stream;
+      video.muted = true;
+      video.setAttribute("playsinline", "true");
+      try {
+        await video.play();
+      } catch {
+        // Some browsers reject the first play(); the frame wait is the real test.
+      }
+
+      const ready = await waitForFirstFrame(video);
+      if (!ready) {
+        stopCamera();
+        setCameraState("error");
+        setCameraError("Камера не выводит изображение. Повторите запуск или введите код вручную");
+        return;
+      }
+
+      setCameraState("scanning");
+
+      // Hand the already-playing element to the decoder. It reads frames from
+      // the element we set up, so it never re-attaches or resets the stream.
+      const reader = new BrowserQRCodeReader();
+      controlsRef.current = await reader.decodeFromVideoElement(video, (result) => {
+        if (!result || handledRef.current) return;
+        const bikeCode = extractBikeCode(result.getText());
+        if (!bikeCode) {
+          setError("Не удалось распознать код велосипеда");
+          return;
+        }
+        handledRef.current = true;
+        if (!resolveCode(bikeCode)) {
+          // Allow another attempt if this code wasn't usable.
+          handledRef.current = false;
+        }
+      });
     } catch (err) {
-      setScanning(false);
+      stopCamera();
+      setCameraState("error");
       const name = (err as { name?: string })?.name;
       if (name === "NotAllowedError" || name === "SecurityError") {
         setCameraError("Доступ к камере запрещён. Разрешите доступ или введите код вручную");
@@ -230,7 +210,7 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
         setCameraError("Не удалось запустить камеру. Введите код вручную");
       }
     }
-  }, [resolveCode, ensureVideoPlaying, getVideoTrack]);
+  }, [resolveCode, stopCamera, waitForFirstFrame]);
 
   // Auto-start the camera when the modal opens; clean everything up on close.
   useEffect(() => {
@@ -238,7 +218,6 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
       setCode("");
       setError(null);
       setCameraError(null);
-      retriedRef.current = false;
       startCamera();
     } else {
       stopCamera();
@@ -289,8 +268,17 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
             playsInline
             data-testid="video-qr-camera"
           />
-          {!scanning && (
-            <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+          {cameraState === "loading" && (
+            <div
+              className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-muted/60 text-muted-foreground"
+              data-testid="status-camera-loading"
+            >
+              <Loader2 className="w-8 h-8 animate-spin" />
+              <span className="text-xs">Запуск камеры…</span>
+            </div>
+          )}
+          {cameraState === "error" && (
+            <div className="absolute inset-0 flex items-center justify-center bg-muted/60 text-muted-foreground">
               <QrCode className="w-16 h-16 opacity-40" />
             </div>
           )}
@@ -304,36 +292,19 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
         </div>
 
         {cameraError && (
-          <div className="text-xs text-destructive text-center" data-testid="status-camera-error">
-            {cameraError}
-          </div>
-        )}
-
-        {scanning && (
-          <div className="flex items-center justify-center gap-2">
-            {torchSupported ? (
-              <Button
-                type="button"
-                variant={torchOn ? "default" : "outline"}
-                size="sm"
-                onClick={toggleTorch}
-                data-testid="button-toggle-torch"
-              >
-                {torchOn ? (
-                  <FlashlightOff className="w-4 h-4 mr-2" />
-                ) : (
-                  <Flashlight className="w-4 h-4 mr-2" />
-                )}
-                Фонарик
-              </Button>
-            ) : (
-              <span
-                className="text-xs text-muted-foreground"
-                data-testid="status-torch-unavailable"
-              >
-                Фонарик недоступен
-              </span>
-            )}
+          <div className="space-y-2 text-center">
+            <div className="text-xs text-destructive" data-testid="status-camera-error">
+              {cameraError}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={startCamera}
+              data-testid="button-retry-camera"
+            >
+              Повторить запуск камеры
+            </Button>
           </div>
         )}
 
