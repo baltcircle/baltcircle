@@ -47,6 +47,8 @@
     "@radix-ui/react-tooltip": "^1.2.0",
     "@supabase/supabase-js": "^2.49.4",
     "@tanstack/react-query": "^5.60.5",
+    "@zxing/browser": "^0.2.0",
+    "@zxing/library": "^0.22.0",
     "better-sqlite3": "^11.7.0",
     "better-sqlite3-session-store": "^0.1.0",
     "class-variance-authority": "^0.7.1",
