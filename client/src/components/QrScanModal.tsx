@@ -248,7 +248,10 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="dialog-qr-scan">
+      <DialogContent
+        data-testid="dialog-qr-scan"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle className="font-display font-light flex items-center gap-2">
             <QrCode className="w-5 h-5" /> Сканирование QR
