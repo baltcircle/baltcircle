@@ -5,6 +5,7 @@ import type { Bike, MapObject, Ride } from "@shared/schema";
 import { YandexMap } from "@/components/YandexMap";
 import { RentalStartModal } from "@/components/RentalStartModal";
 import { RegistrationModal } from "@/components/RegistrationModal";
+import { QrScanModal } from "@/components/QrScanModal";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -52,6 +53,7 @@ export function MapPage() {
   const [rentalOpen, setRentalOpen] = useState(false);
   const [rentalMulti, setRentalMulti] = useState(false);
   const [regOpen, setRegOpen] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
 
   // Remembers a rental action interrupted by the registration gate, so we can
   // resume it automatically once the rider finishes registering.
@@ -96,20 +98,29 @@ export function MapPage() {
     },
   });
 
-  const openRental = (multi: boolean) => {
+  // Opens the scan-simulation step. The chosen multi flag is carried through to
+  // the rental modal once a bike has been scanned/selected.
+  const openScan = (multi: boolean) => {
     setRentalMulti(multi);
-    setRentalOpen(true);
+    setScanOpen(true);
   };
 
   const goRent = (multi = false) => {
-    // Registration gate: unregistered riders must register before the rental
+    // Registration gate: unregistered riders must register before the scan
     // flow opens. The attempted action is resumed after successful sign-up.
     if (!isRegistered) {
       pendingMulti.current = multi;
       setRegOpen(true);
       return;
     }
-    openRental(multi);
+    openScan(multi);
+  };
+
+  // A bike was resolved by the scan modal (QR, manual code, or test bike).
+  // Lock it in as the selected bike and continue to the rental-start modal.
+  const onBikeScanned = (b: Bike) => {
+    setSelected(b.id);
+    setRentalOpen(true);
   };
 
   return (
@@ -262,13 +273,21 @@ export function MapPage() {
           if (!open) pendingMulti.current = null;
         }}
         onRegistered={() => {
-          // Resume the rental action that triggered the gate, if any.
+          // Resume the rental action that triggered the gate, if any, by
+          // entering the scan step the rider was headed toward.
           if (pendingMulti.current !== null) {
             const multi = pendingMulti.current;
             pendingMulti.current = null;
-            openRental(multi);
+            openScan(multi);
           }
         }}
+      />
+
+      <QrScanModal
+        open={scanOpen}
+        onOpenChange={setScanOpen}
+        bikes={bikesQ.data ?? []}
+        onBikeSelected={onBikeScanned}
       />
 
       <RentalStartModal
