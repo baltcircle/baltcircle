@@ -276,17 +276,96 @@ export type AdminRide = Ride & {
   userPhone: string | null;
 };
 
-/* ------- MAINTENANCE TICKETS ------- */
+/* ------- SERVICE / MAINTENANCE TICKETS ------- */
+// Operational service tickets for the fleet. A ticket tracks one issue on one
+// bike through its lifecycle (new → in progress → resolved/closed). `kind`
+// carries either a human-reported issue type (see TICKET_KINDS) or one of the
+// legacy auto-flag kinds kept for backward compatibility with seeded rows.
 export const tickets = sqliteTable("tickets", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   bikeId: text("bike_id").notNull(),
-  kind: text("kind").notNull(),       // low_battery | suspicious_idle | repair_request | out_of_zone
-  message: text("message").notNull(),
-  status: text("status").notNull(),   // open | in_progress | resolved
+  kind: text("kind").notNull(),          // issue type — see TICKET_KINDS
+  priority: text("priority").notNull().default("medium"), // see TICKET_PRIORITIES
+  title: text("title").notNull().default(""),     // short summary
+  message: text("message").notNull(),    // description
+  assignee: text("assignee"),            // optional free-text assignee name
+  status: text("status").notNull(),      // see TICKET_STATUSES
   createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at"),      // unix ms of last mutation
+  closedAt: integer("closed_at"),        // unix ms when resolved/closed/cancelled
 });
 export type Ticket = typeof tickets.$inferSelect;
-export const insertTicketSchema = createInsertSchema(tickets).omit({ id: true, createdAt: true, status: true });
+
+// History / comment entries attached to a ticket. Each row is either a free-text
+// operator comment or an auto-generated event note (status change, creation).
+export const ticketComments = sqliteTable("ticket_comments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ticketId: integer("ticket_id").notNull(),
+  author: text("author").notNull(),     // operator display name or "Система"
+  body: text("body").notNull(),
+  kind: text("kind").notNull().default("comment"), // comment | event
+  createdAt: integer("created_at").notNull(),
+});
+export type TicketComment = typeof ticketComments.$inferSelect;
+
+// A ticket enriched with its comment/history thread for the detail view.
+export type TicketWithComments = Ticket & { comments: TicketComment[] };
+
+// Issue types (Russian labels live in the client). The id is stored in
+// `tickets.kind`. The first set are operator-reportable; the legacy auto-flag
+// kinds remain valid so old seeded/auto-generated rows still render.
+export const TICKET_KINDS = [
+  "wheel_puncture", "brakes", "chain", "handlebar_saddle", "lock",
+  "qr_sticker", "dirty", "lost", "other",
+] as const;
+export type TicketKind = (typeof TICKET_KINDS)[number];
+const LEGACY_TICKET_KINDS = ["low_battery", "suspicious_idle", "repair_request", "out_of_zone"] as const;
+const ALL_TICKET_KINDS = [...TICKET_KINDS, ...LEGACY_TICKET_KINDS] as const;
+
+// Priorities, lowest → highest. high/critical bikes get pulled into maintenance.
+export const TICKET_PRIORITIES = ["low", "medium", "high", "critical"] as const;
+export type TicketPriority = (typeof TICKET_PRIORITIES)[number];
+
+// Ticket lifecycle. `new` is the entry state (stored as "new"); the legacy
+// "open" value is treated as equivalent and accepted on input for old rows.
+export const TICKET_STATUSES = [
+  "new", "in_progress", "waiting_parts", "resolved", "closed", "cancelled",
+] as const;
+export type TicketStatus = (typeof TICKET_STATUSES)[number];
+// Statuses that take a ticket out of the active queue.
+export const TICKET_CLOSED_STATUSES: readonly string[] = ["resolved", "closed", "cancelled"];
+
+// Create a service ticket. Bike + kind required; the rest have sensible
+// defaults so the quick-report flow stays light.
+export const createTicketSchema = z.object({
+  bikeId: z.string().trim().min(1, "Укажите велосипед").max(20),
+  kind: z.enum(ALL_TICKET_KINDS as unknown as [string, ...string[]]).default("other"),
+  priority: z.enum(TICKET_PRIORITIES).default("medium"),
+  title: z.union([z.string().trim().max(120), z.literal("")]).optional(),
+  message: z.string().trim().min(2, "Опишите проблему").max(2000),
+  assignee: z.union([z.string().trim().max(80), z.literal("")]).optional(),
+});
+export type CreateTicketInput = z.infer<typeof createTicketSchema>;
+
+// Update a ticket: any subset of status/priority/assignee. `returnBikeToAvailable`
+// is an action flag used when closing — it asks the server to flip the bike back
+// to available rather than mutating the ticket directly.
+export const updateTicketSchema = z.object({
+  status: z.enum(TICKET_STATUSES).optional(),
+  priority: z.enum(TICKET_PRIORITIES).optional(),
+  assignee: z.union([z.string().trim().max(80), z.literal("")]).optional(),
+  returnBikeToAvailable: z.boolean().optional(),
+}).refine(
+  (v) => v.status !== undefined || v.priority !== undefined || v.assignee !== undefined,
+  { message: "Нет изменений" },
+);
+export type UpdateTicketInput = z.infer<typeof updateTicketSchema>;
+
+// Add a comment to a ticket's history thread.
+export const addTicketCommentSchema = z.object({
+  body: z.string().trim().min(1, "Введите комментарий").max(2000),
+});
+export type AddTicketCommentInput = z.infer<typeof addTicketCommentSchema>;
 
 /* ------- PAYMENTS / BALANCE (single demo user) ------- */
 export const payments = sqliteTable("payments", {

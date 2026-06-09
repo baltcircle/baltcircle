@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Link } from "wouter";
 import type { Bike, User, Ride, Ticket, MapObject } from "@shared/schema";
+import { TICKET_CLOSED_STATUSES } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -345,8 +346,8 @@ function deriveMetrics(d: {
     longActiveRides: activeRideRows
       .map(r => ({ id: r.id, bikeId: r.bikeId, hours: (Date.now() - r.startedAt) / 3_600_000 }))
       .filter(r => r.hours >= LONG_RIDE_HOURS),
-    openTickets: tickets.filter(t => t.status !== "resolved").length,
-    highPriorityTickets: tickets.filter(t => t.status !== "resolved" && (t.kind === "repair_request" || t.kind === "out_of_zone")).length,
+    openTickets: tickets.filter(t => !TICKET_CLOSED_STATUSES.includes(t.status)).length,
+    highPriorityTickets: tickets.filter(t => !TICKET_CLOSED_STATUSES.includes(t.status) && (t.priority === "high" || t.priority === "critical")).length,
     mapObjects: mapObjects.length,
     mapRoutes: mapObjects.filter(o => o.kind === "route").length,
     mapZones: mapObjects.filter(o => o.kind === "zone").length,

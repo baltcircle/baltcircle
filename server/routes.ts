@@ -10,6 +10,7 @@ import {
   phoneChangeStartSchema, phoneChangeVerifySchema,
   linkPaymentMethodSchema, createSupportTicketSchema,
   adminCreateBikeSchema, adminUpdateBikeSchema,
+  createTicketSchema, updateTicketSchema, addTicketCommentSchema,
 } from "@shared/schema";
 import type { UserRole } from "@shared/schema";
 import { sendOtpSms } from "./sms";
@@ -19,6 +20,14 @@ import { sendOtpSms } from "./sms";
 // MVP (map, demo rides, analytics) keeps working without registration.
 function riderId(req: Request): string {
   return req.session?.userId ?? "demo";
+}
+
+// Display name of the acting staff member for ticket history. Falls back to a
+// generic label when no session user is resolvable (local dev with guard off).
+function actorName(req: Request): string {
+  const id = req.session?.userId;
+  const user = id ? storage.getUser(id) : undefined;
+  return user?.name ?? "Оператор";
 }
 
 // Best-effort client IP for consent auditing. Honours the first X-Forwarded-For
@@ -403,25 +412,39 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
   app.get("/api/payments", (req, res) => res.json(storage.listPayments(riderId(req))));
 
-  // -------------- Maintenance tickets --------------
+  // -------------- Service / maintenance tickets --------------
+  // List is open (operator UI reads it freely); all mutations are staff-gated
+  // when ADMIN_PHONE_NUMBERS is configured, matching the rest of the admin API.
   app.get("/api/tickets", (_req, res) => res.json(storage.listTickets()));
-  app.post("/api/tickets", (req, res) => {
-    const schema = z.object({
-      bikeId: z.string(),
-      kind: z.string(),
-      message: z.string().min(2),
-    });
-    const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-    res.json(storage.createTicket(parsed.data));
-  });
-  app.patch("/api/tickets/:id", requireAdminWhenConfigured(), (req, res) => {
-    const schema = z.object({ status: z.enum(["open", "in_progress", "resolved"]) });
-    const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-    const t = storage.updateTicketStatus(Number(req.params.id), parsed.data.status);
+  app.get("/api/tickets/:id", (req, res) => {
+    const t = storage.getTicket(Number(req.params.id));
     if (!t) return res.status(404).json({ error: "Заявка не найдена" });
     res.json(t);
+  });
+  app.post("/api/tickets", requireAdminWhenConfigured(), (req, res) => {
+    const parsed = createTicketSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Проверьте данные" });
+    }
+    res.status(201).json(storage.createTicket(parsed.data));
+  });
+  app.patch("/api/tickets/:id", requireAdminWhenConfigured(), (req, res) => {
+    const parsed = updateTicketSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Проверьте данные" });
+    }
+    const t = storage.updateTicket(Number(req.params.id), parsed.data, actorName(req));
+    if (!t) return res.status(404).json({ error: "Заявка не найдена" });
+    res.json(t);
+  });
+  app.post("/api/tickets/:id/comments", requireAdminWhenConfigured(), (req, res) => {
+    const parsed = addTicketCommentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Проверьте данные" });
+    }
+    const t = storage.addTicketComment(Number(req.params.id), actorName(req), parsed.data.body);
+    if (!t) return res.status(404).json({ error: "Заявка не найдена" });
+    res.status(201).json(t);
   });
 
   // -------------- Map objects (operator-drawn routes/zones) --------------

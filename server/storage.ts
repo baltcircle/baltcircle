@@ -1,12 +1,13 @@
 import {
-  bikes, parkings, zones, rides, tickets, payments, wallet, mapObjects, users,
+  bikes, parkings, zones, rides, tickets, ticketComments, payments, wallet, mapObjects, users,
   otpRequests, phoneChangeRequests, paymentMethods, supportTickets,
+  TICKET_CLOSED_STATUSES,
 } from "@shared/schema";
 import type {
-  Bike, Parking, ZoneRow, Ride, AdminRide, Ticket, Payment, Wallet,
+  Bike, Parking, ZoneRow, Ride, AdminRide, Ticket, TicketComment, TicketWithComments, Payment, Wallet,
   MapObject, InsertMapObject, User, OtpRequest, UserRole, UpdateProfileInput,
   PhoneChangeRequest, PaymentMethod, SupportTicket,
-  AdminCreateBikeInput, AdminUpdateBikeInput,
+  AdminCreateBikeInput, AdminUpdateBikeInput, CreateTicketInput, UpdateTicketInput,
 } from "@shared/schema";
 import { CONSENT_VERSION } from "@shared/schema";
 import { randomUUID, createHmac, randomInt, timingSafeEqual } from "node:crypto";
@@ -70,8 +71,21 @@ CREATE TABLE IF NOT EXISTS tickets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   bike_id TEXT NOT NULL,
   kind TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'medium',
+  title TEXT NOT NULL DEFAULT '',
   message TEXT NOT NULL,
+  assignee TEXT,
   status TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER,
+  closed_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS ticket_comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket_id INTEGER NOT NULL,
+  author TEXT NOT NULL,
+  body TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'comment',
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS payments (
@@ -194,6 +208,26 @@ function migrateBikesTable() {
 }
 migrateBikesTable();
 
+// ---------- Tickets column migration (service ticket fields) ----------
+// Older DBs created tickets with only id/bike_id/kind/message/status/created_at.
+// Add the service-operations columns in place so existing tickets survive, and
+// normalise the legacy "open" status to the new "new" entry state.
+function migrateTicketsTable() {
+  const cols = (sqlite.prepare("PRAGMA table_info(tickets)").all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  const addColumn = (name: string, ddl: string) => {
+    if (!cols.includes(name)) sqlite.exec(`ALTER TABLE tickets ADD COLUMN ${ddl}`);
+  };
+  addColumn("priority", "priority TEXT NOT NULL DEFAULT 'medium'");
+  addColumn("title", "title TEXT NOT NULL DEFAULT ''");
+  addColumn("assignee", "assignee TEXT");
+  addColumn("updated_at", "updated_at INTEGER");
+  addColumn("closed_at", "closed_at INTEGER");
+  sqlite.exec("UPDATE tickets SET status = 'new' WHERE status = 'open'");
+}
+migrateTicketsTable();
+
 const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
 
 // Bump this whenever the demo geography/seed data changes so existing
@@ -246,6 +280,9 @@ function migrateDemoData() {
     // Demo rides/tickets reference demo (seed) bikes only. Clear those, plus the
     // wider demo payments/wallet/zones/parkings which carry no manual data.
     sqlite.exec(`
+      DELETE FROM ticket_comments WHERE ticket_id IN (
+        SELECT id FROM tickets WHERE bike_id IN (SELECT id FROM bikes WHERE seed = 1)
+      );
       DELETE FROM rides   WHERE bike_id IN (SELECT id FROM bikes WHERE seed = 1);
       DELETE FROM tickets WHERE bike_id IN (SELECT id FROM bikes WHERE seed = 1);
       DELETE FROM payments;
@@ -257,7 +294,7 @@ function migrateDemoData() {
     // Reset AUTOINCREMENT counters for tickets/payments if present. `rides` is
     // intentionally left so ids stay stable for any preserved manual-bike rides.
     try {
-      sqlite.exec("DELETE FROM sqlite_sequence WHERE name IN ('tickets','payments')");
+      sqlite.exec("DELETE FROM sqlite_sequence WHERE name IN ('tickets','ticket_comments','payments')");
     } catch {
       // sqlite_sequence only exists once an AUTOINCREMENT table has rows; ignore.
     }
@@ -325,10 +362,12 @@ function populateDemoData() {
   // Seed a couple of maintenance tickets against existing sample bikes so the
   // admin tickets table has data without referencing bikes that no longer exist.
   const sampleBikeIds = sqlite.prepare("SELECT id FROM bikes ORDER BY id").all() as { id: string }[];
-  const insertT = sqlite.prepare("INSERT INTO tickets (bike_id, kind, message, status, created_at) VALUES (?,?,?,?,?)");
-  if (sampleBikeIds[0]) insertT.run(sampleBikeIds[0].id, "repair_request", "Пользователь сообщил: спущено колесо", "open", now - 5400000);
-  if (sampleBikeIds[1]) insertT.run(sampleBikeIds[1].id, "repair_request", "Пользователь сообщил: не фиксируется замок", "in_progress", now - 86400000);
-  if (sampleBikeIds[2]) insertT.run(sampleBikeIds[2].id, "out_of_zone", "Завершение поездки вне зоны обслуживания", "resolved", now - 172800000);
+  const insertT = sqlite.prepare(
+    "INSERT INTO tickets (bike_id, kind, priority, title, message, assignee, status, created_at, updated_at, closed_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
+  );
+  if (sampleBikeIds[0]) insertT.run(sampleBikeIds[0].id, "wheel_puncture", "high", "Спущено колесо", "Пользователь сообщил: спущено заднее колесо", null, "new", now - 5400000, null, null);
+  if (sampleBikeIds[1]) insertT.run(sampleBikeIds[1].id, "lock", "critical", "Не фиксируется замок", "Пользователь сообщил: не фиксируется замок", "Сервисная бригада", "in_progress", now - 86400000, now - 80000000, null);
+  if (sampleBikeIds[2]) insertT.run(sampleBikeIds[2].id, "dirty", "low", "Грязный велосипед", "Требуется мойка после поездки в дождь", null, "resolved", now - 172800000, now - 90000000, now - 90000000);
 
   // Seed some past payments and rides to give analytics a baseline
   const insertPay = sqlite.prepare("INSERT INTO payments (user_id, amount, kind, description, created_at) VALUES (?,?,?,?,?)");
@@ -511,10 +550,12 @@ export interface IStorage {
   topUp(userId: string, amount: number): { wallet: Wallet; payment: Payment };
   purchaseTariff(userId: string, tariff: string, price: number, durationMs: number): { wallet: Wallet; payment: Payment };
   listPayments(userId: string): Payment[];
-  // tickets
+  // service / maintenance tickets
   listTickets(): Ticket[];
-  createTicket(input: { bikeId: string; kind: string; message: string }): Ticket;
-  updateTicketStatus(id: number, status: string): Ticket | undefined;
+  getTicket(id: number): TicketWithComments | undefined;
+  createTicket(input: CreateTicketInput): TicketWithComments;
+  updateTicket(id: number, patch: UpdateTicketInput, actor: string): TicketWithComments | undefined;
+  addTicketComment(id: number, author: string, body: string): TicketWithComments | undefined;
   // map objects (operator-drawn routes/zones)
   listMapObjects(): MapObject[];
   createMapObject(input: InsertMapObject): MapObject;
@@ -1056,15 +1097,97 @@ export class DatabaseStorage implements IStorage {
 
   listTickets() { return db.select().from(tickets).orderBy(desc(tickets.createdAt)).all() as Ticket[]; }
 
-  createTicket({ bikeId, kind, message }: { bikeId: string; kind: string; message: string }) {
-    return db.insert(tickets).values({
-      bikeId, kind, message, status: "open", createdAt: Date.now(),
-    }).returning().get() as Ticket;
+  getTicket(id: number): TicketWithComments | undefined {
+    const t = db.select().from(tickets).where(eq(tickets.id, id)).get() as Ticket | undefined;
+    if (!t) return undefined;
+    const comments = db.select().from(ticketComments)
+      .where(eq(ticketComments.ticketId, id))
+      .orderBy(ticketComments.createdAt)
+      .all() as TicketComment[];
+    return { ...t, comments };
   }
 
-  updateTicketStatus(id: number, status: string) {
-    db.update(tickets).set({ status }).where(eq(tickets.id, id)).run();
-    return db.select().from(tickets).where(eq(tickets.id, id)).get() as Ticket | undefined;
+  private addEvent(ticketId: number, author: string, body: string, kind: "comment" | "event") {
+    db.insert(ticketComments).values({
+      ticketId, author, body, kind, createdAt: Date.now(),
+    }).run();
+  }
+
+  createTicket(input: CreateTicketInput): TicketWithComments {
+    const now = Date.now();
+    const title = (input.title ?? "").trim();
+    const assignee = (input.assignee ?? "").trim();
+    const row = db.insert(tickets).values({
+      bikeId: input.bikeId,
+      kind: input.kind,
+      priority: input.priority,
+      title,
+      message: input.message,
+      assignee: assignee || null,
+      status: "new",
+      createdAt: now,
+      updatedAt: now,
+      closedAt: null,
+    }).returning().get() as Ticket;
+    this.addEvent(row.id, "Система", "Заявка создана", "event");
+
+    // High/critical tickets pull a rentable bike out of rotation into
+    // maintenance so it can't be rented while the issue is open. We never touch
+    // a bike that's mid-ride (rented) or already out of service.
+    if ((input.priority === "high" || input.priority === "critical")) {
+      const bike = this.getBike(input.bikeId);
+      if (bike && (bike.status === "available" || bike.status === "reserved")) {
+        this.updateBike(bike.id, { status: "maintenance" });
+        this.addEvent(row.id, "Система", `Велосипед ${bike.id} переведён в обслуживание`, "event");
+      }
+    }
+    return this.getTicket(row.id)!;
+  }
+
+  updateTicket(id: number, patch: UpdateTicketInput, actor: string): TicketWithComments | undefined {
+    const existing = db.select().from(tickets).where(eq(tickets.id, id)).get() as Ticket | undefined;
+    if (!existing) return undefined;
+    const now = Date.now();
+    const set: Partial<Ticket> = { updatedAt: now };
+
+    if (patch.priority !== undefined && patch.priority !== existing.priority) {
+      set.priority = patch.priority;
+      this.addEvent(id, actor, `Приоритет: ${existing.priority} → ${patch.priority}`, "event");
+    }
+    if (patch.assignee !== undefined) {
+      const next = patch.assignee.trim() || null;
+      if (next !== (existing.assignee ?? null)) {
+        set.assignee = next;
+        this.addEvent(id, actor, next ? `Назначено: ${next}` : "Исполнитель снят", "event");
+      }
+    }
+    if (patch.status !== undefined && patch.status !== existing.status) {
+      set.status = patch.status;
+      const becameClosed = TICKET_CLOSED_STATUSES.includes(patch.status);
+      set.closedAt = becameClosed ? now : null;
+      this.addEvent(id, actor, `Статус: ${existing.status} → ${patch.status}`, "event");
+    }
+
+    db.update(tickets).set(set as any).where(eq(tickets.id, id)).run();
+
+    // Optional action when closing: return the bike to the rental pool if it's
+    // currently in maintenance because of this issue.
+    if (patch.returnBikeToAvailable) {
+      const bike = this.getBike(existing.bikeId);
+      if (bike && bike.status === "maintenance") {
+        this.updateBike(bike.id, { status: "available" });
+        this.addEvent(id, actor, `Велосипед ${bike.id} возвращён в доступные`, "event");
+      }
+    }
+    return this.getTicket(id);
+  }
+
+  addTicketComment(id: number, author: string, body: string): TicketWithComments | undefined {
+    const existing = db.select().from(tickets).where(eq(tickets.id, id)).get() as Ticket | undefined;
+    if (!existing) return undefined;
+    this.addEvent(id, author, body, "comment");
+    db.update(tickets).set({ updatedAt: Date.now() }).where(eq(tickets.id, id)).run();
+    return this.getTicket(id);
   }
 
   listMapObjects() {

@@ -22,8 +22,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Search, Plus, Pencil, QrCode, Archive, Trash2, Copy, Download, Printer, Bike as BikeIcon,
+  Search, Plus, Pencil, QrCode, Archive, Trash2, Copy, Download, Printer, Bike as BikeIcon, Wrench,
 } from "lucide-react";
+import { Link } from "wouter";
 
 const ADMIN_BIKES_KEY = ["/api/admin/bikes"] as const;
 
@@ -293,6 +294,11 @@ export function BikesPage() {
                     </Button>
                     <Button variant="ghost" size="icon" onClick={() => openEdit(b)} title="Редактировать" data-testid={`button-edit-${b.id}`}>
                       <Pencil className="w-4 h-4" />
+                    </Button>
+                    <Button asChild variant="ghost" size="icon" title="Создать сервисную заявку" data-testid={`button-service-${b.id}`}>
+                      <Link href={`/admin/maintenance?bike=${encodeURIComponent(b.id)}`}>
+                        <Wrench className="w-4 h-4" />
+                      </Link>
                     </Button>
                     {b.status !== "archived" && (
                       <Button
