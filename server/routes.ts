@@ -9,6 +9,7 @@ import {
   adminSetRoleSchema, adminSetBlockedSchema,
   phoneChangeStartSchema, phoneChangeVerifySchema,
   linkPaymentMethodSchema, createSupportTicketSchema,
+  adminCreateBikeSchema, adminUpdateBikeSchema,
 } from "@shared/schema";
 import type { UserRole } from "@shared/schema";
 import { sendOtpSms } from "./sms";
@@ -261,6 +262,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // -------------- Bikes / Parkings / Zones --------------
+  // Public read: archived bikes are excluded so they never reach the map or
+  // rental selection. (The admin fleet page uses /api/admin/bikes for the full
+  // list including archived.)
   app.get("/api/bikes", (_req, res) => res.json(storage.listBikes()));
   app.get("/api/bikes/:id", (req, res) => {
     const b = storage.getBike(req.params.id);
@@ -273,6 +277,51 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(b);
   });
   app.get("/api/parkings", (_req, res) => res.json(storage.listParkings()));
+
+  // -------------- Admin: fleet (bike) management --------------
+  // Staff-only CRUD over the real fleet. The list includes archived bikes so
+  // operators can see/restore them; the public /api/bikes never does.
+  app.get("/api/admin/bikes", requireRole("operator", "admin"), (_req, res) => {
+    res.json(storage.listBikes({ includeArchived: true }));
+  });
+  app.post("/api/admin/bikes", requireRole("operator", "admin"), (req, res) => {
+    const parsed = adminCreateBikeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+    const result = storage.createBike(parsed.data);
+    if ("error" in result) return res.status(409).json(result);
+    res.status(201).json(result.bike);
+  });
+  app.patch("/api/admin/bikes/:id", requireRole("operator", "admin"), (req, res) => {
+    const parsed = adminUpdateBikeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+    const result = storage.adminUpdateBike(String(req.params.id), parsed.data);
+    if ("error" in result) return res.status(404).json(result);
+    res.json(result.bike);
+  });
+  app.post("/api/admin/bikes/:id/archive", requireRole("operator", "admin"), (req, res) => {
+    const result = storage.archiveBike(String(req.params.id));
+    if ("error" in result) {
+      const status = (result.error ?? "").includes("не найден") ? 404 : 400;
+      return res.status(status).json(result);
+    }
+    res.json(result.bike);
+  });
+  app.delete("/api/admin/bikes/:id", requireRole("operator", "admin"), (req, res) => {
+    const result = storage.deleteBike(String(req.params.id));
+    if ("error" in result) {
+      // Bike kept but archived (had ride history) → 409 with the archived row.
+      if (result.archived) return res.status(409).json(result);
+      const status = (result.error ?? "").includes("не найден") ? 404 : 400;
+      return res.status(status).json(result);
+    }
+    res.json(result);
+  });
   app.get("/api/zones", (_req, res) => res.json(storage.listZones()));
 
   // -------------- Rides --------------

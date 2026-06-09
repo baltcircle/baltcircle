@@ -140,18 +140,65 @@ export type PhoneChangeVerifyInput = z.infer<typeof phoneChangeVerifySchema>;
 export const bikes = sqliteTable("bikes", {
   id: text("id").primaryKey(),               // e.g. "BC-014"
   model: text("model").notNull(),            // Cruiser / Comfort / City+
-  status: text("status").notNull(),          // available | rented | reserved | offline | maintenance
+  status: text("status").notNull(),          // see BIKE_STATUSES below
   battery: integer("battery").notNull(),     // 0-100 (smart lock battery)
   lat: real("lat").notNull(),                // map % space, see note below
   lng: real("lng").notNull(),
   lastSeen: integer("last_seen").notNull(),  // unix ms
   idleHours: real("idle_hours").notNull(),   // hours
   flagged: integer("flagged", { mode: "boolean" }).notNull().default(false),
+  // ----- Real-fleet operations fields (added for admin management) -----
+  serial: text("serial"),                    // manufacturer serial / frame number
+  lockId: text("lock_id"),                   // smart-lock id placeholder (no real integration yet)
+  parkingId: text("parking_id"),             // optional home parking station id
+  notes: text("notes"),                      // operator free-text notes
+  // `seed` marks demo fleet rows so the demo reseed migration can refresh them
+  // without ever touching bikes an operator added manually.
+  seed: integer("seed", { mode: "boolean" }).notNull().default(false),
 });
+
+// Operational statuses. `available`/`rented`/`reserved` drive the rental flow;
+// `maintenance`/`offline`/`storage`/`lost` take a bike out of rotation; and
+// `archived` hides a retired bike from the public list (soft delete).
+export const BIKE_STATUSES = [
+  "available", "rented", "reserved", "maintenance", "offline", "storage", "lost", "archived",
+] as const;
+export type BikeStatus = (typeof BIKE_STATUSES)[number];
+
+// Statuses a bike must NOT be in to be rentable from the public app/map.
+export const RENTABLE_STATUSES: readonly BikeStatus[] = ["available", "reserved"];
 
 export const insertBikeSchema = createInsertSchema(bikes);
 export type InsertBike = z.infer<typeof insertBikeSchema>;
 export type Bike = typeof bikes.$inferSelect;
+
+// Admin: create a bike. Id/model required; status defaults to available. Map
+// coordinates are optional (default to a station/centre server-side). Battery
+// defaults to 100 for a freshly provisioned lock.
+const bikeIdRegex = /^[A-Za-z0-9-]{2,20}$/;
+export const adminCreateBikeSchema = z.object({
+  id: z.string().trim().regex(bikeIdRegex, "Код: латиница, цифры и дефис (2–20 символов)"),
+  model: z.string().trim().min(1, "Укажите модель").max(60),
+  status: z.enum(BIKE_STATUSES).default("available"),
+  battery: z.number().int().min(0).max(100).default(100),
+  serial: z.union([z.string().trim().max(60), z.literal("")]).optional(),
+  lockId: z.union([z.string().trim().max(60), z.literal("")]).optional(),
+  parkingId: z.union([z.string().trim().max(40), z.literal("")]).optional(),
+  notes: z.union([z.string().trim().max(500), z.literal("")]).optional(),
+});
+export type AdminCreateBikeInput = z.infer<typeof adminCreateBikeSchema>;
+
+// Admin: edit a bike. All fields optional; id is immutable (path param).
+export const adminUpdateBikeSchema = z.object({
+  model: z.string().trim().min(1).max(60).optional(),
+  status: z.enum(BIKE_STATUSES).optional(),
+  battery: z.number().int().min(0).max(100).optional(),
+  serial: z.union([z.string().trim().max(60), z.literal("")]).optional(),
+  lockId: z.union([z.string().trim().max(60), z.literal("")]).optional(),
+  parkingId: z.union([z.string().trim().max(40), z.literal("")]).optional(),
+  notes: z.union([z.string().trim().max(500), z.literal("")]).optional(),
+});
+export type AdminUpdateBikeInput = z.infer<typeof adminUpdateBikeSchema>;
 
 /* ------- PARKING STATIONS ------- */
 export const parkings = sqliteTable("parkings", {

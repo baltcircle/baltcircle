@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { Link } from "wouter";
 import type { Bike } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Search, Battery, Clock, MapPin, Bike as BikeIcon, AlertTriangle } from "lucide-react";
+import { Search, Battery, Clock, MapPin, Bike as BikeIcon, AlertTriangle, Settings2 } from "lucide-react";
 import { fmtRelative } from "@/lib/format";
 import { checkZoneState } from "@shared/geo";
 
@@ -41,18 +42,25 @@ export function AdminPage() {
       <header className="mb-6 flex items-end justify-between flex-wrap gap-4">
         <div>
           <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Парк</div>
-          <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">100 велосипедов</h1>
+          <h1 className="font-display text-2xl lg:text-3xl font-light mt-1" data-testid="text-fleet-count">
+            {bikes.length} {pluralBikes(bikes.length)}
+          </h1>
           <p className="text-muted-foreground text-sm mt-1">Статусы, заряд замков, простой и последний сигнал по всему флоту.</p>
         </div>
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Поиск BC-014 или модель"
-            className="pl-9 w-64"
-            data-testid="input-admin-search"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Поиск BC-014 или модель"
+              className="pl-9 w-64"
+              data-testid="input-admin-search"
+            />
+          </div>
+          <Link href="/admin/bikes" data-testid="link-manage-bikes">
+            <Button variant="outline"><Settings2 className="w-4 h-4 mr-2" />Управление</Button>
+          </Link>
         </div>
       </header>
 
@@ -122,6 +130,14 @@ export function AdminPage() {
   );
 }
 
+function pluralBikes(n: number) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return "велосипед";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return "велосипеда";
+  return "велосипедов";
+}
+
 function filterLabel(s: StatusFilter) {
   return ({
     all: "Все",
@@ -140,8 +156,16 @@ function StatusPill({ status }: { status: string }) {
     reserved: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
     maintenance: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
     offline: "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200",
+    storage: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200",
+    lost: "bg-rose-200 text-rose-900 dark:bg-rose-950 dark:text-rose-200",
+    archived: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
   };
-  return <Badge className={`${m[status] ?? m.offline} border-0`}>{filterLabel(status as StatusFilter)}</Badge>;
+  const labels: Record<string, string> = {
+    available: "Доступен", rented: "В аренде", reserved: "Бронь",
+    maintenance: "Сервис", offline: "Оффлайн", storage: "На складе",
+    lost: "Утерян", archived: "Архив",
+  };
+  return <Badge className={`${m[status] ?? m.offline} border-0`}>{labels[status] ?? status}</Badge>;
 }
 
 function BatteryBar({ pct }: { pct: number }) {

@@ -1,5 +1,7 @@
-import { Switch, Route, Router, Redirect } from "wouter";
+import { Switch, Route, Router, Redirect, useLocation } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
+import { useEffect } from "react";
+import { PENDING_BIKE_KEY } from "@/lib/pending-bike";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -19,6 +21,7 @@ import { SafetyPage } from "@/pages/SafetyPage";
 import { LegalIndexPage } from "@/pages/LegalIndexPage";
 import { LegalDocPage } from "@/pages/LegalDocPage";
 import { AdminPage } from "@/pages/AdminPage";
+import { BikesPage } from "@/pages/BikesPage";
 import { UsersPage } from "@/pages/UsersPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
 import { MaintenancePage } from "@/pages/MaintenancePage";
@@ -30,6 +33,9 @@ function AppRouter() {
     <Switch>
       {/* Customer / rider interface */}
       <Route path="/" component={MapPage} />
+      {/* QR deep link: a scanned bike URL (".../#/bike/BC-001") lands here, is
+          stashed, and redirects to the map which auto-opens the rental flow. */}
+      <Route path="/bike/:id">{(params) => <BikeDeepLink id={params.id} />}</Route>
       <Route path="/rent" component={RentPage} />
       <Route path="/tariffs" component={TariffsPage} />
       <Route path="/rides" component={RidesPage} />
@@ -49,6 +55,7 @@ function AppRouter() {
 
       {/* Admin / operator interface — gated to operator/admin roles */}
       <Route path="/admin"><AdminGuard><AdminPage /></AdminGuard></Route>
+      <Route path="/admin/bikes"><AdminGuard><BikesPage /></AdminGuard></Route>
       <Route path="/admin/users"><AdminGuard><UsersPage /></AdminGuard></Route>
       <Route path="/admin/map"><AdminGuard><MapEditorPage /></AdminGuard></Route>
       <Route path="/admin/analytics"><AdminGuard><AnalyticsPage /></AdminGuard></Route>
@@ -61,6 +68,18 @@ function AppRouter() {
       <Route component={NotFound} />
     </Switch>
   );
+}
+
+// Lands a scanned QR deep link: stash the bike code for the map to pick up,
+// then redirect home. Normalizes the code so "bc-1" / "BC-001" both work.
+function BikeDeepLink({ id }: { id: string }) {
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    const code = id.trim().toUpperCase();
+    if (code) sessionStorage.setItem(PENDING_BIKE_KEY, code);
+    navigate("/", { replace: true });
+  }, [id, navigate]);
+  return null;
 }
 
 function App() {

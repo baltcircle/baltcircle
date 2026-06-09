@@ -9,6 +9,18 @@ export const ROLE_LABEL: Record<UserRole, string> = {
   admin: "Администратор",
 };
 
+// Public base URL used to build scannable bike QR links. Configurable via
+// VITE_PUBLIC_BASE_URL at build time; defaults to the production domain. The
+// app uses hash routing, so the deep link is "<base>/#/bike/<CODE>" — which the
+// scan modal's extractBikeCode() already parses.
+const PUBLIC_BASE_URL = (
+  (import.meta.env.VITE_PUBLIC_BASE_URL as string | undefined) || "https://takeride.ru"
+).replace(/\/+$/, "");
+
+export function bikeQrLink(bikeId: string) {
+  return `${PUBLIC_BASE_URL}/#/bike/${bikeId}`;
+}
+
 export function fmtRub(value: number) {
   const n = Math.round(value);
   return n.toLocaleString("ru-RU") + " ₽";

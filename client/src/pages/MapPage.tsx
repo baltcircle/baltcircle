@@ -10,6 +10,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDuration } from "@/lib/format";
+import { PENDING_BIKE_KEY } from "@/lib/pending-bike";
 import { Logo } from "@/components/Logo";
 import { QrCode, Bike as BikeIcon, User, LifeBuoy, Lock, Clock, ChevronRight } from "lucide-react";
 
@@ -122,6 +123,33 @@ export function MapPage() {
     setSelected(b.id);
     setRentalOpen(true);
   };
+
+  // Cold-open QR deep link ("/#/bike/BC-001"): once bikes/user have loaded,
+  // resolve the stashed code and either open the rental (registered + bike
+  // available) or surface a clear toast. Cleared so it fires only once.
+  useEffect(() => {
+    if (userLoading || !bikesQ.data) return;
+    const code = sessionStorage.getItem(PENDING_BIKE_KEY);
+    if (!code) return;
+    sessionStorage.removeItem(PENDING_BIKE_KEY);
+
+    const target = bikesQ.data.find((b) => b.id.toUpperCase() === code);
+    if (!target) {
+      toast.toast({ title: "Велосипед не найден", description: code, variant: "destructive" });
+      return;
+    }
+    if (target.status !== "available") {
+      toast.toast({ title: "Велосипед недоступен", description: `${target.id} сейчас занят`, variant: "destructive" });
+      return;
+    }
+    if (!isRegistered) {
+      pendingMulti.current = false;
+      setRegOpen(true);
+      return;
+    }
+    onBikeScanned(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userLoading, bikesQ.data, isRegistered]);
 
   return (
     <div className="relative flex flex-col h-full min-h-0 overflow-hidden">

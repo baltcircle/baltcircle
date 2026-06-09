@@ -26,6 +26,7 @@ const RIDER_NAV: NavItem[] = [
 // Operator / admin interface — separated under /admin.
 const OPS_NAV: NavItem[] = [
   { href: "/admin",             label: "Парк",         icon: ShieldCheck, testId: "nav-admin" },
+  { href: "/admin/bikes",       label: "Велосипеды",   icon: Bike,        testId: "nav-bikes" },
   { href: "/admin/users",       label: "Пользователи", icon: Users,       testId: "nav-users" },
   { href: "/admin/map",         label: "Карта",        icon: Map,         testId: "nav-map-editor" },
   { href: "/admin/analytics",   label: "Аналитика",    icon: BarChart3,   testId: "nav-analytics" },

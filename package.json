@@ -13,6 +13,7 @@
     "smoke:session": "tsx script/smoke-session.ts",
     "smoke:profile": "tsx script/smoke-profile.ts",
     "smoke:admin-users": "tsx script/smoke-admin-users.ts",
+    "smoke:admin-bikes": "tsx script/smoke-admin-bikes.ts",
     "smoke:account": "tsx script/smoke-account.ts"
   },
   "dependencies": {

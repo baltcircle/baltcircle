@@ -6,11 +6,12 @@ import type {
   Bike, Parking, ZoneRow, Ride, Ticket, Payment, Wallet,
   MapObject, InsertMapObject, User, OtpRequest, UserRole, UpdateProfileInput,
   PhoneChangeRequest, PaymentMethod, SupportTicket,
+  AdminCreateBikeInput, AdminUpdateBikeInput,
 } from "@shared/schema";
 import { CONSENT_VERSION } from "@shared/schema";
 import { randomUUID, createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import {
-  PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES,
+  PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES, MAP_W, MAP_H,
 } from "@shared/geo";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -34,7 +35,12 @@ CREATE TABLE IF NOT EXISTS bikes (
   lng REAL NOT NULL,
   last_seen INTEGER NOT NULL,
   idle_hours REAL NOT NULL,
-  flagged INTEGER NOT NULL DEFAULT 0
+  flagged INTEGER NOT NULL DEFAULT 0,
+  serial TEXT,
+  lock_id TEXT,
+  parking_id TEXT,
+  notes TEXT,
+  seed INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS parkings (
   id TEXT PRIMARY KEY, name TEXT NOT NULL,
@@ -164,6 +170,30 @@ function migrateUsersTable() {
 }
 migrateUsersTable();
 
+// ---------- Bikes column migration (real-fleet ops fields) ----------
+// Older DBs created the bikes table before serial/lock/parking/notes/seed
+// existed. Add the columns in place so existing demo + manual rows survive.
+// Existing rows predate the manual-add feature, so they are the demo fleet —
+// backfill seed = 1 for them so the demo reseed can still refresh them.
+function migrateBikesTable() {
+  const cols = (sqlite.prepare("PRAGMA table_info(bikes)").all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  const addColumn = (name: string, ddl: string) => {
+    if (!cols.includes(name)) sqlite.exec(`ALTER TABLE bikes ADD COLUMN ${ddl}`);
+  };
+  addColumn("serial", "serial TEXT");
+  addColumn("lock_id", "lock_id TEXT");
+  addColumn("parking_id", "parking_id TEXT");
+  addColumn("notes", "notes TEXT");
+  if (!cols.includes("seed")) {
+    sqlite.exec("ALTER TABLE bikes ADD COLUMN seed INTEGER NOT NULL DEFAULT 0");
+    // Pre-existing rows are the demo fleet — mark them so reseed can manage them.
+    sqlite.exec("UPDATE bikes SET seed = 1");
+  }
+}
+migrateBikesTable();
+
 const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
 
 // Bump this whenever the demo geography/seed data changes so existing
@@ -208,21 +238,26 @@ function migrateDemoData() {
   const needsReseed = storedVersion < DEMO_DATA_VERSION || hasLegacyParkings;
   if (!needsReseed) return;
 
-  // Wipe demo tables and reseed. Wrapped in a transaction so startup either
-  // sees the old data or the fully refreshed data, never a partial state.
+  // Refresh demo data without destroying operator-added real bikes. Only rows
+  // that belong to the demo seed are cleared; manually-added bikes (seed = 0)
+  // and any rides/tickets referencing them are preserved. Wrapped in a
+  // transaction so startup sees either the old or the fully refreshed state.
   const reset = sqlite.transaction(() => {
+    // Demo rides/tickets reference demo (seed) bikes only. Clear those, plus the
+    // wider demo payments/wallet/zones/parkings which carry no manual data.
     sqlite.exec(`
-      DELETE FROM rides;
-      DELETE FROM tickets;
+      DELETE FROM rides   WHERE bike_id IN (SELECT id FROM bikes WHERE seed = 1);
+      DELETE FROM tickets WHERE bike_id IN (SELECT id FROM bikes WHERE seed = 1);
       DELETE FROM payments;
       DELETE FROM wallet;
       DELETE FROM zones;
       DELETE FROM parkings;
-      DELETE FROM bikes;
+      DELETE FROM bikes   WHERE seed = 1;
     `);
-    // Reset AUTOINCREMENT counters for rides/tickets/payments if present.
+    // Reset AUTOINCREMENT counters for tickets/payments if present. `rides` is
+    // intentionally left so ids stay stable for any preserved manual-bike rides.
     try {
-      sqlite.exec("DELETE FROM sqlite_sequence WHERE name IN ('rides','tickets','payments')");
+      sqlite.exec("DELETE FROM sqlite_sequence WHERE name IN ('tickets','payments')");
     } catch {
       // sqlite_sequence only exists once an AUTOINCREMENT table has rows; ignore.
     }
@@ -250,7 +285,8 @@ function populateDemoData() {
   // "available" with healthy batteries so the QR/rental demo flow always has a
   // bike to pick, while still giving admin tables real sample rows.
   const insertBike = sqlite.prepare(
-    "INSERT INTO bikes VALUES (?,?,?,?,?,?,?,?,?)"
+    `INSERT INTO bikes (id, model, status, battery, lat, lng, last_seen, idle_hours, flagged, parking_id, seed)
+     VALUES (?,?,?,?,?,?,?,?,?,?,1)`
   );
   for (let i = 1; i <= DEMO_BIKE_COUNT; i++) {
     const id = `BC-${String(i).padStart(3, "0")}`;
@@ -265,7 +301,7 @@ function populateDemoData() {
     const flagged = 0;
     const lastSeen = now - Math.round(idleHours * 3600 * 1000);
 
-    insertBike.run(id, model, status, battery, y, x, lastSeen, idleHours, flagged);
+    insertBike.run(id, model, status, battery, y, x, lastSeen, idleHours, flagged, p.id);
   }
 
   // Parkings
@@ -451,9 +487,14 @@ export interface IStorage {
   listSupportTickets(userId: string): SupportTicket[];
   createSupportTicket(input: { userId: string; subject: string; message: string }): SupportTicket;
   // bikes
-  listBikes(): Bike[];
+  listBikes(opts?: { includeArchived?: boolean }): Bike[];
   getBike(id: string): Bike | undefined;
   updateBike(id: string, patch: Partial<Bike>): Bike | undefined;
+  // bikes — admin CRUD (staff only)
+  createBike(input: AdminCreateBikeInput): { bike: Bike } | { error: string };
+  adminUpdateBike(id: string, patch: AdminUpdateBikeInput): { bike: Bike } | { error: string };
+  archiveBike(id: string): { bike: Bike } | { error: string };
+  deleteBike(id: string): { ok: true } | { error: string; archived?: Bike };
   // parkings
   listParkings(): Parking[];
   // zones
@@ -770,11 +811,104 @@ export class DatabaseStorage implements IStorage {
     }).returning().get() as SupportTicket;
   }
 
-  listBikes() { return db.select().from(bikes).all() as Bike[]; }
+  // Public list excludes archived (retired) bikes so they never appear on the
+  // map or in rental selection. Admin callers pass includeArchived to see all.
+  listBikes(opts?: { includeArchived?: boolean }) {
+    const rows = db.select().from(bikes).all() as Bike[];
+    if (opts?.includeArchived) return rows;
+    return rows.filter((b) => b.status !== "archived");
+  }
   getBike(id: string) { return db.select().from(bikes).where(eq(bikes.id, id)).get() as Bike | undefined; }
   updateBike(id: string, patch: Partial<Bike>) {
     db.update(bikes).set(patch as any).where(eq(bikes.id, id)).run();
     return this.getBike(id);
+  }
+
+  // ---------- Bikes: admin CRUD (staff only) ----------
+  // Normalize an optional string field: trim, and treat "" as null so blank
+  // form inputs clear the column rather than storing an empty string.
+  private optStr(v: string | undefined): string | null {
+    if (v === undefined) return null;
+    const t = v.trim();
+    return t.length > 0 ? t : null;
+  }
+
+  // Create a real (non-demo) bike. The id is unique (primary key); a duplicate
+  // is rejected with a clear message. Map coordinates default to the assigned
+  // parking station or the map centre so the bike has a valid position.
+  createBike(input: AdminCreateBikeInput) {
+    const id = input.id.trim().toUpperCase();
+    if (this.getBike(id)) return { error: "Велосипед с таким кодом уже существует" };
+
+    let lat = MAP_H / 2;
+    let lng = MAP_W / 2;
+    const parkingId = this.optStr(input.parkingId);
+    if (parkingId) {
+      const p = db.select().from(parkings).where(eq(parkings.id, parkingId)).get() as Parking | undefined;
+      if (p) { lat = p.lat; lng = p.lng; }
+    }
+
+    const now = Date.now();
+    db.insert(bikes).values({
+      id,
+      model: input.model.trim(),
+      status: input.status,
+      battery: input.battery,
+      lat, lng,
+      lastSeen: now,
+      idleHours: 0,
+      flagged: false,
+      serial: this.optStr(input.serial),
+      lockId: this.optStr(input.lockId),
+      parkingId,
+      notes: this.optStr(input.notes),
+      seed: false,
+    } as any).run();
+    return { bike: this.getBike(id)! };
+  }
+
+  adminUpdateBike(id: string, patch: AdminUpdateBikeInput) {
+    const existing = this.getBike(id);
+    if (!existing) return { error: "Велосипед не найден" };
+
+    const set: Partial<Bike> = {};
+    if (patch.model !== undefined) set.model = patch.model.trim();
+    if (patch.status !== undefined) set.status = patch.status;
+    if (patch.battery !== undefined) set.battery = patch.battery;
+    if (patch.serial !== undefined) set.serial = this.optStr(patch.serial);
+    if (patch.lockId !== undefined) set.lockId = this.optStr(patch.lockId);
+    if (patch.notes !== undefined) set.notes = this.optStr(patch.notes);
+    if (patch.parkingId !== undefined) {
+      const parkingId = this.optStr(patch.parkingId);
+      set.parkingId = parkingId;
+    }
+    db.update(bikes).set(set as any).where(eq(bikes.id, id)).run();
+    return { bike: this.getBike(id)! };
+  }
+
+  // Soft delete: mark a bike archived so it drops out of the public list and
+  // rental selection while keeping its ride history intact.
+  archiveBike(id: string) {
+    const existing = this.getBike(id);
+    if (!existing) return { error: "Велосипед не найден" };
+    if (existing.status === "rented") return { error: "Нельзя архивировать велосипед во время активной аренды" };
+    db.update(bikes).set({ status: "archived" } as any).where(eq(bikes.id, id)).run();
+    return { bike: this.getBike(id)! };
+  }
+
+  // Hard delete: only allowed when the bike has no ride history. Otherwise we
+  // refuse and archive instead, so analytics/ride records never dangle.
+  deleteBike(id: string) {
+    const existing = this.getBike(id);
+    if (!existing) return { error: "Велосипед не найден" };
+    if (existing.status === "rented") return { error: "Нельзя удалить велосипед во время активной аренды" };
+    const rideCount = (sqlite.prepare("SELECT COUNT(*) AS c FROM rides WHERE bike_id = ?").get(id) as { c: number }).c;
+    if (rideCount > 0) {
+      db.update(bikes).set({ status: "archived" } as any).where(eq(bikes.id, id)).run();
+      return { error: "У велосипеда есть история поездок — он переведён в архив", archived: this.getBike(id)! };
+    }
+    db.delete(bikes).where(eq(bikes.id, id)).run();
+    return { ok: true as const };
   }
   listParkings() { return db.select().from(parkings).all() as Parking[]; }
   listZones() { return db.select().from(zones).all() as ZoneRow[]; }
