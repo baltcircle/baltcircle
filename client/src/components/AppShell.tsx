@@ -135,7 +135,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Mobile top header */}
+      {/* Mobile top header — the customer map route renders its own floating
+          header inside MapPage for a full-bleed, map-first look, so suppress
+          this one there to avoid a doubled header. */}
+      {!isCustomerMap && (
       <header className="lg:hidden sticky top-0 z-30 bg-sidebar text-sidebar-foreground border-b border-sidebar-border flex items-center justify-between px-4 h-14">
         <Link href={isAdmin ? "/admin" : "/"} data-testid="link-home-mobile" className="flex items-center gap-2">
           <Logo />
@@ -175,6 +178,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
         </div>
       </header>
+      )}
 
       {/* Customer UI is map-first with no bottom tabs; admin keeps tab bar. */}
       <main
