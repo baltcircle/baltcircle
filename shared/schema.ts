@@ -268,6 +268,14 @@ export const rides = sqliteTable("rides", {
 export type Ride = typeof rides.$inferSelect;
 export const insertRideSchema = createInsertSchema(rides);
 
+// A ride enriched with the rider's display name/phone for the admin rides
+// table. Identity is resolved server-side from the users table; an unknown or
+// demo rider yields null name/phone so the UI can fall back to the raw id.
+export type AdminRide = Ride & {
+  userName: string | null;
+  userPhone: string | null;
+};
+
 /* ------- MAINTENANCE TICKETS ------- */
 export const tickets = sqliteTable("tickets", {
   id: integer("id").primaryKey({ autoIncrement: true }),

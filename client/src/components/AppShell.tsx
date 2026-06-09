@@ -27,6 +27,7 @@ const RIDER_NAV: NavItem[] = [
 const OPS_NAV: NavItem[] = [
   { href: "/admin",             label: "Дашборд",      icon: ShieldCheck, testId: "nav-admin" },
   { href: "/admin/bikes",       label: "Велосипеды",   icon: Bike,        testId: "nav-bikes" },
+  { href: "/admin/rides",       label: "Поездки",      icon: Route,       testId: "nav-admin-rides" },
   { href: "/admin/users",       label: "Пользователи", icon: Users,       testId: "nav-users" },
   { href: "/admin/map",         label: "Карта",        icon: Map,         testId: "nav-map-editor" },
   { href: "/admin/analytics",   label: "Аналитика",    icon: BarChart3,   testId: "nav-analytics" },

@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fmtRelative, fmtRub } from "@/lib/format";
 import {
-  Plus, Map as MapIcon, Users as UsersIcon, Wrench, BarChart3, QrCode,
+  Plus, Map as MapIcon, Users as UsersIcon, Wrench, BarChart3,
   Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity, ChevronRight,
 } from "lucide-react";
 
@@ -136,11 +136,11 @@ export function AdminPage() {
         <h2 className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground mb-3">Быстрые действия</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <QuickAction href="/admin/bikes" icon={<Plus className="w-5 h-5" />} label="Добавить велосипед" testId="quick-action-add-bike" />
+          <QuickAction href="/admin/rides" icon={<Activity className="w-5 h-5" />} label="Поездки" testId="quick-action-rides" />
           <QuickAction href="/admin/map" icon={<MapIcon className="w-5 h-5" />} label="Редактор карты" testId="quick-action-map" />
           <QuickAction href="/admin/users" icon={<UsersIcon className="w-5 h-5" />} label="Пользователи" testId="quick-action-users" />
           <QuickAction href="/admin/maintenance" icon={<Wrench className="w-5 h-5" />} label="Сервис" testId="quick-action-maintenance" />
           <QuickAction href="/admin/analytics" icon={<BarChart3 className="w-5 h-5" />} label="Аналитика" testId="quick-action-analytics" />
-          <QuickAction href="/admin/bikes" icon={<QrCode className="w-5 h-5" />} label="QR-коды" testId="quick-action-qr" />
         </div>
       </section>
 
@@ -218,8 +218,8 @@ export function AdminPage() {
             <h2 className="font-display text-lg font-light flex items-center gap-2">
               <Activity className="w-4 h-4 text-primary" />Последние поездки
             </h2>
-            <Link href="/admin/analytics" className="text-xs text-primary hover:underline" data-testid="link-rides-detail">
-              Аналитика
+            <Link href="/admin/rides" className="text-xs text-primary hover:underline" data-testid="link-rides-detail">
+              Все поездки
             </Link>
           </div>
           {loading ? (
@@ -390,7 +390,7 @@ function deriveAlerts(m: Metrics): Alert[] {
       severity: "critical",
       title: `${m.longActiveRides.length} затянувшихся поездок`,
       detail: `Поездка ${longest.bikeId} идёт ${longest.hours.toFixed(1)} ч (порог ${LONG_RIDE_HOURS} ч).`,
-      href: "/admin/analytics",
+      href: "/admin/rides",
     });
   }
   if (m.highPriorityTickets > 0) {

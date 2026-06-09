@@ -21,6 +21,7 @@ import { SafetyPage } from "@/pages/SafetyPage";
 import { LegalIndexPage } from "@/pages/LegalIndexPage";
 import { LegalDocPage } from "@/pages/LegalDocPage";
 import { AdminPage } from "@/pages/AdminPage";
+import { RidesAdminPage } from "@/pages/RidesAdminPage";
 import { BikesPage } from "@/pages/BikesPage";
 import { UsersPage } from "@/pages/UsersPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
@@ -56,6 +57,7 @@ function AppRouter() {
       {/* Admin / operator interface — gated to operator/admin roles */}
       <Route path="/admin"><AdminGuard><AdminPage /></AdminGuard></Route>
       <Route path="/admin/bikes"><AdminGuard><BikesPage /></AdminGuard></Route>
+      <Route path="/admin/rides"><AdminGuard><RidesAdminPage /></AdminGuard></Route>
       <Route path="/admin/users"><AdminGuard><UsersPage /></AdminGuard></Route>
       <Route path="/admin/map"><AdminGuard><MapEditorPage /></AdminGuard></Route>
       <Route path="/admin/analytics"><AdminGuard><AnalyticsPage /></AdminGuard></Route>

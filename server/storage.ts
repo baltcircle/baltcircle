@@ -3,7 +3,7 @@ import {
   otpRequests, phoneChangeRequests, paymentMethods, supportTickets,
 } from "@shared/schema";
 import type {
-  Bike, Parking, ZoneRow, Ride, Ticket, Payment, Wallet,
+  Bike, Parking, ZoneRow, Ride, AdminRide, Ticket, Payment, Wallet,
   MapObject, InsertMapObject, User, OtpRequest, UserRole, UpdateProfileInput,
   PhoneChangeRequest, PaymentMethod, SupportTicket,
   AdminCreateBikeInput, AdminUpdateBikeInput,
@@ -505,6 +505,7 @@ export interface IStorage {
   endRide(rideId: number): Ride | undefined;
   getActiveRide(userId: string): Ride | undefined;
   listRides(opts?: { userId?: string; limit?: number }): Ride[];
+  listAdminRides(opts?: { limit?: number }): AdminRide[];
   // payments / wallet
   getWallet(userId: string): Wallet;
   topUp(userId: string, amount: number): { wallet: Wallet; payment: Payment };
@@ -996,6 +997,21 @@ export class DatabaseStorage implements IStorage {
         .all() as Ride[];
     }
     return db.select().from(rides).orderBy(desc(rides.startedAt)).limit(limit).all() as Ride[];
+  }
+
+  // Rides for the operator panel, newest first, joined to rider identity so the
+  // admin table can show a name/phone instead of a raw user id. Riders are
+  // looked up in a single batch; unknown/demo ids resolve to null so the UI can
+  // fall back to the id.
+  listAdminRides(opts?: { limit?: number }) {
+    const limit = opts?.limit ?? 200;
+    const rows = db.select().from(rides).orderBy(desc(rides.startedAt)).limit(limit).all() as Ride[];
+    const all = db.select().from(users).all() as User[];
+    const byId = new Map(all.map((u) => [u.id, u]));
+    return rows.map((r) => {
+      const u = byId.get(r.userId);
+      return { ...r, userName: u?.name ?? null, userPhone: u?.phone ?? null } as AdminRide;
+    });
   }
 
   getWallet(userId: string) {

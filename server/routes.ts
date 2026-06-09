@@ -361,6 +361,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(r);
   });
 
+  // -------------- Admin rides --------------
+  // Staff-only operational view of every ride with rider identity attached.
+  // 401 unregistered, 403 registered-but-not-staff (mirrors /api/admin/*).
+  app.get("/api/admin/rides", requireRole("operator", "admin"), (req, res) => {
+    const limit = req.query.limit ? Math.min(Number(req.query.limit) || 200, 1000) : 200;
+    res.json(storage.listAdminRides({ limit }));
+  });
+  // Manually finish any active ride. Reuses the shared endRide() (which settles
+  // cost, frees the bike and charges the wallet) but, unlike the rider endpoint,
+  // an operator may end a ride that isn't their own. 404 if not active.
+  app.post("/api/admin/rides/:id/end", requireRole("operator", "admin"), (req, res) => {
+    const r = storage.endRide(Number(req.params.id));
+    if (!r) return res.status(404).json({ error: "Поездка не активна" });
+    res.json(r);
+  });
+
   // -------------- Wallet / Payments --------------
   app.get("/api/wallet", (req, res) => res.json(storage.getWallet(riderId(req))));
   app.post("/api/wallet/topup", (req, res) => {
