@@ -5,7 +5,7 @@ import { useAppViewport } from "@/hooks/use-app-viewport";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import {
   Map, QrCode, CreditCard, Route, ShieldCheck, Wrench, BarChart3,
-  Sun, Moon, Bike, ChevronRight, ArrowLeft, User, Users, MapPin,
+  Sun, Moon, Bike, ChevronRight, ArrowLeft, User, Users, MapPin, Crosshair,
 } from "lucide-react";
 
 interface NavItem {
@@ -30,6 +30,7 @@ const OPS_NAV: NavItem[] = [
   { href: "/admin/rides",       label: "Поездки",      icon: Route,       testId: "nav-admin-rides" },
   { href: "/admin/users",       label: "Пользователи", icon: Users,       testId: "nav-users" },
   { href: "/admin/map",         label: "Карта",        icon: Map,         testId: "nav-map-editor" },
+  { href: "/admin/operations-map", label: "Оперкарта",  icon: Crosshair,  testId: "nav-operations-map" },
   { href: "/admin/parkings",    label: "Парковки",     icon: MapPin,      testId: "nav-parkings" },
   { href: "/admin/analytics",   label: "Аналитика",    icon: BarChart3,   testId: "nav-analytics" },
   { href: "/admin/maintenance", label: "Сервис",       icon: Wrench,      testId: "nav-maintenance" },

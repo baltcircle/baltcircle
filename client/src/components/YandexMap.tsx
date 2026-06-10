@@ -1,20 +1,41 @@
 import { useEffect, useRef, useState } from "react";
-import type { Bike, Parking, ZoneRow, Ride, MapObject } from "@shared/schema";
+import type { Bike, Parking, ZoneRow, Ride, MapObject, Ticket } from "@shared/schema";
 import { REAL_CENTER, mapToReal } from "@shared/geo";
 import { parkingPlacemarkStyle, PARKING_SEA } from "@shared/parkingMarker";
 import { CoastMap } from "./CoastMap";
+
+/** Which optional overlay layers are drawn. Every flag defaults to visible, so
+ *  existing callers (customer map, parking/map editors) are unaffected. The
+ *  admin operations map flips these from its layer toggles. */
+export interface MapLayers {
+  parkings?: boolean;
+  bikes?: boolean;
+  rides?: boolean;
+  tickets?: boolean;
+  objects?: boolean;
+}
 
 interface Props {
   bikes?: Bike[];
   parkings?: Parking[];
   zones?: ZoneRow[];
   ride?: Ride | null;
+  /** Active rides drawn as markers (start point) plus their track. Used by the
+   *  admin operations map; the customer map uses the single `ride` track. */
+  activeRides?: Ride[];
+  /** Open/high-priority service tickets, drawn at their bike's position. */
+  tickets?: Ticket[];
   /** Operator-drawn routes/zones from the visual map editor. Empty by default
    *  (no pre-drawn overlays) — the public map is just the base map until an
    *  operator saves objects in /admin/map. */
   mapObjects?: MapObject[];
+  /** Per-layer visibility. Omitted layers render as before (visible). */
+  layers?: MapLayers;
   selectedBikeId?: string | null;
   onSelectBike?: (id: string) => void;
+  onSelectParking?: (id: string) => void;
+  onSelectRide?: (id: number) => void;
+  onSelectTicket?: (id: number) => void;
   height?: number | string;
   showLabels?: boolean;
   interactive?: boolean;
@@ -44,12 +65,28 @@ function fillFromColor(color: string) {
   return `${color}22`; // ~13% alpha
 }
 
+// Service ticket marker colour by priority — critical/high stand out in red,
+// the rest in amber. Used only by the admin operations map.
+function ticketColor(priority: string) {
+  return priority === "critical" || priority === "high" ? "#d64545" : "#e0972a";
+}
+
 export function YandexMap(props: Props) {
   const {
-    bikes = [], parkings = [], ride = null, mapObjects = [],
-    selectedBikeId, onSelectBike, height = 520,
-    interactive = true, onMapClick, onCenterGetter,
+    bikes = [], parkings = [], ride = null, activeRides = [], tickets = [],
+    mapObjects = [], layers = {},
+    selectedBikeId, onSelectBike, onSelectParking, onSelectRide, onSelectTicket,
+    height = 520, interactive = true, onMapClick, onCenterGetter,
   } = props;
+
+  // A layer renders unless its flag is explicitly false (default: visible).
+  const show = {
+    parkings: layers.parkings !== false,
+    bikes: layers.bikes !== false,
+    rides: layers.rides !== false,
+    tickets: layers.tickets !== false,
+    objects: layers.objects !== false,
+  };
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -58,6 +95,12 @@ export function YandexMap(props: Props) {
   const savedObjectsRef = useRef<any | null>(null);  // operator-drawn objects
   const onSelectRef = useRef(onSelectBike);
   onSelectRef.current = onSelectBike;
+  const onSelectParkingRef = useRef(onSelectParking);
+  onSelectParkingRef.current = onSelectParking;
+  const onSelectRideRef = useRef(onSelectRide);
+  onSelectRideRef.current = onSelectRide;
+  const onSelectTicketRef = useRef(onSelectTicket);
+  onSelectTicketRef.current = onSelectTicket;
   const onMapClickRef = useRef(onMapClick);
   onMapClickRef.current = onMapClick;
   const onCenterGetterRef = useRef(onCenterGetter);
@@ -139,19 +182,21 @@ export function YandexMap(props: Props) {
   useEffect(() => {
     renderDynamic();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bikes, parkings, ride, selectedBikeId, interactive]);
+  }, [bikes, parkings, ride, activeRides, tickets, selectedBikeId, interactive,
+      show.parkings, show.bikes, show.rides, show.tickets]);
 
   // Re-render saved operator objects whenever they change.
   useEffect(() => {
     renderSavedObjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapObjects]);
+  }, [mapObjects, show.objects]);
 
   function renderSavedObjects() {
     const ymaps = ymapsRef.current;
     const saved = savedObjectsRef.current;
     if (!ymaps || !saved) return;
     saved.removeAll();
+    if (!show.objects) return;
 
     for (const obj of mapObjects) {
       let pts: [number, number][];
@@ -200,51 +245,58 @@ export function YandexMap(props: Props) {
     // styled that way renders identical to an active one and looks "missing".
     // islands#grayStretchyIcon honours both iconColor and a caption, giving an
     // unmistakable muted grey "P · неактивна" marker.
-    for (const p of parkings) {
-      const inactive = p.status === "inactive";
-      const style = parkingPlacemarkStyle(inactive);
-      const placemark = new ymaps.Placemark(
-        mapToReal(p.lng, p.lat),
-        {
-          iconCaption: inactive ? "P · неактивна" : undefined,
-          hintContent: inactive ? `${p.name} · неактивна` : p.name,
-          balloonContent: `${p.name} · ${p.occupied}/${p.capacity}${inactive ? " · неактивна" : ""}`,
-        },
-        {
-          preset: style.preset,
-          iconColor: style.iconColor,
-        },
-      );
-      // Keep inactive markers clearly readable but visually subordinate to
-      // active ones — never so faint they read as "hidden".
-      placemark.options.set("zIndex", style.zIndex);
-      placemark.options.set("opacity", style.opacity);
-      collection.add(placemark);
+    if (show.parkings) {
+      for (const p of parkings) {
+        const inactive = p.status === "inactive";
+        const style = parkingPlacemarkStyle(inactive);
+        const placemark = new ymaps.Placemark(
+          mapToReal(p.lng, p.lat),
+          {
+            iconCaption: inactive ? "P · неактивна" : undefined,
+            hintContent: inactive ? `${p.name} · неактивна` : p.name,
+            balloonContent: `${p.name} · ${p.occupied}/${p.capacity}${inactive ? " · неактивна" : ""}`,
+          },
+          {
+            preset: style.preset,
+            iconColor: style.iconColor,
+          },
+        );
+        // Keep inactive markers clearly readable but visually subordinate to
+        // active ones — never so faint they read as "hidden".
+        placemark.options.set("zIndex", style.zIndex);
+        placemark.options.set("opacity", style.opacity);
+        if (interactive && onSelectParkingRef.current) {
+          placemark.events.add("click", () => onSelectParkingRef.current?.(p.id));
+        }
+        collection.add(placemark);
+      }
     }
 
     // Bikes
-    for (const b of bikes) {
-      const isSel = b.id === selectedBikeId;
-      const placemark = new ymaps.Placemark(
-        mapToReal(b.lng, b.lat),
-        {
-          hintContent: `${b.id} · ${b.model}`,
-          balloonContent: `${b.id} · ${b.model} · ${b.battery}%`,
-        },
-        {
-          preset: "islands#circleIcon",
-          iconColor: bikeColor(b.status),
-          zIndex: isSel ? 500 : 300,
-        },
-      );
-      if (interactive) {
-        placemark.events.add("click", () => onSelectRef.current?.(b.id));
+    if (show.bikes) {
+      for (const b of bikes) {
+        const isSel = b.id === selectedBikeId;
+        const placemark = new ymaps.Placemark(
+          mapToReal(b.lng, b.lat),
+          {
+            hintContent: `${b.id} · ${b.model}`,
+            balloonContent: `${b.id} · ${b.model} · ${b.battery}%`,
+          },
+          {
+            preset: "islands#circleIcon",
+            iconColor: bikeColor(b.status),
+            zIndex: isSel ? 500 : 300,
+          },
+        );
+        if (interactive) {
+          placemark.events.add("click", () => onSelectRef.current?.(b.id));
+        }
+        collection.add(placemark);
       }
-      collection.add(placemark);
     }
 
-    // Active ride track
-    if (ride) {
+    // Single active ride track (customer map).
+    if (show.rides && ride) {
       try {
         const pts = JSON.parse(ride.track) as [number, number, number][];
         const coords = pts.map(([x, y]) => mapToReal(x, y));
@@ -255,6 +307,55 @@ export function YandexMap(props: Props) {
           collection.add(line);
         }
       } catch { /* ignore malformed track */ }
+    }
+
+    // Active rides as markers + tracks (admin operations map).
+    if (show.rides) {
+      for (const r of activeRides) {
+        try {
+          const pts = JSON.parse(r.track) as [number, number, number][];
+          const coords = pts.map(([x, y]) => mapToReal(x, y));
+          if (coords.length > 1) {
+            const line = new ymaps.Polyline(coords, {}, {
+              strokeColor: SEA, strokeWidth: 4, strokeOpacity: 0.85, zIndex: 380,
+            });
+            collection.add(line);
+          }
+        } catch { /* ignore malformed track */ }
+        const marker = new ymaps.Placemark(
+          mapToReal(r.startLng, r.startLat),
+          {
+            hintContent: `Поездка #${r.id} · ${r.bikeId}`,
+            balloonContent: `Поездка #${r.id} · велосипед ${r.bikeId}`,
+          },
+          { preset: "islands#nightCircleDotIcon", iconColor: SEA, zIndex: 420 },
+        );
+        if (interactive && onSelectRideRef.current) {
+          marker.events.add("click", () => onSelectRideRef.current?.(r.id));
+        }
+        collection.add(marker);
+      }
+    }
+
+    // Open / high-priority service tickets at their bike's position.
+    if (show.tickets) {
+      const bikeById = new Map(bikes.map((b) => [b.id, b] as const));
+      for (const t of tickets) {
+        const bike = bikeById.get(t.bikeId);
+        if (!bike) continue; // no position to anchor the marker without the bike
+        const marker = new ymaps.Placemark(
+          mapToReal(bike.lng, bike.lat),
+          {
+            hintContent: `Тикет #${t.id} · ${t.bikeId} · ${t.priority}`,
+            balloonContent: `Тикет #${t.id} · ${t.bikeId} · ${t.title || t.kind}`,
+          },
+          { preset: "islands#dotIcon", iconColor: ticketColor(t.priority), zIndex: 460 },
+        );
+        if (interactive && onSelectTicketRef.current) {
+          marker.events.add("click", () => onSelectTicketRef.current?.(t.id));
+        }
+        collection.add(marker);
+      }
     }
   }
 
