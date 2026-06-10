@@ -254,25 +254,34 @@ export function CoastMap({
           );
         })}
 
-        {/* Parkings */}
+        {/* Parkings. Inactive points are kept on the admin maps but rendered in
+            a muted grey so operators can see the full network; the public map
+            only ever receives active parkings. */}
         {parkings.map(p => {
           const label = parkingLabelProps(p.id);
+          const inactive = p.status === "inactive";
+          const stroke = inactive ? "hsl(220 6% 56%)" : "hsl(var(--brand-sea))";
           return (
-            <g key={p.id} transform={`translate(${p.lng} ${p.lat})`} data-testid={`parking-${p.id}`}>
+            <g
+              key={p.id}
+              transform={`translate(${p.lng} ${p.lat})`}
+              data-testid={`parking-${p.id}`}
+              opacity={inactive ? 0.7 : 1}
+            >
               <rect x="-9" y="-9" width="18" height="18" rx="4"
                 fill="hsl(var(--brand-foam))"
-                stroke="hsl(var(--brand-sea))"
+                stroke={stroke}
                 strokeWidth="1.6"
                 filter="url(#softShadow)"
               />
-              <text x="0" y="3" fontSize="9" textAnchor="middle" fontWeight="700" fill="hsl(var(--brand-sea))">P</text>
+              <text x="0" y="3" fontSize="9" textAnchor="middle" fontWeight="700" fill={stroke}>P</text>
               {showLabels && (
                 <>
                   <text x={label.x} y={label.y} fontSize="9.5" textAnchor={label.anchor} stroke="hsl(var(--brand-foam))" strokeWidth="3" strokeLinejoin="round" className="font-medium">
-                    {p.name}
+                    {inactive ? `${p.name} · неактивна` : p.name}
                   </text>
                   <text x={label.x} y={label.y} fontSize="9.5" textAnchor={label.anchor} fill="hsl(var(--brand-bark))" className="font-medium">
-                    {p.name}
+                    {inactive ? `${p.name} · неактивна` : p.name}
                   </text>
                 </>
               )}

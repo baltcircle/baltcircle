@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Bike, Parking, ZoneRow, Ride, MapObject } from "@shared/schema";
 import { REAL_CENTER, mapToReal } from "@shared/geo";
+import { parkingPlacemarkStyle, PARKING_SEA } from "@shared/parkingMarker";
 import { CoastMap } from "./CoastMap";
 
 interface Props {
@@ -26,7 +27,7 @@ interface Props {
 }
 
 // Resolved brand-ish colors (Yandex overlays can't read CSS variables).
-const SEA = "#1d6f8e";
+const SEA = PARKING_SEA;
 
 function bikeColor(status: string) {
   switch (status) {
@@ -192,20 +193,32 @@ export function YandexMap(props: Props) {
     // Parkings — mapped from abstract storage to real coordinates near towns.
     // Inactive points are dimmed (grey) so admin management can show the full
     // set; the public map only ever receives active parkings.
+    //
+    // Active points use the blue parking glyph. Inactive points must use a
+    // *colorable* preset: the parking presets (islands#blueParkingIcon) ship a
+    // fixed-colour image and silently ignore `iconColor`, so an inactive point
+    // styled that way renders identical to an active one and looks "missing".
+    // islands#grayStretchyIcon honours both iconColor and a caption, giving an
+    // unmistakable muted grey "P · неактивна" marker.
     for (const p of parkings) {
       const inactive = p.status === "inactive";
+      const style = parkingPlacemarkStyle(inactive);
       const placemark = new ymaps.Placemark(
         mapToReal(p.lng, p.lat),
         {
+          iconCaption: inactive ? "P · неактивна" : undefined,
           hintContent: inactive ? `${p.name} · неактивна` : p.name,
           balloonContent: `${p.name} · ${p.occupied}/${p.capacity}${inactive ? " · неактивна" : ""}`,
         },
         {
-          preset: "islands#blueParkingIcon",
-          iconColor: inactive ? "#8a8f96" : SEA,
+          preset: style.preset,
+          iconColor: style.iconColor,
         },
       );
-      placemark.options.set("zIndex", inactive ? 150 : 200);
+      // Keep inactive markers clearly readable but visually subordinate to
+      // active ones — never so faint they read as "hidden".
+      placemark.options.set("zIndex", style.zIndex);
+      placemark.options.set("opacity", style.opacity);
       collection.add(placemark);
     }
 

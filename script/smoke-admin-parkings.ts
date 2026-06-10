@@ -169,6 +169,26 @@ async function main() {
     (p: any) => p.id === "PX-TEST" && p.status === "inactive" && !p.archivedAt,
   );
   assert(!!inactiveOnMap, "inactive non-archived parking is in the admin map render set");
+  // The admin map render set (non-archived parkings) must strictly contain the
+  // public, active-only set: every public parking is also on the admin map, and
+  // the admin map additionally carries the inactive point that the public map
+  // omits. This is the active-only-vs-full-list contract the bug violated.
+  const publicNow = await (await fetch(`${BASE}/api/parkings`)).json();
+  const adminMapSet = adminList.filter((p: any) => !p.archivedAt);
+  const adminMapIds = new Set(adminMapSet.map((p: any) => p.id));
+  assert(
+    publicNow.every((p: any) => p.status === "active"),
+    "public /api/parkings is active-only",
+  );
+  assert(
+    publicNow.every((p: any) => adminMapIds.has(p.id)),
+    "every public parking is also on the admin map",
+  );
+  assert(
+    adminMapSet.some((p: any) => p.status === "inactive") &&
+      !publicNow.some((p: any) => p.status === "inactive"),
+    "admin map shows inactive parkings the public map hides",
+  );
 
   // 8. Archive a demo parking → gone from both lists.
   res = await j(admin.cookie, "POST", "/api/admin/parkings/P-01/archive");
