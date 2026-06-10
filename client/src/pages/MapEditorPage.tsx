@@ -30,9 +30,11 @@ export function MapEditorPage() {
   // Admin editor reads the full list (incl. inactive). The public map reads the
   // active-only "/api/map-objects" endpoint, so it stays clean.
   const objectsQ = useQuery<MapObject[]>({ queryKey: ADMIN_OBJECTS_KEY });
-  // Active managed parkings, shown as context so the operator can align routes
-  // and zones to the real pickup/return points while drawing.
-  const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
+  // Managed parkings shown as context so the operator can align routes and
+  // zones to the real pickup/return points while drawing. Uses the admin
+  // full-list endpoint so inactive points appear (muted) here too — only the
+  // public customer map is limited to active parkings.
+  const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/admin/parkings"] });
 
   const [type, setType] = useState<ObjType>("route");
   const [name, setName] = useState("");
@@ -65,6 +67,10 @@ export function MapEditorPage() {
     ...(objectsQ.data ?? []).filter((o) => o.active),
     ...(draftObject ? [draftObject] : []),
   ];
+
+  // Drop archived (soft-deleted) parkings before drawing. Inactive points stay
+  // and are rendered muted by YandexMap.
+  const mapParkings = (parkingsQ.data ?? []).filter((p) => !p.archivedAt);
 
   const saveM = useMutation({
     mutationFn: async () => {
@@ -171,7 +177,7 @@ export function MapEditorPage() {
         <div>
           <YandexMap
             bikes={[]}
-            parkings={parkingsQ.data ?? []}
+            parkings={mapParkings}
             mapObjects={previewObjects}
             height="64vh"
             onMapClick={(coords) => setDraft((d) => [...d, coords])}

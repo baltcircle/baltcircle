@@ -162,6 +162,13 @@ async function main() {
   assert(!publicList.some((p: any) => p.id === "PX-TEST"), "inactive parking hidden from public /api/parkings");
   const adminList = await (await fetch(`${BASE}/api/admin/parkings`, { headers: { cookie: admin.cookie } })).json();
   assert(adminList.some((p: any) => p.id === "PX-TEST"), "inactive parking visible to admin");
+  // The admin maps (parking + route/zone editors) render the non-archived
+  // subset of this list, dimming inactive points. Assert the inactive point is
+  // exactly that — present, inactive, and not archived — so it reaches the map.
+  const inactiveOnMap = adminList.find(
+    (p: any) => p.id === "PX-TEST" && p.status === "inactive" && !p.archivedAt,
+  );
+  assert(!!inactiveOnMap, "inactive non-archived parking is in the admin map render set");
 
   // 8. Archive a demo parking → gone from both lists.
   res = await j(admin.cookie, "POST", "/api/admin/parkings/P-01/archive");
