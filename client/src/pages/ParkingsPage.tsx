@@ -20,7 +20,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Search, Plus, Pencil, Archive, Trash2, MapPin, Crosshair,
+  Search, Plus, Pencil, Archive, Trash2, MapPin, Crosshair, RotateCcw,
 } from "lucide-react";
 
 const ADMIN_PARKINGS_KEY = ["/api/admin/parkings"] as const;
@@ -35,7 +35,14 @@ const STATUS_TONE: Record<ParkingStatus, string> = {
   inactive: "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200",
 };
 
-type StatusFilter = "all" | "active" | "inactive";
+type StatusFilter = "all" | "active" | "inactive" | "archive";
+
+const FILTER_LABEL: Record<StatusFilter, string> = {
+  all: "Все",
+  active: "Активные",
+  inactive: "Неактивные",
+  archive: "Архив",
+};
 
 type FormState = {
   id: string;
@@ -75,8 +82,10 @@ export function ParkingsPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return parkings
-      .filter((p) => !p.archivedAt)
-      .filter((p) => statusFilter === "all" || p.status === statusFilter)
+      // Archive view shows only soft-deleted points; every other view shows
+      // only live (non-archived) points so archived never leak into them.
+      .filter((p) => (statusFilter === "archive" ? !!p.archivedAt : !p.archivedAt))
+      .filter((p) => statusFilter === "all" || statusFilter === "archive" || p.status === statusFilter)
       .filter((p) => !q || p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q))
       .sort((a, b) => a.id.localeCompare(b.id));
   }, [parkings, search, statusFilter]);
@@ -128,6 +137,19 @@ export function ParkingsPage() {
       queryClient.invalidateQueries({ queryKey: ADMIN_PARKINGS_KEY });
       queryClient.invalidateQueries({ queryKey: ["/api/parkings"] });
       toast.toast({ title: "Парковка в архиве", description: p.name });
+    },
+    onError: (err: any) => toast.toast({ title: "Не удалось", description: err?.message?.replace(/^\d+:\s*/, ""), variant: "destructive" }),
+  });
+
+  const restoreMut = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/admin/parkings/${encodeURIComponent(id)}/restore`);
+      return res.json() as Promise<Parking>;
+    },
+    onSuccess: (p) => {
+      queryClient.invalidateQueries({ queryKey: ADMIN_PARKINGS_KEY });
+      queryClient.invalidateQueries({ queryKey: ["/api/parkings"] });
+      toast.toast({ title: "Парковка восстановлена", description: `${p.name} · неактивна` });
     },
     onError: (err: any) => toast.toast({ title: "Не удалось", description: err?.message?.replace(/^\d+:\s*/, ""), variant: "destructive" }),
   });
@@ -293,15 +315,16 @@ export function ParkingsPage() {
       )}
 
       <div className="flex items-center gap-2 mb-4" data-testid="parking-status-filter">
-        {(["all", "active", "inactive"] as StatusFilter[]).map((s) => (
+        {(["all", "active", "inactive", "archive"] as StatusFilter[]).map((s) => (
           <Button
             key={s}
             variant={statusFilter === s ? "default" : "outline"}
             size="sm"
             onClick={() => setStatusFilter(s)}
-            data-testid={`filter-parking-${s}`}
+            data-testid={s === "archive" ? "filter-parkings-archive" : `filter-parking-${s}`}
           >
-            {s === "all" ? "Все" : STATUS_LABEL[s]}
+            {FILTER_LABEL[s]}
+            {s === "archive" && archivedCount > 0 ? ` (${archivedCount})` : ""}
           </Button>
         ))}
       </div>
@@ -321,8 +344,13 @@ export function ParkingsPage() {
           <TableBody>
             {filtered.map((p) => {
               const r = mapToReal(p.lng, p.lat);
+              const isArchived = !!p.archivedAt;
               return (
-                <TableRow key={p.id} data-testid={`row-admin-parking-${p.id}`} className="hover-elevate">
+                <TableRow
+                  key={p.id}
+                  data-testid={`row-admin-parking-${p.id}`}
+                  className={`hover-elevate${isArchived ? " opacity-60" : ""}`}
+                >
                   <TableCell className="font-mono text-sm">
                     <span className="inline-flex items-center gap-2">
                       <MapPin className="w-3.5 h-3.5 text-muted-foreground" />{p.id}
@@ -333,9 +361,15 @@ export function ParkingsPage() {
                     {p.notes && <div className="text-xs text-muted-foreground truncate max-w-xs">{p.notes}</div>}
                   </TableCell>
                   <TableCell>
-                    <Badge className={`${STATUS_TONE[p.status as ParkingStatus] ?? STATUS_TONE.inactive} border-0`}>
-                      {STATUS_LABEL[p.status as ParkingStatus] ?? p.status}
-                    </Badge>
+                    {isArchived ? (
+                      <Badge className="bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 border-0">
+                        Архив
+                      </Badge>
+                    ) : (
+                      <Badge className={`${STATUS_TONE[p.status as ParkingStatus] ?? STATUS_TONE.inactive} border-0`}>
+                        {STATUS_LABEL[p.status as ParkingStatus] ?? p.status}
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell className="text-right text-sm font-mono">{p.occupied} / {p.capacity}</TableCell>
                   <TableCell className="text-xs text-muted-foreground font-mono">
@@ -343,31 +377,45 @@ export function ParkingsPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center justify-end gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(p)} title="Редактировать" data-testid={`button-edit-parking-${p.id}`}>
-                        <Pencil className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="ghost" size="icon"
-                        onClick={() => archiveMut.mutate(p.id)}
-                        disabled={archiveMut.isPending}
-                        title="В архив"
-                        data-testid={`button-archive-parking-${p.id}`}
-                      >
-                        <Archive className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="ghost" size="icon"
-                        onClick={() => {
-                          if (confirm(`Удалить ${p.name}? Если привязаны велосипеды — парковка уйдёт в архив.`)) {
-                            deleteMut.mutate(p.id);
-                          }
-                        }}
-                        disabled={deleteMut.isPending}
-                        title="Удалить"
-                        data-testid={`button-delete-parking-${p.id}`}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      {isArchived ? (
+                        <Button
+                          variant="ghost" size="sm"
+                          onClick={() => restoreMut.mutate(p.id)}
+                          disabled={restoreMut.isPending}
+                          title="Восстановить как неактивную"
+                          data-testid="button-restore-parking"
+                        >
+                          <RotateCcw className="w-4 h-4 mr-1" /> Восстановить
+                        </Button>
+                      ) : (
+                        <>
+                          <Button variant="ghost" size="icon" onClick={() => openEdit(p)} title="Редактировать" data-testid={`button-edit-parking-${p.id}`}>
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost" size="icon"
+                            onClick={() => archiveMut.mutate(p.id)}
+                            disabled={archiveMut.isPending}
+                            title="В архив"
+                            data-testid={`button-archive-parking-${p.id}`}
+                          >
+                            <Archive className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost" size="icon"
+                            onClick={() => {
+                              if (confirm(`Удалить ${p.name}? Если привязаны велосипеды — парковка уйдёт в архив.`)) {
+                                deleteMut.mutate(p.id);
+                              }
+                            }}
+                            disabled={deleteMut.isPending}
+                            title="Удалить"
+                            data-testid={`button-delete-parking-${p.id}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -376,7 +424,11 @@ export function ParkingsPage() {
             {filtered.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-muted-foreground py-12" data-testid="parkings-empty">
-                  {search ? "Ничего не найдено" : "Парковок пока нет — добавьте первую."}
+                  {search
+                    ? "Ничего не найдено"
+                    : statusFilter === "archive"
+                      ? "В архиве пока нет парковок."
+                      : "Парковок пока нет — добавьте первую."}
                 </TableCell>
               </TableRow>
             )}

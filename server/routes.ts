@@ -321,6 +321,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if ("error" in result) return res.status(404).json(result);
     res.json(result.parking);
   });
+  // Restore returns an archived point as *inactive* so it never re-appears on
+  // the public map until an operator activates it; it shows muted on admin maps.
+  app.post("/api/admin/parkings/:id/restore", requireRole("operator", "admin"), (req, res) => {
+    const result = storage.restoreParking(String(req.params.id));
+    if ("error" in result) return res.status(404).json(result);
+    res.json(result.parking);
+  });
   app.delete("/api/admin/parkings/:id", requireRole("operator", "admin"), (req, res) => {
     const result = storage.deleteParking(String(req.params.id));
     if ("error" in result) {

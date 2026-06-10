@@ -590,6 +590,7 @@ export interface IStorage {
   createParking(input: AdminCreateParkingInput): { parking: Parking } | { error: string };
   updateParking(id: string, patch: AdminUpdateParkingInput): { parking: Parking } | { error: string };
   archiveParking(id: string): { parking: Parking } | { error: string };
+  restoreParking(id: string): { parking: Parking } | { error: string };
   deleteParking(id: string): { ok: true } | { error: string; archived?: Parking };
   // zones
   listZones(): ZoneRow[];
@@ -1077,6 +1078,17 @@ export class DatabaseStorage implements IStorage {
     const existing = this.getParking(id);
     if (!existing) return { error: "Парковка не найдена" };
     db.update(parkings).set({ archivedAt: Date.now(), updatedAt: Date.now() } as any).where(eq(parkings.id, id)).run();
+    return { parking: this.getParking(id)! };
+  }
+
+  // Undo a soft delete: clear archivedAt and force status to inactive so the
+  // point returns muted on the admin maps but never re-appears on the public
+  // map until an operator explicitly re-activates it.
+  restoreParking(id: string) {
+    const existing = this.getParking(id);
+    if (!existing) return { error: "Парковка не найдена" };
+    if (!existing.archivedAt) return { error: "Парковка не в архиве" };
+    db.update(parkings).set({ archivedAt: null, status: "inactive", updatedAt: Date.now() } as any).where(eq(parkings.id, id)).run();
     return { parking: this.getParking(id)! };
   }
 

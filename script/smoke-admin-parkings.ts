@@ -9,7 +9,8 @@
 //   5. rejects a duplicate id (409) and bad input (400)
 //   6. edits a parking (name/status/capacity/occupied/notes) and clamps occupied
 //   7. inactive parking drops out of public /api/parkings but stays in admin list
-//   8. archives a parking → hidden from both public and admin lists
+//   8. archives a parking → hidden from public + the admin map render set
+//   8b. restores it → comes back inactive, hidden from public, on admin map
 //   9. hard-deletes a never-referenced parking (200) → gone
 //
 // Run with:  npx tsx script/smoke-admin-parkings.ts
@@ -197,6 +198,26 @@ async function main() {
   assert(!publicAfter.some((p: any) => p.id === "P-01"), "archived parking hidden from public list");
   const adminAfter = await (await fetch(`${BASE}/api/admin/parkings`, { headers: { cookie: admin.cookie } })).json();
   assert(adminAfter.some((p: any) => p.id === "P-01" && p.archivedAt), "archived parking carries archivedAt in admin list");
+
+  // 8b. Restore the archived parking → returns as inactive, never re-appears on
+  // the public map, and lands back in the admin map render set (non-archived).
+  res = await j(admin.cookie, "POST", "/api/admin/parkings/P-01/restore");
+  assert(res.status === 200, "admin restores archived P-01 (200)");
+  const restored = await res.json();
+  assert(!restored.archivedAt, "restored parking has archivedAt cleared");
+  assert(restored.status === "inactive", "restored parking comes back as inactive (not auto-shown to riders)");
+  const publicAfterRestore = await (await fetch(`${BASE}/api/parkings`)).json();
+  assert(!publicAfterRestore.some((p: any) => p.id === "P-01"), "restored-as-inactive parking stays hidden from public map");
+  const adminAfterRestore = await (await fetch(`${BASE}/api/admin/parkings`, { headers: { cookie: admin.cookie } })).json();
+  const restoredOnMap = adminAfterRestore.find(
+    (p: any) => p.id === "P-01" && p.status === "inactive" && !p.archivedAt,
+  );
+  assert(!!restoredOnMap, "restored parking is back in the admin map render set, muted as inactive");
+  // Restoring a live (non-archived) parking is rejected.
+  res = await j(admin.cookie, "POST", "/api/admin/parkings/P-01/restore");
+  assert(res.status === 404, "restoring a non-archived parking is rejected (404)");
+  res = await j(admin.cookie, "POST", "/api/admin/parkings/DOES-NOT-EXIST/restore");
+  assert(res.status === 404, "restoring a missing parking returns 404");
 
   // 9. Hard-delete an unreferenced parking → fully removed.
   res = await j(admin.cookie, "DELETE", `/api/admin/parkings/${auto.id}`);
