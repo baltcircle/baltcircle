@@ -190,16 +190,22 @@ export function YandexMap(props: Props) {
     collection.removeAll();
 
     // Parkings — mapped from abstract storage to real coordinates near towns.
+    // Inactive points are dimmed (grey) so admin management can show the full
+    // set; the public map only ever receives active parkings.
     for (const p of parkings) {
+      const inactive = p.status === "inactive";
       const placemark = new ymaps.Placemark(
         mapToReal(p.lng, p.lat),
-        { hintContent: p.name, balloonContent: `${p.name} · ${p.occupied}/${p.capacity}` },
+        {
+          hintContent: inactive ? `${p.name} · неактивна` : p.name,
+          balloonContent: `${p.name} · ${p.occupied}/${p.capacity}${inactive ? " · неактивна" : ""}`,
+        },
         {
           preset: "islands#blueParkingIcon",
-          iconColor: SEA,
+          iconColor: inactive ? "#8a8f96" : SEA,
         },
       );
-      placemark.options.set("zIndex", 200);
+      placemark.options.set("zIndex", inactive ? 150 : 200);
       collection.add(placemark);
     }
 

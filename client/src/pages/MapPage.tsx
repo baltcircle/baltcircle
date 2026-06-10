@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Link } from "wouter";
-import type { Bike, MapObject, Ride } from "@shared/schema";
+import type { Bike, MapObject, Parking, Ride } from "@shared/schema";
 import { YandexMap } from "@/components/YandexMap";
 import { RentalStartModal } from "@/components/RentalStartModal";
 import { RegistrationModal } from "@/components/RegistrationModal";
@@ -23,6 +23,9 @@ export function MapPage() {
   const toast = useToast();
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
   const mapObjectsQ = useQuery<MapObject[]>({ queryKey: ["/api/map-objects"] });
+  // Active, operator-managed parking points. Shown as parking markers on the
+  // customer map so riders know where to pick up / return bikes.
+  const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
   // Active ride drives the on-map ride card. Polled so the duration/finish
   // state stays fresh while the rider is on the home screen.
   const activeQ = useQuery<Ride | null>({
@@ -172,12 +175,14 @@ export function MapPage() {
         </Link>
       </header>
 
-      {/* Map fills the screen as the central focus. The public map shows only
-          the base Yandex map plus operator-drawn objects saved in /admin/map —
-          no app-drawn bike or parking markers. Bike data still loads above to
-          drive the QR / rental flow. */}
+      {/* Map fills the screen as the central focus. The public map shows the
+          base Yandex map, operator-drawn objects saved in /admin/map, and the
+          active operator-managed parking points. Bikes stay hidden on the
+          customer map; bike data still loads above to drive the QR / rental
+          flow. */}
       <div className="flex-1 min-h-0" data-testid="map-area">
         <YandexMap
+          parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
           ride={activeRide}
           height="100%"

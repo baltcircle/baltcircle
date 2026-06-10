@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRef, useState } from "react";
-import type { MapObject } from "@shared/schema";
+import type { MapObject, Parking } from "@shared/schema";
 import { YandexMap } from "@/components/YandexMap";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,9 @@ export function MapEditorPage() {
   // Admin editor reads the full list (incl. inactive). The public map reads the
   // active-only "/api/map-objects" endpoint, so it stays clean.
   const objectsQ = useQuery<MapObject[]>({ queryKey: ADMIN_OBJECTS_KEY });
+  // Active managed parkings, shown as context so the operator can align routes
+  // and zones to the real pickup/return points while drawing.
+  const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
 
   const [type, setType] = useState<ObjType>("route");
   const [name, setName] = useState("");
@@ -168,7 +171,7 @@ export function MapEditorPage() {
         <div>
           <YandexMap
             bikes={[]}
-            parkings={[]}
+            parkings={parkingsQ.data ?? []}
             mapObjects={previewObjects}
             height="64vh"
             onMapClick={(coords) => setDraft((d) => [...d, coords])}

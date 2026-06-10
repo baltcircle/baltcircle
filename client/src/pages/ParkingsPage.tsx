@@ -92,6 +92,15 @@ export function ParkingsPage() {
     notes: null, archivedAt: null, seed: false, createdAt: null, updatedAt: null,
   };
 
+  // Markers shown on the editor map: the live draft plus every other live
+  // parking (active visible, inactive muted) so the operator sees the draft in
+  // context of the existing network. The point being edited is omitted from the
+  // backdrop so its draft marker isn't drawn twice.
+  const mapParkings: Parking[] = [
+    draftParking,
+    ...parkings.filter((p) => !p.archivedAt && p.id !== editing?.id),
+  ];
+
   // ---------- Mutations ----------
   const saveMut = useMutation({
     mutationFn: async (payload: { editingId: string | null; body: any }) => {
@@ -390,7 +399,7 @@ export function ParkingsPage() {
           <div className="grid md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <YandexMap
-                parkings={[draftParking]}
+                parkings={mapParkings}
                 height="42vh"
                 onMapClick={setCoordsFromReal}
                 onCenterGetter={(fn) => { centerGetterRef.current = fn; }}
