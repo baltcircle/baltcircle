@@ -375,6 +375,28 @@ export function mapToReal(x: number, y: number): [number, number] {
   ];
 }
 
+/** Inverse of mapToReal: map a real [lat, lng] back to abstract storage
+ *  coordinates (x = lng-field, y = lat-field) by anchoring to the nearest town.
+ *  Used by the parking editor so a point picked on the Yandex map round-trips:
+ *  realToMap(mapToReal(x, y)) ≈ [x, y]. Returned as { x, y } to match the
+ *  storage convention (lng stores x, lat stores y). */
+export function realToMap(lat: number, lng: number): { x: number; y: number } {
+  let best = SVG_TOWNS[0];
+  let bestD = Infinity;
+  for (const t of SVG_TOWNS) {
+    const [tLat, tLng] = REAL_TOWNS[t.id];
+    const d = (tLat - lat) ** 2 + (tLng - lng) ** 2;
+    if (d < bestD) { bestD = d; best = t; }
+  }
+  const [baseLat, baseLng] = REAL_TOWNS[best.id];
+  const northM = (lat - baseLat) * M_PER_DEG_LAT;
+  const eastM = (lng - baseLng) * M_PER_DEG_LNG;
+  // mapToReal: eastM = (x - best.x) * MPU ; northM = (best.y - y) * MPU
+  const x = best.x + eastM / METERS_PER_UNIT;
+  const y = best.y - northM / METERS_PER_UNIT;
+  return { x, y };
+}
+
 // Linear span of the stylized SVG viewBox over real coordinates, centred on
 // REAL_CENTER. Used by the SVG fallback map (no Yandex key) so operators can
 // still click to add route/zone points and saved objects can be rendered back.

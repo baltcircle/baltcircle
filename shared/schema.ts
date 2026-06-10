@@ -201,6 +201,11 @@ export const adminUpdateBikeSchema = z.object({
 export type AdminUpdateBikeInput = z.infer<typeof adminUpdateBikeSchema>;
 
 /* ------- PARKING STATIONS ------- */
+// Operator-managed parking points. Coordinates are stored in the same abstract
+// 1000x700 map space as bikes (lng = x, lat = y) so they map to real Yandex
+// coordinates via mapToReal(). `status` gates public visibility: only "active"
+// parkings reach the public /api/parkings. `archivedAt` is a soft delete that
+// hides a point everywhere while keeping it referenceable from bikes/history.
 export const parkings = sqliteTable("parkings", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -208,8 +213,47 @@ export const parkings = sqliteTable("parkings", {
   lng: real("lng").notNull(),
   capacity: integer("capacity").notNull(),
   occupied: integer("occupied").notNull(),
+  status: text("status").notNull().default("active"), // active | inactive
+  notes: text("notes"),                  // operator instructions / free-text
+  archivedAt: integer("archived_at"),    // unix ms when archived; null = live
+  // `seed` marks the demo parkings so a future reseed can refresh them without
+  // touching operator-added points (mirrors the bikes table convention).
+  seed: integer("seed", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at"),      // unix ms; null for legacy demo rows
+  updatedAt: integer("updated_at"),      // unix ms of last mutation
 });
 export type Parking = typeof parkings.$inferSelect;
+
+export const PARKING_STATUSES = ["active", "inactive"] as const;
+export type ParkingStatus = (typeof PARKING_STATUSES)[number];
+
+// Admin: create a parking point. Coordinates are required (picked on the map or
+// typed manually). Capacity defaults to a sensible rack size; occupied starts
+// at 0 for a freshly provisioned point.
+const parkingIdRegex = /^[A-Za-z0-9-]{2,40}$/;
+export const adminCreateParkingSchema = z.object({
+  id: z.union([z.string().trim().regex(parkingIdRegex, "Код: латиница, цифры и дефис (2–40 символов)"), z.literal("")]).optional(),
+  name: z.string().trim().min(2, "Укажите название").max(120),
+  lat: z.number().finite(),
+  lng: z.number().finite(),
+  capacity: z.number().int().min(0).max(1000).default(10),
+  occupied: z.number().int().min(0).max(1000).default(0),
+  status: z.enum(PARKING_STATUSES).default("active"),
+  notes: z.union([z.string().trim().max(500), z.literal("")]).optional(),
+});
+export type AdminCreateParkingInput = z.infer<typeof adminCreateParkingSchema>;
+
+// Admin: edit a parking point. All fields optional; id is immutable (path param).
+export const adminUpdateParkingSchema = z.object({
+  name: z.string().trim().min(2).max(120).optional(),
+  lat: z.number().finite().optional(),
+  lng: z.number().finite().optional(),
+  capacity: z.number().int().min(0).max(1000).optional(),
+  occupied: z.number().int().min(0).max(1000).optional(),
+  status: z.enum(PARKING_STATUSES).optional(),
+  notes: z.union([z.string().trim().max(500), z.literal("")]).optional(),
+}).refine((v) => Object.keys(v).length > 0, { message: "Нет изменений" });
+export type AdminUpdateParkingInput = z.infer<typeof adminUpdateParkingSchema>;
 
 /* ------- ZONES (operating / restricted / forbidden) ------- */
 /** zone.kind = "operating" | "slow" | "forbidden"
@@ -236,6 +280,8 @@ export const mapObjects = sqliteTable("map_objects", {
   kind: text("kind").notNull(),
   color: text("color").notNull().default("#1d6f8e"),
   points: text("points").notNull(),
+  // Inactive objects are kept in the editor but never rendered on the public map.
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: integer("created_at").notNull(),
 });
 export type MapObject = typeof mapObjects.$inferSelect;
@@ -245,8 +291,15 @@ export const insertMapObjectSchema = z.object({
   kind: z.enum(["route", "zone"]),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#1d6f8e"),
   points: z.array(z.tuple([z.number(), z.number()])).min(2),
+  active: z.boolean().default(true),
 });
 export type InsertMapObject = z.infer<typeof insertMapObjectSchema>;
+
+// Admin: toggle a map object's active state (controls public-map visibility).
+export const updateMapObjectSchema = z.object({
+  active: z.boolean(),
+});
+export type UpdateMapObjectInput = z.infer<typeof updateMapObjectSchema>;
 
 /* ------- RIDES ------- */
 export const rides = sqliteTable("rides", {

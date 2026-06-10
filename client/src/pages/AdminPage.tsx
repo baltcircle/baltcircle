@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Link } from "wouter";
-import type { Bike, User, Ride, Ticket, MapObject } from "@shared/schema";
+import type { Bike, User, Ride, Ticket, MapObject, Parking } from "@shared/schema";
 import { TICKET_CLOSED_STATUSES } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { fmtRelative, fmtRub } from "@/lib/format";
 import {
   Plus, Map as MapIcon, Users as UsersIcon, Wrench, BarChart3,
-  Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity, ChevronRight,
+  Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity, ChevronRight, MapPin,
 } from "lucide-react";
 
 // Active rides running longer than this are surfaced as an alert — a likely
@@ -33,15 +33,19 @@ export function AdminPage() {
   const ridesQ = useQuery<Ride[]>({ queryKey: ["/api/rides"] });
   const ticketsQ = useQuery<Ticket[]>({ queryKey: ["/api/tickets"] });
   const mapQ = useQuery<MapObject[]>({ queryKey: ["/api/map-objects"] });
+  // Public endpoint returns active, non-archived parkings only — exactly the
+  // count riders can see on the map.
+  const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
 
   const bikes = bikesQ.data ?? [];
   const users = usersQ.data ?? [];
   const rides = ridesQ.data ?? [];
   const tickets = ticketsQ.data ?? [];
   const mapObjects = mapQ.data ?? [];
+  const parkings = parkingsQ.data ?? [];
 
-  const m = useMemo(() => deriveMetrics({ bikes, users, rides, tickets, mapObjects }), [
-    bikes, users, rides, tickets, mapObjects,
+  const m = useMemo(() => deriveMetrics({ bikes, users, rides, tickets, mapObjects, parkings }), [
+    bikes, users, rides, tickets, mapObjects, parkings,
   ]);
   const alerts = useMemo(() => deriveAlerts(m), [m]);
 
@@ -130,6 +134,7 @@ export function AdminPage() {
         <Kpi testId="dashboard-kpi-active-rides" label="Активные поездки" value={m.activeRides} tone="sky" />
         <Kpi testId="dashboard-kpi-open-tickets" label="Открытых заявок" value={m.openTickets} tone={m.openTickets > 0 ? "amber" : undefined} icon={<Wrench className="w-4 h-4" />} />
         <Kpi testId="dashboard-kpi-map-objects" label="Объектов на карте" value={m.mapObjects} icon={<MapIcon className="w-4 h-4" />} />
+        <Kpi testId="dashboard-kpi-active-parkings" label="Активных парковок" value={m.activeParkings} tone={m.activeParkings === 0 ? "amber" : undefined} icon={<MapPin className="w-4 h-4" />} />
       </section>
 
       {/* ---------- Quick actions ---------- */}
@@ -139,6 +144,7 @@ export function AdminPage() {
           <QuickAction href="/admin/bikes" icon={<Plus className="w-5 h-5" />} label="Добавить велосипед" testId="quick-action-add-bike" />
           <QuickAction href="/admin/rides" icon={<Activity className="w-5 h-5" />} label="Поездки" testId="quick-action-rides" />
           <QuickAction href="/admin/map" icon={<MapIcon className="w-5 h-5" />} label="Редактор карты" testId="quick-action-map" />
+          <QuickAction href="/admin/parkings" icon={<MapPin className="w-5 h-5" />} label="Парковки" testId="quick-action-parkings" />
           <QuickAction href="/admin/users" icon={<UsersIcon className="w-5 h-5" />} label="Пользователи" testId="quick-action-users" />
           <QuickAction href="/admin/maintenance" icon={<Wrench className="w-5 h-5" />} label="Сервис" testId="quick-action-maintenance" />
           <QuickAction href="/admin/analytics" icon={<BarChart3 className="w-5 h-5" />} label="Аналитика" testId="quick-action-analytics" />
@@ -318,12 +324,13 @@ interface Metrics {
   mapObjects: number;
   mapRoutes: number;
   mapZones: number;
+  activeParkings: number;
 }
 
 function deriveMetrics(d: {
-  bikes: Bike[]; users: User[]; rides: Ride[]; tickets: Ticket[]; mapObjects: MapObject[];
+  bikes: Bike[]; users: User[]; rides: Ride[]; tickets: Ticket[]; mapObjects: MapObject[]; parkings: Parking[];
 }): Metrics {
-  const { bikes, users, rides, tickets, mapObjects } = d;
+  const { bikes, users, rides, tickets, mapObjects, parkings } = d;
   const dayStart = startOfToday();
 
   const byStatus = (s: string) => bikes.filter(b => b.status === s).length;
@@ -351,6 +358,7 @@ function deriveMetrics(d: {
     mapObjects: mapObjects.length,
     mapRoutes: mapObjects.filter(o => o.kind === "route").length,
     mapZones: mapObjects.filter(o => o.kind === "zone").length,
+    activeParkings: parkings.length,
   };
 }
 
@@ -427,6 +435,15 @@ function deriveAlerts(m: Metrics): Alert[] {
       title: "Карта не настроена",
       detail: "Не добавлено ни одного маршрута или зоны.",
       href: "/admin/map",
+    });
+  }
+  if (m.activeParkings === 0) {
+    out.push({
+      id: "no-parkings",
+      severity: "warning",
+      title: "Нет активных парковок",
+      detail: "Клиенты не увидят точек на карте — добавьте или активируйте парковку.",
+      href: "/admin/parkings",
     });
   }
 

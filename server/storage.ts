@@ -8,6 +8,7 @@ import type {
   MapObject, InsertMapObject, User, OtpRequest, UserRole, UpdateProfileInput,
   PhoneChangeRequest, PaymentMethod, SupportTicket,
   AdminCreateBikeInput, AdminUpdateBikeInput, CreateTicketInput, UpdateTicketInput,
+  AdminCreateParkingInput, AdminUpdateParkingInput,
 } from "@shared/schema";
 import { CONSENT_VERSION } from "@shared/schema";
 import { randomUUID, createHmac, randomInt, timingSafeEqual } from "node:crypto";
@@ -46,7 +47,13 @@ CREATE TABLE IF NOT EXISTS bikes (
 CREATE TABLE IF NOT EXISTS parkings (
   id TEXT PRIMARY KEY, name TEXT NOT NULL,
   lat REAL NOT NULL, lng REAL NOT NULL,
-  capacity INTEGER NOT NULL, occupied INTEGER NOT NULL
+  capacity INTEGER NOT NULL, occupied INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  notes TEXT,
+  archived_at INTEGER,
+  seed INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER,
+  updated_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS zones (
   id TEXT PRIMARY KEY, name TEXT NOT NULL,
@@ -109,6 +116,7 @@ CREATE TABLE IF NOT EXISTS map_objects (
   kind TEXT NOT NULL,
   color TEXT NOT NULL DEFAULT '#1d6f8e',
   points TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS users (
@@ -228,6 +236,44 @@ function migrateTicketsTable() {
 }
 migrateTicketsTable();
 
+// ---------- Parkings column migration (operator management fields) ----------
+// Older DBs created parkings with only id/name/lat/lng/capacity/occupied. Add
+// the management columns in place so the existing 15 demo parkings survive and
+// become editable. Pre-existing rows are the demo seed, so backfill seed = 1
+// (and an active status) for them.
+function migrateParkingsTable() {
+  const cols = (sqlite.prepare("PRAGMA table_info(parkings)").all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  const addColumn = (name: string, ddl: string) => {
+    if (!cols.includes(name)) sqlite.exec(`ALTER TABLE parkings ADD COLUMN ${ddl}`);
+  };
+  addColumn("status", "status TEXT NOT NULL DEFAULT 'active'");
+  addColumn("notes", "notes TEXT");
+  addColumn("archived_at", "archived_at INTEGER");
+  addColumn("created_at", "created_at INTEGER");
+  addColumn("updated_at", "updated_at INTEGER");
+  if (!cols.includes("seed")) {
+    sqlite.exec("ALTER TABLE parkings ADD COLUMN seed INTEGER NOT NULL DEFAULT 0");
+    // Pre-existing rows are the demo parkings — mark them so reseed can manage them.
+    sqlite.exec("UPDATE parkings SET seed = 1");
+  }
+}
+migrateParkingsTable();
+
+// ---------- Map objects column migration (active toggle) ----------
+// Older DBs created map_objects without the `active` column. Add it defaulting
+// to active so existing operator-drawn objects keep rendering on the public map.
+function migrateMapObjectsTable() {
+  const cols = (sqlite.prepare("PRAGMA table_info(map_objects)").all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  if (!cols.includes("active")) {
+    sqlite.exec("ALTER TABLE map_objects ADD COLUMN active INTEGER NOT NULL DEFAULT 1");
+  }
+}
+migrateMapObjectsTable();
+
 const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
 
 // Bump this whenever the demo geography/seed data changes so existing
@@ -341,11 +387,15 @@ function populateDemoData() {
     insertBike.run(id, model, status, battery, y, x, lastSeen, idleHours, flagged, p.id);
   }
 
-  // Parkings
-  const insertP = sqlite.prepare("INSERT INTO parkings VALUES (?,?,?,?,?,?)");
+  // Parkings — seeded active and marked seed = 1 so a future reseed can refresh
+  // them without touching operator-added points.
+  const insertP = sqlite.prepare(
+    `INSERT INTO parkings (id, name, lat, lng, capacity, occupied, status, notes, archived_at, seed, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,'active',NULL,NULL,1,?,NULL)`,
+  );
   for (const p of PARKINGS) {
     const occupied = Math.min(p.capacity, Math.floor(rng() * p.capacity * 0.9));
-    insertP.run(p.id, p.name, p.y, p.x, p.capacity, occupied);
+    insertP.run(p.id, p.name, p.y, p.x, p.capacity, occupied, now);
   }
 
   // Zones
@@ -535,7 +585,12 @@ export interface IStorage {
   archiveBike(id: string): { bike: Bike } | { error: string };
   deleteBike(id: string): { ok: true } | { error: string; archived?: Bike };
   // parkings
-  listParkings(): Parking[];
+  listParkings(opts?: { includeInactive?: boolean; includeArchived?: boolean }): Parking[];
+  getParking(id: string): Parking | undefined;
+  createParking(input: AdminCreateParkingInput): { parking: Parking } | { error: string };
+  updateParking(id: string, patch: AdminUpdateParkingInput): { parking: Parking } | { error: string };
+  archiveParking(id: string): { parking: Parking } | { error: string };
+  deleteParking(id: string): { ok: true } | { error: string; archived?: Parking };
   // zones
   listZones(): ZoneRow[];
   // rides
@@ -557,8 +612,9 @@ export interface IStorage {
   updateTicket(id: number, patch: UpdateTicketInput, actor: string): TicketWithComments | undefined;
   addTicketComment(id: number, author: string, body: string): TicketWithComments | undefined;
   // map objects (operator-drawn routes/zones)
-  listMapObjects(): MapObject[];
+  listMapObjects(opts?: { activeOnly?: boolean }): MapObject[];
   createMapObject(input: InsertMapObject): MapObject;
+  setMapObjectActive(id: number, active: boolean): MapObject | undefined;
   deleteMapObject(id: number): boolean;
   // analytics
   analytics(): any;
@@ -952,7 +1008,92 @@ export class DatabaseStorage implements IStorage {
     db.delete(bikes).where(eq(bikes.id, id)).run();
     return { ok: true as const };
   }
-  listParkings() { return db.select().from(parkings).all() as Parking[]; }
+  // ---------- Parkings: read + admin CRUD ----------
+  // Public callers get active, non-archived points only. The admin page passes
+  // includeInactive/includeArchived to see the full set.
+  listParkings(opts?: { includeInactive?: boolean; includeArchived?: boolean }) {
+    let rows = db.select().from(parkings).all() as Parking[];
+    if (!opts?.includeArchived) rows = rows.filter((p) => !p.archivedAt);
+    if (!opts?.includeInactive) rows = rows.filter((p) => p.status === "active");
+    return rows;
+  }
+  getParking(id: string) {
+    return db.select().from(parkings).where(eq(parkings.id, id)).get() as Parking | undefined;
+  }
+
+  // Generate the next free P-NN id when the operator doesn't supply one.
+  private nextParkingId(): string {
+    const ids = (db.select({ id: parkings.id }).from(parkings).all() as { id: string }[]).map((r) => r.id);
+    let n = 1;
+    while (ids.includes(`P-${String(n).padStart(2, "0")}`)) n++;
+    return `P-${String(n).padStart(2, "0")}`;
+  }
+
+  createParking(input: AdminCreateParkingInput) {
+    const id = (input.id && input.id.trim().length > 0 ? input.id.trim().toUpperCase() : this.nextParkingId());
+    if (this.getParking(id)) return { error: "Парковка с таким кодом уже существует" };
+    const now = Date.now();
+    const occupied = Math.min(input.occupied, input.capacity);
+    db.insert(parkings).values({
+      id,
+      name: input.name.trim(),
+      lat: input.lat,
+      lng: input.lng,
+      capacity: input.capacity,
+      occupied,
+      status: input.status,
+      notes: this.optStr(input.notes),
+      archivedAt: null,
+      seed: false,
+      createdAt: now,
+      updatedAt: now,
+    } as any).run();
+    return { parking: this.getParking(id)! };
+  }
+
+  updateParking(id: string, patch: AdminUpdateParkingInput) {
+    const existing = this.getParking(id);
+    if (!existing) return { error: "Парковка не найдена" };
+    const set: Partial<Parking> = {};
+    if (patch.name !== undefined) set.name = patch.name.trim();
+    if (patch.lat !== undefined) set.lat = patch.lat;
+    if (patch.lng !== undefined) set.lng = patch.lng;
+    if (patch.capacity !== undefined) set.capacity = patch.capacity;
+    if (patch.occupied !== undefined) set.occupied = patch.occupied;
+    if (patch.status !== undefined) set.status = patch.status;
+    if (patch.notes !== undefined) set.notes = this.optStr(patch.notes);
+    // Keep occupied within the (possibly new) capacity bound.
+    const cap = set.capacity ?? existing.capacity;
+    const occ = set.occupied ?? existing.occupied;
+    if (occ > cap) set.occupied = cap;
+    set.updatedAt = Date.now();
+    db.update(parkings).set(set as any).where(eq(parkings.id, id)).run();
+    return { parking: this.getParking(id)! };
+  }
+
+  // Soft delete: stamp archivedAt so the point drops out of every list while
+  // staying referenceable from bikes/history that point at its id.
+  archiveParking(id: string) {
+    const existing = this.getParking(id);
+    if (!existing) return { error: "Парковка не найдена" };
+    db.update(parkings).set({ archivedAt: Date.now(), updatedAt: Date.now() } as any).where(eq(parkings.id, id)).run();
+    return { parking: this.getParking(id)! };
+  }
+
+  // Hard delete: only when no bike references this parking. Otherwise archive so
+  // bike.parkingId never dangles.
+  deleteParking(id: string) {
+    const existing = this.getParking(id);
+    if (!existing) return { error: "Парковка не найдена" };
+    const refCount = (sqlite.prepare("SELECT COUNT(*) AS c FROM bikes WHERE parking_id = ?").get(id) as { c: number }).c;
+    if (refCount > 0) {
+      db.update(parkings).set({ archivedAt: Date.now(), updatedAt: Date.now() } as any).where(eq(parkings.id, id)).run();
+      return { error: "К парковке привязаны велосипеды — она переведена в архив", archived: this.getParking(id)! };
+    }
+    db.delete(parkings).where(eq(parkings.id, id)).run();
+    return { ok: true as const };
+  }
+
   listZones() { return db.select().from(zones).all() as ZoneRow[]; }
 
   startRide({ bikeId, userId, tariff }: { bikeId: string; userId: string; tariff: string }) {
@@ -1190,8 +1331,9 @@ export class DatabaseStorage implements IStorage {
     return this.getTicket(id);
   }
 
-  listMapObjects() {
-    return db.select().from(mapObjects).orderBy(desc(mapObjects.createdAt)).all() as MapObject[];
+  listMapObjects(opts?: { activeOnly?: boolean }) {
+    const rows = db.select().from(mapObjects).orderBy(desc(mapObjects.createdAt)).all() as MapObject[];
+    return opts?.activeOnly ? rows.filter((o) => o.active) : rows;
   }
 
   createMapObject(input: InsertMapObject) {
@@ -1201,8 +1343,14 @@ export class DatabaseStorage implements IStorage {
       kind: input.kind,
       color: input.color,
       points: JSON.stringify(input.points),
+      active: input.active,
       createdAt: Date.now(),
     }).returning().get() as MapObject;
+  }
+
+  setMapObjectActive(id: number, active: boolean) {
+    db.update(mapObjects).set({ active } as any).where(eq(mapObjects.id, id)).run();
+    return db.select().from(mapObjects).where(eq(mapObjects.id, id)).get() as MapObject | undefined;
   }
 
   deleteMapObject(id: number) {

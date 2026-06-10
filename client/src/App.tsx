@@ -27,6 +27,7 @@ import { UsersPage } from "@/pages/UsersPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
 import { MaintenancePage } from "@/pages/MaintenancePage";
 import { MapEditorPage } from "@/pages/MapEditorPage";
+import { ParkingsPage } from "@/pages/ParkingsPage";
 import NotFound from "@/pages/not-found";
 
 function AppRouter() {
@@ -60,6 +61,7 @@ function AppRouter() {
       <Route path="/admin/rides"><AdminGuard><RidesAdminPage /></AdminGuard></Route>
       <Route path="/admin/users"><AdminGuard><UsersPage /></AdminGuard></Route>
       <Route path="/admin/map"><AdminGuard><MapEditorPage /></AdminGuard></Route>
+      <Route path="/admin/parkings"><AdminGuard><ParkingsPage /></AdminGuard></Route>
       <Route path="/admin/analytics"><AdminGuard><AnalyticsPage /></AdminGuard></Route>
       <Route path="/admin/maintenance"><AdminGuard><MaintenancePage /></AdminGuard></Route>
 

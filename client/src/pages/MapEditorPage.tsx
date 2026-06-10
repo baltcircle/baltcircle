@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Map as MapIcon, Trash2, Save, Eraser, Route as RouteIcon, Hexagon, Crosshair } from "lucide-react";
+import { Map as MapIcon, Trash2, Save, Eraser, Route as RouteIcon, Hexagon, Crosshair, Eye, EyeOff } from "lucide-react";
+
+const ADMIN_OBJECTS_KEY = ["/api/admin/map-objects"] as const;
 
 type ObjType = "route" | "operating" | "slow" | "forbidden";
 
@@ -25,7 +27,9 @@ const TYPE_LABEL: Record<string, string> = Object.fromEntries(
 
 export function MapEditorPage() {
   const { toast } = useToast();
-  const objectsQ = useQuery<MapObject[]>({ queryKey: ["/api/map-objects"] });
+  // Admin editor reads the full list (incl. inactive). The public map reads the
+  // active-only "/api/map-objects" endpoint, so it stays clean.
+  const objectsQ = useQuery<MapObject[]>({ queryKey: ADMIN_OBJECTS_KEY });
 
   const [type, setType] = useState<ObjType>("route");
   const [name, setName] = useState("");
@@ -47,12 +51,15 @@ export function MapEditorPage() {
           kind: activeType.kind,
           color,
           points: JSON.stringify(draft),
+          active: true,
           createdAt: 0,
         }
       : null;
 
+  // Preview mirrors the public map: only active objects render (plus the live
+  // draft), so the operator sees exactly what riders will see.
   const previewObjects = [
-    ...(objectsQ.data ?? []),
+    ...(objectsQ.data ?? []).filter((o) => o.active),
     ...(draftObject ? [draftObject] : []),
   ];
 
@@ -68,6 +75,7 @@ export function MapEditorPage() {
       return res.json();
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ADMIN_OBJECTS_KEY });
       queryClient.invalidateQueries({ queryKey: ["/api/map-objects"] });
       setDraft([]);
       setName("");
@@ -81,10 +89,22 @@ export function MapEditorPage() {
       await apiRequest("DELETE", `/api/map-objects/${id}`);
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ADMIN_OBJECTS_KEY });
       queryClient.invalidateQueries({ queryKey: ["/api/map-objects"] });
       toast({ title: "Объект удалён" });
     },
     onError: (e: Error) => toast({ title: "Не удалось удалить", description: e.message, variant: "destructive" }),
+  });
+
+  const toggleM = useMutation({
+    mutationFn: async (vars: { id: number; active: boolean }) => {
+      await apiRequest("PATCH", `/api/map-objects/${vars.id}`, { active: vars.active });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ADMIN_OBJECTS_KEY });
+      queryClient.invalidateQueries({ queryKey: ["/api/map-objects"] });
+    },
+    onError: (e: Error) => toast({ title: "Не удалось изменить", description: e.message, variant: "destructive" }),
   });
 
   // Validate on click instead of disabling the button: a disabled button looks
@@ -267,7 +287,10 @@ export function MapEditorPage() {
                 {objectsQ.data!.map((o) => (
                   <div
                     key={o.id}
-                    className="flex items-center gap-2 rounded-md border border-card-border px-3 py-2"
+                    className={[
+                      "flex items-center gap-2 rounded-md border border-card-border px-3 py-2",
+                      o.active ? "" : "opacity-60",
+                    ].join(" ")}
                     data-testid={`editor-saved-${o.id}`}
                   >
                     <span className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: o.color }} />
@@ -276,6 +299,23 @@ export function MapEditorPage() {
                       <div className="text-[11px] text-muted-foreground">{TYPE_LABEL[o.type] ?? o.type}</div>
                     </div>
                     <Badge variant="secondary" className="text-[10px]">{o.kind === "zone" ? "зона" : "линия"}</Badge>
+                    {!o.active && (
+                      <Badge variant="outline" className="text-[10px]" data-testid={`editor-inactive-${o.id}`}>
+                        скрыт
+                      </Badge>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => toggleM.mutate({ id: o.id, active: !o.active })}
+                      disabled={toggleM.isPending}
+                      data-testid={`editor-toggle-${o.id}`}
+                      aria-label={o.active ? "Скрыть с карты" : "Показать на карте"}
+                      title={o.active ? "Скрыть с публичной карты" : "Показать на публичной карте"}
+                    >
+                      {o.active ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4 text-muted-foreground" />}
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"

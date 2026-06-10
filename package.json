@@ -14,6 +14,7 @@
     "smoke:profile": "tsx script/smoke-profile.ts",
     "smoke:admin-users": "tsx script/smoke-admin-users.ts",
     "smoke:admin-bikes": "tsx script/smoke-admin-bikes.ts",
+    "smoke:admin-parkings": "tsx script/smoke-admin-parkings.ts",
     "smoke:admin-rides": "tsx script/smoke-admin-rides.ts",
     "smoke:admin-maintenance": "tsx script/smoke-admin-maintenance.ts",
     "smoke:account": "tsx script/smoke-account.ts"
