@@ -3,6 +3,7 @@ import { Logo } from "./Logo";
 import { useTheme } from "@/lib/theme";
 import { useAppViewport } from "@/hooks/use-app-viewport";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import type { UserRole } from "@shared/schema";
 import {
   Map, QrCode, CreditCard, Route, ShieldCheck, Wrench, BarChart3,
   Sun, Moon, Bike, ChevronRight, ArrowLeft, User, Users, MapPin, Crosshair,
@@ -13,6 +14,9 @@ interface NavItem {
   label: string;
   icon: typeof Map;
   testId: string;
+  // Roles allowed to see this entry. Omitted = all staff roles. A mechanic only
+  // sees the service + fleet entries; everything else is operator/admin.
+  roles?: UserRole[];
 }
 
 // Customer / rider interface — the default experience.
@@ -23,17 +27,18 @@ const RIDER_NAV: NavItem[] = [
   { href: "/rides",   label: "Поездки", icon: Route,  testId: "nav-rides" },
 ];
 
-// Operator / admin interface — separated under /admin.
+// Operator / admin interface — separated under /admin. `roles` narrows an entry
+// to specific staff roles; entries without it are operator/admin only.
 const OPS_NAV: NavItem[] = [
-  { href: "/admin",             label: "Дашборд",      icon: ShieldCheck, testId: "nav-admin" },
-  { href: "/admin/bikes",       label: "Велосипеды",   icon: Bike,        testId: "nav-bikes" },
-  { href: "/admin/rides",       label: "Поездки",      icon: Route,       testId: "nav-admin-rides" },
-  { href: "/admin/users",       label: "Пользователи", icon: Users,       testId: "nav-users" },
-  { href: "/admin/map",         label: "Карта",        icon: Map,         testId: "nav-map-editor" },
-  { href: "/admin/operations-map", label: "Оперкарта",  icon: Crosshair,  testId: "nav-operations-map" },
-  { href: "/admin/parkings",    label: "Парковки",     icon: MapPin,      testId: "nav-parkings" },
-  { href: "/admin/analytics",   label: "Аналитика",    icon: BarChart3,   testId: "nav-analytics" },
-  { href: "/admin/maintenance", label: "Сервис",       icon: Wrench,      testId: "nav-maintenance" },
+  { href: "/admin",             label: "Дашборд",      icon: ShieldCheck, testId: "nav-admin",       roles: ["operator", "admin"] },
+  { href: "/admin/bikes",       label: "Велосипеды",   icon: Bike,        testId: "nav-bikes",       roles: ["mechanic", "operator", "admin"] },
+  { href: "/admin/rides",       label: "Поездки",      icon: Route,       testId: "nav-admin-rides", roles: ["operator", "admin"] },
+  { href: "/admin/users",       label: "Пользователи", icon: Users,       testId: "nav-users",       roles: ["operator", "admin"] },
+  { href: "/admin/map",         label: "Карта",        icon: Map,         testId: "nav-map-editor",  roles: ["operator", "admin"] },
+  { href: "/admin/operations-map", label: "Оперкарта",  icon: Crosshair,  testId: "nav-operations-map", roles: ["operator", "admin"] },
+  { href: "/admin/parkings",    label: "Парковки",     icon: MapPin,      testId: "nav-parkings",    roles: ["operator", "admin"] },
+  { href: "/admin/analytics",   label: "Аналитика",    icon: BarChart3,   testId: "nav-analytics",   roles: ["operator", "admin"] },
+  { href: "/admin/maintenance", label: "Сервис",       icon: Wrench,      testId: "nav-maintenance", roles: ["mechanic", "operator", "admin"] },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -42,10 +47,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Hide operator entry points until the session resolves and the role is
   // known to be operator/admin. Defaulting to hidden avoids a flash of the
   // admin link for unregistered or regular riders.
-  const { isStaff } = useCurrentUser();
+  const { isStaff, role } = useCurrentUser();
 
   const isAdmin = loc === "/admin" || loc.startsWith("/admin/");
-  const nav = isAdmin ? OPS_NAV : RIDER_NAV;
+  // Mechanics see a trimmed operator nav (service + fleet only); operators and
+  // admins see the full set. Riders use the customer nav.
+  const opsNav = OPS_NAV.filter((item) => !item.roles || (role != null && item.roles.includes(role)));
+  const nav = isAdmin ? opsNav : RIDER_NAV;
+  // Where the operator entry points should land. Mechanics can't open the
+  // dashboard, so send them to the first section they're allowed to see.
+  const opsHome = opsNav[0]?.href ?? "/admin";
   const matchActive = (href: string) =>
     href === "/" ? loc === "/" : loc === href || loc.startsWith(href + "/");
 
@@ -75,7 +86,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         data-testid="sidebar"
       >
         <div className="px-5 py-6 border-b border-sidebar-border/40">
-          <Link href={isAdmin ? "/admin" : "/"} data-testid="link-home"><Logo /></Link>
+          <Link href={isAdmin ? opsHome : "/"} data-testid="link-home"><Logo /></Link>
           {isAdmin && (
             <div
               className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-sidebar-accent/60 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em]"
@@ -104,7 +115,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Link>
           ) : isStaff ? (
             <Link
-              href="/admin"
+              href={opsHome}
               data-testid="link-admin"
               className="w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
             >
@@ -144,7 +155,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           this one there to avoid a doubled header. */}
       {!isCustomerMap && (
       <header className="lg:hidden sticky top-0 z-30 bg-sidebar text-sidebar-foreground border-b border-sidebar-border flex items-center justify-between px-4 h-14">
-        <Link href={isAdmin ? "/admin" : "/"} data-testid="link-home-mobile" className="flex items-center gap-2">
+        <Link href={isAdmin ? opsHome : "/"} data-testid="link-home-mobile" className="flex items-center gap-2">
           <Logo />
           {isAdmin && <span className="text-[10px] uppercase tracking-[0.18em] opacity-80">Оператор</span>}
         </Link>

@@ -13,6 +13,9 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip, TooltipContent, TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { Search, Users, ShieldCheck, Ban, Check, AlertTriangle } from "lucide-react";
 import { fmtDate, ROLE_LABEL } from "@/lib/format";
@@ -21,8 +24,19 @@ const USERS_KEY = ["/api/admin/users"];
 
 const ROLE_TONE: Record<UserRole, string> = {
   rider: "",
+  mechanic: "text-teal-600 dark:text-teal-400 border-teal-500/40",
   operator: "text-primary border-primary/40",
   admin: "text-amber-600 dark:text-amber-400 border-amber-500/40",
+};
+
+// Short, human description of what each role can do, surfaced as a tooltip on
+// the role selector so staff understand the access a role grants before
+// assigning it. Mirrors the server-side guards and client route gating.
+const ROLE_HINT: Record<UserRole, string> = {
+  rider: "Клиент: только клиентское приложение, без доступа к панели.",
+  mechanic: "Механик: сервисные заявки и просмотр парка велосипедов. Остальные разделы скрыты.",
+  operator: "Оператор: все разделы панели, кроме назначения роли администратора.",
+  admin: "Администратор: полный доступ, включая управление ролями.",
 };
 
 export function UsersPage() {
@@ -167,7 +181,9 @@ function UserRowItem({ u, isSelf, actorRole, onRole, onBlockToggle, busy }: {
     busy ||
     (!isAdminActor && role === "admin") ||
     (isSelf && role === "admin");
-  const roleOptions: UserRole[] = isAdminActor ? ["rider", "operator", "admin"] : ["rider", "operator"];
+  const roleOptions: UserRole[] = isAdminActor
+    ? ["rider", "mechanic", "operator", "admin"]
+    : ["rider", "mechanic", "operator"];
   // Operators can't block admins; nobody can block themselves.
   const blockDisabled = busy || isSelf || (role === "admin" && !isAdminActor);
 
@@ -189,12 +205,19 @@ function UserRowItem({ u, isSelf, actorRole, onRole, onBlockToggle, busy }: {
             onValueChange={(v) => onRole(v as UserRole)}
             disabled={roleSelectDisabled}
           >
-            <SelectTrigger className="h-8 w-[130px]" data-testid={`select-role-${u.id}`}>
-              <SelectValue />
-            </SelectTrigger>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SelectTrigger className="h-8 w-[130px]" data-testid={`select-role-${u.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">{ROLE_HINT[role]}</TooltipContent>
+            </Tooltip>
             <SelectContent>
               {roleOptions.map((r) => (
-                <SelectItem key={r} value={r}>{ROLE_LABEL[r]}</SelectItem>
+                <SelectItem key={r} value={r} data-testid={`select-role-${u.id}-option-${r}`} title={ROLE_HINT[r]}>
+                  {ROLE_LABEL[r]}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>

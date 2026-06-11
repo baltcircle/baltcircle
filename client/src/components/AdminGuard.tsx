@@ -1,22 +1,26 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import type { UserRole } from "@shared/schema";
 import { RegistrationModal } from "@/components/RegistrationModal";
 import { Button } from "@/components/ui/button";
 import { ShieldAlert, LogIn, ArrowLeft } from "lucide-react";
 
-// Gate for the operator/admin (`/admin/*`) area. Three states:
+// Gate for the operator/admin (`/admin/*`) area. States:
 //  - loading: render nothing to avoid a flash of the denied screen
 //  - not registered: show a clear access screen with a way to log in (the SMS
 //    registration modal — an admin phone is promoted on verification)
-//  - registered rider (no operator/admin role): show "Нет доступа"
-// A user with operator/admin role passes through to the wrapped page.
-export function AdminGuard({ children }: { children: React.ReactNode }) {
-  const { isStaff, isRegistered, isLoading } = useCurrentUser();
+//  - registered but not allowed for this section: show "Нет доступа"
+// `roles` restricts a section to specific staff roles (e.g. mechanics may only
+// reach service + fleet). Omitted = any staff role (operator/mechanic/admin).
+export function AdminGuard({ children, roles }: { children: React.ReactNode; roles?: UserRole[] }) {
+  const { isStaff, role, isRegistered, isLoading } = useCurrentUser();
   const [regOpen, setRegOpen] = useState(false);
 
+  const allowed = isStaff && (!roles || (role != null && roles.includes(role)));
+
   if (isLoading) return null;
-  if (isStaff) return <>{children}</>;
+  if (allowed) return <>{children}</>;
 
   return (
     <div

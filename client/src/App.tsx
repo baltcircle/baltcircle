@@ -56,16 +56,18 @@ function AppRouter() {
       <Route path="/privacy"><Redirect to="/legal/privacy" /></Route>
       <Route path="/consent"><Redirect to="/legal/consent" /></Route>
 
-      {/* Admin / operator interface — gated to operator/admin roles */}
-      <Route path="/admin"><AdminGuard><AdminPage /></AdminGuard></Route>
-      <Route path="/admin/bikes"><AdminGuard><BikesPage /></AdminGuard></Route>
-      <Route path="/admin/rides"><AdminGuard><RidesAdminPage /></AdminGuard></Route>
-      <Route path="/admin/users"><AdminGuard><UsersPage /></AdminGuard></Route>
-      <Route path="/admin/map"><AdminGuard><MapEditorPage /></AdminGuard></Route>
-      <Route path="/admin/operations-map"><AdminGuard><OperationsMapPage /></AdminGuard></Route>
-      <Route path="/admin/parkings"><AdminGuard><ParkingsPage /></AdminGuard></Route>
-      <Route path="/admin/analytics"><AdminGuard><AnalyticsPage /></AdminGuard></Route>
-      <Route path="/admin/maintenance"><AdminGuard><MaintenancePage /></AdminGuard></Route>
+      {/* Admin / operator interface — gated by role. Mechanics may only reach
+          service (maintenance) and the read-only fleet; the rest is
+          operator/admin only. */}
+      <Route path="/admin"><AdminGuard roles={["operator", "admin"]}><AdminPage /></AdminGuard></Route>
+      <Route path="/admin/bikes"><AdminGuard roles={["mechanic", "operator", "admin"]}><BikesPage /></AdminGuard></Route>
+      <Route path="/admin/rides"><AdminGuard roles={["operator", "admin"]}><RidesAdminPage /></AdminGuard></Route>
+      <Route path="/admin/users"><AdminGuard roles={["operator", "admin"]}><UsersPage /></AdminGuard></Route>
+      <Route path="/admin/map"><AdminGuard roles={["operator", "admin"]}><MapEditorPage /></AdminGuard></Route>
+      <Route path="/admin/operations-map"><AdminGuard roles={["operator", "admin"]}><OperationsMapPage /></AdminGuard></Route>
+      <Route path="/admin/parkings"><AdminGuard roles={["operator", "admin"]}><ParkingsPage /></AdminGuard></Route>
+      <Route path="/admin/analytics"><AdminGuard roles={["operator", "admin"]}><AnalyticsPage /></AdminGuard></Route>
+      <Route path="/admin/maintenance"><AdminGuard roles={["mechanic", "operator", "admin"]}><MaintenancePage /></AdminGuard></Route>
 
       {/* Legacy admin deep-links — redirect to the namespaced routes */}
       <Route path="/analytics"><Redirect to="/admin/analytics" /></Route>

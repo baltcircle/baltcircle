@@ -54,13 +54,14 @@ function requireRole(...roles: UserRole[]) {
   };
 }
 
-// Admin guard for operator-facing mutation endpoints. To avoid locking the
-// operator UI (map editor, tickets) out of local dev — where no admin exists —
-// the guard is only enforced when ADMIN_PHONE_NUMBERS is configured. With the
-// env set (staging/prod) it requires an operator/admin session; without it the
-// endpoints stay open so the MVP map editor remains testable.
-function requireAdminWhenConfigured() {
-  const guard = requireRole("operator", "admin");
+// Guard for operator-facing mutation endpoints. To avoid locking the operator
+// UI (map editor, tickets) out of local dev — where no admin exists — the guard
+// is only enforced when ADMIN_PHONE_NUMBERS is configured. With the env set
+// (staging/prod) it requires one of the given roles; without it the endpoints
+// stay open so the MVP map editor remains testable. Defaults to operator/admin;
+// service endpoints pass "mechanic" too so service staff can work tickets.
+function requireRoleWhenConfigured(...roles: UserRole[]) {
+  const guard = requireRole(...(roles.length ? roles : (["operator", "admin"] as UserRole[])));
   return (req: Request, res: Response, next: NextFunction) => {
     if (!process.env.ADMIN_PHONE_NUMBERS) return next();
     return guard(req, res, next);
@@ -341,7 +342,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // -------------- Admin: fleet (bike) management --------------
   // Staff-only CRUD over the real fleet. The list includes archived bikes so
   // operators can see/restore them; the public /api/bikes never does.
-  app.get("/api/admin/bikes", requireRole("operator", "admin"), (_req, res) => {
+  // Read access includes mechanics so the service staff can see the full fleet
+  // (including archived) while triaging tickets; writes below stay operator/admin.
+  app.get("/api/admin/bikes", requireRole("mechanic", "operator", "admin"), (_req, res) => {
     res.json(storage.listBikes({ includeArchived: true }));
   });
   app.post("/api/admin/bikes", requireRole("operator", "admin"), (req, res) => {
@@ -465,21 +468,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // -------------- Service / maintenance tickets --------------
   // List is open (operator UI reads it freely); all mutations are staff-gated
-  // when ADMIN_PHONE_NUMBERS is configured, matching the rest of the admin API.
+  // when ADMIN_PHONE_NUMBERS is configured. Service tickets are the mechanic's
+  // core surface, so mechanic/operator/admin may create, update and comment.
+  const requireServiceStaff = requireRoleWhenConfigured("mechanic", "operator", "admin");
   app.get("/api/tickets", (_req, res) => res.json(storage.listTickets()));
   app.get("/api/tickets/:id", (req, res) => {
     const t = storage.getTicket(Number(req.params.id));
     if (!t) return res.status(404).json({ error: "Заявка не найдена" });
     res.json(t);
   });
-  app.post("/api/tickets", requireAdminWhenConfigured(), (req, res) => {
+  app.post("/api/tickets", requireServiceStaff, (req, res) => {
     const parsed = createTicketSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Проверьте данные" });
     }
     res.status(201).json(storage.createTicket(parsed.data));
   });
-  app.patch("/api/tickets/:id", requireAdminWhenConfigured(), (req, res) => {
+  app.patch("/api/tickets/:id", requireServiceStaff, (req, res) => {
     const parsed = updateTicketSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Проверьте данные" });
@@ -488,7 +493,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!t) return res.status(404).json({ error: "Заявка не найдена" });
     res.json(t);
   });
-  app.post("/api/tickets/:id/comments", requireAdminWhenConfigured(), (req, res) => {
+  app.post("/api/tickets/:id/comments", requireServiceStaff, (req, res) => {
     const parsed = addTicketCommentSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Проверьте данные" });
@@ -502,22 +507,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Public read returns only active objects so inactive ones never render on the
   // customer map. The editor reads /api/admin/map-objects for the full list.
   app.get("/api/map-objects", (_req, res) => res.json(storage.listMapObjects({ activeOnly: true })));
-  app.get("/api/admin/map-objects", requireAdminWhenConfigured(), (_req, res) =>
+  app.get("/api/admin/map-objects", requireRoleWhenConfigured(), (_req, res) =>
     res.json(storage.listMapObjects()),
   );
-  app.post("/api/map-objects", requireAdminWhenConfigured(), (req, res) => {
+  app.post("/api/map-objects", requireRoleWhenConfigured(), (req, res) => {
     const parsed = insertMapObjectSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     res.json(storage.createMapObject(parsed.data));
   });
-  app.patch("/api/map-objects/:id", requireAdminWhenConfigured(), (req, res) => {
+  app.patch("/api/map-objects/:id", requireRoleWhenConfigured(), (req, res) => {
     const parsed = updateMapObjectSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     const obj = storage.setMapObjectActive(Number(req.params.id), parsed.data.active);
     if (!obj) return res.status(404).json({ error: "Объект не найден" });
     res.json(obj);
   });
-  app.delete("/api/map-objects/:id", requireAdminWhenConfigured(), (req, res) => {
+  app.delete("/api/map-objects/:id", requireRoleWhenConfigured(), (req, res) => {
     const ok = storage.deleteMapObject(Number(req.params.id));
     if (!ok) return res.status(404).json({ error: "Объект не найден" });
     res.json({ ok: true });

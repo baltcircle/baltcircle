@@ -5,6 +5,7 @@ import type { UserRole } from "@shared/schema";
 // though the stored/internal role string stays "rider".
 export const ROLE_LABEL: Record<UserRole, string> = {
   rider: "Клиент",
+  mechanic: "Механик",
   operator: "Оператор",
   admin: "Администратор",
 };

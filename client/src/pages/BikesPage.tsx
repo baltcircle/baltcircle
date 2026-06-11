@@ -4,6 +4,7 @@ import type { Bike, BikeStatus, Parking } from "@shared/schema";
 import { BIKE_STATUSES } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import { bikeQrLink } from "@/lib/format";
 import { qrToSvg } from "@/lib/qrcode";
 import { BikeQr } from "@/components/BikeQr";
@@ -68,6 +69,11 @@ const emptyForm: FormState = {
 
 export function BikesPage() {
   const toast = useToast();
+  // Mechanics get a read-only fleet view: they can browse and open service
+  // tickets, but fleet mutations (create/edit/archive/delete) are operator/admin
+  // only. The server enforces this too — this just hides the controls.
+  const { isMechanic } = useCurrentUser();
+  const canWrite = !isMechanic;
   const bikesQ = useQuery<Bike[]>({ queryKey: ADMIN_BIKES_KEY });
   const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
 
@@ -239,9 +245,11 @@ export function BikesPage() {
               data-testid="input-bikes-search"
             />
           </div>
-          <Button onClick={openAdd} data-testid="button-add-bike">
-            <Plus className="w-4 h-4 mr-2" /> Добавить
-          </Button>
+          {canWrite && (
+            <Button onClick={openAdd} data-testid="button-add-bike">
+              <Plus className="w-4 h-4 mr-2" /> Добавить
+            </Button>
+          )}
         </div>
       </header>
 
@@ -292,15 +300,17 @@ export function BikesPage() {
                     <Button variant="ghost" size="icon" onClick={() => setQrBike(b)} title="QR-код" data-testid={`button-qr-${b.id}`}>
                       <QrCode className="w-4 h-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => openEdit(b)} title="Редактировать" data-testid={`button-edit-${b.id}`}>
-                      <Pencil className="w-4 h-4" />
-                    </Button>
+                    {canWrite && (
+                      <Button variant="ghost" size="icon" onClick={() => openEdit(b)} title="Редактировать" data-testid={`button-edit-${b.id}`}>
+                        <Pencil className="w-4 h-4" />
+                      </Button>
+                    )}
                     <Button asChild variant="ghost" size="icon" title="Создать сервисную заявку" data-testid={`button-service-${b.id}`}>
                       <Link href={`/admin/maintenance?bike=${encodeURIComponent(b.id)}`}>
                         <Wrench className="w-4 h-4" />
                       </Link>
                     </Button>
-                    {b.status !== "archived" && (
+                    {canWrite && b.status !== "archived" && (
                       <Button
                         variant="ghost" size="icon"
                         onClick={() => archiveMut.mutate(b.id)}
@@ -311,19 +321,21 @@ export function BikesPage() {
                         <Archive className="w-4 h-4" />
                       </Button>
                     )}
-                    <Button
-                      variant="ghost" size="icon"
-                      onClick={() => {
-                        if (confirm(`Удалить ${b.id}? Если есть история поездок — велосипед уйдёт в архив.`)) {
-                          deleteMut.mutate(b.id);
-                        }
-                      }}
-                      disabled={deleteMut.isPending}
-                      title="Удалить"
-                      data-testid={`button-delete-${b.id}`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                    {canWrite && (
+                      <Button
+                        variant="ghost" size="icon"
+                        onClick={() => {
+                          if (confirm(`Удалить ${b.id}? Если есть история поездок — велосипед уйдёт в архив.`)) {
+                            deleteMut.mutate(b.id);
+                          }
+                        }}
+                        disabled={deleteMut.isPending}
+                        title="Удалить"
+                        data-testid={`button-delete-${b.id}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>

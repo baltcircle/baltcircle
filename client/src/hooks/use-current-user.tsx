@@ -15,11 +15,19 @@ export function useCurrentUser() {
   const user = query.data ?? null;
   const role = (user?.role as UserRole | undefined) ?? null;
 
+  // `isStaff` means "may reach the operator panel at all". Mechanics are staff
+  // but with a restricted view (service + read-only fleet); nav/route gating
+  // narrows them down from there. `canManageStaff` mirrors the user-management
+  // gate (operator/admin only — mechanics never manage users).
   return {
     user,
     role,
     isRegistered: !!user,
-    isStaff: role === "operator" || role === "admin",
+    isStaff: role === "mechanic" || role === "operator" || role === "admin",
+    isMechanic: role === "mechanic",
+    isOperator: role === "operator",
+    isAdmin: role === "admin",
+    canManageStaff: role === "operator" || role === "admin",
     isLoading: query.isLoading,
   };
 }

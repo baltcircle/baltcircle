@@ -13,6 +13,7 @@
     "smoke:session": "tsx script/smoke-session.ts",
     "smoke:profile": "tsx script/smoke-profile.ts",
     "smoke:admin-users": "tsx script/smoke-admin-users.ts",
+    "smoke:admin-roles": "tsx script/smoke-admin-roles.ts",
     "smoke:admin-bikes": "tsx script/smoke-admin-bikes.ts",
     "smoke:admin-parkings": "tsx script/smoke-admin-parkings.ts",
     "smoke:parking-marker": "tsx script/smoke-parking-marker.ts",

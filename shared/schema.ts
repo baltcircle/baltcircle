@@ -11,7 +11,7 @@ export const users = sqliteTable("users", {
   name: text("name").notNull(),
   phone: text("phone").notNull(),            // normalized to digits with optional leading +
   email: text("email"),                      // optional, rider-supplied; validated on update
-  role: text("role").notNull().default("rider"), // rider | operator | admin
+  role: text("role").notNull().default("rider"), // rider | mechanic | operator | admin
   consentAcceptedAt: integer("consent_accepted_at"), // unix ms when consent was accepted
   consentVersion: text("consent_version"),   // e.g. "v1-2026-06-07"
   consentIp: text("consent_ip"),             // best-effort client IP captured at consent time
@@ -21,13 +21,14 @@ export const users = sqliteTable("users", {
   updatedAt: integer("updated_at"),          // unix ms of last profile mutation
 });
 export type User = typeof users.$inferSelect;
-export type UserRole = "rider" | "operator" | "admin";
+export type UserRole = "rider" | "mechanic" | "operator" | "admin";
 
-// Admin role assignment. Restricted to the three known roles so an operator
-// can't store an arbitrary string. Promotion to "admin" is gated server-side
-// (only an admin may grant admin) — this schema just validates the value.
+// Admin role assignment. Restricted to the known roles so an operator can't
+// store an arbitrary string. Promotion to "admin" is gated server-side (only
+// an admin may grant admin) — this schema just validates the value. "mechanic"
+// is a service-only staff role (maintenance + read-only fleet).
 export const adminSetRoleSchema = z.object({
-  role: z.enum(["rider", "operator", "admin"]),
+  role: z.enum(["rider", "mechanic", "operator", "admin"]),
 });
 export type AdminSetRoleInput = z.infer<typeof adminSetRoleSchema>;
 

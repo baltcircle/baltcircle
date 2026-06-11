@@ -1,9 +1,10 @@
 import { useMemo, useState, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useSearch } from "wouter";
-import type { Bike, Ticket, TicketComment, TicketWithComments } from "@shared/schema";
+import type { Bike, Ticket, TicketComment, TicketWithComments, User } from "@shared/schema";
 import { TICKET_KINDS, TICKET_PRIORITIES, TICKET_STATUSES, TICKET_CLOSED_STATUSES } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -79,6 +80,18 @@ export function MaintenancePage() {
   const search = useSearch();
   const ticketsQ = useQuery<Ticket[]>({ queryKey: ["/api/tickets"] });
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
+  // Staff names to suggest as assignees. Only operators/admins may read the
+  // users list, so the query is gated to them; mechanics keep plain free text.
+  // The input stays free text either way — this only offers autocomplete.
+  const { canManageStaff } = useCurrentUser();
+  const staffQ = useQuery<User[]>({ queryKey: ["/api/admin/users"], enabled: canManageStaff });
+  const assigneeOptions = useMemo(
+    () =>
+      (staffQ.data ?? [])
+        .filter((u) => u.role === "mechanic" || u.role === "operator" || u.role === "admin")
+        .map((u) => u.name),
+    [staffQ.data],
+  );
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -310,8 +323,12 @@ export function MaintenancePage() {
                 value={form.assignee}
                 onChange={(e) => setForm((s) => ({ ...s, assignee: e.target.value }))}
                 placeholder="Имя механика / бригады"
+                list="ticket-assignees"
                 data-testid="input-ticket-assignee"
               />
+              <datalist id="ticket-assignees">
+                {assigneeOptions.map((name) => <option key={name} value={name} />)}
+              </datalist>
             </div>
             {(form.priority === "high" || form.priority === "critical") && (
               <p className="text-xs text-amber-600 dark:text-amber-400">
