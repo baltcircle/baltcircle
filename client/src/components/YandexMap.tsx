@@ -107,6 +107,12 @@ export function YandexMap(props: Props) {
   onCenterGetterRef.current = onCenterGetter;
 
   const [failed, setFailed] = useState(false);
+  // Flips to true once the map instance and its overlay collections exist.
+  // The overlay-render effects below key on this so they (re)draw with the
+  // *current* data once the map is ready — otherwise async data that resolves
+  // before map init would render into empty closures and the overlays would
+  // stay blank until an unrelated re-render (e.g. navigating away and back).
+  const [ready, setReady] = useState(false);
 
   // Initialise the map once.
   useEffect(() => {
@@ -156,9 +162,15 @@ export function YandexMap(props: Props) {
 
         onCenterGetterRef.current?.(() => map.getCenter() as [number, number]);
 
+        // The container may have been laid out (or resized) while the API was
+        // still loading; nudge the map to match its current box so tiles and
+        // overlays are placed against the right viewport on first paint.
+        try { map.container.fitToViewport(); } catch { /* ignore */ }
+
         setFailed(false);
-        renderSavedObjects();
-        renderDynamic();
+        // Marking ready re-runs the overlay effects with current data; no need
+        // to render here with the (possibly stale) init-time closures.
+        setReady(true);
 
         cleanup = () => {
           try { map.destroy(); } catch { /* ignore */ }
@@ -174,22 +186,25 @@ export function YandexMap(props: Props) {
       mapRef.current = null;
       overlaysRef.current = null;
       savedObjectsRef.current = null;
+      setReady(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-render dynamic overlays whenever data or selection changes.
+  // Re-render dynamic overlays whenever the map becomes ready or data/selection
+  // changes. Keying on `ready` closes the first-load race where data resolves
+  // before the map instance exists.
   useEffect(() => {
     renderDynamic();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bikes, parkings, ride, activeRides, tickets, selectedBikeId, interactive,
+  }, [ready, bikes, parkings, ride, activeRides, tickets, selectedBikeId, interactive,
       show.parkings, show.bikes, show.rides, show.tickets]);
 
-  // Re-render saved operator objects whenever they change.
+  // Re-render saved operator objects whenever the map becomes ready or they change.
   useEffect(() => {
     renderSavedObjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapObjects, show.objects]);
+  }, [ready, mapObjects, show.objects]);
 
   function renderSavedObjects() {
     const ymaps = ymapsRef.current;
