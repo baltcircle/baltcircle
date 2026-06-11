@@ -619,6 +619,8 @@ export interface IStorage {
   deleteMapObject(id: number): boolean;
   // analytics
   analytics(): any;
+  // period-scoped analytics for the admin "Аналитика v1" page
+  adminAnalytics(range: { from: number; to: number }): any;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1418,6 +1420,123 @@ export class DatabaseStorage implements IStorage {
     const idleAvg = (sqlite.prepare("SELECT AVG(idle_hours) AS a FROM bikes").get() as any).a;
 
     return { total, completed, revenue, avgDuration, avgDistance, byDay, parkingCounts, utilisation, problemBikes, idleAvg };
+  }
+
+  // Period-scoped analytics powering the admin "Аналитика v1" page. Everything
+  // is computed against rides that *started* within [from, to]. Revenue is the
+  // sum of settled ride cost (the current ride/tariff data — no real acquiring).
+  adminAnalytics(range: { from: number; to: number }) {
+    const { from, to } = range;
+    const q = (sqlStr: string) =>
+      sqlite.prepare(sqlStr).get(from, to) as any;
+
+    // ---- KPI cards (selected period) ----
+    const ridesCount = q("SELECT COUNT(*) AS c FROM rides WHERE started_at >= ? AND started_at <= ?").c;
+    const activeRides = q("SELECT COUNT(*) AS c FROM rides WHERE status='active' AND started_at >= ? AND started_at <= ?").c;
+    const completedRides = q("SELECT COUNT(*) AS c FROM rides WHERE status='completed' AND started_at >= ? AND started_at <= ?").c;
+    const revenue = q("SELECT COALESCE(SUM(cost),0) AS s FROM rides WHERE status='completed' AND started_at >= ? AND started_at <= ?").s;
+    const avgDuration = q("SELECT COALESCE(AVG((ended_at-started_at)/60000.0),0) AS a FROM rides WHERE status='completed' AND ended_at IS NOT NULL AND started_at >= ? AND started_at <= ?").a;
+    // Average check = revenue per completed (paid) ride in the period.
+    const avgCheck = completedRides > 0 ? revenue / completedRides : 0;
+    const newUsers = q("SELECT COUNT(*) AS c FROM users WHERE created_at >= ? AND created_at <= ?").c;
+    const usersWithRides = q("SELECT COUNT(DISTINCT user_id) AS c FROM rides WHERE started_at >= ? AND started_at <= ?").c;
+    const openTickets = (sqlite.prepare(
+      `SELECT COUNT(*) AS c FROM tickets WHERE status NOT IN ('resolved','closed','cancelled')`,
+    ).get() as any).c;
+
+    // ---- Rides per day (within the period) for the trend chart ----
+    const byDay = sqlite.prepare(`
+      SELECT strftime('%Y-%m-%d', started_at/1000, 'unixepoch') AS day,
+             COUNT(*) AS rides_count,
+             COALESCE(SUM(CASE WHEN status='completed' THEN cost ELSE 0 END),0) AS revenue
+      FROM rides
+      WHERE started_at >= ? AND started_at <= ?
+      GROUP BY day
+      ORDER BY day ASC
+    `).all(from, to) as any[];
+
+    // ---- Top bikes (most rides) and zero-ride bikes in the period ----
+    const ridesByBike = new Map<string, number>();
+    for (const row of sqlite.prepare(
+      "SELECT bike_id, COUNT(*) AS c FROM rides WHERE started_at >= ? AND started_at <= ? GROUP BY bike_id",
+    ).all(from, to) as any[]) {
+      ridesByBike.set(row.bike_id, row.c);
+    }
+    const liveBikes = this.listBikes(); // excludes archived
+    const topBikes = liveBikes
+      .map((b) => ({ id: b.id, model: b.model, status: b.status, rides: ridesByBike.get(b.id) ?? 0 }))
+      .sort((a, b) => b.rides - a.rides)
+      .slice(0, 10);
+    const zeroRideBikes = liveBikes
+      .filter((b) => (ridesByBike.get(b.id) ?? 0) === 0)
+      .map((b) => ({ id: b.id, model: b.model, status: b.status, idleHours: b.idleHours }))
+      .sort((a, b) => b.idleHours - a.idleHours);
+
+    // ---- Users summary ----
+    const totalUsers = (sqlite.prepare("SELECT COUNT(*) AS c FROM users").get() as any).c;
+    const blockedUsers = (sqlite.prepare("SELECT COUNT(*) AS c FROM users WHERE blocked_at IS NOT NULL").get() as any).c;
+    const usersSummary = { total: totalUsers, newInPeriod: newUsers, withRidesInPeriod: usersWithRides, blocked: blockedUsers };
+
+    // ---- Service stats (whole-fleet snapshot; tickets are operational, not period-bound) ----
+    const ticketsByPriority = sqlite.prepare(
+      "SELECT priority, COUNT(*) AS c FROM tickets GROUP BY priority",
+    ).all() as any[];
+    const ticketsByStatus = sqlite.prepare(
+      "SELECT status, COUNT(*) AS c FROM tickets GROUP BY status",
+    ).all() as any[];
+    const ticketsByKind = sqlite.prepare(
+      "SELECT kind, COUNT(*) AS c FROM tickets GROUP BY kind ORDER BY c DESC",
+    ).all() as any[];
+    // Repeated-problem bikes: more than one ticket ever logged against them.
+    const repeatedProblemBikes = sqlite.prepare(`
+      SELECT bike_id, COUNT(*) AS tickets,
+             SUM(CASE WHEN status NOT IN ('resolved','closed','cancelled') THEN 1 ELSE 0 END) AS open
+      FROM tickets
+      GROUP BY bike_id
+      HAVING COUNT(*) > 1
+      ORDER BY tickets DESC
+      LIMIT 12
+    `).all() as any[];
+
+    // ---- Parking usage (proximity of ride starts in the period) ----
+    const periodStarts = sqlite.prepare(
+      "SELECT start_lat, start_lng FROM rides WHERE started_at >= ? AND started_at <= ?",
+    ).all(from, to) as any[];
+    const parkingUsage = this.listParkings().map((p) => {
+      let c = 0;
+      for (const r of periodStarts) {
+        const dx = r.start_lng - p.lng;
+        const dy = r.start_lat - p.lat;
+        if (Math.sqrt(dx * dx + dy * dy) < 30) c++;
+      }
+      return { id: p.id, name: p.name, capacity: p.capacity, occupied: p.occupied, rideStarts: c };
+    }).sort((a, b) => b.rideStarts - a.rideStarts);
+
+    return {
+      range: { from, to },
+      kpis: {
+        ridesCount,
+        activeRides,
+        completedRides,
+        revenue,
+        avgDurationMin: avgDuration,
+        avgCheck,
+        newUsers,
+        usersWithRides,
+        openTickets,
+      },
+      byDay,
+      topBikes,
+      zeroRideBikes,
+      usersSummary,
+      service: {
+        byPriority: ticketsByPriority,
+        byStatus: ticketsByStatus,
+        byKind: ticketsByKind,
+        repeatedProblemBikes,
+      },
+      parkingUsage,
+    };
   }
 }
 

@@ -526,5 +526,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // -------------- Analytics --------------
   app.get("/api/analytics", (_req, res) => res.json(storage.analytics()));
 
+  // Period-scoped analytics for the admin "Аналитика v1" page. Staff-only.
+  // `from`/`to` are unix-ms bounds (inclusive); defaults to the last 30 days.
+  app.get("/api/admin/analytics", requireRole("operator", "admin"), (req, res) => {
+    const now = Date.now();
+    const parseTs = (v: unknown, fallback: number) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : fallback;
+    };
+    const from = parseTs(req.query.from, now - 30 * 24 * 60 * 60 * 1000);
+    const to = parseTs(req.query.to, now);
+    if (from > to) return res.status(400).json({ error: "Некорректный диапазон дат" });
+    res.json(storage.adminAnalytics({ from, to }));
+  });
+
   return httpServer;
 }

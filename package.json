@@ -18,6 +18,7 @@
     "smoke:parking-marker": "tsx script/smoke-parking-marker.ts",
     "smoke:admin-rides": "tsx script/smoke-admin-rides.ts",
     "smoke:admin-maintenance": "tsx script/smoke-admin-maintenance.ts",
+    "smoke:admin-analytics": "tsx script/smoke-admin-analytics.ts",
     "smoke:account": "tsx script/smoke-account.ts"
   },
   "dependencies": {
