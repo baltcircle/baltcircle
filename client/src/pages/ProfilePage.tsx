@@ -6,8 +6,9 @@ import { fmtDistance } from "@/lib/format";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import {
   Route as RouteIcon, ShieldCheck, HelpCircle, Settings,
-  ChevronRight, CreditCard, User, Wallet,
+  ChevronRight, CreditCard, User, Wallet, Sun, Moon,
 } from "lucide-react";
+import { useTheme } from "@/lib/theme";
 
 function greeting(d = new Date()) {
   const h = d.getHours();
@@ -19,6 +20,7 @@ function greeting(d = new Date()) {
 
 export function ProfilePage() {
   const { user, isStaff } = useCurrentUser();
+  const { theme, toggle } = useTheme();
   const userId = user?.id ?? "demo";
 
   const ridesQ = useQuery<Ride[]>({
@@ -36,23 +38,30 @@ export function ProfilePage() {
     <div className="min-h-full bg-background" data-testid="page-profile">
       <div className="mx-auto max-w-md px-5 pt-8 pb-12">
         {/* Greeting */}
-        <header className="mb-7">
-          <div className="flex items-center gap-3">
-            <span className="flex items-center justify-center w-12 h-12 rounded-full bg-brand-sand-soft text-brand-bark">
-              <User className="w-6 h-6" />
-            </span>
-            <div>
-              <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
-                TakeRide
-              </div>
-              <h1
-                className="font-display text-2xl font-light leading-tight"
-                data-testid="text-greeting"
-              >
-                {user ? `${greeting()}, ${user.name}` : greeting()}
-              </h1>
+        <header className="mb-7 flex items-center gap-3">
+          <span className="flex items-center justify-center w-12 h-12 rounded-full bg-brand-sand-soft text-brand-bark shrink-0">
+            <User className="w-6 h-6" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
+              TakeRide
             </div>
+            <h1
+              className="font-display text-2xl font-light leading-tight"
+              data-testid="text-greeting"
+            >
+              {user ? `${greeting()}, ${user.name}` : greeting()}
+            </h1>
           </div>
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label="Сменить тему"
+            data-testid="profile-theme-toggle"
+            className="flex items-center justify-center w-11 h-11 rounded-full bg-muted text-muted-foreground shrink-0 hover-elevate active:scale-95 transition-transform"
+          >
+            {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          </button>
         </header>
 
         {/* Stats */}
