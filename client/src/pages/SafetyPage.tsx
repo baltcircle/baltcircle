@@ -1,7 +1,7 @@
 import { Link } from "wouter";
 import {
   ArrowLeft, ShieldCheck, HardHat, TrafficCone, Gauge, ParkingSquare,
-  Moon, Lock, KeyRound, Database, Scale, ChevronRight,
+  Moon, Lock, KeyRound, Database,
 } from "lucide-react";
 
 interface Topic {
@@ -81,7 +81,7 @@ export function SafetyPage() {
             <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
               TakeRide
             </div>
-            <h1 className="font-display text-2xl font-light leading-tight">Центр безопасности</h1>
+            <h1 className="font-display text-2xl font-light leading-tight">Информация</h1>
           </div>
         </header>
 
@@ -100,23 +100,6 @@ export function SafetyPage() {
           topics={PRIVACY_TOPICS}
           testId="section-privacy"
         />
-
-        <Link
-          href="/legal"
-          data-testid="link-safety-legal"
-          className="flex items-center gap-3 rounded-2xl border border-card-border bg-card p-4 hover-elevate"
-        >
-          <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
-            <Scale className="w-5 h-5" />
-          </span>
-          <span className="flex-1 min-w-0">
-            <span className="block font-light">Правовые документы</span>
-            <span className="block text-xs text-muted-foreground mt-0.5">
-              Политика конфиденциальности, согласие, правила и условия
-            </span>
-          </span>
-          <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-        </Link>
       </div>
     </div>
   );

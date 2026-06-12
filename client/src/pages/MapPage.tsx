@@ -12,7 +12,8 @@ import { useToast } from "@/hooks/use-toast";
 import { fmtDuration } from "@/lib/format";
 import { PENDING_BIKE_KEY } from "@/lib/pending-bike";
 import { Logo } from "@/components/Logo";
-import { QrCode, Bike as BikeIcon, User, LifeBuoy, Lock, Clock, ChevronRight } from "lucide-react";
+import { useTheme } from "@/lib/theme";
+import { QrCode, Bike as BikeIcon, User, LifeBuoy, Lock, Clock, ChevronRight, Sun, Moon } from "lucide-react";
 
 // Marks that the first-visit registration prompt was already shown on this
 // device, so closing it does not re-open on every refresh. Registration itself
@@ -21,6 +22,7 @@ const INTRO_SHOWN_KEY = "bc.registration.intro.shown";
 
 export function MapPage() {
   const toast = useToast();
+  const { theme, toggle } = useTheme();
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
   const mapObjectsQ = useQuery<MapObject[]>({ queryKey: ["/api/map-objects"] });
   // Active, operator-managed parking points. Shown as parking markers on the
@@ -165,14 +167,25 @@ export function MapPage() {
         <div className="pointer-events-auto flex items-center rounded-full bg-card/90 backdrop-blur border border-card-border shadow-sm pl-2.5 pr-3.5 h-11 text-foreground">
           <Logo />
         </div>
-        <Link
-          href="/profile"
-          aria-label="Профиль"
-          data-testid="home-profile-button"
-          className="pointer-events-auto flex items-center justify-center w-11 h-11 rounded-full bg-card/90 backdrop-blur border border-card-border shadow-sm text-foreground hover-elevate active:scale-95 transition-transform"
-        >
-          <User className="w-5 h-5" />
-        </Link>
+        <div className="pointer-events-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label="Сменить тему"
+            data-testid="home-theme-toggle"
+            className="flex items-center justify-center w-11 h-11 rounded-full bg-card/90 backdrop-blur border border-card-border shadow-sm text-foreground hover-elevate active:scale-95 transition-transform"
+          >
+            {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          </button>
+          <Link
+            href="/profile"
+            aria-label="Профиль"
+            data-testid="home-profile-button"
+            className="flex items-center justify-center w-11 h-11 rounded-full bg-card/90 backdrop-blur border border-card-border shadow-sm text-foreground hover-elevate active:scale-95 transition-transform"
+          >
+            <User className="w-5 h-5" />
+          </Link>
+        </div>
       </header>
 
       {/* Map fills the screen as the central focus. The public map shows the

@@ -5,7 +5,7 @@ import { useAppViewport } from "@/hooks/use-app-viewport";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import type { UserRole } from "@shared/schema";
 import {
-  Map, QrCode, CreditCard, Route, ShieldCheck, Wrench, BarChart3,
+  Map, QrCode, Route, ShieldCheck, Wrench, BarChart3,
   Sun, Moon, Bike, ChevronRight, ArrowLeft, User, Users, MapPin, Crosshair,
 } from "lucide-react";
 
@@ -19,11 +19,11 @@ interface NavItem {
   roles?: UserRole[];
 }
 
-// Customer / rider interface — the default experience.
+// Customer / rider interface — the default experience. Tariffs are not exposed
+// in the customer nav; they surface only inside the scan / rental flow.
 const RIDER_NAV: NavItem[] = [
   { href: "/",        label: "Карта",   icon: Map,    testId: "nav-map" },
   { href: "/rent",    label: "Аренда",  icon: QrCode, testId: "nav-rent" },
-  { href: "/tariffs", label: "Тарифы",  icon: CreditCard, testId: "nav-tariffs" },
   { href: "/rides",   label: "Поездки", icon: Route,  testId: "nav-rides" },
 ];
 
