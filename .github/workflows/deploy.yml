@@ -37,6 +37,14 @@ jobs:
           # bootstrap). Passed through to the container at runtime, never
           # hardcoded. Empty when the secret is unset -> no auto-admins.
           ADMIN_PHONE_NUMBERS: ${{ secrets.ADMIN_PHONE_NUMBERS }}
+          # T-Bank / T-Kassa acquiring runtime config — consumed by the backend
+          # container at runtime (docker-compose `environment:`), never inlined
+          # into the client bundle. Terminal key + password are secrets; the API
+          # base and public URL fall back to in-app defaults when unset.
+          TBANK_TERMINAL_KEY: ${{ secrets.TBANK_TERMINAL_KEY }}
+          TBANK_PASSWORD: ${{ secrets.TBANK_PASSWORD }}
+          TBANK_API_BASE: ${{ secrets.TBANK_API_BASE }}
+          PUBLIC_APP_URL: ${{ secrets.PUBLIC_APP_URL }}
         run: |
           set -e
           docker compose up -d --build

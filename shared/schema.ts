@@ -440,19 +440,49 @@ export const wallet = sqliteTable("wallet", {
 });
 export type Wallet = typeof wallet.$inferSelect;
 
-/* ------- PAYMENT METHODS (MVP placeholders, no card data) ------- */
-// A rider's linked payment methods. Strictly metadata: we record the *kind*
-// (card / sbp), a human label (e.g. masked test pan), and a status — never a
-// real card number, CVC, or token. No real acquiring is performed.
+/* ------- PAYMENT METHODS (T-Bank card binding metadata, no card data) ------- */
+// A rider's linked payment methods. Strictly metadata — never a real card
+// number, CVC, or full token. For real T-Bank bindings we store the provider
+// identifiers returned by the acquirer (CustomerKey, CardId, RebillId) plus a
+// masked PAN label and a lifecycle status. The PAN/CVC themselves are entered
+// only on T-Bank's hosted form and never reach our servers.
 export const paymentMethods = sqliteTable("payment_methods", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: text("user_id").notNull(),
   type: text("type").notNull(),              // card | sbp
   label: text("label").notNull(),            // display label, e.g. "•••• 4242" / "СБП"
-  status: text("status").notNull().default("linked"), // linked
+  status: text("status").notNull().default("linked"), // pending | active | failed | linked (legacy)
+  // ----- Real T-Bank metadata (added for the acquiring integration) -----
+  provider: text("provider"),                // "tbank" for real bindings; null for legacy MVP rows
+  customerKey: text("customer_key"),         // T-Bank CustomerKey (== our user id)
+  cardId: text("card_id"),                   // T-Bank CardId once the card is bound
+  rebillId: text("rebill_id"),               // T-Bank RebillId for recurring charges (if returned)
+  requestKey: text("request_key"),           // AddCard RequestKey, to correlate the binding
   createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at"),          // unix ms of last status change
 });
 export type PaymentMethod = typeof paymentMethods.$inferSelect;
+
+/* ------- PAYMENT ORDERS (T-Bank ride/charge payments) ------- */
+// One row per payment attempt created via T-Bank Init. Tracks the local order
+// id we generate, the acquirer PaymentId, the rider/ride context, amount (in
+// kopecks), status, and the PaymentURL the rider was sent to. No card data.
+export const paymentOrders = sqliteTable("payment_orders", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  orderId: text("order_id").notNull(),       // our unique order id sent to T-Bank
+  userId: text("user_id").notNull(),
+  rideId: integer("ride_id"),                // set once a ride is started (nullable)
+  bikeId: text("bike_id"),                   // bike the payment is for (ride payments)
+  tariffId: text("tariff_id"),               // tariff selected for a ride payment
+  kind: text("kind").notNull().default("ride"), // ride (extendable later)
+  amountKopecks: integer("amount_kopecks").notNull(),
+  providerPaymentId: text("provider_payment_id"), // T-Bank PaymentId
+  status: text("status").notNull().default("pending"), // pending | confirmed | failed | cancelled
+  paymentUrl: text("payment_url"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at"),
+});
+export type PaymentOrder = typeof paymentOrders.$inferSelect;
 
 // Link a payment method. Only the type is client-supplied; the label/status are
 // derived server-side so no card data can be smuggled in through the label.
@@ -460,6 +490,15 @@ export const linkPaymentMethodSchema = z.object({
   type: z.enum(["card", "sbp"]),
 });
 export type LinkPaymentMethodInput = z.infer<typeof linkPaymentMethodSchema>;
+
+// Start a T-Bank ride payment. Bike + tariff are client-supplied; the
+// authoritative amount is resolved server-side from the tariff table so the
+// client can never set its own price.
+export const initRidePaymentSchema = z.object({
+  bikeId: z.string().trim().min(1, "Укажите велосипед").max(40),
+  tariffId: z.enum(["h1", "h2", "h3"]),
+});
+export type InitRidePaymentInput = z.infer<typeof initRidePaymentSchema>;
 
 /* ------- SUPPORT TICKETS (rider help requests) ------- */
 // Lightweight contact form persistence for the current user. Riders can submit

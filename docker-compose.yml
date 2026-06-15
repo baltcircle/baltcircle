@@ -29,6 +29,18 @@ services:
       # bootstrap until a role-admin UI exists. Read from the host env (set by
       # the deploy workflow from a GitHub secret). Empty -> no auto-admins.
       ADMIN_PHONE_NUMBERS: ${ADMIN_PHONE_NUMBERS:-}
+      # T-Bank / T-Kassa acquiring — backend-only runtime config (never inlined
+      # into the client bundle). Terminal key + password are SECRET and read from
+      # the host env (set by the deploy workflow from GitHub secrets). When the
+      # key/password are empty the payment endpoints return 503 and the UI shows
+      # "Платежи настраиваются" — the app keeps running.
+      TBANK_TERMINAL_KEY: ${TBANK_TERMINAL_KEY:-}
+      TBANK_PASSWORD: ${TBANK_PASSWORD:-}
+      # API base defaults to the production acquiring host inside the app when empty.
+      TBANK_API_BASE: ${TBANK_API_BASE:-}
+      # Public origin used to build Success/Fail/Notification URLs; defaults to
+      # https://takeride.ru inside the app when empty.
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
     ports:
       - "5000:5000"
     volumes:

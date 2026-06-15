@@ -1,12 +1,12 @@
 import {
   bikes, parkings, zones, rides, tickets, ticketComments, payments, wallet, mapObjects, users,
-  otpRequests, phoneChangeRequests, paymentMethods, supportTickets,
+  otpRequests, phoneChangeRequests, paymentMethods, paymentOrders, supportTickets,
   TICKET_CLOSED_STATUSES,
 } from "@shared/schema";
 import type {
   Bike, Parking, ZoneRow, Ride, AdminRide, Ticket, TicketComment, TicketWithComments, Payment, Wallet,
   MapObject, InsertMapObject, User, OtpRequest, UserRole, UpdateProfileInput,
-  PhoneChangeRequest, PaymentMethod, SupportTicket,
+  PhoneChangeRequest, PaymentMethod, PaymentOrder, SupportTicket,
   AdminCreateBikeInput, AdminUpdateBikeInput, CreateTicketInput, UpdateTicketInput,
   AdminCreateParkingInput, AdminUpdateParkingInput,
 } from "@shared/schema";
@@ -157,7 +157,28 @@ CREATE TABLE IF NOT EXISTS payment_methods (
   type TEXT NOT NULL,
   label TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'linked',
-  created_at INTEGER NOT NULL
+  provider TEXT,
+  customer_key TEXT,
+  card_id TEXT,
+  rebill_id TEXT,
+  request_key TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS payment_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  ride_id INTEGER,
+  bike_id TEXT,
+  tariff_id TEXT,
+  kind TEXT NOT NULL DEFAULT 'ride',
+  amount_kopecks INTEGER NOT NULL,
+  provider_payment_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  payment_url TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS support_tickets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -273,6 +294,26 @@ function migrateMapObjectsTable() {
   }
 }
 migrateMapObjectsTable();
+
+// ---------- Payment methods column migration (real T-Bank metadata) ----------
+// Older DBs created payment_methods with only id/user_id/type/label/status.
+// Add the T-Bank acquirer columns in place so existing (legacy MVP) rows
+// survive; they keep provider = NULL and are treated as non-real placeholders.
+function migratePaymentMethodsTable() {
+  const cols = (sqlite.prepare("PRAGMA table_info(payment_methods)").all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  const addColumn = (name: string, ddl: string) => {
+    if (!cols.includes(name)) sqlite.exec(`ALTER TABLE payment_methods ADD COLUMN ${ddl}`);
+  };
+  addColumn("provider", "provider TEXT");
+  addColumn("customer_key", "customer_key TEXT");
+  addColumn("card_id", "card_id TEXT");
+  addColumn("rebill_id", "rebill_id TEXT");
+  addColumn("request_key", "request_key TEXT");
+  addColumn("updated_at", "updated_at INTEGER");
+}
+migratePaymentMethodsTable();
 
 const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
 
@@ -568,10 +609,22 @@ export interface IStorage {
     | { ok: true; phone: string; code: string; resendInSec: number }
     | { error: string; retryAfterSec?: number };
   verifyPhoneChange(input: { userId: string; code: string }): { user: User } | { error: string };
-  // payment methods (MVP metadata only — no card data)
+  // payment methods (metadata only — no card data)
   listPaymentMethods(userId: string): PaymentMethod[];
   linkPaymentMethod(userId: string, type: "card" | "sbp"): PaymentMethod;
   unlinkPaymentMethod(userId: string, id: number): boolean;
+  // T-Bank card binding (real acquiring metadata)
+  createPendingCardMethod(input: { userId: string; customerKey: string; requestKey?: string }): PaymentMethod;
+  getPaymentMethod(id: number): PaymentMethod | undefined;
+  findPendingCardMethod(userId: string): PaymentMethod | undefined;
+  updatePaymentMethod(id: number, patch: Partial<PaymentMethod>): PaymentMethod | undefined;
+  // T-Bank payment orders (ride payments)
+  createPaymentOrder(input: {
+    orderId: string; userId: string; bikeId?: string; tariffId?: string;
+    kind?: string; amountKopecks: number;
+  }): PaymentOrder;
+  getPaymentOrderByOrderId(orderId: string): PaymentOrder | undefined;
+  updatePaymentOrder(id: number, patch: Partial<PaymentOrder>): PaymentOrder | undefined;
   // support tickets (rider help requests)
   listSupportTickets(userId: string): SupportTicket[];
   createSupportTicket(input: { userId: string; subject: string; message: string }): SupportTicket;
@@ -896,6 +949,82 @@ export class DatabaseStorage implements IStorage {
       .where(sql`${paymentMethods.id} = ${id} AND ${paymentMethods.userId} = ${userId}`)
       .run();
     return res.changes > 0;
+  }
+
+  // ---------- T-Bank card binding (real acquiring metadata) ----------
+  // Create a pending card method when a binding flow starts. The card is not
+  // usable until the notification confirms it (status -> active) and fills in
+  // CardId/RebillId. No card data is ever stored here.
+  createPendingCardMethod(input: { userId: string; customerKey: string; requestKey?: string }) {
+    const now = Date.now();
+    return db.insert(paymentMethods).values({
+      userId: input.userId,
+      type: "card",
+      label: "Карта (привязывается…)",
+      status: "pending",
+      provider: "tbank",
+      customerKey: input.customerKey,
+      requestKey: input.requestKey ?? null,
+      createdAt: now,
+      updatedAt: now,
+    } as any).returning().get() as PaymentMethod;
+  }
+
+  getPaymentMethod(id: number) {
+    return db.select().from(paymentMethods).where(eq(paymentMethods.id, id)).get() as
+      | PaymentMethod
+      | undefined;
+  }
+
+  // The most recent pending T-Bank card binding for a user. Used by the
+  // notification handler to attach the confirmed card to the binding the rider
+  // just started.
+  findPendingCardMethod(userId: string) {
+    return db.select().from(paymentMethods)
+      .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.provider} = 'tbank' AND ${paymentMethods.status} = 'pending'`)
+      .orderBy(desc(paymentMethods.createdAt))
+      .get() as PaymentMethod | undefined;
+  }
+
+  updatePaymentMethod(id: number, patch: Partial<PaymentMethod>) {
+    const set: Record<string, unknown> = { ...patch, updatedAt: Date.now() };
+    delete set.id;
+    db.update(paymentMethods).set(set as any).where(eq(paymentMethods.id, id)).run();
+    return this.getPaymentMethod(id);
+  }
+
+  // ---------- T-Bank payment orders (ride payments) ----------
+  createPaymentOrder(input: {
+    orderId: string; userId: string; bikeId?: string; tariffId?: string;
+    kind?: string; amountKopecks: number;
+  }) {
+    const now = Date.now();
+    return db.insert(paymentOrders).values({
+      orderId: input.orderId,
+      userId: input.userId,
+      bikeId: input.bikeId ?? null,
+      tariffId: input.tariffId ?? null,
+      kind: input.kind ?? "ride",
+      amountKopecks: input.amountKopecks,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    } as any).returning().get() as PaymentOrder;
+  }
+
+  getPaymentOrderByOrderId(orderId: string) {
+    return db.select().from(paymentOrders).where(eq(paymentOrders.orderId, orderId)).get() as
+      | PaymentOrder
+      | undefined;
+  }
+
+  updatePaymentOrder(id: number, patch: Partial<PaymentOrder>) {
+    const set: Record<string, unknown> = { ...patch, updatedAt: Date.now() };
+    delete set.id;
+    db.update(paymentOrders).set(set as any).where(eq(paymentOrders.id, id)).run();
+    return db.select().from(paymentOrders).where(eq(paymentOrders.id, id)).get() as
+      | PaymentOrder
+      | undefined;
   }
 
   // ---------- Support tickets ----------
