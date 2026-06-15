@@ -6,9 +6,8 @@ import { fmtDistance } from "@/lib/format";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import {
   Route as RouteIcon, ShieldCheck, HelpCircle, Settings,
-  ChevronRight, CreditCard, User, Wallet, Sun, Moon,
+  ChevronRight, CreditCard, User, Wallet,
 } from "lucide-react";
-import { useTheme } from "@/lib/theme";
 
 function greeting(d = new Date()) {
   const h = d.getHours();
@@ -20,7 +19,6 @@ function greeting(d = new Date()) {
 
 export function ProfilePage() {
   const { user, isStaff } = useCurrentUser();
-  const { theme, toggle } = useTheme();
   const userId = user?.id ?? "demo";
 
   const ridesQ = useQuery<Ride[]>({
@@ -53,15 +51,6 @@ export function ProfilePage() {
               {user ? `${greeting()}, ${user.name}` : greeting()}
             </h1>
           </div>
-          <button
-            type="button"
-            onClick={toggle}
-            aria-label="Сменить тему"
-            data-testid="profile-theme-toggle"
-            className="flex items-center justify-center w-11 h-11 rounded-full bg-muted text-muted-foreground shrink-0 hover-elevate active:scale-95 transition-transform"
-          >
-            {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
         </header>
 
         {/* Stats */}
