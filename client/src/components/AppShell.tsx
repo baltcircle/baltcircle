@@ -122,19 +122,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <ShieldCheck className="w-4 h-4 opacity-80" /> Операторская
             </Link>
           ) : null}
-          {isAdmin ? (
-            <button
-              onClick={toggle}
-              className="w-full flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
-              data-testid="button-theme-toggle"
-            >
-              <span className="flex items-center gap-2 opacity-90">
-                {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-                {theme === "dark" ? "Светлая тема" : "Тёмная тема"}
-              </span>
-              <ChevronRight className="w-4 h-4 opacity-50" />
-            </button>
-          ) : (
+          <button
+            onClick={toggle}
+            className="w-full flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
+            data-testid="button-theme-toggle"
+          >
+            <span className="flex items-center gap-2 opacity-90">
+              {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              {theme === "dark" ? "Светлая тема" : "Тёмная тема"}
+            </span>
+            <ChevronRight className="w-4 h-4 opacity-50" />
+          </button>
+          {!isAdmin && (
             <Link
               href="/profile"
               data-testid="link-profile"
@@ -180,16 +179,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </Link>
             </>
           ) : (
-            <Link
-              href="/profile"
-              data-testid="link-profile-mobile"
-              aria-label="Профиль"
-              className="p-1 rounded-full hover-elevate"
-            >
-              <span className="flex items-center justify-center w-8 h-8 rounded-full bg-sidebar-accent/70 text-sidebar-foreground">
-                <User className="w-5 h-5" />
-              </span>
-            </Link>
+            <>
+              <button
+                onClick={toggle}
+                className="p-2 rounded-md hover-elevate"
+                aria-label="Сменить тему"
+                data-testid="button-theme-toggle-mobile"
+              >
+                {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              </button>
+              <Link
+                href="/profile"
+                data-testid="link-profile-mobile"
+                aria-label="Профиль"
+                className="p-1 rounded-full hover-elevate"
+              >
+                <span className="flex items-center justify-center w-8 h-8 rounded-full bg-sidebar-accent/70 text-sidebar-foreground">
+                  <User className="w-5 h-5" />
+                </span>
+              </Link>
+            </>
           )}
         </div>
       </header>
