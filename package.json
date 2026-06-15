@@ -20,7 +20,8 @@
     "smoke:admin-rides": "tsx script/smoke-admin-rides.ts",
     "smoke:admin-maintenance": "tsx script/smoke-admin-maintenance.ts",
     "smoke:admin-analytics": "tsx script/smoke-admin-analytics.ts",
-    "smoke:account": "tsx script/smoke-account.ts"
+    "smoke:account": "tsx script/smoke-account.ts",
+    "smoke:spa-fallback": "tsx script/smoke-spa-fallback.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

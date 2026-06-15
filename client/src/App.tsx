@@ -1,5 +1,4 @@
 import { Switch, Route, Router, Redirect, useLocation } from "wouter";
-import { useHashLocation } from "wouter/use-hash-location";
 import { useEffect } from "react";
 import { PENDING_BIKE_KEY } from "@/lib/pending-bike";
 import { queryClient } from "./lib/queryClient";
@@ -36,7 +35,7 @@ function AppRouter() {
     <Switch>
       {/* Customer / rider interface */}
       <Route path="/" component={MapPage} />
-      {/* QR deep link: a scanned bike URL (".../#/bike/BC-001") lands here, is
+      {/* QR deep link: a scanned bike URL (".../bike/BC-001") lands here, is
           stashed, and redirects to the map which auto-opens the rental flow. */}
       <Route path="/bike/:id">{(params) => <BikeDeepLink id={params.id} />}</Route>
       <Route path="/rent" component={RentPage} />
@@ -96,7 +95,7 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <Toaster />
-          <Router hook={useHashLocation}>
+          <Router>
             <AppShell>
               <AppRouter />
             </AppShell>

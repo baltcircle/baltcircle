@@ -24,11 +24,15 @@ export function RentPage() {
   const [code, setCode] = useState("");
   const [regOpen, setRegOpen] = useState(false);
 
-  // Preselect from query
+  // Preselect from query. Clean URLs carry "?bike=" on the real URL; legacy
+  // hash links ("/#/rent?bike=...") still parse so old bookmarks keep working.
   useEffect(() => {
     const u = new URL(window.location.href);
-    const hashUrl = new URL("http://x" + u.hash.replace("#", ""));
-    const bike = hashUrl.searchParams.get("bike");
+    let bike = u.searchParams.get("bike");
+    if (!bike && u.hash.includes("?")) {
+      const hashQuery = new URLSearchParams(u.hash.slice(u.hash.indexOf("?")));
+      bike = hashQuery.get("bike");
+    }
     if (bike) setCode(bike);
   }, [loc]);
 

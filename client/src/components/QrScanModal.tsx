@@ -18,8 +18,9 @@ interface Props {
 }
 
 // Extract a bike code from raw QR text. Accepts a plain id ("BC-001") or a URL
-// that carries the id in the path (".../#/bike/BC-001") or a query param
-// (?bike=BC-001 / ?id=BC-001). Returns an upper-cased code or null.
+// that carries the id in the path — both the clean ".../bike/BC-001" and the
+// legacy hash ".../#/bike/BC-001" forms — or a query param (?bike=BC-001 /
+// ?id=BC-001). Returns an upper-cased code or null.
 function extractBikeCode(raw: string): string | null {
   const text = raw.trim();
   if (!text) return null;

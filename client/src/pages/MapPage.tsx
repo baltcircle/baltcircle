@@ -129,7 +129,7 @@ export function MapPage() {
     setRentalOpen(true);
   };
 
-  // Cold-open QR deep link ("/#/bike/BC-001"): once bikes/user have loaded,
+  // Cold-open QR deep link ("/bike/BC-001"): once bikes/user have loaded,
   // resolve the stashed code and either open the rental (registered + bike
   // available) or surface a clear toast. Cleared so it fires only once.
   useEffect(() => {
