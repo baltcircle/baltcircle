@@ -335,9 +335,17 @@ export interface InitBindCardInput {
 //
 // Token correctness: Init signs only ROOT-LEVEL scalar params. We pass the
 // documented Init fields (TerminalKey is injected by signedPost) — Amount,
-// OrderId, Description, CustomerKey, Recurrent, plus the redirect/notify URLs,
-// which ARE valid Init parameters (unlike AddCard). signedPost signs the exact
-// payload sent, so the signed set === the sent set (avoids code 204).
+// OrderId, Description, CustomerKey, Recurrent, OperationInitiatorType, plus the
+// redirect/notify URLs, which ARE valid Init parameters (unlike AddCard).
+// signedPost signs the exact payload sent, so the signed set === the sent set
+// (avoids code 204).
+//
+// OperationInitiatorType=1 (CIT CC — customer-initiated, credential-captured)
+// is required alongside Recurrent=Y so the acquirer registers this as the PARENT
+// operation that captures the card credential for future MIT (merchant-initiated)
+// recurring charges. Per the T-Bank spec the RebillId/Recurrent/
+// OperationInitiatorType triad must be consistent or MAPI rejects the request;
+// for the parent credential-capture payment the matching value is 1.
 export async function tbankInitBindCard(
   cfg: TbankConfig,
   input: InitBindCardInput,
@@ -348,6 +356,7 @@ export async function tbankInitBindCard(
     Description: input.description,
     CustomerKey: input.customerKey,
     Recurrent: "Y",
+    OperationInitiatorType: "1",
     SuccessURL: input.successUrl,
     FailURL: input.failUrl,
     NotificationURL: input.notificationUrl,

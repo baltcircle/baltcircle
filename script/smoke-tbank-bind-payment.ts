@@ -4,10 +4,13 @@
 //   1. parseBindAmount normalizes the verification-payment amount and falls back
 //      to the 100-kopeck (1 ₽) default for empty/invalid/zero/negative values.
 //   2. tbankInitBindCard posts to /Init with EXACTLY the documented Init fields
-//      (Amount, OrderId, Description, CustomerKey, Recurrent=Y, the redirect/
-//      notify URLs) plus the injected TerminalKey + SHA-256 Token, and that the
-//      Token matches a recomputation over the final payload (the signed set ===
-//      the sent set — the classic guard against code 204 "invalid token").
+//      (Amount, OrderId, Description, CustomerKey, Recurrent=Y,
+//      OperationInitiatorType=1, the redirect/notify URLs) plus the injected
+//      TerminalKey + SHA-256 Token, and that the Token matches a recomputation
+//      over the final payload (the signed set === the sent set — the classic
+//      guard against code 204 "invalid token"). OperationInitiatorType=1 marks
+//      the parent credential-captured (CIT CC) operation; the
+//      Recurrent/OperationInitiatorType pair must be consistent or MAPI rejects.
 //   3. classifyInitBinding maps the verification-payment lifecycle to our
 //      active/failed/pending states (active only with a RebillId on
 //      AUTHORIZED/CONFIRMED).
@@ -42,7 +45,7 @@ assert(parseBindAmount("-5") === 100, "parseBindAmount rejects negative -> defau
 assert(parseBindAmount("abc") === 100, "parseBindAmount rejects non-numeric -> default");
 assert(parseBindAmount("199.9") === 199, "parseBindAmount truncates to whole kopecks");
 
-// --- generateBindOrderId (T-Bank requires OrderId length 1..50; code 212) ---
+// --- generateBindOrderId (Init docs require OrderId length 1..36) ---
 {
   const seen = new Set<string>();
   let maxLen = 0;
@@ -50,10 +53,10 @@ assert(parseBindAmount("199.9") === 199, "parseBindAmount truncates to whole kop
   for (let i = 0; i < 5000; i++) {
     const id = generateBindOrderId();
     maxLen = Math.max(maxLen, id.length);
-    if (id.length < 1 || id.length > 50 || !/^[A-Za-z0-9-]+$/.test(id)) badChar = id;
+    if (id.length < 1 || id.length > 36 || !/^[A-Za-z0-9-]+$/.test(id)) badChar = id;
     seen.add(id);
   }
-  assert(maxLen <= 50, `generateBindOrderId stays <= 50 chars over 5000 calls (max ${maxLen})`);
+  assert(maxLen <= 36, `generateBindOrderId stays <= 36 chars over 5000 calls (max ${maxLen})`);
   assert(badChar === "", `generateBindOrderId only emits ASCII latin/digits/dash, no spaces/unicode${badChar && ` (offender: ${badChar})`}`);
   // Not a strict guarantee, but the timestamp+random suffix must avoid mass
   // collisions across a tight loop.
@@ -137,8 +140,16 @@ try {
   assert(body.TerminalKey === "DummyTerminalKey", "payload carries TerminalKey");
   assert(body.Amount === 100, "payload carries Amount in kopecks");
   assert(body.OrderId === "bind-user-1-123", "payload carries OrderId");
+  assert(
+    typeof body.OrderId === "string" && (body.OrderId as string).length <= 36,
+    "payload OrderId stays within the Init 36-char limit",
+  );
   assert(body.CustomerKey === "user-1", "payload carries CustomerKey");
   assert(body.Recurrent === "Y", "payload carries Recurrent=Y (issues a RebillId)");
+  assert(
+    body.OperationInitiatorType === "1",
+    "payload carries OperationInitiatorType=1 (parent credential-captured CIT CC)",
+  );
   assert(body.Description === "Проверочный платёж для привязки карты", "payload carries Description");
   assert(
     body.NotificationURL === "https://app.test/api/payments/tbank/notification",
