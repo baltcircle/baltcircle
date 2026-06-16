@@ -159,6 +159,18 @@ export function sigmaSmsApiBase(): string {
   return base.replace(/\/+$/, "");
 }
 
+// SigmaSMS expects the recipient in international E.164 form with a leading "+"
+// (docs example: +79999999999). Our phone normalization keeps the "+" only when
+// the user typed one, so a number entered as "79991234567" reaches us without it
+// and SigmaSMS rejects it. Re-add the "+" for the recipient field only — we do
+// not mutate the stored/canonical phone.
+export function sigmaSmsRecipient(phone: string): string {
+  const trimmed = phone.trim();
+  if (trimmed.startsWith("+")) return trimmed;
+  const digits = trimmed.replace(/\D/g, "");
+  return digits ? "+" + digits : trimmed;
+}
+
 export interface SigmaSmsRequest {
   url: string;
   headers: Record<string, string>;
@@ -181,11 +193,62 @@ export function buildSigmaSmsRequest(
       Authorization: token,
     },
     body: {
-      recipient: phone,
+      recipient: sigmaSmsRecipient(phone),
       type: "sms",
       payload: { sender: sigmaSmsSender(), text: otpMessage(code) },
     },
   };
+}
+
+// Extract a short, SAFE description of a SigmaSMS failure from its response.
+// Includes only non-sensitive provider diagnostics — the HTTP status, the
+// provider's status/error fields and any validation messages. Never includes the
+// token, request headers, sender or message text. Returned string is bounded so
+// a verbose provider body can't bloat the API response.
+export function describeSigmaSmsError(httpStatus: number, data: any): string {
+  const parts: string[] = [`HTTP ${httpStatus}`];
+
+  const status = data?.status;
+  if (typeof status === "string" && status.trim()) parts.push(`статус: ${status.trim()}`);
+
+  // The error field may be a string or a {code,message} object.
+  const err = data?.error;
+  if (typeof err === "string" && err.trim()) {
+    parts.push(`ошибка: ${err.trim()}`);
+  } else if (err && typeof err === "object") {
+    const code = err.code ?? err.status;
+    const message = err.message ?? err.text ?? err.description;
+    if (code !== undefined) parts.push(`код: ${code}`);
+    if (typeof message === "string" && message.trim()) parts.push(`ошибка: ${message.trim()}`);
+  }
+
+  // Validation errors: SigmaSMS / similar APIs return field-level messages under
+  // `errors` (array of strings or {field,message}) or `description`.
+  const validation = collectValidationMessages(data);
+  if (validation.length) parts.push(`детали: ${validation.join("; ")}`);
+  else if (typeof data?.description === "string" && data.description.trim()) {
+    parts.push(`детали: ${data.description.trim()}`);
+  }
+
+  const detail = parts.join(", ");
+  return detail.length > 300 ? detail.slice(0, 297) + "…" : detail;
+}
+
+function collectValidationMessages(data: any): string[] {
+  const errors = data?.errors;
+  if (!Array.isArray(errors)) return [];
+  const out: string[] = [];
+  for (const e of errors) {
+    if (typeof e === "string" && e.trim()) out.push(e.trim());
+    else if (e && typeof e === "object") {
+      const field = e.field ?? e.param ?? e.name;
+      const message = e.message ?? e.text ?? e.description;
+      if (typeof message === "string" && message.trim()) {
+        out.push(field ? `${field}: ${message.trim()}` : message.trim());
+      }
+    }
+  }
+  return out;
 }
 
 // fetch-compatible signature so a smoke test can inject a mock.
@@ -225,12 +288,52 @@ export async function sendViaSigmaSms(
   }
 
   // A non-2xx HTTP status, an explicit error field, or a failed status all mean
-  // the message was not accepted. We never echo the provider error verbatim to
-  // the rider; logs carry the status (no token, no message text).
+  // the message was not accepted. We surface SAFE provider diagnostics (HTTP
+  // status, provider status/error/validation) so staff can act on the failure —
+  // never the token, headers, sender or message text. Logs carry the same safe
+  // summary.
   if (!res.ok || data?.error || isSigmaSmsFailedStatus(data?.status)) {
-    log(`[sms:sigmasms] request rejected: http=${res.status} status=${data?.status ?? "?"}`, "sms");
-    throw new Error("Не удалось отправить SMS. Попробуйте позже.");
+    const detail = describeSigmaSmsError(res.status, data);
+    log(`[sms:sigmasms] request rejected: ${detail}`, "sms");
+    throw new Error(`Не удалось отправить SMS (${detail}). Попробуйте позже.`);
   }
+}
+
+// Safe, non-secret view of the SigmaSMS configuration for an admin diagnostics
+// endpoint. Reports whether a token is present and its LENGTH only — never the
+// token itself, and never request headers.
+export interface SmsDiagnostics {
+  provider: string;
+  configured: boolean;
+  tokenLength: number;
+  sender: string;
+  apiBase: string;
+}
+
+export function getSmsDiagnostics(): SmsDiagnostics {
+  const provider = smsProvider();
+  if (provider === "sigmasms") {
+    const token = sigmaSmsToken();
+    return {
+      provider,
+      configured: token.length > 0,
+      tokenLength: token.length,
+      sender: sigmaSmsSender(),
+      apiBase: `${sigmaSmsApiBase()}/sendings`,
+    };
+  }
+  if (provider === "smsru") {
+    const token = (process.env.SMSRU_API_ID || "").trim();
+    return {
+      provider,
+      configured: token.length > 0,
+      tokenLength: token.length,
+      sender: "",
+      apiBase: "https://sms.ru/sms/send",
+    };
+  }
+  // No provider configured — dev fallback.
+  return { provider: provider || "(none)", configured: false, tokenLength: 0, sender: "", apiBase: "" };
 }
 
 // SigmaSMS returns a textual status per sending. Anything that clearly denotes

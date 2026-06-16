@@ -14,6 +14,9 @@ import {
   sendViaSigmaSms,
   sendOtpSms,
   otpMessage,
+  describeSigmaSmsError,
+  sigmaSmsRecipient,
+  getSmsDiagnostics,
 } from "../server/sms";
 
 function assert(cond: unknown, msg: string) {
@@ -89,23 +92,47 @@ process.env.SIGMASMS = FAKE_TOKEN;
 }
 
 // --- 4. Provider error in the JSON body is treated as failure -------------
+//        and SAFE provider diagnostics are surfaced (no token, no message text).
 {
   const mockFetch = async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ error: "insufficient funds" }),
+    ok: false,
+    status: 402,
+    json: async () => ({ status: "error", error: "insufficient funds" }),
   });
   let threw = false;
   try {
     await sendViaSigmaSms(PHONE, CODE, mockFetch as any);
   } catch (e: any) {
     threw = true;
-    assert(
-      !/insufficient funds/i.test(e.message),
-      "user-facing error does not leak the provider error text",
-    );
+    assert(/HTTP 402/.test(e.message), "user-facing error includes the HTTP status");
+    assert(/insufficient funds/.test(e.message), "user-facing error includes the safe provider error field");
+    assert(!new RegExp(FAKE_TOKEN).test(e.message), "user-facing error never leaks the token");
+    assert(!new RegExp(otpMessage(CODE)).test(e.message), "user-facing error never leaks the OTP message text");
   }
   assert(threw, "an error field in the response throws a user-friendly error");
+}
+
+// --- 4b. describeSigmaSmsError surfaces validation details safely ---------
+{
+  const detail = describeSigmaSmsError(400, {
+    status: "error",
+    error: { code: "BAD_RECIPIENT", message: "recipient is invalid" },
+    errors: [{ field: "recipient", message: "must start with +" }],
+  });
+  assert(/HTTP 400/.test(detail), "describe includes HTTP status");
+  assert(/BAD_RECIPIENT/.test(detail), "describe includes provider error code");
+  assert(/recipient is invalid/.test(detail), "describe includes provider error message");
+  assert(/must start with \+/.test(detail), "describe includes field-level validation message");
+  const long = describeSigmaSmsError(500, { error: "x".repeat(1000) });
+  assert(long.length <= 300, "describe output is bounded to <=300 chars");
+}
+
+// --- 4c. recipient is forced to +7 form -----------------------------------
+{
+  assert(sigmaSmsRecipient("79991234567") === "+79991234567", "recipient gains a + when missing");
+  assert(sigmaSmsRecipient("+79991234567") === "+79991234567", "recipient keeps an existing +");
+  const req = buildSigmaSmsRequest("79991234567", CODE, FAKE_TOKEN);
+  assert(req.body.recipient === "+79991234567", "built request recipient is in +7 form");
 }
 
 // --- 5. Non-2xx HTTP status is treated as failure -------------------------
@@ -145,5 +172,25 @@ process.env.SIGMASMS = FAKE_TOKEN;
   delete process.env.SIGMASMS_TOKEN;
 }
 delete process.env.SMS_PROVIDER;
+
+// --- 8. Diagnostics expose safe metadata only (no token) ------------------
+{
+  process.env.SMS_PROVIDER = "sigmasms";
+  process.env.SIGMASMS_TOKEN = FAKE_TOKEN;
+  process.env.SIGMASMS_SENDER = "TakeRide";
+  const diag = getSmsDiagnostics();
+  assert(diag.provider === "sigmasms", "diagnostics report the sigmasms provider");
+  assert(diag.configured === true, "diagnostics report configured=true when token set");
+  assert(diag.tokenLength === FAKE_TOKEN.length, "diagnostics report the token LENGTH");
+  assert(diag.sender === "TakeRide", "diagnostics report the sender");
+  assert(/\/sendings$/.test(diag.apiBase), "diagnostics report the API base/sendings");
+  assert(
+    !Object.values(diag).some((v) => typeof v === "string" && v.includes(FAKE_TOKEN)),
+    "diagnostics never include the raw token",
+  );
+  delete process.env.SMS_PROVIDER;
+  delete process.env.SIGMASMS_TOKEN;
+  delete process.env.SIGMASMS_SENDER;
+}
 
 if (!process.exitCode) console.log("\nAll SigmaSMS smoke checks passed.");

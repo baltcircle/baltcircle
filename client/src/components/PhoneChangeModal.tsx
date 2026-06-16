@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, errorMessage, queryClient } from "@/lib/queryClient";
 import { CURRENT_USER_KEY } from "@/hooks/use-current-user";
 import type { User } from "@shared/schema";
 import {
@@ -79,7 +79,7 @@ export function PhoneChangeModal({ open, onOpenChange }: Props) {
       }
     },
     onError: (err) => {
-      setError(err?.message?.replace(/^\d+:\s*/, "") ?? "Не удалось отправить код");
+      setError(errorMessage(err, "Не удалось отправить код"));
     },
   });
 
@@ -95,7 +95,7 @@ export function PhoneChangeModal({ open, onOpenChange }: Props) {
       onOpenChange(false);
     },
     onError: (err) => {
-      setError(err?.message?.replace(/^\d+:\s*/, "") ?? "Не удалось подтвердить код");
+      setError(errorMessage(err, "Не удалось подтвердить код"));
     },
   });
 

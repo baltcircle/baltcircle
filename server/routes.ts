@@ -14,7 +14,7 @@ import {
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
 } from "@shared/schema";
 import type { UserRole, PaymentMethod, PaymentOrder } from "@shared/schema";
-import { sendOtpSms } from "./sms";
+import { sendOtpSms, getSmsDiagnostics, smsProvider } from "./sms";
 import {
   getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
   tbankGetAddCardState, classifyCardBinding, classifyInitBinding,
@@ -120,6 +120,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if ("error" in result) return res.status(400).json(result);
     req.session.userId = result.user.id;
     res.status(201).json(result.user);
+  });
+
+  // Public probe so the client can tell whether a real SMS provider is wired up.
+  // Never exposes the token — just the provider name and a configured flag.
+  app.get("/api/sms/config", (_req, res) => {
+    res.json({ provider: smsProvider() || "(none)", configured: getSmsDiagnostics().configured });
+  });
+
+  // Admin-only SMS diagnostics. Returns ONLY non-secret metadata: provider,
+  // configured flag, token LENGTH (never the token), sender and the API base.
+  // Lets staff confirm the SigmaSMS wiring without ever seeing the secret.
+  app.get("/api/sms/diagnostics", requireRole("admin"), (_req, res) => {
+    res.json(getSmsDiagnostics());
   });
 
   app.get("/api/users/current", (req, res) => {
