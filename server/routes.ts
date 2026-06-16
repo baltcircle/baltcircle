@@ -18,7 +18,7 @@ import { sendOtpSms } from "./sms";
 import {
   getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
   tbankGetAddCardState, classifyCardBinding, classifyInitBinding,
-  tbankInitBindCard, verifyNotificationToken,
+  tbankInitBindCard, verifyNotificationToken, generateBindOrderId,
 } from "./tbank";
 import { log } from "./index";
 
@@ -277,7 +277,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
 
     // Unique per attempt so each binding payment correlates to exactly one row.
-    const orderId = `bind-${user.id}-${Date.now()}`;
+    // Must stay <= 50 chars or T-Bank rejects Init with code 212 (the user id is
+    // a 36-char UUID, so embedding it overflowed the limit).
+    const orderId = generateBindOrderId();
     const amountKopecks = cfg.cardBindAmountKopecks;
 
     try {

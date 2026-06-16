@@ -21,7 +21,7 @@
 
 import {
   computeToken, parseBindAmount, tbankInitBindCard, classifyInitBinding,
-  getTbankConfig, type TbankConfig,
+  getTbankConfig, generateBindOrderId, type TbankConfig,
 } from "../server/tbank";
 
 function assert(cond: unknown, msg: string) {
@@ -41,6 +41,24 @@ assert(parseBindAmount("0") === 100, "parseBindAmount rejects zero -> default");
 assert(parseBindAmount("-5") === 100, "parseBindAmount rejects negative -> default");
 assert(parseBindAmount("abc") === 100, "parseBindAmount rejects non-numeric -> default");
 assert(parseBindAmount("199.9") === 199, "parseBindAmount truncates to whole kopecks");
+
+// --- generateBindOrderId (T-Bank requires OrderId length 1..50; code 212) ---
+{
+  const seen = new Set<string>();
+  let maxLen = 0;
+  let badChar = "";
+  for (let i = 0; i < 5000; i++) {
+    const id = generateBindOrderId();
+    maxLen = Math.max(maxLen, id.length);
+    if (id.length < 1 || id.length > 50 || !/^[A-Za-z0-9-]+$/.test(id)) badChar = id;
+    seen.add(id);
+  }
+  assert(maxLen <= 50, `generateBindOrderId stays <= 50 chars over 5000 calls (max ${maxLen})`);
+  assert(badChar === "", `generateBindOrderId only emits ASCII latin/digits/dash, no spaces/unicode${badChar && ` (offender: ${badChar})`}`);
+  // Not a strict guarantee, but the timestamp+random suffix must avoid mass
+  // collisions across a tight loop.
+  assert(seen.size > 4900, `generateBindOrderId is unique enough across 5000 calls (got ${seen.size})`);
+}
 
 // --- classifyInitBinding ---
 assert(

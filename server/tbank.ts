@@ -15,7 +15,7 @@
 // only ever fed into the SHA-256 token and is never returned, logged, or sent
 // to the client.
 
-import { createHash } from "node:crypto";
+import { createHash, randomInt } from "node:crypto";
 
 // Local logger. We intentionally do NOT import the logger from ./index, because
 // importing index boots the HTTP server (top-level listen). Keeping logging
@@ -296,6 +296,19 @@ export async function tbankAddCard(cfg: TbankConfig, input: AddCardInput): Promi
     CustomerKey: input.customerKey,
     CheckType: input.checkType ?? cfg.addCardCheckType,
   });
+}
+
+// T-Bank rejects an OrderId longer than 50 chars (Init error code 212,
+// "OrderId length must be 1..50"). A UUID user id alone is 36 chars, so the old
+// `bind-${uuid}-${Date.now()}` form was ~55 chars and always failed. We build a
+// compact, collision-resistant id instead: a short prefix, a base36 millisecond
+// timestamp, and a random base36 suffix. Result is ASCII (latin/digits/dash)
+// only — no spaces or unicode — and well under 50 chars.
+export function generateBindOrderId(): string {
+  const ts = Date.now().toString(36); // ~8 chars through year ~2059
+  let rand = "";
+  while (rand.length < 6) rand += randomInt(36).toString(36);
+  return `TRCB-${ts}-${rand.slice(0, 6)}`; // e.g. TRCB-lk3p9q2-a8f1zq (~20 chars)
 }
 
 export interface InitBindCardInput {
