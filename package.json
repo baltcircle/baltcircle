@@ -23,7 +23,8 @@
     "smoke:account": "tsx script/smoke-account.ts",
     "smoke:spa-fallback": "tsx script/smoke-spa-fallback.ts",
     "smoke:tbank-token": "tsx script/smoke-tbank-token.ts",
-    "smoke:tbank-routes": "tsx script/smoke-tbank-routes.ts"
+    "smoke:tbank-routes": "tsx script/smoke-tbank-routes.ts",
+    "smoke:tbank-addcard": "tsx script/smoke-tbank-addcard.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

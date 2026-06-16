@@ -198,12 +198,20 @@ export function PaymentMethodsPage() {
 }
 
 // apiRequest throws "<status>: <body>" — pull a human message out of the body.
+// The add-card endpoint returns the acquirer's own { error, code, message,
+// details }; surface the message plus a parenthetical code/details so a rider
+// (or support) sees *why* the binding failed instead of a generic rejection.
 function cleanErr(e: Error): string {
   const m = e.message.match(/^\d+:\s*([\s\S]*)$/);
   const body = m ? m[1] : e.message;
   try {
     const parsed = JSON.parse(body);
-    if (parsed?.error) return parsed.error;
+    if (parsed?.error) {
+      const extra = parsed.code ? `код ${parsed.code}` : "";
+      const detail = parsed.details && parsed.details !== parsed.error ? parsed.details : "";
+      const suffix = [extra, detail].filter(Boolean).join(", ");
+      return suffix ? `${parsed.error} (${suffix})` : parsed.error;
+    }
   } catch {
     // body wasn't JSON; fall through
   }

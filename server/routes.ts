@@ -233,9 +233,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
 
     try {
-      const resp = await tbankAddCard(cfg, { customerKey: user.id, checkType: "3DS" });
+      const resp = await tbankAddCard(cfg, { customerKey: user.id });
       if (!resp.Success || !resp.PaymentURL) {
-        return res.status(502).json({ error: tbankUserError(resp) });
+        return res.status(502).json(tbankErrorBody(resp));
       }
       storage.createPendingCardMethod({
         userId: user.id,
@@ -619,13 +619,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   return httpServer;
 }
 
-// Map a T-Bank error response to a safe, user-facing Russian message. Never
-// surfaces the raw acquirer Details (which can leak internal info) to the
-// client; the full ErrorCode/Message is already logged in the client module.
-function tbankUserError(resp: { ErrorCode?: string; Message?: string }): string {
-  const code = resp.ErrorCode ?? "";
-  if (code === "0" || code === "") return resp.Message || "Не удалось выполнить операцию.";
-  return "Платёжный сервис отклонил операцию. Попробуйте позже или другую карту.";
+// Build a sanitized error body for a rejected T-Bank operation. Surfaces the
+// acquirer's own ErrorCode / Message / Details so the rider (and support) can
+// see *why* the operation failed instead of an opaque generic message. These
+// fields are produced by T-Bank and carry no terminal secret (the password is
+// never echoed back), so they are safe to forward. A friendly fallback message
+// is always provided when T-Bank returns nothing useful.
+function tbankErrorBody(resp: {
+  ErrorCode?: string;
+  Message?: string;
+  Details?: string;
+}): { error: string; code?: string; message?: string; details?: string } {
+  const code = (resp.ErrorCode ?? "").trim();
+  const message = (resp.Message ?? "").trim();
+  const details = (resp.Details ?? "").trim();
+
+  // Prefer the acquirer's human message, then its details, then a fallback.
+  const error =
+    message ||
+    details ||
+    "Платёжный сервис отклонил операцию. Попробуйте позже или другую карту.";
+
+  return {
+    error,
+    code: code && code !== "0" ? code : undefined,
+    message: message || undefined,
+    details: details || undefined,
+  };
 }
 
 // Process a verified T-Bank notification. Stage 1 handles only card binding

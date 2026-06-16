@@ -7,6 +7,8 @@
 //   TBANK_PASSWORD      — terminal password (secret; used only for the token)
 //   TBANK_API_BASE      — API base, defaults to the production acquiring host
 //   PUBLIC_APP_URL      — our public origin, used to build Success/Fail/Notify
+//   TBANK_ADD_CARD_CHECK_TYPE — AddCard CheckType (NO/HOLD/3DS/3DSHOLD),
+//                               defaults to 3DS
 //
 // If the terminal key or password is missing the client reports "not
 // configured" so routes can answer 503 instead of crashing. The password is
@@ -28,11 +30,18 @@ function log(message: string, source = "tbank"): void {
 const DEFAULT_API_BASE = "https://securepay.tinkoff.ru/v2";
 const DEFAULT_PUBLIC_APP_URL = "https://takeride.ru";
 
+export type CardCheckType = "NO" | "HOLD" | "3DS" | "3DSHOLD";
+const DEFAULT_ADD_CARD_CHECK_TYPE: CardCheckType = "3DS";
+const VALID_CHECK_TYPES: readonly CardCheckType[] = ["NO", "HOLD", "3DS", "3DSHOLD"];
+
 export interface TbankConfig {
   terminalKey: string;
   password: string;
   apiBase: string;
   publicAppUrl: string;
+  // Default CheckType for AddCard. Env-configurable so a test terminal that
+  // rejects 3DS binding can fall back to NO without a code change.
+  addCardCheckType: CardCheckType;
 }
 
 // Resolve the runtime config from the environment. Returns null when the
@@ -51,7 +60,17 @@ export function getTbankConfig(): TbankConfig | null {
     // Strip any trailing slash so we can join paths predictably.
     apiBase: apiBase.replace(/\/+$/, ""),
     publicAppUrl: publicAppUrl.replace(/\/+$/, ""),
+    addCardCheckType: parseCheckType(process.env.TBANK_ADD_CARD_CHECK_TYPE),
   };
+}
+
+// Parse the configured AddCard CheckType, falling back to the default for an
+// empty or unrecognized value (case-insensitive). Keeping this permissive
+// avoids a doomed request with an invalid CheckType the acquirer would reject.
+export function parseCheckType(raw: string | undefined): CardCheckType {
+  const v = (raw || "").trim().toUpperCase();
+  const match = VALID_CHECK_TYPES.find((t) => t === v);
+  return match ?? DEFAULT_ADD_CARD_CHECK_TYPE;
 }
 
 export function isTbankConfigured(): boolean {
@@ -177,8 +196,9 @@ async function signedPost(
 export interface AddCardInput {
   customerKey: string;
   // 3DS card binding. "3DS" runs the binding through 3-D Secure (recommended);
-  // other valid values are NO, 3DSHOLD, HOLD.
-  checkType?: "NO" | "3DS" | "3DSHOLD" | "HOLD";
+  // other valid values are NO, 3DSHOLD, HOLD. Defaults to cfg.addCardCheckType
+  // (TBANK_ADD_CARD_CHECK_TYPE) when omitted.
+  checkType?: CardCheckType;
   // Optional override URLs; default to PUBLIC_APP_URL-derived endpoints. The
   // rider is returned to /payment-methods after the hosted form; binding
   // results arrive asynchronously on the notification endpoint.
@@ -189,12 +209,17 @@ export interface AddCardInput {
 
 // Initiate card binding for a customer. Returns a PaymentURL the rider opens to
 // enter their card on T-Bank's hosted form (we never see the PAN/CVC).
+//
+// NOTE: AddCard uses its own redirect-URL field names — SuccessAddCardURL and
+// FailAddCardURL — NOT the generic SuccessURL/FailURL used by Init. Using the
+// generic names leaves the binding without return URLs, which is the root cause
+// of the hosted form failing to complete the redirect back to the app.
 export async function tbankAddCard(cfg: TbankConfig, input: AddCardInput): Promise<TbankResponse> {
   return signedPost(cfg, "/AddCard", {
     CustomerKey: input.customerKey,
-    CheckType: input.checkType ?? "3DS",
-    SuccessURL: input.successUrl ?? `${cfg.publicAppUrl}/payment-methods`,
-    FailURL: input.failUrl ?? `${cfg.publicAppUrl}/payment-methods`,
+    CheckType: input.checkType ?? cfg.addCardCheckType,
+    SuccessAddCardURL: input.successUrl ?? `${cfg.publicAppUrl}/payment-methods`,
+    FailAddCardURL: input.failUrl ?? `${cfg.publicAppUrl}/payment-methods`,
     NotificationURL: input.notificationUrl ?? `${cfg.publicAppUrl}/api/payments/tbank/notification`,
   });
 }
