@@ -111,6 +111,10 @@ process.env.SIGMASMS = FAKE_TOKEN;
   const live = await getSigmaSmsSendingStatus("abc-123", mockFetch as any);
   assert(captured!.init.method === "GET", "status lookup uses HTTP GET");
   assert(
+    !("body" in captured!.init),
+    "status lookup GET omits the request body (fetch forbids a body on GET)",
+  );
+  assert(
     captured!.url === "https://user.sigmasms.ru/api/sendings/abc-123",
     "status lookup hits /sendings/{id}",
   );

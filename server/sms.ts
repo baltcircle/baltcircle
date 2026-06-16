@@ -262,10 +262,13 @@ function collectValidationMessages(data: any): string[] {
   return out;
 }
 
-// fetch-compatible signature so a smoke test can inject a mock.
+// fetch-compatible signature so a smoke test can inject a mock. `body` is
+// optional: a GET status lookup must omit it entirely, since the WHATWG fetch
+// spec forbids a body on GET/HEAD ("Request with GET/HEAD method cannot have
+// body.").
 type FetchLike = (
   url: string,
-  init: { method: string; headers: Record<string, string>; body: string },
+  init: { method: string; headers: Record<string, string>; body?: string },
 ) => Promise<{ ok: boolean; status: number; json: () => Promise<any> }>;
 
 // On success returns the provider's sending id and status (both may be absent
@@ -348,12 +351,12 @@ export async function getSigmaSmsSendingStatus(
 
   let res: { ok: boolean; status: number; json: () => Promise<any>; text?: () => Promise<string> };
   try {
-    // GET has no body; reuse the FetchLike init shape with an empty body so a
-    // single mock signature serves both send and status in tests.
+    // GET must NOT carry a body: the fetch spec rejects a body on GET/HEAD with
+    // "Request with GET/HEAD method cannot have body." Only the method and the
+    // Authorization/Accept headers are sent.
     res = await fetchImpl(url, {
       method: "GET",
-      headers: { "Content-Type": "application/json", Authorization: token },
-      body: "",
+      headers: { Accept: "application/json", Authorization: token },
     });
   } catch (err) {
     // fetch threw before any HTTP response: DNS failure, TLS error, connection
