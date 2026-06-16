@@ -30,6 +30,11 @@ function log(message: string, source = "tbank"): void {
 const DEFAULT_API_BASE = "https://securepay.tinkoff.ru/v2";
 const DEFAULT_PUBLIC_APP_URL = "https://takeride.ru";
 
+// Default amount (in kopecks) for the verification payment used to bind a card
+// via Init+Recurrent. 100 kopecks = 1 ₽. Overridable with
+// TBANK_CARD_BIND_AMOUNT_KOPEKS for terminals that require a different minimum.
+const DEFAULT_CARD_BIND_AMOUNT_KOPEKS = 100;
+
 export type CardCheckType = "NO" | "HOLD" | "3DS" | "3DSHOLD";
 const DEFAULT_ADD_CARD_CHECK_TYPE: CardCheckType = "3DS";
 const VALID_CHECK_TYPES: readonly CardCheckType[] = ["NO", "HOLD", "3DS", "3DSHOLD"];
@@ -42,6 +47,9 @@ export interface TbankConfig {
   // Default CheckType for AddCard. Env-configurable so a test terminal that
   // rejects 3DS binding can fall back to NO without a code change.
   addCardCheckType: CardCheckType;
+  // Amount (in kopecks) for the Init+Recurrent verification payment used to bind
+  // a card. Env-configurable (TBANK_CARD_BIND_AMOUNT_KOPEKS), default 100 (1 ₽).
+  cardBindAmountKopecks: number;
 }
 
 // Resolve the runtime config from the environment. Returns null when the
@@ -61,7 +69,18 @@ export function getTbankConfig(): TbankConfig | null {
     apiBase: apiBase.replace(/\/+$/, ""),
     publicAppUrl: publicAppUrl.replace(/\/+$/, ""),
     addCardCheckType: parseCheckType(process.env.TBANK_ADD_CARD_CHECK_TYPE),
+    cardBindAmountKopecks: parseBindAmount(process.env.TBANK_CARD_BIND_AMOUNT_KOPEKS),
   };
+}
+
+// Parse the configured verification-payment amount (kopecks). Falls back to the
+// default for an empty, non-numeric, zero, or negative value so a misconfigured
+// env never produces an Init request the acquirer would reject. Truncates to a
+// whole number of kopecks (Init.Amount must be an integer).
+export function parseBindAmount(raw: string | undefined): number {
+  const n = Number((raw || "").trim());
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_CARD_BIND_AMOUNT_KOPEKS;
+  return Math.floor(n);
 }
 
 // Parse the configured AddCard CheckType, falling back to the default for an
@@ -95,6 +114,7 @@ export interface TbankDiagnostics {
   // interpolation stripped it. We expose only the boolean, never the value.
   passwordHasDollar?: boolean;
   publicAppUrl?: string;
+  cardBindAmountKopecks?: number;
 }
 
 export function getTbankDiagnostics(): TbankDiagnostics {
@@ -109,6 +129,7 @@ export function getTbankDiagnostics(): TbankDiagnostics {
     passwordLength: cfg.password.length,
     passwordHasDollar: cfg.password.includes("$"),
     publicAppUrl: cfg.publicAppUrl,
+    cardBindAmountKopecks: cfg.cardBindAmountKopecks,
   };
 }
 
@@ -277,6 +298,49 @@ export async function tbankAddCard(cfg: TbankConfig, input: AddCardInput): Promi
   });
 }
 
+export interface InitBindCardInput {
+  // Our order id for this binding payment (unique per attempt). Echoed back in
+  // notifications so we can correlate the payment to the pending method.
+  orderId: string;
+  // Amount in kopecks for the verification payment (e.g. 100 = 1 ₽).
+  amountKopecks: number;
+  // CustomerKey ties the saved card to the rider; required together with
+  // Recurrent=Y so a RebillId is issued for future charges.
+  customerKey: string;
+  description: string;
+  successUrl: string;
+  failUrl: string;
+  notificationUrl: string;
+}
+
+// Create a payment via /Init with Recurrent=Y to bind a card through a small
+// verification payment. This is the more reliable binding path than AddCard on
+// test/sandbox terminals: the rider pays a tiny amount (e.g. 1 ₽) on T-Bank's
+// hosted form, and because Recurrent=Y + CustomerKey are set, the acquirer
+// issues a RebillId we can use for future recurring charges. Returns a
+// PaymentURL the rider opens; the PAN/CVC are entered only on T-Bank's form.
+//
+// Token correctness: Init signs only ROOT-LEVEL scalar params. We pass the
+// documented Init fields (TerminalKey is injected by signedPost) — Amount,
+// OrderId, Description, CustomerKey, Recurrent, plus the redirect/notify URLs,
+// which ARE valid Init parameters (unlike AddCard). signedPost signs the exact
+// payload sent, so the signed set === the sent set (avoids code 204).
+export async function tbankInitBindCard(
+  cfg: TbankConfig,
+  input: InitBindCardInput,
+): Promise<TbankResponse> {
+  return signedPost(cfg, "/Init", {
+    Amount: input.amountKopecks,
+    OrderId: input.orderId,
+    Description: input.description,
+    CustomerKey: input.customerKey,
+    Recurrent: "Y",
+    SuccessURL: input.successUrl,
+    FailURL: input.failUrl,
+    NotificationURL: input.notificationUrl,
+  });
+}
+
 // Poll the status of a card binding started with AddCard. The acquirer accepts
 // ONLY TerminalKey + RequestKey (plus the injected Token) for /GetAddCardState
 // per the T-Bank spec (developer.tbank.ru/eacq). Sending anything else would
@@ -316,5 +380,25 @@ export function classifyCardBinding(args: {
     return "active";
   }
   if (FAILED_BINDING_STATUSES.includes(status)) return "failed";
+  return "pending";
+}
+
+// Map an Init verification-payment notification/state to our card-binding
+// lifecycle. The card is bound once the payment reaches AUTHORIZED/CONFIRMED
+// *and* the acquirer returned a RebillId (the recurring token we actually need
+// for future charges). It is "failed" on an explicit terminal rejection or
+// Success=false; everything else is still in flight ("pending").
+export function classifyInitBinding(args: {
+  status?: string;
+  rebillId?: string;
+  success?: boolean;
+}): CardBindingOutcome {
+  const status = (args.status || "").trim().toUpperCase();
+  if (args.rebillId && (status === "AUTHORIZED" || status === "CONFIRMED")) {
+    return "active";
+  }
+  if (args.success === false || FAILED_BINDING_STATUSES.includes(status)) {
+    return "failed";
+  }
   return "pending";
 }

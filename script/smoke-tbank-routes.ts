@@ -116,6 +116,17 @@ async function main() {
   res = await fetch(`${BASE}/api/payments/tbank/add-card`, { method: "POST" });
   assert(res.status === 401, "add-card requires a session (401 unregistered)");
 
+  // bind-card-payment (the primary path) -> 503 when unconfigured.
+  res = await fetch(`${BASE}/api/payments/tbank/bind-card-payment`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", cookie: cookie! },
+  });
+  assert(res.status === 503, "bind-card-payment returns 503 when T-Bank not configured");
+
+  // bind-card-payment without a session -> 401 (registered-only).
+  res = await fetch(`${BASE}/api/payments/tbank/bind-card-payment`, { method: "POST" });
+  assert(res.status === 401, "bind-card-payment requires a session (401 unregistered)");
+
   // notification -> 503 (no config) and the server stays alive.
   res = await fetch(`${BASE}/api/payments/tbank/notification`, {
     method: "POST",

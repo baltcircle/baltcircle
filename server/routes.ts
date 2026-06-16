@@ -17,7 +17,8 @@ import type { UserRole, PaymentMethod } from "@shared/schema";
 import { sendOtpSms } from "./sms";
 import {
   getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
-  tbankGetAddCardState, classifyCardBinding, verifyNotificationToken,
+  tbankGetAddCardState, classifyCardBinding, classifyInitBinding,
+  tbankInitBindCard, verifyNotificationToken,
 } from "./tbank";
 import { log } from "./index";
 
@@ -253,6 +254,56 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         requestKey: typeof resp.RequestKey === "string" ? resp.RequestKey : undefined,
       });
       res.json({ paymentUrl: resp.PaymentURL });
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
+    }
+  });
+
+  // Start a card binding via a small verification PAYMENT (Init + Recurrent=Y).
+  // This is the PRIMARY binding path: AddCard rejects cards on some test/sandbox
+  // terminals, whereas a real (tiny) payment with Recurrent=Y reliably yields a
+  // RebillId we can use for future recurring charges. The rider pays e.g. 1 ₽ on
+  // T-Bank's hosted form (PAN/CVC never reach us); on CONFIRMED/AUTHORIZED with a
+  // RebillId the notification webhook activates the method. Returns the
+  // PaymentURL the client opens. A pending payment-method row (purpose=
+  // card_binding) is created so the UI can show "привязывается…".
+  app.post("/api/payments/tbank/bind-card-payment", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Требуется вход" });
+    const user = storage.getUser(userId);
+    if (!user) return res.status(401).json({ error: "Требуется вход" });
+
+    const cfg = getTbankConfig();
+    if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
+
+    // Unique per attempt so each binding payment correlates to exactly one row.
+    const orderId = `bind-${user.id}-${Date.now()}`;
+    const amountKopecks = cfg.cardBindAmountKopecks;
+
+    try {
+      const resp = await tbankInitBindCard(cfg, {
+        orderId,
+        amountKopecks,
+        customerKey: user.id,
+        description: "Проверочный платёж для привязки карты",
+        successUrl: `${cfg.publicAppUrl}/payment-methods`,
+        failUrl: `${cfg.publicAppUrl}/payment-methods`,
+        notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
+      });
+      if (!resp.Success || !resp.PaymentURL) {
+        return res.status(502).json(tbankErrorBody(resp));
+      }
+      const method = storage.createPendingBindPayment({
+        userId: user.id,
+        customerKey: user.id,
+        orderId,
+        amountKopecks,
+      });
+      storage.updatePaymentMethod(method.id, {
+        paymentId: resp.PaymentId != null ? String(resp.PaymentId) : null,
+        paymentUrl: resp.PaymentURL,
+      });
+      res.json({ paymentUrl: resp.PaymentURL, amountKopecks });
     } catch (err: any) {
       res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
     }
@@ -732,14 +783,77 @@ function tbankErrorBody(resp: {
   };
 }
 
-// Process a verified T-Bank notification. Stage 1 handles only card binding
-// (AddCard): a notification carrying CardId/Status for a CustomerKey activates
-// (or fails) the rider's pending card method. Ride-payment notifications are
-// intentionally out of scope for this stage.
+// Process a verified T-Bank notification for card binding. Two binding paths
+// produce notifications here:
+//   • Init + Recurrent=Y (primary): a verification-payment notification carries
+//     OrderId/PaymentId/Status and, once authorized, a RebillId. We correlate by
+//     OrderId and activate the method once a RebillId arrives on AUTHORIZED/
+//     CONFIRMED.
+//   • AddCard (fallback): a notification carrying CardId/Status for a CustomerKey
+//     activates (or fails) the rider's pending card method.
+// Ride-payment notifications are intentionally out of scope for this stage.
 //
 // The notification is assumed signature-verified by the caller. Statuses follow
 // the T-Kassa lifecycle (NEW/FORM_SHOWED/AUTHORIZED/CONFIRMED/REJECTED/...).
 function handleTbankNotification(body: Record<string, unknown>): void {
+  const orderId = typeof body.OrderId === "string" ? body.OrderId : "";
+
+  // Init binding path: correlate by our OrderId. A matching card_binding row
+  // means this is a verification payment, not a ride/topup payment.
+  if (orderId) {
+    const byOrder = storage.findCardMethodByOrderId(orderId);
+    if (byOrder && byOrder.purpose === "card_binding") {
+      handleInitBindingNotification(byOrder, body);
+      return;
+    }
+  }
+
+  handleAddCardNotification(body);
+}
+
+// Resolve an Init verification-payment binding from a notification. Activates
+// the method only when a RebillId is present alongside AUTHORIZED/CONFIRMED —
+// the RebillId is the recurring token we need for future charges. Persists the
+// PaymentId/RebillId and any acquirer error fields (never a secret).
+function handleInitBindingNotification(
+  method: PaymentMethod,
+  body: Record<string, unknown>,
+): void {
+  if (method.status === "active") return; // already resolved
+
+  const status = typeof body.Status === "string" ? body.Status : "";
+  const rebillId = body.RebillId != null ? String(body.RebillId) : "";
+  const cardId = typeof body.CardId === "string" ? body.CardId : "";
+  const pan = typeof body.Pan === "string" ? body.Pan : "";
+  const paymentId = body.PaymentId != null ? String(body.PaymentId) : "";
+  const success = body.Success === false ? false : undefined;
+
+  const outcome = classifyInitBinding({ status, rebillId, success });
+  if (outcome === "active") {
+    storage.updatePaymentMethod(method.id, {
+      status: "active",
+      rebillId: rebillId || method.rebillId,
+      cardId: cardId || method.cardId,
+      paymentId: paymentId || method.paymentId,
+      label: pan ? maskPan(pan) : "Карта",
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      lastErrorDetails: null,
+    });
+  } else if (outcome === "failed") {
+    storage.updatePaymentMethod(method.id, {
+      status: "failed",
+      paymentId: paymentId || method.paymentId,
+      ...bindingErrorPatch(body),
+    });
+  }
+  // Otherwise an intermediate state — leave pending; a later notification
+  // (CONFIRMED with RebillId) will activate it.
+}
+
+// Resolve an AddCard binding (fallback path) from a notification keyed by
+// CustomerKey. Unchanged from the original AddCard-only behavior.
+function handleAddCardNotification(body: Record<string, unknown>): void {
   const status = typeof body.Status === "string" ? body.Status : "";
   const customerKey = typeof body.CustomerKey === "string" ? body.CustomerKey : "";
   const cardId = typeof body.CardId === "string" ? body.CardId : "";

@@ -458,6 +458,12 @@ export const paymentMethods = sqliteTable("payment_methods", {
   cardId: text("card_id"),                   // T-Bank CardId once the card is bound
   rebillId: text("rebill_id"),               // T-Bank RebillId for recurring charges (if returned)
   requestKey: text("request_key"),           // AddCard RequestKey, to correlate the binding & poll GetAddCardState
+  // ----- Init+Recurrent verification-payment binding (the primary path) -----
+  purpose: text("purpose"),                  // "card_binding" for the Init verification payment; null otherwise
+  orderId: text("order_id"),                 // our Init OrderId, echoed back in notifications to correlate
+  paymentId: text("payment_id"),             // T-Bank PaymentId returned by Init
+  paymentUrl: text("payment_url"),           // hosted PaymentURL the rider opens (not a secret)
+  amountKopecks: integer("amount_kopecks"),  // verification-payment amount in kopecks (e.g. 100 = 1 ₽)
   // Last binding error from T-Bank (notification or GetAddCardState). Acquirer
   // fields only — never a secret — so the UI/support can see WHY a bind failed.
   lastErrorCode: text("last_error_code"),

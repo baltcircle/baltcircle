@@ -46,12 +46,16 @@ export function PaymentMethodsPage() {
     (m) => m.type === "card" && (m.status === "active" || m.status === "pending"),
   );
 
-  // Start a real T-Bank card binding: the backend calls AddCard and returns a
-  // PaymentURL we redirect to. Card data is entered only on T-Bank's form.
-  const addCardMut = useMutation({
+  // Start a real T-Bank card binding via a small verification PAYMENT
+  // (Init + Recurrent=Y): the backend creates the payment and returns a
+  // PaymentURL we redirect to. The rider pays a tiny amount (e.g. 1 ₽) on
+  // T-Bank's hosted form — card data never reaches us — and the resulting
+  // RebillId lets us charge rides later. This is more reliable than AddCard on
+  // test/sandbox terminals, which reject cards even with documented test cards.
+  const bindCardMut = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/payments/tbank/add-card");
-      return (await res.json()) as { paymentUrl: string };
+      const res = await apiRequest("POST", "/api/payments/tbank/bind-card-payment");
+      return (await res.json()) as { paymentUrl: string; amountKopecks?: number };
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: METHODS_KEY });
@@ -98,9 +102,13 @@ export function PaymentMethodsPage() {
   // When T-Bank redirects the rider back to /payment-methods after the hosted
   // form, the Success/Fail URL may carry Success / RequestKey / ErrorCode query
   // params. We don't trust these for state changes (the notification webhook is
-  // authoritative), but we trigger a server-side refresh of the matching pending
-  // method so the rider sees the resolved status without waiting, and surface a
-  // failure message immediately. Runs once per unique query string.
+  // authoritative), but we surface a failure message immediately and reconcile
+  // the pending method:
+  //   • AddCard rows (have a RequestKey) → poll GetAddCardState via /refresh.
+  //   • Init verification-payment rows (no RequestKey) → the webhook activates
+  //     them; we just re-fetch the methods list a few times so the rider sees
+  //     the webhook-updated status without a manual reload.
+  // Runs once per unique query string.
   const handledRedirect = useRef<string>("");
   useEffect(() => {
     const search = window.location.search;
@@ -118,20 +126,29 @@ export function PaymentMethodsPage() {
         variant: "destructive",
       });
     }
-    // Refresh the method matching the returned RequestKey (or the latest pending
-    // one) to pull the authoritative status from T-Bank.
+    // Refresh the method matching the returned RequestKey to pull the
+    // authoritative AddCard status from T-Bank.
     const reqKey = params.get("RequestKey");
-    const target = reqKey
-      ? methods.find((m) => m.requestKey === reqKey)
-      : methods.find((m) => m.type === "card" && m.status === "pending");
-    if (target) refreshMut.mutate(target.id);
+    const refreshable = reqKey ? methods.find((m) => m.requestKey === reqKey) : undefined;
+    if (refreshable) {
+      refreshMut.mutate(refreshable.id);
+    } else {
+      // Init binding (or unknown): re-fetch the list a few times so the
+      // webhook-driven status update shows up shortly after the redirect.
+      let tries = 0;
+      const poll = () => {
+        queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+        if (++tries < 5) setTimeout(poll, 2000);
+      };
+      poll();
+    }
 
     // Strip the query params so a manual reload doesn't re-trigger.
     window.history.replaceState({}, "", window.location.pathname);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [methods]);
 
-  const busy = addCardMut.isPending || unlinkMut.isPending || refreshMut.isPending || redirecting;
+  const busy = bindCardMut.isPending || unlinkMut.isPending || refreshMut.isPending || redirecting;
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-2xl mx-auto" data-testid="page-payment-methods">
@@ -215,7 +232,9 @@ export function PaymentMethodsPage() {
                   )}
                   {m.status === "pending" && (
                     <div className="mt-2 text-xs text-muted-foreground" data-testid={`method-pending-hint-${m.id}`}>
-                      Если форма банка уже закрыта, нажмите «Проверить статус».
+                      {canRefresh
+                        ? "Если форма банка уже закрыта, нажмите «Проверить статус»."
+                        : "Статус обновится автоматически после подтверждения платежа банком."}
                     </div>
                   )}
                 </li>
@@ -256,10 +275,10 @@ export function PaymentMethodsPage() {
             <Button
               className="w-full"
               disabled={busy || hasActiveOrPendingCard}
-              onClick={() => addCardMut.mutate()}
+              onClick={() => bindCardMut.mutate()}
               data-testid="button-bind-card"
             >
-              {redirecting || addCardMut.isPending ? (
+              {redirecting || bindCardMut.isPending ? (
                 <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Открываем форму банка…</>
               ) : hasActiveOrPendingCard ? (
                 "Карта уже привязана"
@@ -267,9 +286,16 @@ export function PaymentMethodsPage() {
                 <><ExternalLink className="w-4 h-4 mr-2" /> Привязать карту</>
               )}
             </Button>
-            <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
-              <ShieldCheck className="w-3 h-3" /> Номер карты и CVC вводятся на защищённой форме T-Bank.
-              Мы храним только маскированный номер и статус.
+            <div className="text-[11px] text-muted-foreground space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <ShieldCheck className="w-3 h-3 shrink-0" /> Привязка проходит через защищённую форму
+                Т-Банка: спишется проверочный платёж 1 ₽ (в тестовом режиме), карта сохраняется для
+                будущих поездок.
+              </div>
+              <div className="flex items-center gap-1.5">
+                <ShieldCheck className="w-3 h-3 shrink-0" /> Номер карты и CVC вводятся только на стороне
+                банка. Мы храним лишь маскированный номер и статус.
+              </div>
             </div>
           </div>
         )}

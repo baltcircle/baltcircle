@@ -300,6 +300,11 @@ function migratePaymentMethodsTable() {
   addColumn("last_error_code", "last_error_code TEXT");
   addColumn("last_error_message", "last_error_message TEXT");
   addColumn("last_error_details", "last_error_details TEXT");
+  addColumn("purpose", "purpose TEXT");
+  addColumn("order_id", "order_id TEXT");
+  addColumn("payment_id", "payment_id TEXT");
+  addColumn("payment_url", "payment_url TEXT");
+  addColumn("amount_kopecks", "amount_kopecks INTEGER");
 }
 migratePaymentMethodsTable();
 
@@ -603,8 +608,15 @@ export interface IStorage {
   unlinkPaymentMethod(userId: string, id: number): boolean;
   // T-Bank card binding (real acquiring metadata)
   createPendingCardMethod(input: { userId: string; customerKey: string; requestKey?: string }): PaymentMethod;
+  createPendingBindPayment(input: {
+    userId: string;
+    customerKey: string;
+    orderId: string;
+    amountKopecks: number;
+  }): PaymentMethod;
   getPaymentMethod(id: number): PaymentMethod | undefined;
   findPendingCardMethod(userId: string): PaymentMethod | undefined;
+  findCardMethodByOrderId(orderId: string): PaymentMethod | undefined;
   findCardMethodByRequestKey(userId: string, requestKey: string): PaymentMethod | undefined;
   updatePaymentMethod(id: number, patch: Partial<PaymentMethod>): PaymentMethod | undefined;
   // support tickets (rider help requests)
@@ -952,6 +964,33 @@ export class DatabaseStorage implements IStorage {
     } as any).returning().get() as PaymentMethod;
   }
 
+  // Create a pending card method backed by an Init+Recurrent verification
+  // payment (the primary binding path). Stores our OrderId + amount so the
+  // notification webhook can correlate the payment back to this row. The card is
+  // not usable until the payment is CONFIRMED/AUTHORIZED with a RebillId. No card
+  // data is ever stored here — the PAN/CVC live only on T-Bank's hosted form.
+  createPendingBindPayment(input: {
+    userId: string;
+    customerKey: string;
+    orderId: string;
+    amountKopecks: number;
+  }) {
+    const now = Date.now();
+    return db.insert(paymentMethods).values({
+      userId: input.userId,
+      type: "card",
+      label: "Карта (привязывается…)",
+      status: "pending",
+      provider: "tbank",
+      purpose: "card_binding",
+      customerKey: input.customerKey,
+      orderId: input.orderId,
+      amountKopecks: input.amountKopecks,
+      createdAt: now,
+      updatedAt: now,
+    } as any).returning().get() as PaymentMethod;
+  }
+
   getPaymentMethod(id: number) {
     return db.select().from(paymentMethods).where(eq(paymentMethods.id, id)).get() as
       | PaymentMethod
@@ -964,6 +1003,16 @@ export class DatabaseStorage implements IStorage {
   findPendingCardMethod(userId: string) {
     return db.select().from(paymentMethods)
       .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.provider} = 'tbank' AND ${paymentMethods.status} = 'pending'`)
+      .orderBy(desc(paymentMethods.createdAt))
+      .get() as PaymentMethod | undefined;
+  }
+
+  // Locate a T-Bank card-binding method by the Init OrderId echoed back in the
+  // payment notification. This is how the webhook correlates a verification
+  // payment to the pending method (the Init flow has no RequestKey).
+  findCardMethodByOrderId(orderId: string) {
+    return db.select().from(paymentMethods)
+      .where(sql`${paymentMethods.provider} = 'tbank' AND ${paymentMethods.orderId} = ${orderId}`)
       .orderBy(desc(paymentMethods.createdAt))
       .get() as PaymentMethod | undefined;
   }
