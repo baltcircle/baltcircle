@@ -8,17 +8,18 @@ import {
   insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
   adminSetRoleSchema, adminSetBlockedSchema,
   phoneChangeStartSchema, phoneChangeVerifySchema,
-  linkPaymentMethodSchema, createSupportTicketSchema,
+  linkPaymentMethodSchema, createSupportTicketSchema, rideInitPaymentSchema,
   adminCreateBikeSchema, adminUpdateBikeSchema,
   createTicketSchema, updateTicketSchema, addTicketCommentSchema,
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
 } from "@shared/schema";
-import type { UserRole, PaymentMethod } from "@shared/schema";
+import type { UserRole, PaymentMethod, PaymentOrder } from "@shared/schema";
 import { sendOtpSms } from "./sms";
 import {
   getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
   tbankGetAddCardState, classifyCardBinding, classifyInitBinding,
   tbankInitBindCard, verifyNotificationToken, generateBindOrderId,
+  tbankInitRidePayment, generateRideOrderId, classifyRidePayment,
 } from "./tbank";
 import { log } from "./index";
 
@@ -309,6 +310,98 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err: any) {
       res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
     }
+  });
+
+  // Start a ride by paying its tariff up front via an ordinary T-Bank payment
+  // (NO saved card / RebillId required — this is the working MVP payment path).
+  // The rider pays the chosen tariff on T-Bank's hosted form; the ride is only
+  // started once the notification webhook confirms the payment. We validate the
+  // bike is rentable and the tariff is known, resolve the price authoritatively
+  // server-side (never trusting a client amount), create a pending payment order
+  // and return the PaymentURL the client opens. No card data ever reaches us.
+  app.post("/api/payments/tbank/ride/init", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Требуется вход" });
+    const user = storage.getUser(userId);
+    if (!user) return res.status(401).json({ error: "Требуется вход" });
+    if (user.blockedAt) {
+      return res.status(403).json({ error: "Аккаунт заблокирован. Обратитесь в поддержку." });
+    }
+
+    const parsed = rideInitPaymentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+
+    const bike = storage.getBike(parsed.data.bikeId);
+    if (!bike) return res.status(404).json({ error: "Велосипед не найден" });
+    if (bike.status !== "available" && bike.status !== "reserved") {
+      return res.status(409).json({ error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` });
+    }
+    if (storage.getActiveRide(userId)) {
+      return res.status(409).json({ error: "У вас уже есть активная поездка" });
+    }
+
+    const tariffDef = TARIFFS.find((t) => t.id === parsed.data.tariffId);
+    if (!tariffDef) return res.status(400).json({ error: "Неизвестный тариф" });
+    const amountKopecks = Math.round(tariffDef.price * 100);
+
+    const cfg = getTbankConfig();
+    if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
+
+    // Unique per attempt and <= 50 chars (T-Bank Init rejects longer with 212).
+    const orderId = generateRideOrderId();
+
+    try {
+      const resp = await tbankInitRidePayment(cfg, {
+        orderId,
+        amountKopecks,
+        customerKey: user.id,
+        description: `Аренда велосипеда ${bike.id} • ${tariffDef.name}`,
+        successUrl: `${cfg.publicAppUrl}/payment-result?orderId=${encodeURIComponent(orderId)}`,
+        failUrl: `${cfg.publicAppUrl}/payment-result?orderId=${encodeURIComponent(orderId)}`,
+        notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
+      });
+      if (!resp.Success || !resp.PaymentURL) {
+        return res.status(502).json(tbankErrorBody(resp));
+      }
+      const order = storage.createRidePaymentOrder({
+        orderId,
+        userId: user.id,
+        bikeId: bike.id,
+        tariffId: tariffDef.id,
+        amountKopecks,
+      });
+      storage.updateRidePaymentOrder(order.id, {
+        paymentId: resp.PaymentId != null ? String(resp.PaymentId) : null,
+        paymentUrl: resp.PaymentURL,
+      });
+      res.json({ orderId, paymentUrl: resp.PaymentURL, amountKopecks });
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message ?? "Не удалось создать оплату. Попробуйте позже." });
+    }
+  });
+
+  // Status of a ride payment order for the post-redirect result page. The rider
+  // may only read their OWN order. Returns the lifecycle status and, once the
+  // ride has started, its id so the client can route into the active ride.
+  app.get("/api/payments/tbank/ride/:orderId", (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Требуется вход" });
+    const order = storage.getRidePaymentOrder(req.params.orderId);
+    if (!order || order.userId !== userId) {
+      return res.status(404).json({ error: "Заказ не найден" });
+    }
+    res.json({
+      orderId: order.orderId,
+      status: order.status,
+      bikeId: order.bikeId,
+      tariffId: order.tariffId,
+      amountKopecks: order.amountKopecks,
+      rideId: order.rideId,
+      error: order.lastErrorMessage ?? undefined,
+    });
   });
 
   // Public T-Bank notification webhook. T-Bank POSTs payment/binding status
@@ -793,16 +886,27 @@ function tbankErrorBody(resp: {
 //     CONFIRMED.
 //   • AddCard (fallback): a notification carrying CardId/Status for a CustomerKey
 //     activates (or fails) the rider's pending card method.
-// Ride-payment notifications are intentionally out of scope for this stage.
+//   • Ordinary ride payment (the MVP path): a notification carrying our ride
+//     OrderId starts the paid ride once AUTHORIZED/CONFIRMED, or marks the order
+//     failed otherwise.
 //
 // The notification is assumed signature-verified by the caller. Statuses follow
 // the T-Kassa lifecycle (NEW/FORM_SHOWED/AUTHORIZED/CONFIRMED/REJECTED/...).
 function handleTbankNotification(body: Record<string, unknown>): void {
   const orderId = typeof body.OrderId === "string" ? body.OrderId : "";
 
-  // Init binding path: correlate by our OrderId. A matching card_binding row
-  // means this is a verification payment, not a ride/topup payment.
   if (orderId) {
+    // Ordinary ride payment: correlate by our OrderId. Checked first because a
+    // ride order id and a card-binding order id never collide (distinct
+    // prefixes / distinct tables), and a paid ride is the time-critical action.
+    const order = storage.getRidePaymentOrder(orderId);
+    if (order) {
+      handleRidePaymentNotification(order, body);
+      return;
+    }
+
+    // Init binding path: correlate by our OrderId. A matching card_binding row
+    // means this is a verification payment, not a ride/topup payment.
     const byOrder = storage.findCardMethodByOrderId(orderId);
     if (byOrder && byOrder.purpose === "card_binding") {
       handleInitBindingNotification(byOrder, body);
@@ -811,6 +915,70 @@ function handleTbankNotification(body: Record<string, unknown>): void {
   }
 
   handleAddCardNotification(body);
+}
+
+// Resolve an ordinary ride-payment order from a notification. On the first
+// AUTHORIZED/CONFIRMED we start the ride (idempotently — a duplicate
+// notification re-uses the already-started ride and never double-charges or
+// double-starts) and record the rideId. On an explicit rejection we mark the
+// order failed and leave the bike available. Intermediate states stay pending.
+function handleRidePaymentNotification(
+  order: PaymentOrder,
+  body: Record<string, unknown>,
+): void {
+  if (order.status === "paid") return; // already resolved — idempotent
+
+  const status = typeof body.Status === "string" ? body.Status : "";
+  const paymentId = body.PaymentId != null ? String(body.PaymentId) : "";
+  const success = body.Success === false ? false : undefined;
+  const outcome = classifyRidePayment({ status, success });
+
+  if (outcome === "paid") {
+    // Start the ride for this rider/bike/tariff if one isn't already running.
+    // startRide is itself guarded (it rejects when the rider has an active
+    // ride or the bike isn't rentable), so a racing/duplicate notification
+    // cannot create a second ride.
+    let rideId = order.rideId ?? null;
+    if (rideId == null) {
+      const existing = storage.getActiveRide(order.userId);
+      if (existing && existing.bikeId === order.bikeId) {
+        rideId = existing.id;
+      } else {
+        const started = storage.startRide({
+          bikeId: order.bikeId,
+          userId: order.userId,
+          tariff: order.tariffId,
+        });
+        if ("error" in started) {
+          // Payment succeeded but the ride could not start (e.g. the bike was
+          // taken in the meantime). Mark paid so we don't lose the payment
+          // record; record the reason for support/refund follow-up.
+          storage.updateRidePaymentOrder(order.id, {
+            status: "paid",
+            paymentId: paymentId || order.paymentId,
+            lastErrorMessage: started.error,
+          });
+          return;
+        }
+        rideId = started.id;
+      }
+    }
+    storage.updateRidePaymentOrder(order.id, {
+      status: "paid",
+      paymentId: paymentId || order.paymentId,
+      rideId,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      lastErrorDetails: null,
+    });
+  } else if (outcome === "failed") {
+    storage.updateRidePaymentOrder(order.id, {
+      status: "failed",
+      paymentId: paymentId || order.paymentId,
+      ...bindingErrorPatch(body),
+    });
+  }
+  // Otherwise an intermediate state — leave pending; a later CONFIRMED resolves it.
 }
 
 // Resolve an Init verification-payment binding from a notification. Activates

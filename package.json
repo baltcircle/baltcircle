@@ -26,7 +26,8 @@
     "smoke:tbank-routes": "tsx script/smoke-tbank-routes.ts",
     "smoke:tbank-addcard": "tsx script/smoke-tbank-addcard.ts",
     "smoke:tbank-addcard-state": "tsx script/smoke-tbank-addcard-state.ts",
-    "smoke:tbank-bind-payment": "tsx script/smoke-tbank-bind-payment.ts"
+    "smoke:tbank-bind-payment": "tsx script/smoke-tbank-bind-payment.ts",
+    "smoke:tbank-ride-payment": "tsx script/smoke-tbank-ride-payment.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

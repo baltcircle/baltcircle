@@ -1,12 +1,12 @@
 import {
   bikes, parkings, zones, rides, tickets, ticketComments, payments, wallet, mapObjects, users,
-  otpRequests, phoneChangeRequests, paymentMethods, supportTickets,
+  otpRequests, phoneChangeRequests, paymentMethods, supportTickets, paymentOrders,
   TICKET_CLOSED_STATUSES,
 } from "@shared/schema";
 import type {
   Bike, Parking, ZoneRow, Ride, AdminRide, Ticket, TicketComment, TicketWithComments, Payment, Wallet,
   MapObject, InsertMapObject, User, OtpRequest, UserRole, UpdateProfileInput,
-  PhoneChangeRequest, PaymentMethod, SupportTicket,
+  PhoneChangeRequest, PaymentMethod, SupportTicket, PaymentOrder,
   AdminCreateBikeInput, AdminUpdateBikeInput, CreateTicketInput, UpdateTicketInput,
   AdminCreateParkingInput, AdminUpdateParkingInput,
 } from "@shared/schema";
@@ -172,6 +172,23 @@ CREATE TABLE IF NOT EXISTS support_tickets (
   message TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open',
   created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payment_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id TEXT NOT NULL UNIQUE,
+  user_id TEXT NOT NULL,
+  bike_id TEXT NOT NULL,
+  tariff_id TEXT NOT NULL,
+  amount_kopecks INTEGER NOT NULL,
+  payment_id TEXT,
+  payment_url TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  ride_id INTEGER,
+  last_error_code TEXT,
+  last_error_message TEXT,
+  last_error_details TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER
 );
 `);
 
@@ -619,6 +636,16 @@ export interface IStorage {
   findCardMethodByOrderId(orderId: string): PaymentMethod | undefined;
   findCardMethodByRequestKey(userId: string, requestKey: string): PaymentMethod | undefined;
   updatePaymentMethod(id: number, patch: Partial<PaymentMethod>): PaymentMethod | undefined;
+  // T-Bank ordinary ride payment orders (pay-then-start, no saved card)
+  createRidePaymentOrder(input: {
+    orderId: string;
+    userId: string;
+    bikeId: string;
+    tariffId: string;
+    amountKopecks: number;
+  }): PaymentOrder;
+  getRidePaymentOrder(orderId: string): PaymentOrder | undefined;
+  updateRidePaymentOrder(id: number, patch: Partial<PaymentOrder>): PaymentOrder | undefined;
   // support tickets (rider help requests)
   listSupportTickets(userId: string): SupportTicket[];
   createSupportTicket(input: { userId: string; subject: string; message: string }): SupportTicket;
@@ -1032,6 +1059,46 @@ export class DatabaseStorage implements IStorage {
     delete set.id;
     db.update(paymentMethods).set(set as any).where(eq(paymentMethods.id, id)).run();
     return this.getPaymentMethod(id);
+  }
+
+  // ---------- T-Bank ordinary ride payment orders ----------
+  // Create a pending ride payment order when the rider starts the pay-then-ride
+  // flow. The ride is NOT started until the payment is confirmed by the
+  // notification webhook (status -> paid, ride_id filled). No card data is ever
+  // stored here — the PAN/CVC live only on T-Bank's hosted form.
+  createRidePaymentOrder(input: {
+    orderId: string;
+    userId: string;
+    bikeId: string;
+    tariffId: string;
+    amountKopecks: number;
+  }) {
+    const now = Date.now();
+    return db.insert(paymentOrders).values({
+      orderId: input.orderId,
+      userId: input.userId,
+      bikeId: input.bikeId,
+      tariffId: input.tariffId,
+      amountKopecks: input.amountKopecks,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    } as any).returning().get() as PaymentOrder;
+  }
+
+  getRidePaymentOrder(orderId: string) {
+    return db.select().from(paymentOrders)
+      .where(eq(paymentOrders.orderId, orderId))
+      .get() as PaymentOrder | undefined;
+  }
+
+  updateRidePaymentOrder(id: number, patch: Partial<PaymentOrder>) {
+    const set: Record<string, unknown> = { ...patch, updatedAt: Date.now() };
+    delete set.id;
+    db.update(paymentOrders).set(set as any).where(eq(paymentOrders.id, id)).run();
+    return db.select().from(paymentOrders).where(eq(paymentOrders.id, id)).get() as
+      | PaymentOrder
+      | undefined;
   }
 
   // ---------- Support tickets ----------

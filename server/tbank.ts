@@ -354,6 +354,76 @@ export async function tbankInitBindCard(
   });
 }
 
+// Build a compact, collision-resistant OrderId for an ordinary ride payment.
+// Same constraints as generateBindOrderId — must stay <= 50 chars (T-Bank Init
+// rejects longer with code 212) and contain only ASCII latin/digits/dash. We
+// use a distinct "TRRP" (TakeRide Ride Payment) prefix so the notification
+// handler can tell ride payments apart from card-binding orders at a glance.
+export function generateRideOrderId(): string {
+  const ts = Date.now().toString(36); // ~8 chars through year ~2059
+  let rand = "";
+  while (rand.length < 6) rand += randomInt(36).toString(36);
+  return `TRRP-${ts}-${rand.slice(0, 6)}`; // e.g. TRRP-lk3p9q2-a8f1zq (~20 chars)
+}
+
+export interface InitRidePaymentInput {
+  // Our order id for this ride payment (unique per attempt, <= 50 chars).
+  orderId: string;
+  // Amount in kopecks for the tariff (e.g. 35000 = 350 ₽).
+  amountKopecks: number;
+  description: string;
+  successUrl: string;
+  failUrl: string;
+  notificationUrl: string;
+  // Optional CustomerKey ties the payment to the rider in T-Bank's cabinet. It
+  // is NOT required for an ordinary (non-recurring) payment and carries no card
+  // data; we pass our user id so payments are attributable in the merchant UI.
+  customerKey?: string;
+}
+
+// Create an ordinary (one-off) payment via /Init for a ride. Unlike the
+// card-binding path this sends NO Recurrent=Y and expects NO RebillId back —
+// the rider simply pays the tariff up front on T-Bank's hosted form (PAN/CVC
+// never reach us). On CONFIRMED/AUTHORIZED the notification webhook starts the
+// ride. Returns the PaymentURL the rider opens.
+//
+// Token correctness: Init signs only ROOT-LEVEL scalar params. We sign and send
+// exactly the documented Init fields (TerminalKey is injected by signedPost),
+// so the signed set === the sent set (avoids code 204 "invalid token").
+export async function tbankInitRidePayment(
+  cfg: TbankConfig,
+  input: InitRidePaymentInput,
+): Promise<TbankResponse> {
+  return signedPost(cfg, "/Init", {
+    Amount: input.amountKopecks,
+    OrderId: input.orderId,
+    Description: input.description,
+    CustomerKey: input.customerKey,
+    SuccessURL: input.successUrl,
+    FailURL: input.failUrl,
+    NotificationURL: input.notificationUrl,
+  });
+}
+
+// Map an ordinary ride-payment notification/state to our order lifecycle. The
+// payment is "paid" once it reaches AUTHORIZED or CONFIRMED (we start the ride
+// on either — AUTHORIZED is a held auth, CONFIRMED a captured one; for the MVP
+// both mean the rider has committed funds). It is "failed" on an explicit
+// terminal rejection or Success=false; everything else is still in flight.
+export type RidePaymentOutcome = "paid" | "failed" | "pending";
+
+export function classifyRidePayment(args: {
+  status?: string;
+  success?: boolean;
+}): RidePaymentOutcome {
+  const status = (args.status || "").trim().toUpperCase();
+  if (status === "AUTHORIZED" || status === "CONFIRMED") return "paid";
+  if (args.success === false || FAILED_BINDING_STATUSES.includes(status)) {
+    return "failed";
+  }
+  return "pending";
+}
+
 // Poll the status of a card binding started with AddCard. The acquirer accepts
 // ONLY TerminalKey + RequestKey (plus the injected Token) for /GetAddCardState
 // per the T-Bank spec (developer.tbank.ru/eacq). Sending anything else would

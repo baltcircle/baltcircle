@@ -14,6 +14,7 @@ import { TariffsPage } from "@/pages/TariffsPage";
 import { RidesPage } from "@/pages/RidesPage";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { PaymentMethodsPage } from "@/pages/PaymentMethodsPage";
+import { PaymentResultPage } from "@/pages/PaymentResultPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SupportPage } from "@/pages/SupportPage";
 import { SafetyPage } from "@/pages/SafetyPage";
@@ -43,6 +44,7 @@ function AppRouter() {
       <Route path="/rides" component={RidesPage} />
       <Route path="/profile" component={ProfilePage} />
       <Route path="/payment-methods" component={PaymentMethodsPage} />
+      <Route path="/payment-result" component={PaymentResultPage} />
       <Route path="/settings" component={SettingsPage} />
       <Route path="/support" component={SupportPage} />
       <Route path="/safety" component={SafetyPage} />

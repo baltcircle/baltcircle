@@ -481,6 +481,41 @@ export const linkPaymentMethodSchema = z.object({
 });
 export type LinkPaymentMethodInput = z.infer<typeof linkPaymentMethodSchema>;
 
+/* ------- PAYMENT ORDERS (T-Bank ordinary ride payment) ------- */
+// One row per "pay now, then start the ride" attempt. This is the MVP payment
+// path that does NOT rely on a saved card / RebillId: the rider pays the chosen
+// tariff up front on T-Bank's hosted form, and the ride is started once the
+// notification webhook confirms the payment. No card data is ever stored — only
+// the acquirer's order/payment identifiers, amounts, and a lifecycle status.
+export const paymentOrders = sqliteTable("payment_orders", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  orderId: text("order_id").notNull().unique(),   // our Init OrderId (<= 50 chars, echoed in notifications)
+  userId: text("user_id").notNull(),
+  bikeId: text("bike_id").notNull(),
+  tariffId: text("tariff_id").notNull(),          // h1 | h2 | h3
+  amountKopecks: integer("amount_kopecks").notNull(),
+  paymentId: text("payment_id"),                  // T-Bank PaymentId returned by Init
+  paymentUrl: text("payment_url"),                // hosted PaymentURL the rider opens (not a secret)
+  status: text("status").notNull().default("pending"), // pending | paid | failed
+  rideId: integer("ride_id"),                     // set once the paid ride is started
+  // Last acquirer error (notification/Init), non-secret values only.
+  lastErrorCode: text("last_error_code"),
+  lastErrorMessage: text("last_error_message"),
+  lastErrorDetails: text("last_error_details"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at"),
+});
+export type PaymentOrder = typeof paymentOrders.$inferSelect;
+export type PaymentOrderStatus = "pending" | "paid" | "failed";
+
+// Start a ride by paying its tariff up front. Only the bike + tariff are
+// client-supplied; the amount/price is resolved authoritatively server-side.
+export const rideInitPaymentSchema = z.object({
+  bikeId: z.string().trim().min(1, "Укажите велосипед").max(20),
+  tariffId: z.enum(["h1", "h2", "h3"]),
+});
+export type RideInitPaymentInput = z.infer<typeof rideInitPaymentSchema>;
+
 /* ------- SUPPORT TICKETS (rider help requests) ------- */
 // Lightweight contact form persistence for the current user. Riders can submit
 // a subject + message; staff handling happens out-of-band for the MVP.

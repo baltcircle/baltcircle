@@ -1,0 +1,116 @@
+import { useEffect } from "react";
+import { Link, useLocation, useSearch } from "wouter";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import {
+  CheckCircle2, Loader2, XCircle, AlertCircle, Bike as BikeIcon, RefreshCw,
+} from "lucide-react";
+
+interface RidePaymentStatus {
+  orderId: string;
+  status: "pending" | "paid" | "failed";
+  bikeId: string;
+  tariffId: string;
+  amountKopecks: number;
+  rideId: number | null;
+  error?: string;
+}
+
+// Landing page after the rider returns from T-Bank's hosted payment form.
+// The webhook may not have arrived yet, so we poll the order status until it
+// settles to paid/failed. On "paid" the ride has already been started by the
+// server; we offer a link straight into the active ride.
+export function PaymentResultPage() {
+  const search = useSearch();
+  const [, navigate] = useLocation();
+  const queryClient = useQueryClient();
+  const orderId = new URLSearchParams(search).get("orderId") ?? "";
+
+  const statusQ = useQuery<RidePaymentStatus>({
+    queryKey: ["/api/payments/tbank/ride", orderId],
+    enabled: orderId.length > 0,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/payments/tbank/ride/${encodeURIComponent(orderId)}`);
+      return res.json();
+    },
+    // Keep polling while the payment is still pending (webhook in flight); stop
+    // once it settles to paid/failed.
+    refetchInterval: (query) => {
+      const s = query.state.data?.status;
+      return s === "pending" || s === undefined ? 2500 : false;
+    },
+  });
+
+  const status = statusQ.data?.status;
+
+  // Once paid, refresh the active-ride / bikes caches so the rest of the app
+  // reflects the started ride when the rider navigates back.
+  useEffect(() => {
+    if (status === "paid") {
+      queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
+    }
+  }, [status, queryClient]);
+
+  return (
+    <div className="px-4 lg:px-10 py-10 max-w-xl mx-auto" data-testid="page-payment-result">
+      <header className="mb-6">
+        <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Оплата</div>
+        <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Результат оплаты</h1>
+      </header>
+
+      {!orderId ? (
+        <Card className="p-8 text-center space-y-4" data-testid="payment-result-missing">
+          <AlertCircle className="w-10 h-10 mx-auto text-destructive opacity-70" />
+          <div className="text-muted-foreground">Не указан номер заказа.</div>
+          <Button asChild variant="outline"><Link href="/">На главную</Link></Button>
+        </Card>
+      ) : statusQ.isError ? (
+        <Card className="p-8 text-center space-y-4" data-testid="payment-result-error">
+          <XCircle className="w-10 h-10 mx-auto text-destructive opacity-70" />
+          <div className="text-muted-foreground">Не удалось получить статус оплаты.</div>
+          <Button variant="outline" onClick={() => statusQ.refetch()}>
+            <RefreshCw className="w-4 h-4 mr-2" /> Обновить
+          </Button>
+        </Card>
+      ) : status === "paid" ? (
+        <Card className="p-8 text-center space-y-4" data-testid="payment-result-paid">
+          <CheckCircle2 className="w-12 h-12 mx-auto text-primary" />
+          <div className="font-display text-xl font-light">Оплата прошла</div>
+          <div className="text-sm text-muted-foreground">
+            Аренда велосипеда {statusQ.data?.bikeId} начата. Замок разблокирован — можно ехать!
+          </div>
+          <div className="flex flex-col gap-2">
+            <Button asChild onClick={() => navigate("/")}>
+              <Link href="/"><BikeIcon className="w-4 h-4 mr-2" /> К поездке</Link>
+            </Button>
+            <Button asChild variant="outline"><Link href="/rides">История поездок</Link></Button>
+          </div>
+        </Card>
+      ) : status === "failed" ? (
+        <Card className="p-8 text-center space-y-4" data-testid="payment-result-failed">
+          <XCircle className="w-12 h-12 mx-auto text-destructive opacity-80" />
+          <div className="font-display text-xl font-light">Оплата не прошла</div>
+          <div className="text-sm text-muted-foreground">
+            {statusQ.data?.error || "Платёж отклонён. Велосипед остался свободен — попробуйте ещё раз."}
+          </div>
+          <Button asChild variant="outline"><Link href="/">Выбрать велосипед</Link></Button>
+        </Card>
+      ) : (
+        <Card className="p-8 text-center space-y-4" data-testid="payment-result-pending">
+          <Loader2 className="w-12 h-12 mx-auto text-muted-foreground animate-spin" />
+          <div className="font-display text-xl font-light">Подтверждаем оплату…</div>
+          <div className="text-sm text-muted-foreground">
+            Это занимает несколько секунд. Аренда начнётся автоматически, как только
+            банк подтвердит платёж — страница обновится сама.
+          </div>
+          <Button variant="outline" onClick={() => statusQ.refetch()}>
+            <RefreshCw className="w-4 h-4 mr-2" /> Обновить сейчас
+          </Button>
+        </Card>
+      )}
+    </div>
+  );
+}
