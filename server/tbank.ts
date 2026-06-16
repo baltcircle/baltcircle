@@ -174,35 +174,17 @@ async function signedPost(
 
 // ---------- High-level operations ----------
 
-export interface InitInput {
-  orderId: string;
-  amountKopecks: number;
-  customerKey: string;
-  description?: string;
-  // Optional override URLs; default to PUBLIC_APP_URL-derived endpoints.
-  successUrl?: string;
-  failUrl?: string;
-  notificationUrl?: string;
-}
-
-// Create a payment and obtain a PaymentURL the rider opens to pay.
-export async function tbankInit(cfg: TbankConfig, input: InitInput): Promise<TbankResponse> {
-  return signedPost(cfg, "/Init", {
-    Amount: input.amountKopecks,
-    OrderId: input.orderId,
-    CustomerKey: input.customerKey,
-    Description: input.description,
-    SuccessURL: input.successUrl ?? `${cfg.publicAppUrl}/payment-methods`,
-    FailURL: input.failUrl ?? `${cfg.publicAppUrl}/payment-methods`,
-    NotificationURL: input.notificationUrl ?? `${cfg.publicAppUrl}/api/payments/tbank/notification`,
-  });
-}
-
 export interface AddCardInput {
   customerKey: string;
   // 3DS card binding. "3DS" runs the binding through 3-D Secure (recommended);
   // other valid values are NO, 3DSHOLD, HOLD.
   checkType?: "NO" | "3DS" | "3DSHOLD" | "HOLD";
+  // Optional override URLs; default to PUBLIC_APP_URL-derived endpoints. The
+  // rider is returned to /payment-methods after the hosted form; binding
+  // results arrive asynchronously on the notification endpoint.
+  successUrl?: string;
+  failUrl?: string;
+  notificationUrl?: string;
 }
 
 // Initiate card binding for a customer. Returns a PaymentURL the rider opens to
@@ -211,10 +193,8 @@ export async function tbankAddCard(cfg: TbankConfig, input: AddCardInput): Promi
   return signedPost(cfg, "/AddCard", {
     CustomerKey: input.customerKey,
     CheckType: input.checkType ?? "3DS",
+    SuccessURL: input.successUrl ?? `${cfg.publicAppUrl}/payment-methods`,
+    FailURL: input.failUrl ?? `${cfg.publicAppUrl}/payment-methods`,
+    NotificationURL: input.notificationUrl ?? `${cfg.publicAppUrl}/api/payments/tbank/notification`,
   });
-}
-
-// Query a payment's current status by PaymentId. Useful for reconciliation.
-export async function tbankGetState(cfg: TbankConfig, paymentId: string): Promise<TbankResponse> {
-  return signedPost(cfg, "/GetState", { PaymentId: paymentId });
 }

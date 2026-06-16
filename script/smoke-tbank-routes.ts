@@ -4,8 +4,7 @@
 // credentials and asserts the app degrades gracefully:
 //   1. GET /api/payments/tbank/config -> { configured: false }
 //   2. POST add-card (registered rider) -> 503 "Платежи настраиваются"
-//   3. POST init-ride-payment (registered rider) -> 503
-//   4. POST notification -> 503 (no config) / never crashes the server
+//   3. POST notification -> 503 (no config) / never crashes the server
 // The server must stay up and keep serving /api/bikes throughout.
 //
 // Run with:  npx tsx script/smoke-tbank-routes.ts
@@ -112,14 +111,6 @@ async function main() {
     headers: { "Content-Type": "application/json", cookie: cookie! },
   });
   assert(res.status === 503, "add-card returns 503 when T-Bank not configured");
-
-  // init-ride-payment -> 503 when unconfigured.
-  res = await fetch(`${BASE}/api/payments/tbank/init-ride-payment`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", cookie: cookie! },
-    body: JSON.stringify({ bikeId: "BC-001", tariffId: "h1" }),
-  });
-  assert(res.status === 503, "init-ride-payment returns 503 when T-Bank not configured");
 
   // add-card without a session -> 401 (registered-only).
   res = await fetch(`${BASE}/api/payments/tbank/add-card`, { method: "POST" });

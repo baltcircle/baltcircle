@@ -1,12 +1,12 @@
 import {
   bikes, parkings, zones, rides, tickets, ticketComments, payments, wallet, mapObjects, users,
-  otpRequests, phoneChangeRequests, paymentMethods, paymentOrders, supportTickets,
+  otpRequests, phoneChangeRequests, paymentMethods, supportTickets,
   TICKET_CLOSED_STATUSES,
 } from "@shared/schema";
 import type {
   Bike, Parking, ZoneRow, Ride, AdminRide, Ticket, TicketComment, TicketWithComments, Payment, Wallet,
   MapObject, InsertMapObject, User, OtpRequest, UserRole, UpdateProfileInput,
-  PhoneChangeRequest, PaymentMethod, PaymentOrder, SupportTicket,
+  PhoneChangeRequest, PaymentMethod, SupportTicket,
   AdminCreateBikeInput, AdminUpdateBikeInput, CreateTicketInput, UpdateTicketInput,
   AdminCreateParkingInput, AdminUpdateParkingInput,
 } from "@shared/schema";
@@ -162,21 +162,6 @@ CREATE TABLE IF NOT EXISTS payment_methods (
   card_id TEXT,
   rebill_id TEXT,
   request_key TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER
-);
-CREATE TABLE IF NOT EXISTS payment_orders (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  order_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  ride_id INTEGER,
-  bike_id TEXT,
-  tariff_id TEXT,
-  kind TEXT NOT NULL DEFAULT 'ride',
-  amount_kopecks INTEGER NOT NULL,
-  provider_payment_id TEXT,
-  status TEXT NOT NULL DEFAULT 'pending',
-  payment_url TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER
 );
@@ -618,13 +603,6 @@ export interface IStorage {
   getPaymentMethod(id: number): PaymentMethod | undefined;
   findPendingCardMethod(userId: string): PaymentMethod | undefined;
   updatePaymentMethod(id: number, patch: Partial<PaymentMethod>): PaymentMethod | undefined;
-  // T-Bank payment orders (ride payments)
-  createPaymentOrder(input: {
-    orderId: string; userId: string; bikeId?: string; tariffId?: string;
-    kind?: string; amountKopecks: number;
-  }): PaymentOrder;
-  getPaymentOrderByOrderId(orderId: string): PaymentOrder | undefined;
-  updatePaymentOrder(id: number, patch: Partial<PaymentOrder>): PaymentOrder | undefined;
   // support tickets (rider help requests)
   listSupportTickets(userId: string): SupportTicket[];
   createSupportTicket(input: { userId: string; subject: string; message: string }): SupportTicket;
@@ -991,40 +969,6 @@ export class DatabaseStorage implements IStorage {
     delete set.id;
     db.update(paymentMethods).set(set as any).where(eq(paymentMethods.id, id)).run();
     return this.getPaymentMethod(id);
-  }
-
-  // ---------- T-Bank payment orders (ride payments) ----------
-  createPaymentOrder(input: {
-    orderId: string; userId: string; bikeId?: string; tariffId?: string;
-    kind?: string; amountKopecks: number;
-  }) {
-    const now = Date.now();
-    return db.insert(paymentOrders).values({
-      orderId: input.orderId,
-      userId: input.userId,
-      bikeId: input.bikeId ?? null,
-      tariffId: input.tariffId ?? null,
-      kind: input.kind ?? "ride",
-      amountKopecks: input.amountKopecks,
-      status: "pending",
-      createdAt: now,
-      updatedAt: now,
-    } as any).returning().get() as PaymentOrder;
-  }
-
-  getPaymentOrderByOrderId(orderId: string) {
-    return db.select().from(paymentOrders).where(eq(paymentOrders.orderId, orderId)).get() as
-      | PaymentOrder
-      | undefined;
-  }
-
-  updatePaymentOrder(id: number, patch: Partial<PaymentOrder>) {
-    const set: Record<string, unknown> = { ...patch, updatedAt: Date.now() };
-    delete set.id;
-    db.update(paymentOrders).set(set as any).where(eq(paymentOrders.id, id)).run();
-    return db.select().from(paymentOrders).where(eq(paymentOrders.id, id)).get() as
-      | PaymentOrder
-      | undefined;
   }
 
   // ---------- Support tickets ----------

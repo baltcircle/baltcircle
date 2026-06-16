@@ -8,7 +8,7 @@ import {
   insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
   adminSetRoleSchema, adminSetBlockedSchema,
   phoneChangeStartSchema, phoneChangeVerifySchema,
-  linkPaymentMethodSchema, createSupportTicketSchema, initRidePaymentSchema,
+  linkPaymentMethodSchema, createSupportTicketSchema,
   adminCreateBikeSchema, adminUpdateBikeSchema,
   createTicketSchema, updateTicketSchema, addTicketCommentSchema,
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
@@ -16,9 +16,8 @@ import {
 import type { UserRole } from "@shared/schema";
 import { sendOtpSms } from "./sms";
 import {
-  getTbankConfig, isTbankConfigured, tbankInit, tbankAddCard, verifyNotificationToken,
+  getTbankConfig, isTbankConfigured, tbankAddCard, verifyNotificationToken,
 } from "./tbank";
-import { randomUUID } from "node:crypto";
 import { log } from "./index";
 
 // Resolve the active rider id. A registered rider has their user id stored in
@@ -246,66 +245,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json({ paymentUrl: resp.PaymentURL });
     } catch (err: any) {
       res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
-    }
-  });
-
-  // Create a ride payment for the current rider. The amount is resolved from the
-  // tariff table server-side (never trusted from the client) and converted to
-  // kopecks. Returns the PaymentURL the rider opens to pay. The ride is NOT
-  // started here — it is activated by the notification once payment is confirmed.
-  app.post("/api/payments/tbank/init-ride-payment", async (req, res) => {
-    const userId = req.session?.userId;
-    if (!userId) return res.status(401).json({ error: "Требуется вход" });
-    const user = storage.getUser(userId);
-    if (!user) return res.status(401).json({ error: "Требуется вход" });
-    if (user.blockedAt) {
-      return res.status(403).json({ error: "Аккаунт заблокирован. Обратитесь в поддержку." });
-    }
-
-    const parsed = initRidePaymentSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Проверьте данные" });
-    }
-
-    const cfg = getTbankConfig();
-    if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
-
-    const bike = storage.getBike(parsed.data.bikeId);
-    if (!bike) return res.status(404).json({ error: "Велосипед не найден" });
-
-    const tariffDef = TARIFFS.find((t) => t.id === parsed.data.tariffId);
-    if (!tariffDef) return res.status(400).json({ error: "Неизвестный тариф" });
-    const amountKopecks = Math.round(tariffDef.price * 100);
-
-    const orderId = `ride-${user.id}-${Date.now()}-${randomUUID().slice(0, 8)}`;
-    const order = storage.createPaymentOrder({
-      orderId,
-      userId: user.id,
-      bikeId: bike.id,
-      tariffId: tariffDef.id,
-      kind: "ride",
-      amountKopecks,
-    });
-
-    try {
-      const resp = await tbankInit(cfg, {
-        orderId,
-        amountKopecks,
-        customerKey: user.id,
-        description: `Аренда ${bike.id} • ${tariffDef.name}`,
-      });
-      if (!resp.Success || !resp.PaymentURL) {
-        storage.updatePaymentOrder(order.id, { status: "failed" });
-        return res.status(502).json({ error: tbankUserError(resp) });
-      }
-      storage.updatePaymentOrder(order.id, {
-        providerPaymentId: resp.PaymentId != null ? String(resp.PaymentId) : null,
-        paymentUrl: resp.PaymentURL,
-      });
-      res.json({ paymentUrl: resp.PaymentURL, orderId });
-    } catch (err: any) {
-      storage.updatePaymentOrder(order.id, { status: "failed" });
-      res.status(502).json({ error: err?.message ?? "Не удалось создать платёж. Попробуйте позже." });
     }
   });
 
@@ -689,76 +628,36 @@ function tbankUserError(resp: { ErrorCode?: string; Message?: string }): string 
   return "Платёжный сервис отклонил операцию. Попробуйте позже или другую карту.";
 }
 
-// Process a verified T-Bank notification. Two flows are handled:
-//   1. Card binding (AddCard) — a notification carrying CardId/Status for a
-//      CustomerKey activates the rider's pending card method.
-//   2. Ride payment (Init) — a CONFIRMED/AUTHORIZED payment for one of our
-//      OrderIds activates the ride (starts it) if the bike is still rentable;
-//      a rejected/cancelled payment marks the order failed.
+// Process a verified T-Bank notification. Stage 1 handles only card binding
+// (AddCard): a notification carrying CardId/Status for a CustomerKey activates
+// (or fails) the rider's pending card method. Ride-payment notifications are
+// intentionally out of scope for this stage.
 //
 // The notification is assumed signature-verified by the caller. Statuses follow
 // the T-Kassa lifecycle (NEW/FORM_SHOWED/AUTHORIZED/CONFIRMED/REJECTED/...).
 function handleTbankNotification(body: Record<string, unknown>): void {
   const status = typeof body.Status === "string" ? body.Status : "";
-  const orderId = typeof body.OrderId === "string" ? body.OrderId : "";
   const customerKey = typeof body.CustomerKey === "string" ? body.CustomerKey : "";
   const cardId = typeof body.CardId === "string" ? body.CardId : "";
   const rebillId = body.RebillId != null ? String(body.RebillId) : "";
   const pan = typeof body.Pan === "string" ? body.Pan : "";
 
-  // ----- Card binding notification (no OrderId, carries CustomerKey/CardId) -----
-  if (!orderId && customerKey) {
-    const pending = storage.findPendingCardMethod(customerKey);
-    if (!pending) return;
-    // A binding succeeds once the acquirer returns a CardId; an explicit failure
-    // status marks it failed. Anything else (intermediate state) is ignored.
-    if (cardId) {
-      storage.updatePaymentMethod(pending.id, {
-        status: "active",
-        cardId,
-        rebillId: rebillId || null,
-        label: pan ? maskPan(pan) : "Карта",
-      });
-    } else if (status === "REJECTED" || status === "DEADLINE_EXPIRED") {
-      storage.updatePaymentMethod(pending.id, { status: "failed" });
-    }
-    return;
+  if (!customerKey) return;
+  const pending = storage.findPendingCardMethod(customerKey);
+  if (!pending) return;
+
+  // A binding succeeds once the acquirer returns a CardId; an explicit failure
+  // status marks it failed. Anything else (intermediate state) is ignored.
+  if (cardId) {
+    storage.updatePaymentMethod(pending.id, {
+      status: "active",
+      cardId,
+      rebillId: rebillId || null,
+      label: pan ? maskPan(pan) : "Карта",
+    });
+  } else if (status === "REJECTED" || status === "DEADLINE_EXPIRED") {
+    storage.updatePaymentMethod(pending.id, { status: "failed" });
   }
-
-  // ----- Ride payment notification (carries our OrderId) -----
-  if (!orderId) return;
-  const order = storage.getPaymentOrderByOrderId(orderId);
-  if (!order) return;
-
-  const failedStatuses = ["REJECTED", "CANCELED", "CANCELLED", "DEADLINE_EXPIRED", "REVERSED", "REFUNDED"];
-  if (failedStatuses.includes(status)) {
-    storage.updatePaymentOrder(order.id, { status: "failed" });
-    return;
-  }
-
-  // Only act on a confirmed/authorized payment we haven't already settled.
-  if (status !== "CONFIRMED" && status !== "AUTHORIZED") return;
-  if (order.status === "confirmed") return;
-
-  storage.updatePaymentOrder(order.id, {
-    status: "confirmed",
-    providerPaymentId: body.PaymentId != null ? String(body.PaymentId) : order.providerPaymentId,
-  });
-
-  // Activate the ride now that payment is confirmed, if not already started and
-  // the bike is still rentable. If activation isn't possible the order stays
-  // confirmed and an operator can reconcile manually.
-  if (!order.bikeId || order.rideId) return;
-  const started = storage.startRide({
-    bikeId: order.bikeId,
-    userId: order.userId,
-    tariff: order.tariffId ?? "payg",
-  });
-  if ("error" in started) {
-    log(`[tbank] ride not started for order ${orderId}: ${started.error}`, "tbank");
-    return;
-  }
-  storage.updatePaymentOrder(order.id, { rideId: started.id });
 }
 
 // Build a masked PAN label from a T-Bank-provided masked pan. T-Bank already

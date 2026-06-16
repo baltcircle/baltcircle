@@ -11,10 +11,9 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { TARIFFS } from "@shared/geo";
 import type { Tariff } from "@shared/geo";
-import { TBANK_CONFIG_KEY, type TbankConfigResponse } from "@/lib/payment";
 import {
   Bike as BikeIcon, Battery, Check, CreditCard, QrCode, Loader2,
-  AlertCircle, ShieldAlert, ShieldCheck, MapPin, LifeBuoy, ExternalLink,
+  AlertCircle, ShieldAlert, ShieldCheck, MapPin, LifeBuoy,
 } from "lucide-react";
 
 interface Props {
@@ -27,31 +26,20 @@ interface Props {
 export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
   const toast = useToast();
   const [tariff, setTariff] = useState<Tariff["id"]>("h1");
-  const [redirecting, setRedirecting] = useState(false);
 
   useEffect(() => {
-    if (open) {
-      setTariff("h1");
-      setRedirecting(false);
-    }
+    if (open) setTariff("h1");
   }, [open]);
 
-  // Whether real T-Bank acquiring is configured. When it is, starting a rental
-  // creates a payment and redirects to T-Bank — the ride is activated by the
-  // payment notification callback. When it is not, we fall back to the legacy
-  // instant start (gated on a linked method) so local/dev stays testable.
-  const cfgQ = useQuery<TbankConfigResponse>({ queryKey: TBANK_CONFIG_KEY, enabled: open });
-  const tbankConfigured = cfgQ.data?.configured === true;
-
-  // Payment-method status gates the legacy (non-T-Bank) start. The query only
-  // runs while the modal is open to avoid spurious fetches on the home screen.
+  // Payment-method status gates the rental start. The query only runs while the
+  // modal is open to avoid spurious fetches on the home screen.
   const methodsQ = useQuery<PaymentMethod[]>({
     queryKey: ["/api/payment-methods"],
     enabled: open,
   });
   const hasPaymentMethod = (methodsQ.data?.length ?? 0) > 0;
 
-  // Legacy instant-start (no real acquiring configured).
+  // Instant start, gated on a linked payment method.
   const startMut = useMutation<Ride, Error, void>({
     mutationFn: async () => {
       if (!bike) throw new Error("Велосипед не выбран");
@@ -72,29 +60,7 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
     },
   });
 
-  // Real T-Bank flow: create a ride payment and redirect to the PaymentURL. The
-  // ride is started server-side once the payment notification confirms it.
-  const payMut = useMutation<{ paymentUrl: string }, Error, void>({
-    mutationFn: async () => {
-      if (!bike) throw new Error("Велосипед не выбран");
-      const res = await apiRequest("POST", "/api/payments/tbank/init-ride-payment", {
-        bikeId: bike.id,
-        tariffId: tariff,
-      });
-      return res.json();
-    },
-    onSuccess: (data) => {
-      if (data.paymentUrl) {
-        setRedirecting(true);
-        window.location.href = data.paymentUrl;
-      }
-    },
-    onError: (err) => {
-      toast.toast({ title: "Не удалось создать платёж", description: cleanErr(err), variant: "destructive" });
-    },
-  });
-
-  const submitting = startMut.isPending || payMut.isPending || redirecting;
+  const submitting = startMut.isPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -164,25 +130,11 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
           </div>
         </div>
 
-        {/* Payment status. With real T-Bank acquiring, payment happens up-front
-            on T-Bank's form and the ride starts via the payment callback. In the
-            legacy fallback (no acquiring configured) a linked method is required
-            and the start is instant. */}
-        {cfgQ.isLoading || methodsQ.isLoading ? (
+        {/* Payment status. A linked method is required and the start is instant;
+            charging is handled separately after the ride. */}
+        {methodsQ.isLoading ? (
           <div className="text-[11px] text-muted-foreground flex items-center gap-1.5" data-testid="rental-payment-loading">
             <Loader2 className="w-3 h-3 animate-spin" /> Проверяем оплату…
-          </div>
-        ) : tbankConfigured ? (
-          <div
-            className="rounded-xl border border-card-border bg-muted/40 p-3 text-xs text-muted-foreground flex items-start gap-1.5"
-            data-testid="rental-payment-tbank"
-          >
-            <ExternalLink className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <span>
-              Оплата на защищённой форме T-Bank. После подтверждения оплаты поездка начнётся
-              автоматически. Если поездка не началась сразу — статус обновится после возврата с
-              платёжной страницы.
-            </span>
           </div>
         ) : hasPaymentMethod ? (
           <div className="text-[11px] text-muted-foreground flex items-center gap-1.5" data-testid="rental-payment-ok">
@@ -220,48 +172,27 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
           </li>
         </ul>
 
-        {/* Error state if the start/payment API fails. */}
-        {(startMut.isError || payMut.isError) && (
+        {/* Error state if the start API fails. */}
+        {startMut.isError && (
           <div className="rounded-md bg-destructive/10 text-destructive text-xs p-2.5 flex items-start gap-1.5" data-testid="rental-start-error">
             <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <span>
-              {startMut.error
-                ? cleanErr(startMut.error)
-                : payMut.error
-                  ? cleanErr(payMut.error)
-                  : "Не удалось начать поездку. Попробуйте ещё раз."}
-            </span>
+            <span>{cleanErr(startMut.error)}</span>
           </div>
         )}
 
         <DialogFooter>
-          {tbankConfigured ? (
-            <Button
-              className="w-full"
-              disabled={!bike || bike.status !== "available" || submitting}
-              onClick={() => payMut.mutate()}
-              data-testid="button-start-rental"
-            >
-              {submitting ? (
-                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Открываем оплату…</>
-              ) : (
-                <><ExternalLink className="w-4 h-4 mr-2" /> Оплатить и начать аренду</>
-              )}
-            </Button>
-          ) : (
-            <Button
-              className="w-full"
-              disabled={!bike || bike.status !== "available" || !hasPaymentMethod || submitting}
-              onClick={() => startMut.mutate()}
-              data-testid="button-start-rental"
-            >
-              {submitting ? (
-                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Начинаем…</>
-              ) : (
-                <><QrCode className="w-4 h-4 mr-2" /> Начать аренду</>
-              )}
-            </Button>
-          )}
+          <Button
+            className="w-full"
+            disabled={!bike || bike.status !== "available" || !hasPaymentMethod || submitting}
+            onClick={() => startMut.mutate()}
+            data-testid="button-start-rental"
+          >
+            {submitting ? (
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Начинаем…</>
+            ) : (
+              <><QrCode className="w-4 h-4 mr-2" /> Начать аренду</>
+            )}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -463,42 +463,12 @@ export const paymentMethods = sqliteTable("payment_methods", {
 });
 export type PaymentMethod = typeof paymentMethods.$inferSelect;
 
-/* ------- PAYMENT ORDERS (T-Bank ride/charge payments) ------- */
-// One row per payment attempt created via T-Bank Init. Tracks the local order
-// id we generate, the acquirer PaymentId, the rider/ride context, amount (in
-// kopecks), status, and the PaymentURL the rider was sent to. No card data.
-export const paymentOrders = sqliteTable("payment_orders", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  orderId: text("order_id").notNull(),       // our unique order id sent to T-Bank
-  userId: text("user_id").notNull(),
-  rideId: integer("ride_id"),                // set once a ride is started (nullable)
-  bikeId: text("bike_id"),                   // bike the payment is for (ride payments)
-  tariffId: text("tariff_id"),               // tariff selected for a ride payment
-  kind: text("kind").notNull().default("ride"), // ride (extendable later)
-  amountKopecks: integer("amount_kopecks").notNull(),
-  providerPaymentId: text("provider_payment_id"), // T-Bank PaymentId
-  status: text("status").notNull().default("pending"), // pending | confirmed | failed | cancelled
-  paymentUrl: text("payment_url"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at"),
-});
-export type PaymentOrder = typeof paymentOrders.$inferSelect;
-
 // Link a payment method. Only the type is client-supplied; the label/status are
 // derived server-side so no card data can be smuggled in through the label.
 export const linkPaymentMethodSchema = z.object({
   type: z.enum(["card", "sbp"]),
 });
 export type LinkPaymentMethodInput = z.infer<typeof linkPaymentMethodSchema>;
-
-// Start a T-Bank ride payment. Bike + tariff are client-supplied; the
-// authoritative amount is resolved server-side from the tariff table so the
-// client can never set its own price.
-export const initRidePaymentSchema = z.object({
-  bikeId: z.string().trim().min(1, "Укажите велосипед").max(40),
-  tariffId: z.enum(["h1", "h2", "h3"]),
-});
-export type InitRidePaymentInput = z.infer<typeof initRidePaymentSchema>;
 
 /* ------- SUPPORT TICKETS (rider help requests) ------- */
 // Lightweight contact form persistence for the current user. Riders can submit
