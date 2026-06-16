@@ -346,7 +346,7 @@ export async function getSigmaSmsSendingStatus(
 
   const url = `${sigmaSmsApiBase()}/sendings/${encodeURIComponent(id)}`;
 
-  let res: { ok: boolean; status: number; json: () => Promise<any> };
+  let res: { ok: boolean; status: number; json: () => Promise<any>; text?: () => Promise<string> };
   try {
     // GET has no body; reuse the FetchLike init shape with an empty body so a
     // single mock signature serves both send and status in tests.
@@ -355,28 +355,117 @@ export async function getSigmaSmsSendingStatus(
       headers: { "Content-Type": "application/json", Authorization: token },
       body: "",
     });
-  } catch {
-    throw new Error("Не удалось получить статус SMS. Проверьте соединение и попробуйте позже.");
+  } catch (err) {
+    // fetch threw before any HTTP response: DNS failure, TLS error, connection
+    // refused/reset, timeout, aborted request, etc. The previous code discarded
+    // this and surfaced a generic message with httpStatus 0, which made the
+    // failure mode impossible to diagnose. Surface a SAFE, bounded description of
+    // the exception (its name + message) so staff can tell a network/DNS/TLS
+    // failure apart from an HTTP error. httpStatus stays 0 to denote "no HTTP
+    // response". The token is never part of the exception, so this is safe.
+    const detail = describeFetchException(err);
+    log(`[sms:sigmasms] status lookup fetch failed: ${detail}`, "sms");
+    return { found: false, httpStatus: 0, error: `Сетевая ошибка: ${detail}` };
   }
 
-  let data: any = undefined;
-  try {
-    data = await res.json();
-  } catch {
-    // Non-JSON body — fall through to the status mapping below.
-  }
+  // Read the body once as text so we can both parse JSON and, on a non-JSON
+  // response (HTML error page, plain text), surface a bounded snippet of it.
+  const raw = await readBodySafely(res);
+  const data = parseJsonSafely(raw);
 
   if (res.status === 404) {
     return { found: false, httpStatus: 404 };
   }
-  if (!res.ok || data?.error) {
-    const detail = describeSigmaSmsError(res.status, data);
+  if (!res.ok || data?.error || isSigmaSmsFailedStatus(data?.status)) {
+    const detail = data
+      ? describeSigmaSmsError(res.status, data)
+      : describeNonJsonBody(res.status, raw);
     log(`[sms:sigmasms] status lookup failed: ${detail}`, "sms");
     return { found: false, httpStatus: res.status, error: detail };
   }
 
+  // 2xx but the body was non-JSON (or empty): we have no parsable status. Report
+  // a safe snippet rather than silently claiming success with no status.
+  if (data === undefined) {
+    return {
+      found: true,
+      httpStatus: res.status,
+      error: describeNonJsonBody(res.status, raw),
+    };
+  }
+
   const status = extractSigmaSmsStatus(data);
   return { found: true, httpStatus: res.status, status };
+}
+
+// Describe a fetch exception with only its name and message, bounded in length.
+// fetch/undici nests the useful detail under `cause` (e.g. an ENOTFOUND /
+// ECONNREFUSED / certificate error), so include that too. Never includes the
+// token (it is not part of any fetch exception) or the request URL.
+export function describeFetchException(err: unknown): string {
+  const parts: string[] = [];
+  if (err instanceof Error) {
+    if (err.name && err.name !== "Error") parts.push(err.name);
+    if (err.message) parts.push(err.message);
+    const cause: any = (err as any).cause;
+    if (cause) {
+      const causeName = typeof cause?.name === "string" ? cause.name : undefined;
+      const causeCode = typeof cause?.code === "string" ? cause.code : undefined;
+      const causeMsg = typeof cause?.message === "string" ? cause.message : undefined;
+      const causeDetail = [causeCode, causeName, causeMsg].filter(Boolean).join(" ");
+      if (causeDetail) parts.push(`(${causeDetail})`);
+    }
+  } else if (typeof err === "string" && err.trim()) {
+    parts.push(err.trim());
+  }
+  const detail = parts.join(": ") || "неизвестная ошибка сети";
+  return detail.length > 200 ? detail.slice(0, 197) + "…" : detail;
+}
+
+// Read a response body as text without throwing. Returns "" when the body can't
+// be read or the response exposes no text()/json() reader (e.g. a minimal mock).
+async function readBodySafely(res: {
+  json: () => Promise<any>;
+  text?: () => Promise<string>;
+}): Promise<string> {
+  if (typeof res.text === "function") {
+    try {
+      return await res.text();
+    } catch {
+      return "";
+    }
+  }
+  // Fallback for mocks that only implement json(): re-serialize the parsed JSON
+  // so readBodySafely + parseJsonSafely still round-trips in tests.
+  try {
+    const parsed = await res.json();
+    return parsed === undefined ? "" : JSON.stringify(parsed);
+  } catch {
+    return "";
+  }
+}
+
+// Parse text as JSON, returning undefined (not throwing) for empty/non-JSON
+// bodies such as an HTML error page.
+function parseJsonSafely(raw: string): any {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+}
+
+// Build a SAFE, bounded description for a non-JSON response body. Collapses
+// whitespace and includes a short snippet so staff can tell an HTML/login/error
+// page apart from an empty body. The body of a status lookup never contains the
+// token or message text, so a snippet is safe to surface.
+export function describeNonJsonBody(httpStatus: number, raw: string): string {
+  const snippet = raw.replace(/\s+/g, " ").trim();
+  if (!snippet) return `HTTP ${httpStatus}, пустой ответ (не JSON)`;
+  const bounded = snippet.length > 200 ? snippet.slice(0, 197) + "…" : snippet;
+  return `HTTP ${httpStatus}, ответ не в формате JSON: ${bounded}`;
 }
 
 // Pull the delivery status text from a status-lookup response. SigmaSMS may

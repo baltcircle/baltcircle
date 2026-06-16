@@ -15,7 +15,10 @@ import {
   sendOtpSms,
   otpMessage,
   describeSigmaSmsError,
+  describeFetchException,
+  describeNonJsonBody,
   sigmaSmsRecipient,
+  sigmaSmsApiBase,
   getSmsDiagnostics,
   getSigmaSmsSendingStatus,
 } from "../server/sms";
@@ -148,6 +151,98 @@ process.env.SIGMASMS = FAKE_TOKEN;
   assert(live.found === false, "failed status lookup reports found=false");
   assert(/HTTP 500/.test(live.error ?? ""), "failed status lookup includes the HTTP status");
   assert(!new RegExp(FAKE_TOKEN).test(live.error ?? ""), "failed status lookup never leaks the token");
+}
+
+// --- 3f. status URL is built from the configured API base (no double /api) -
+{
+  delete process.env.SIGMASMS_API_BASE;
+  assert(
+    sigmaSmsApiBase() === "https://user.sigmasms.ru/api",
+    "default API base is .../api (single /api segment)",
+  );
+  let capturedUrl = "";
+  const mockFetch = async (url: string) => {
+    capturedUrl = url;
+    return { ok: true, status: 200, json: async () => ({ status: "delivered" }) };
+  };
+  await getSigmaSmsSendingStatus("00000000-0008-4548-aa37-635189165383", mockFetch as any);
+  assert(
+    capturedUrl === "https://user.sigmasms.ru/api/sendings/00000000-0008-4548-aa37-635189165383",
+    "status URL is {base}/sendings/{id} with the id percent-encoded, no doubled /api",
+  );
+}
+
+// --- 3g. a fetch exception is surfaced as a SAFE bounded diagnostic --------
+//         (httpStatus 0 = no HTTP response) instead of a generic message.
+{
+  const cause: any = new Error("getaddrinfo ENOTFOUND user.sigmasms.ru");
+  cause.code = "ENOTFOUND";
+  const netErr: any = new TypeError("fetch failed");
+  netErr.cause = cause;
+  const mockFetch = async () => {
+    throw netErr;
+  };
+  const live = await getSigmaSmsSendingStatus("abc-123", mockFetch as any);
+  assert(live.found === false, "fetch exception reports found=false");
+  assert(live.httpStatus === 0, "fetch exception keeps httpStatus 0 (no HTTP response)");
+  assert(/ENOTFOUND/.test(live.error ?? ""), "fetch exception surfaces the underlying network code");
+  assert(/fetch failed/.test(live.error ?? ""), "fetch exception surfaces the exception message");
+  assert(
+    !new RegExp(FAKE_TOKEN).test(live.error ?? ""),
+    "fetch exception diagnostic never leaks the token",
+  );
+}
+
+// --- 3h. describeFetchException bounds output and names the error ----------
+{
+  const d1 = describeFetchException(new TypeError("boom"));
+  assert(/TypeError/.test(d1) && /boom/.test(d1), "describeFetchException includes name + message");
+  const big: any = new Error("x".repeat(500));
+  assert(describeFetchException(big).length <= 200, "describeFetchException is bounded to <=200 chars");
+  assert(
+    describeFetchException("plain string") === "plain string",
+    "describeFetchException handles non-Error throws",
+  );
+}
+
+// --- 3i. a non-JSON (HTML) body on the status lookup is surfaced safely -----
+{
+  const html = "<!DOCTYPE html><html><body>502 Bad Gateway</body></html>";
+  const mockFetch = async () => ({
+    ok: false,
+    status: 502,
+    json: async () => {
+      throw new SyntaxError("Unexpected token <");
+    },
+    text: async () => html,
+  });
+  const live = await getSigmaSmsSendingStatus("abc-123", mockFetch as any);
+  assert(live.found === false && live.httpStatus === 502, "HTML error body reports the HTTP status");
+  assert(/502 Bad Gateway/.test(live.error ?? ""), "HTML error body snippet is surfaced");
+  assert(/не в формате JSON/.test(live.error ?? ""), "non-JSON body is flagged as such");
+}
+
+// --- 3j. a 2xx non-JSON body still reports found with a snippet ------------
+{
+  const mockFetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => {
+      throw new SyntaxError("Unexpected token <");
+    },
+    text: async () => "OK (plain text)",
+  });
+  const live = await getSigmaSmsSendingStatus("abc-123", mockFetch as any);
+  assert(live.found === true && live.httpStatus === 200, "2xx non-JSON reports found=true");
+  assert(/OK \(plain text\)/.test(live.error ?? ""), "2xx non-JSON surfaces a body snippet");
+  assert(live.status === undefined, "2xx non-JSON has no parsable status");
+}
+
+// --- 3k. describeNonJsonBody collapses whitespace and bounds output --------
+{
+  assert(/пустой ответ/.test(describeNonJsonBody(204, "   ")), "empty body is described as empty");
+  const long = describeNonJsonBody(500, "a\n".repeat(500));
+  assert(/…$/.test(long) && long.length <= 260, "describeNonJsonBody snippet is bounded");
 }
 
 // --- 4. Provider error in the JSON body is treated as failure -------------
