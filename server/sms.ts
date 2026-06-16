@@ -22,6 +22,12 @@ export interface SmsSendResult {
   // Whether the OTP should be echoed back to the client. Only true in dev
   // fallback, where there is no real SMS channel — never in production.
   devEcho: boolean;
+  // Provider delivery diagnostics for the accepted send, when the provider
+  // returns them. Persisted on the OTP request so staff can later query the
+  // provider's delivery status. None of these are secret.
+  provider?: string;            // "sigmasms" | "smsru"
+  providerMessageId?: string;   // provider's sending id, if returned
+  providerStatus?: string;      // provider's accepted status text, if returned
 }
 
 export function smsProvider(): string {
@@ -46,12 +52,17 @@ export async function sendOtpSms(phone: string, code: string): Promise<SmsSendRe
 
   if (provider === "smsru") {
     await sendViaSmsRu(phone, code);
-    return { devEcho: false };
+    return { devEcho: false, provider };
   }
 
   if (provider === "sigmasms") {
-    await sendViaSigmaSms(phone, code);
-    return { devEcho: false };
+    const accepted = await sendViaSigmaSms(phone, code);
+    return {
+      devEcho: false,
+      provider,
+      providerMessageId: accepted.id,
+      providerStatus: accepted.status,
+    };
   }
 
   if (provider === "" ) {
@@ -257,11 +268,19 @@ type FetchLike = (
   init: { method: string; headers: Record<string, string>; body: string },
 ) => Promise<{ ok: boolean; status: number; json: () => Promise<any> }>;
 
+// On success returns the provider's sending id and status (both may be absent
+// if the provider omits them). These are non-secret and are persisted so the
+// delivery status can be queried later via getSigmaSmsSendingStatus.
+export interface SigmaSmsAccepted {
+  id?: string;
+  status?: string;
+}
+
 export async function sendViaSigmaSms(
   phone: string,
   code: string,
   fetchImpl: FetchLike = fetch as unknown as FetchLike,
-): Promise<void> {
+): Promise<SigmaSmsAccepted> {
   const token = sigmaSmsToken();
   if (!token) {
     throw new Error("SMS-сервис временно недоступен. Попробуйте позже.");
@@ -297,6 +316,79 @@ export async function sendViaSigmaSms(
     log(`[sms:sigmasms] request rejected: ${detail}`, "sms");
     throw new Error(`Не удалось отправить SMS (${detail}). Попробуйте позже.`);
   }
+
+  const id = typeof data?.id === "string" ? data.id : undefined;
+  const status = typeof data?.status === "string" ? data.status.trim() || undefined : undefined;
+  return { id, status };
+}
+
+// --- SigmaSMS delivery status --------------------------------------------
+// Look up the delivery status of a previously accepted sending by its id.
+// Docs: GET {base}/sendings/{id} with the account token in the Authorization
+// header returns the sending's status/details. We map the response to a SAFE,
+// non-secret view: the HTTP status, the provider status text and a bounded
+// error summary. The token is sent in the header but never logged or returned.
+export interface SigmaSmsStatus {
+  found: boolean;       // false when the provider has no record (404)
+  httpStatus: number;   // HTTP status of the status lookup
+  status?: string;      // provider's delivery status text, if present
+  error?: string;       // safe error summary, if the lookup failed
+}
+
+export async function getSigmaSmsSendingStatus(
+  id: string,
+  fetchImpl: FetchLike = fetch as unknown as FetchLike,
+): Promise<SigmaSmsStatus> {
+  const token = sigmaSmsToken();
+  if (!token) {
+    throw new Error("SMS-сервис временно недоступен. Попробуйте позже.");
+  }
+
+  const url = `${sigmaSmsApiBase()}/sendings/${encodeURIComponent(id)}`;
+
+  let res: { ok: boolean; status: number; json: () => Promise<any> };
+  try {
+    // GET has no body; reuse the FetchLike init shape with an empty body so a
+    // single mock signature serves both send and status in tests.
+    res = await fetchImpl(url, {
+      method: "GET",
+      headers: { "Content-Type": "application/json", Authorization: token },
+      body: "",
+    });
+  } catch {
+    throw new Error("Не удалось получить статус SMS. Проверьте соединение и попробуйте позже.");
+  }
+
+  let data: any = undefined;
+  try {
+    data = await res.json();
+  } catch {
+    // Non-JSON body — fall through to the status mapping below.
+  }
+
+  if (res.status === 404) {
+    return { found: false, httpStatus: 404 };
+  }
+  if (!res.ok || data?.error) {
+    const detail = describeSigmaSmsError(res.status, data);
+    log(`[sms:sigmasms] status lookup failed: ${detail}`, "sms");
+    return { found: false, httpStatus: res.status, error: detail };
+  }
+
+  const status = extractSigmaSmsStatus(data);
+  return { found: true, httpStatus: res.status, status };
+}
+
+// Pull the delivery status text from a status-lookup response. SigmaSMS may
+// place it at the top level or nest it (e.g. under `state`/`sending`). Returns
+// undefined when no recognisable status string is present.
+function extractSigmaSmsStatus(data: any): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const candidates = [data.status, data.state, data.sending?.status, data.sending?.state];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim()) return c.trim();
+  }
+  return undefined;
 }
 
 // Safe, non-secret view of the SigmaSMS configuration for an admin diagnostics

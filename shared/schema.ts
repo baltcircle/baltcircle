@@ -73,6 +73,15 @@ export const otpRequests = sqliteTable("otp_requests", {
   attempts: integer("attempts").notNull().default(0),     // wrong-code tries used
   lastSentAt: integer("last_sent_at").notNull(),          // unix ms of last SMS, for resend lock
   consumed: integer("consumed", { mode: "boolean" }).notNull().default(false),
+  // Delivery diagnostics for the last SMS send. SigmaSMS (and similar) return a
+  // sending id + status that we persist so staff can later query the provider's
+  // delivery status. None of these hold secrets — only the provider name, the
+  // provider's sending id, its status text and any safe error summary.
+  provider: text("provider"),                      // "sigmasms" | "smsru" | null (dev)
+  providerMessageId: text("provider_message_id"),  // provider's sending id, if returned
+  providerStatus: text("provider_status"),         // last known provider status text
+  providerError: text("provider_error"),           // safe provider error summary (no secrets)
+  providerCheckedAt: integer("provider_checked_at"),// unix ms of last status refresh
 });
 export type OtpRequest = typeof otpRequests.$inferSelect;
 

@@ -14,7 +14,7 @@ import {
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
 } from "@shared/schema";
 import type { UserRole, PaymentMethod, PaymentOrder } from "@shared/schema";
-import { sendOtpSms, getSmsDiagnostics, smsProvider } from "./sms";
+import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./sms";
 import {
   getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
   tbankGetAddCardState, classifyCardBinding, classifyInitBinding,
@@ -91,13 +91,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.status(status).json(result);
     }
     try {
-      const { devEcho } = await sendOtpSms(result.phone, result.code);
+      const sent = await sendOtpSms(result.phone, result.code);
+      // Persist the provider's sending id/status so staff can later query the
+      // provider's delivery status for this phone. Non-secret diagnostics only.
+      storage.recordOtpSend({
+        phone: result.phone,
+        provider: sent.provider,
+        providerMessageId: sent.providerMessageId,
+        providerStatus: sent.providerStatus,
+      });
       // In dev fallback (no SMS provider configured) we echo the code so the
       // flow is testable locally. In production this is always undefined.
       res.json({
         phone: result.phone,
         resendInSec: result.resendInSec,
-        ...(devEcho ? { devCode: result.code } : {}),
+        ...(sent.providerStatus ? { providerStatus: sent.providerStatus } : {}),
+        ...(sent.devEcho ? { devCode: result.code } : {}),
       });
     } catch (err: any) {
       res.status(502).json({ error: err?.message ?? "Не удалось отправить SMS. Попробуйте позже." });
@@ -133,6 +142,54 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Lets staff confirm the SigmaSMS wiring without ever seeing the secret.
   app.get("/api/sms/diagnostics", requireRole("admin"), (_req, res) => {
     res.json(getSmsDiagnostics());
+  });
+
+  // Admin-only OTP delivery diagnostics for a phone. Returns the stored provider
+  // metadata for the last OTP send (provider, sending id, status, error, and the
+  // OTP request timestamps) — never the code or its hash. When a SigmaSMS sending
+  // id is on file, this also queries the provider's status API and persists the
+  // refreshed status so repeat checks reflect the latest delivery state.
+  // Usage: GET /api/sms/otp-status?phone=+79991234567
+  app.get("/api/sms/otp-status", requireRole("admin"), async (req, res) => {
+    const phone = typeof req.query.phone === "string" ? req.query.phone.trim() : "";
+    if (!phone) return res.status(400).json({ error: "Укажите параметр phone" });
+
+    const row = storage.getLastOtpSend(phone);
+    if (!row) {
+      return res.status(404).json({ error: "По этому номеру нет записей об отправке кода" });
+    }
+
+    // If we have a SigmaSMS sending id, refresh the delivery status from the
+    // provider and persist it. A lookup failure is reported but does not fail the
+    // endpoint — the stored snapshot is still returned.
+    let providerLookup: { httpStatus: number; found: boolean; status?: string; error?: string } | undefined;
+    if (row.provider === "sigmasms" && smsProvider() === "sigmasms" && row.providerMessageId) {
+      try {
+        const live = await getSigmaSmsSendingStatus(row.providerMessageId);
+        providerLookup = live;
+        storage.updateOtpProviderStatus({
+          phone,
+          providerStatus: live.status ?? row.providerStatus ?? undefined,
+          providerError: live.error ?? undefined,
+        });
+      } catch (err: any) {
+        providerLookup = { httpStatus: 0, found: false, error: err?.message ?? "lookup failed" };
+      }
+    }
+
+    // Re-read so the response reflects any refresh we just persisted.
+    const latest = storage.getLastOtpSend(phone) ?? row;
+    res.json({
+      phone: latest.phone,
+      provider: latest.provider,
+      providerMessageId: latest.providerMessageId,
+      providerStatus: latest.providerStatus,
+      providerError: latest.providerError,
+      consumed: latest.consumed,
+      createdAt: latest.lastSentAt,
+      checkedAt: latest.providerCheckedAt,
+      ...(providerLookup ? { providerLookup } : {}),
+    });
   });
 
   app.get("/api/users/current", (req, res) => {

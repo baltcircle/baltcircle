@@ -30,6 +30,7 @@
     "smoke:tbank-ride-payment": "tsx script/smoke-tbank-ride-payment.ts",
     "smoke:tbank-payment-orders-migration": "tsx script/smoke-tbank-payment-orders-migration.ts",
     "smoke:sigmasms": "tsx script/smoke-sigmasms.ts",
+    "smoke:otp-status-migration": "tsx script/smoke-otp-status-migration.ts",
     "smoke:error-message": "tsx script/smoke-error-message.ts"
   },
   "dependencies": {

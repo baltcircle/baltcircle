@@ -140,7 +140,12 @@ CREATE TABLE IF NOT EXISTS otp_requests (
   expires_at INTEGER NOT NULL,
   attempts INTEGER NOT NULL DEFAULT 0,
   last_sent_at INTEGER NOT NULL,
-  consumed INTEGER NOT NULL DEFAULT 0
+  consumed INTEGER NOT NULL DEFAULT 0,
+  provider TEXT,
+  provider_message_id TEXT,
+  provider_status TEXT,
+  provider_error TEXT,
+  provider_checked_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS phone_change_requests (
   user_id TEXT PRIMARY KEY,
@@ -258,6 +263,26 @@ function migrateTicketsTable() {
   sqlite.exec("UPDATE tickets SET status = 'new' WHERE status = 'open'");
 }
 migrateTicketsTable();
+
+// ---------- OTP requests column migration (SMS delivery diagnostics) ----------
+// Older DBs created otp_requests before we tracked provider delivery state. Add
+// the provider columns in place so existing pending rows survive. These hold no
+// secrets — only the provider name, its sending id, its status/error text and a
+// last-checked timestamp — and let staff query the provider's delivery status.
+function migrateOtpRequestsTable() {
+  const cols = (sqlite.prepare("PRAGMA table_info(otp_requests)").all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  const addColumn = (name: string, ddl: string) => {
+    if (!cols.includes(name)) sqlite.exec(`ALTER TABLE otp_requests ADD COLUMN ${ddl}`);
+  };
+  addColumn("provider", "provider TEXT");
+  addColumn("provider_message_id", "provider_message_id TEXT");
+  addColumn("provider_status", "provider_status TEXT");
+  addColumn("provider_error", "provider_error TEXT");
+  addColumn("provider_checked_at", "provider_checked_at INTEGER");
+}
+migrateOtpRequestsTable();
 
 // ---------- Parkings column migration (operator management fields) ----------
 // Older DBs created parkings with only id/name/lat/lng/capacity/occupied. Add
@@ -642,6 +667,20 @@ export interface IStorage {
     | { ok: true; phone: string; code: string; resendInSec: number }
     | { error: string; retryAfterSec?: number };
   verifyOtp(input: { phone: string; code: string; consentIp?: string }): { user: User } | { error: string };
+  // OTP delivery diagnostics (provider id/status persisted per phone)
+  recordOtpSend(input: {
+    phone: string;
+    provider?: string;
+    providerMessageId?: string;
+    providerStatus?: string;
+    providerError?: string;
+  }): void;
+  getLastOtpSend(phone: string): OtpRequest | undefined;
+  updateOtpProviderStatus(input: {
+    phone: string;
+    providerStatus?: string;
+    providerError?: string;
+  }): void;
   // phone change (SMS OTP for an existing account)
   startPhoneChange(input: { userId: string; phone: string }):
     | { ok: true; phone: string; code: string; resendInSec: number }
@@ -897,6 +936,55 @@ export class DatabaseStorage implements IStorage {
       updatedAt: now,
     } as any).run();
     return { user: this.getUserByPhone(cleanPhone)! };
+  }
+
+  // ---------- OTP delivery diagnostics ----------
+  // Persist the provider id/status returned when an OTP SMS was accepted (or the
+  // safe error when it was not). Keyed by phone, matching the single pending OTP
+  // row. A no-op if the row was already consumed/removed by a concurrent verify.
+  recordOtpSend({ phone, provider, providerMessageId, providerStatus, providerError }: {
+    phone: string;
+    provider?: string;
+    providerMessageId?: string;
+    providerStatus?: string;
+    providerError?: string;
+  }) {
+    const cleanPhone = normalizePhone(phone);
+    db.update(otpRequests)
+      .set({
+        provider: provider ?? null,
+        providerMessageId: providerMessageId ?? null,
+        providerStatus: providerStatus ?? null,
+        providerError: providerError ?? null,
+        providerCheckedAt: Date.now(),
+      })
+      .where(eq(otpRequests.phone, cleanPhone))
+      .run();
+  }
+
+  // Read the latest OTP request row for a phone (includes provider diagnostics).
+  getLastOtpSend(phone: string): OtpRequest | undefined {
+    const cleanPhone = normalizePhone(phone);
+    return db.select().from(otpRequests)
+      .where(eq(otpRequests.phone, cleanPhone)).get() as OtpRequest | undefined;
+  }
+
+  // Update only the provider delivery status/error after a status refresh. Does
+  // not touch the OTP lifecycle fields (code/expiry/attempts/consumed).
+  updateOtpProviderStatus({ phone, providerStatus, providerError }: {
+    phone: string;
+    providerStatus?: string;
+    providerError?: string;
+  }) {
+    const cleanPhone = normalizePhone(phone);
+    db.update(otpRequests)
+      .set({
+        providerStatus: providerStatus ?? null,
+        providerError: providerError ?? null,
+        providerCheckedAt: Date.now(),
+      })
+      .where(eq(otpRequests.phone, cleanPhone))
+      .run();
   }
 
   // ---------- Phone change (SMS OTP, existing account) ----------

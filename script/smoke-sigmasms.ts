@@ -17,6 +17,7 @@ import {
   describeSigmaSmsError,
   sigmaSmsRecipient,
   getSmsDiagnostics,
+  getSigmaSmsSendingStatus,
 } from "../server/sms";
 
 function assert(cond: unknown, msg: string) {
@@ -79,7 +80,7 @@ process.env.SIGMASMS = FAKE_TOKEN;
       json: async () => ({ id: "abc-123", recipient: PHONE, status: "queued" }),
     };
   };
-  await sendViaSigmaSms(PHONE, CODE, mockFetch as any);
+  const accepted = await sendViaSigmaSms(PHONE, CODE, mockFetch as any);
   assert(captured!.init.method === "POST", "send uses HTTP POST");
   assert(captured!.url === "https://user.sigmasms.ru/api/sendings", "send hits the /sendings URL");
   const sentBody = JSON.parse(captured!.init.body);
@@ -88,7 +89,65 @@ process.env.SIGMASMS = FAKE_TOKEN;
     captured!.init.headers.Authorization === FAKE_TOKEN,
     "sent Authorization header carries the token",
   );
+  assert(accepted.id === "abc-123", "send returns the provider sending id");
+  assert(accepted.status === "queued", "send returns the provider status");
   console.log("✓ successful send resolves without throwing");
+}
+
+// --- 3b. getSigmaSmsSendingStatus reads the delivery status ----------------
+{
+  let captured: { url: string; init: any } | undefined;
+  const mockFetch = async (url: string, init: any) => {
+    captured = { url, init };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "abc-123", recipient: PHONE, status: "delivered" }),
+    };
+  };
+  const live = await getSigmaSmsSendingStatus("abc-123", mockFetch as any);
+  assert(captured!.init.method === "GET", "status lookup uses HTTP GET");
+  assert(
+    captured!.url === "https://user.sigmasms.ru/api/sendings/abc-123",
+    "status lookup hits /sendings/{id}",
+  );
+  assert(
+    captured!.init.headers.Authorization === FAKE_TOKEN,
+    "status lookup carries the token in the Authorization header",
+  );
+  assert(live.found === true, "status lookup reports found=true on 200");
+  assert(live.status === "delivered", "status lookup surfaces the provider delivery status");
+}
+
+// --- 3c. status lookup maps a nested status field -------------------------
+{
+  const mockFetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ sending: { state: "sent" } }),
+  });
+  const live = await getSigmaSmsSendingStatus("abc-123", mockFetch as any);
+  assert(live.status === "sent", "status lookup reads a nested state field");
+}
+
+// --- 3d. status lookup reports a 404 as not-found safely ------------------
+{
+  const mockFetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
+  const live = await getSigmaSmsSendingStatus("missing-id", mockFetch as any);
+  assert(live.found === false && live.httpStatus === 404, "missing sending id reports found=false / 404");
+}
+
+// --- 3e. status lookup surfaces a safe error, never the token -------------
+{
+  const mockFetch = async () => ({
+    ok: false,
+    status: 500,
+    json: async () => ({ error: "internal" }),
+  });
+  const live = await getSigmaSmsSendingStatus("abc-123", mockFetch as any);
+  assert(live.found === false, "failed status lookup reports found=false");
+  assert(/HTTP 500/.test(live.error ?? ""), "failed status lookup includes the HTTP status");
+  assert(!new RegExp(FAKE_TOKEN).test(live.error ?? ""), "failed status lookup never leaks the token");
 }
 
 // --- 4. Provider error in the JSON body is treated as failure -------------

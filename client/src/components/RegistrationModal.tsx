@@ -21,7 +21,7 @@ interface Props {
   onRegistered?: (user: User) => void;
 }
 
-type StartResponse = { phone: string; resendInSec: number; devCode?: string };
+type StartResponse = { phone: string; resendInSec: number; devCode?: string; providerStatus?: string };
 
 // Client-side mirror of the server validation so riders get instant feedback.
 // The server re-validates and is the source of truth.
@@ -44,6 +44,9 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
   // Normalized phone returned by the server's start step — used verbatim for
   // verify and resend so both sides agree on the canonical number.
   const [verifiedPhone, setVerifiedPhone] = useState("");
+  // Provider delivery status returned by the start step (e.g. "queued"), shown
+  // subtly so the rider knows the SMS was accepted. Absent in dev fallback.
+  const [providerStatus, setProviderStatus] = useState<string | null>(null);
   const [resendIn, setResendIn] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -57,6 +60,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
       setCode("");
       setError(null);
       setVerifiedPhone("");
+      setProviderStatus(null);
       setResendIn(0);
     }
   }, [open]);
@@ -86,6 +90,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
     },
     onSuccess: (data) => {
       setVerifiedPhone(data.phone);
+      setProviderStatus(data.providerStatus ?? null);
       setResendIn(data.resendInSec ?? 60);
       setStep("code");
       setError(null);
@@ -270,6 +275,12 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
                 data-testid="input-registration-code"
               />
             </div>
+
+            {providerStatus && (
+              <p className="text-xs text-muted-foreground" data-testid="text-sms-status">
+                SMS отправлено, статус: {providerStatus}
+              </p>
+            )}
 
             <div className="text-xs text-muted-foreground">
               {resendIn > 0 ? (
