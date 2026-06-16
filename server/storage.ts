@@ -297,6 +297,9 @@ function migratePaymentMethodsTable() {
   addColumn("rebill_id", "rebill_id TEXT");
   addColumn("request_key", "request_key TEXT");
   addColumn("updated_at", "updated_at INTEGER");
+  addColumn("last_error_code", "last_error_code TEXT");
+  addColumn("last_error_message", "last_error_message TEXT");
+  addColumn("last_error_details", "last_error_details TEXT");
 }
 migratePaymentMethodsTable();
 
@@ -602,6 +605,7 @@ export interface IStorage {
   createPendingCardMethod(input: { userId: string; customerKey: string; requestKey?: string }): PaymentMethod;
   getPaymentMethod(id: number): PaymentMethod | undefined;
   findPendingCardMethod(userId: string): PaymentMethod | undefined;
+  findCardMethodByRequestKey(userId: string, requestKey: string): PaymentMethod | undefined;
   updatePaymentMethod(id: number, patch: Partial<PaymentMethod>): PaymentMethod | undefined;
   // support tickets (rider help requests)
   listSupportTickets(userId: string): SupportTicket[];
@@ -960,6 +964,16 @@ export class DatabaseStorage implements IStorage {
   findPendingCardMethod(userId: string) {
     return db.select().from(paymentMethods)
       .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.provider} = 'tbank' AND ${paymentMethods.status} = 'pending'`)
+      .orderBy(desc(paymentMethods.createdAt))
+      .get() as PaymentMethod | undefined;
+  }
+
+  // Locate a user's T-Bank card method by its AddCard RequestKey. Used to
+  // resolve the method a rider was redirected back from (the Success/Fail URL
+  // carries the RequestKey) so we can refresh exactly that binding.
+  findCardMethodByRequestKey(userId: string, requestKey: string) {
+    return db.select().from(paymentMethods)
+      .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.provider} = 'tbank' AND ${paymentMethods.requestKey} = ${requestKey}`)
       .orderBy(desc(paymentMethods.createdAt))
       .get() as PaymentMethod | undefined;
   }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { PaymentMethod } from "@shared/schema";
 import { Card } from "@/components/ui/card";
@@ -10,6 +10,7 @@ import { fmtDate } from "@/lib/format";
 import { TBANK_CONFIG_KEY, type TbankConfigResponse } from "@/lib/payment";
 import {
   CreditCard, Smartphone, ShieldCheck, Loader2, ExternalLink, Trash2, Clock, AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 
 const METHODS_KEY = ["/api/payment-methods"];
@@ -75,7 +76,62 @@ export function PaymentMethodsPage() {
       toast.toast({ title: "Не удалось отвязать", description: cleanErr(e), variant: "destructive" }),
   });
 
-  const busy = addCardMut.isPending || unlinkMut.isPending || redirecting;
+  // Re-check a pending/failed binding by polling T-Bank GetAddCardState on the
+  // server. Resolves a method stuck on "привязывается…" when the notification
+  // webhook never arrived.
+  const refreshMut = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("POST", `/api/payment-methods/${id}/refresh`);
+      return (await res.json()) as PaymentMethod;
+    },
+    onSuccess: (m) => {
+      queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+      if (m.status === "active") toast.toast({ title: "Карта привязана" });
+      else if (m.status === "failed")
+        toast.toast({ title: "Привязка не удалась", description: methodError(m), variant: "destructive" });
+      else toast.toast({ title: "Привязка ещё выполняется", description: "Статус пока не изменился." });
+    },
+    onError: (e: Error) =>
+      toast.toast({ title: "Не удалось проверить статус", description: cleanErr(e), variant: "destructive" }),
+  });
+
+  // When T-Bank redirects the rider back to /payment-methods after the hosted
+  // form, the Success/Fail URL may carry Success / RequestKey / ErrorCode query
+  // params. We don't trust these for state changes (the notification webhook is
+  // authoritative), but we trigger a server-side refresh of the matching pending
+  // method so the rider sees the resolved status without waiting, and surface a
+  // failure message immediately. Runs once per unique query string.
+  const handledRedirect = useRef<string>("");
+  useEffect(() => {
+    const search = window.location.search;
+    if (!search || handledRedirect.current === search) return;
+    const params = new URLSearchParams(search);
+    if (!params.has("Success") && !params.has("RequestKey") && !params.has("ErrorCode")) return;
+    handledRedirect.current = search;
+
+    const ok = (params.get("Success") || "").toLowerCase() === "true";
+    if (!ok) {
+      const code = params.get("ErrorCode");
+      toast.toast({
+        title: "Не удалось привязать карту",
+        description: code && code !== "0" ? `Банк вернул код ${code}.` : "Привязка карты была отклонена.",
+        variant: "destructive",
+      });
+    }
+    // Refresh the method matching the returned RequestKey (or the latest pending
+    // one) to pull the authoritative status from T-Bank.
+    const reqKey = params.get("RequestKey");
+    const target = reqKey
+      ? methods.find((m) => m.requestKey === reqKey)
+      : methods.find((m) => m.type === "card" && m.status === "pending");
+    if (target) refreshMut.mutate(target.id);
+
+    // Strip the query params so a manual reload doesn't re-trigger.
+    window.history.replaceState({}, "", window.location.pathname);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [methods]);
+
+  const busy = addCardMut.isPending || unlinkMut.isPending || refreshMut.isPending || redirecting;
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-2xl mx-auto" data-testid="page-payment-methods">
@@ -101,32 +157,67 @@ export function PaymentMethodsPage() {
           <ul className="space-y-2" data-testid="methods-list">
             {methods.map((m) => {
               const st = statusLabel(m.status);
+              const canRefresh = m.provider === "tbank" && !!m.requestKey && m.status !== "active";
+              const err = methodError(m);
               return (
                 <li
                   key={m.id}
-                  className="flex items-center gap-3 rounded-md bg-muted/60 p-3 text-sm"
+                  className="rounded-md bg-muted/60 p-3 text-sm"
                   data-testid={`method-row-${m.id}`}
                 >
-                  {m.type === "card" ? (
-                    <CreditCard className="w-4 h-4 text-muted-foreground" />
-                  ) : (
-                    <Smartphone className="w-4 h-4 text-muted-foreground" />
+                  <div className="flex items-center gap-3">
+                    {m.type === "card" ? (
+                      <CreditCard className="w-4 h-4 text-muted-foreground" />
+                    ) : (
+                      <Smartphone className="w-4 h-4 text-muted-foreground" />
+                    )}
+                    <span className="font-mono">{m.label}</span>
+                    <span className={`text-xs flex items-center gap-1 ${st.cls}`}>
+                      {m.status === "pending" && <Clock className="w-3 h-3" />}
+                      {m.status === "failed" && <AlertCircle className="w-3 h-3" />}
+                      {st.text}
+                    </span>
+                    <span className="ml-auto text-xs text-muted-foreground">{fmtDate(m.createdAt)}</span>
+                    {canRefresh && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => refreshMut.mutate(m.id)}
+                        data-testid={`button-refresh-${m.id}`}
+                        title="Проверить статус"
+                      >
+                        {refreshMut.isPending && refreshMut.variables === m.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        )}
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => unlinkMut.mutate(m.id)}
+                      data-testid={`button-unlink-${m.id}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                  {m.status === "failed" && err && (
+                    <div
+                      className="mt-2 text-xs text-destructive flex items-start gap-1.5"
+                      data-testid={`method-error-${m.id}`}
+                    >
+                      <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                      <span>{err}</span>
+                    </div>
                   )}
-                  <span className="font-mono">{m.label}</span>
-                  <span className={`text-xs flex items-center gap-1 ${st.cls}`}>
-                    {m.status === "pending" && <Clock className="w-3 h-3" />}
-                    {st.text}
-                  </span>
-                  <span className="ml-auto text-xs text-muted-foreground">{fmtDate(m.createdAt)}</span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => unlinkMut.mutate(m.id)}
-                    data-testid={`button-unlink-${m.id}`}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
+                  {m.status === "pending" && (
+                    <div className="mt-2 text-xs text-muted-foreground" data-testid={`method-pending-hint-${m.id}`}>
+                      Если форма банка уже закрыта, нажмите «Проверить статус».
+                    </div>
+                  )}
                 </li>
               );
             })}
@@ -195,6 +286,21 @@ export function PaymentMethodsPage() {
       </Card>
     </div>
   );
+}
+
+// Render the stored T-Bank binding error for a failed method. Combines the
+// acquirer's message/details with a parenthetical code when present; these
+// fields come straight from T-Bank and carry no secret.
+function methodError(m: PaymentMethod): string {
+  const message = (m.lastErrorMessage || "").trim();
+  const details = (m.lastErrorDetails || "").trim();
+  const code = (m.lastErrorCode || "").trim();
+  const base = message || details || "Банк отклонил привязку карты.";
+  const extras = [
+    code ? `код ${code}` : "",
+    details && details !== base ? details : "",
+  ].filter(Boolean).join(", ");
+  return extras ? `${base} (${extras})` : base;
 }
 
 // apiRequest throws "<status>: <body>" — pull a human message out of the body.

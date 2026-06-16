@@ -276,3 +276,45 @@ export async function tbankAddCard(cfg: TbankConfig, input: AddCardInput): Promi
     CheckType: input.checkType ?? cfg.addCardCheckType,
   });
 }
+
+// Poll the status of a card binding started with AddCard. The acquirer accepts
+// ONLY TerminalKey + RequestKey (plus the injected Token) for /GetAddCardState
+// per the T-Bank spec (developer.tbank.ru/eacq). Sending anything else would
+// fold extra fields into our token while T-Bank signs only its own set — the
+// same code 204 "invalid token" trap as AddCard — so we sign and send exactly
+// RequestKey. On success the response carries Status, and once the card is
+// bound, CardId (and RebillId for HOLD/3DS). Used to resolve a method stuck on
+// "pending" when the notification webhook never arrived.
+export async function tbankGetAddCardState(
+  cfg: TbankConfig,
+  requestKey: string,
+): Promise<TbankResponse> {
+  return signedPost(cfg, "/GetAddCardState", { RequestKey: requestKey });
+}
+
+// Map a T-Bank AddCard binding response/notification to our lifecycle status.
+// A binding is "active" once the acquirer returns a CardId or a COMPLETED
+// status; it is "failed" on an explicit terminal rejection; everything else is
+// still in flight ("pending"). Keeping this in one place lets the notification
+// webhook and the GetAddCardState poller agree on what each state means.
+export type CardBindingOutcome = "active" | "failed" | "pending";
+
+const FAILED_BINDING_STATUSES: readonly string[] = [
+  "REJECTED",
+  "DEADLINE_EXPIRED",
+  "AUTH_FAIL",
+  "CANCELED",
+  "CANCELLED",
+];
+
+export function classifyCardBinding(args: {
+  status?: string;
+  cardId?: string;
+}): CardBindingOutcome {
+  const status = (args.status || "").trim().toUpperCase();
+  if (args.cardId || status === "COMPLETED" || status === "AUTHORIZED" || status === "CONFIRMED") {
+    return "active";
+  }
+  if (FAILED_BINDING_STATUSES.includes(status)) return "failed";
+  return "pending";
+}

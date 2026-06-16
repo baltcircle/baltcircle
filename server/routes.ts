@@ -13,11 +13,11 @@ import {
   createTicketSchema, updateTicketSchema, addTicketCommentSchema,
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
 } from "@shared/schema";
-import type { UserRole } from "@shared/schema";
+import type { UserRole, PaymentMethod } from "@shared/schema";
 import { sendOtpSms } from "./sms";
 import {
   getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
-  verifyNotificationToken,
+  tbankGetAddCardState, classifyCardBinding, verifyNotificationToken,
 } from "./tbank";
 import { log } from "./index";
 
@@ -282,6 +282,80 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
     // T-Bank expects the literal string "OK" with HTTP 200.
     res.status(200).type("text/plain").send("OK");
+  });
+
+  // Refresh a pending T-Bank card binding by polling GetAddCardState. This is
+  // the recovery path when the notification webhook never arrived (or the rider
+  // closed the tab before it landed), leaving a method stuck on "pending". The
+  // rider can refresh only their OWN method; staff may refresh any. The poll
+  // signs ONLY RequestKey (see tbankGetAddCardState) and we map the acquirer's
+  // Status/CardId to our lifecycle, persisting any error fields. Returns the
+  // updated method so the UI can re-render without a separate fetch.
+  app.post("/api/payment-methods/:id/refresh", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Требуется вход" });
+
+    const method = storage.getPaymentMethod(Number(req.params.id));
+    if (!method) return res.status(404).json({ error: "Способ оплаты не найден" });
+
+    const actor = storage.getUser(userId);
+    const isStaff = actor?.role === "admin" || actor?.role === "operator";
+    if (method.userId !== userId && !isStaff) {
+      return res.status(404).json({ error: "Способ оплаты не найден" });
+    }
+
+    if (method.provider !== "tbank" || !method.requestKey) {
+      return res.status(400).json({ error: "Для этого способа оплаты проверка статуса недоступна." });
+    }
+    if (method.status === "active") {
+      return res.json(method); // already resolved; nothing to poll
+    }
+
+    const cfg = getTbankConfig();
+    if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
+
+    let resp;
+    try {
+      resp = await tbankGetAddCardState(cfg, method.requestKey);
+    } catch (err: any) {
+      return res.status(502).json({ error: err?.message ?? "Не удалось проверить статус. Попробуйте позже." });
+    }
+
+    if (!resp.Success) {
+      // The poll itself was rejected (bad RequestKey, etc.). Surface the
+      // acquirer's reason but do NOT mark the method failed — the binding state
+      // is unknown, only our query failed.
+      return res.status(502).json(tbankErrorBody(resp));
+    }
+
+    const cardId = typeof resp.CardId === "string" ? resp.CardId : "";
+    const rebillId = resp.RebillId != null ? String(resp.RebillId) : "";
+    const status = typeof resp.Status === "string" ? resp.Status : "";
+    const pan = typeof resp.Pan === "string" ? resp.Pan : "";
+    const outcome = classifyCardBinding({ status, cardId });
+
+    if (outcome === "active") {
+      const updated = storage.updatePaymentMethod(method.id, {
+        status: "active",
+        cardId: cardId || method.cardId,
+        rebillId: rebillId || method.rebillId,
+        label: pan ? maskPan(pan) : method.label === "Карта (привязывается…)" ? "Карта" : method.label,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+        lastErrorDetails: null,
+      });
+      return res.json(updated);
+    }
+    if (outcome === "failed") {
+      const updated = storage.updatePaymentMethod(method.id, {
+        status: "failed",
+        ...bindingErrorPatch(resp),
+      });
+      return res.json(updated);
+    }
+    // Still pending — record any interim status detail and report unchanged.
+    const updated = storage.updatePaymentMethod(method.id, { status: "pending" });
+    return res.json(updated);
   });
 
   // -------------- Support tickets (rider help requests) --------------
@@ -671,23 +745,53 @@ function handleTbankNotification(body: Record<string, unknown>): void {
   const cardId = typeof body.CardId === "string" ? body.CardId : "";
   const rebillId = body.RebillId != null ? String(body.RebillId) : "";
   const pan = typeof body.Pan === "string" ? body.Pan : "";
+  // T-Bank may signal failure via Success=false even without a terminal Status.
+  const success = body.Success === false ? false : undefined;
 
   if (!customerKey) return;
   const pending = storage.findPendingCardMethod(customerKey);
   if (!pending) return;
 
-  // A binding succeeds once the acquirer returns a CardId; an explicit failure
-  // status marks it failed. Anything else (intermediate state) is ignored.
-  if (cardId) {
+  const outcome = classifyCardBinding({ status, cardId });
+  if (outcome === "active") {
     storage.updatePaymentMethod(pending.id, {
       status: "active",
-      cardId,
-      rebillId: rebillId || null,
+      cardId: cardId || pending.cardId,
+      rebillId: rebillId || pending.rebillId,
       label: pan ? maskPan(pan) : "Карта",
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      lastErrorDetails: null,
     });
-  } else if (status === "REJECTED" || status === "DEADLINE_EXPIRED") {
-    storage.updatePaymentMethod(pending.id, { status: "failed" });
+  } else if (outcome === "failed" || success === false) {
+    // An explicit rejection (or Success=false) ends the binding. Persist the
+    // acquirer's error fields so the rider/support can see *why* — never a
+    // secret, these come straight from T-Bank.
+    storage.updatePaymentMethod(pending.id, {
+      status: "failed",
+      ...bindingErrorPatch(body),
+    });
   }
+  // Otherwise an intermediate state — leave the method pending; the rider can
+  // refresh it explicitly or the next notification will resolve it.
+}
+
+// Extract T-Bank's error fields from a notification/state response into the
+// payment_methods error columns. Acquirer-produced, non-secret values only.
+function bindingErrorPatch(body: {
+  ErrorCode?: unknown;
+  Message?: unknown;
+  Details?: unknown;
+}): Pick<PaymentMethod, "lastErrorCode" | "lastErrorMessage" | "lastErrorDetails"> {
+  const str = (v: unknown) => {
+    const s = typeof v === "string" ? v.trim() : v != null ? String(v) : "";
+    return s && s !== "0" ? s : null;
+  };
+  return {
+    lastErrorCode: str(body.ErrorCode),
+    lastErrorMessage: str(body.Message),
+    lastErrorDetails: str(body.Details),
+  };
 }
 
 // Build a masked PAN label from a T-Bank-provided masked pan. T-Bank already

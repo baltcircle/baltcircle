@@ -457,7 +457,12 @@ export const paymentMethods = sqliteTable("payment_methods", {
   customerKey: text("customer_key"),         // T-Bank CustomerKey (== our user id)
   cardId: text("card_id"),                   // T-Bank CardId once the card is bound
   rebillId: text("rebill_id"),               // T-Bank RebillId for recurring charges (if returned)
-  requestKey: text("request_key"),           // AddCard RequestKey, to correlate the binding
+  requestKey: text("request_key"),           // AddCard RequestKey, to correlate the binding & poll GetAddCardState
+  // Last binding error from T-Bank (notification or GetAddCardState). Acquirer
+  // fields only — never a secret — so the UI/support can see WHY a bind failed.
+  lastErrorCode: text("last_error_code"),
+  lastErrorMessage: text("last_error_message"),
+  lastErrorDetails: text("last_error_details"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at"),          // unix ms of last status change
 });
