@@ -35,6 +35,14 @@ services:
       # key/password are empty the payment endpoints return 503 and the UI shows
       # "Платежи настраиваются" — the app keeps running.
       TBANK_TERMINAL_KEY: ${TBANK_TERMINAL_KEY:-}
+      # IMPORTANT — preserving a `$` in the password. The `${TBANK_PASSWORD:-}`
+      # form below reads the value from the HOST process environment and passes
+      # it through verbatim (Compose does not re-interpolate the substituted
+      # value), so a password like `$ecret` survives intact when exported in the
+      # shell that runs `docker compose`. The danger is a Compose `.env` file:
+      # Compose DOES interpolate `.env`, so a literal `$` there must be written
+      # as `$$` (e.g. TBANK_PASSWORD=$$ecret) or it will be mangled/truncated.
+      # Prefer host env (the deploy workflow injects GitHub secrets that way).
       TBANK_PASSWORD: ${TBANK_PASSWORD:-}
       # API base defaults to the production acquiring host inside the app when empty.
       TBANK_API_BASE: ${TBANK_API_BASE:-}

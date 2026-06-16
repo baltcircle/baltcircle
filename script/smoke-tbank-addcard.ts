@@ -1,12 +1,14 @@
 // Smoke test for the AddCard request payload shape.
 //
-// Verifies — without any real credentials — that tbankAddCard sends the params
-// T-Bank's /AddCard endpoint actually expects:
-//   - the AddCard-specific redirect fields SuccessAddCardURL / FailAddCardURL
-//     (NOT the generic SuccessURL / FailURL used by Init),
-//   - NotificationURL,
+// Verifies — without any real credentials — that tbankAddCard sends EXACTLY the
+// params T-Bank's /AddCard endpoint accepts and signs:
 //   - CustomerKey and a CheckType,
-//   - TerminalKey + a SHA-256 Token injected by signedPost.
+//   - TerminalKey + a SHA-256 Token injected by signedPost,
+//   - and NOTHING else. In particular the redirect/notification URLs
+//     (SuccessAddCardURL / FailAddCardURL / NotificationURL) must NOT be sent:
+//     they are not AddCard parameters per the T-Bank spec, and sending them
+//     folds them into our token while T-Bank signs only its own field set,
+//     producing code 204 "invalid token". This was the live bug.
 // It also checks that TBANK_ADD_CARD_CHECK_TYPE flows through getTbankConfig and
 // that parseCheckType normalizes/falls back correctly.
 //
@@ -66,34 +68,52 @@ try {
   assert(body.CustomerKey === "user-123", "payload carries CustomerKey");
   assert(body.CheckType === "3DS", "payload carries CheckType from config default");
 
-  // The core regression: AddCard-specific redirect field names.
-  assert(
-    body.SuccessAddCardURL === "https://app.test/payment-methods",
-    "payload uses SuccessAddCardURL (not generic SuccessURL)",
-  );
-  assert(
-    body.FailAddCardURL === "https://app.test/payment-methods",
-    "payload uses FailAddCardURL (not generic FailURL)",
-  );
+  // The core regression: redirect/notification URLs are NOT AddCard params and
+  // must never be sent (sending them breaks the token -> code 204).
+  assert(!("SuccessAddCardURL" in body), "payload does NOT include SuccessAddCardURL");
+  assert(!("FailAddCardURL" in body), "payload does NOT include FailAddCardURL");
+  assert(!("NotificationURL" in body), "payload does NOT include NotificationURL");
   assert(!("SuccessURL" in body), "payload does NOT include the generic SuccessURL");
   assert(!("FailURL" in body), "payload does NOT include the generic FailURL");
+
+  // AddCard sends exactly four root-level keys: the three signed fields plus Token.
   assert(
-    body.NotificationURL === "https://app.test/api/payments/tbank/notification",
-    "payload carries NotificationURL",
+    Object.keys(body).sort().join(",") === "CheckType,CustomerKey,TerminalKey,Token",
+    "payload contains exactly TerminalKey, CustomerKey, CheckType, Token",
   );
 
-  // Token must match a recomputation over the same payload (minus Token).
+  // Token must match a recomputation over the EXACT final payload (minus Token).
   const { Token, ...signable } = body as Record<string, unknown> & { Token?: string };
   assert(typeof Token === "string" && Token.length === 64, "payload carries a 64-hex Token");
   assert(
     computeToken(signable, cfg.password) === Token,
-    "payload Token matches a recomputed SHA-256 signature",
+    "payload Token matches a recomputed SHA-256 signature over the final payload",
   );
 
   // CheckType override is honoured.
   captured = null;
   await tbankAddCard(cfg, { customerKey: "user-9", checkType: "NO" });
   assert((captured as any)!.body.CheckType === "NO", "explicit checkType override is sent");
+
+  // A password containing '$' must be signed verbatim. This guards the failure
+  // mode where shell/compose interpolation silently mangles a $-prefixed secret:
+  // the code path here treats the value as opaque bytes, so the only place a `$`
+  // can be lost is delivery (env/compose), not the signing logic.
+  captured = null;
+  const dollarCfg: TbankConfig = { ...cfg, password: "$abc$def" };
+  await tbankAddCard(dollarCfg, { customerKey: "user-77" });
+  const dollarBody = (captured as any)!.body as Record<string, unknown>;
+  const { Token: dollarToken, ...dollarSignable } = dollarBody as Record<string, unknown> & {
+    Token?: string;
+  };
+  assert(
+    computeToken(dollarSignable, "$abc$def") === dollarToken,
+    "token is computed with a $-containing password used verbatim",
+  );
+  assert(
+    computeToken(dollarSignable, "abcdef") !== dollarToken,
+    "stripping the $ from the password changes the token (delivery must preserve $)",
+  );
 } finally {
   globalThis.fetch = realFetch;
 }

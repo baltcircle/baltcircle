@@ -78,4 +78,33 @@ assert(
   "verifyNotificationToken rejects a missing token",
 );
 
+// --- Password containing '$' is signed verbatim (no interpolation in code) ---
+// The signing logic treats the password as opaque bytes; a `$` is just another
+// character. This documents that any lost `$` is a delivery (env/compose) issue,
+// not a code issue. Uses an obvious non-secret value.
+const dollarParams = { TerminalKey: "T", CustomerKey: "u-1", CheckType: "3DS" };
+const dollarPassword = "$abc$def";
+const dollarExpected = createHash("sha256")
+  .update("3DS" + "u-1" + dollarPassword + "T", "utf8") // sorted: CheckType, CustomerKey, Password, TerminalKey
+  .digest("hex");
+assert(
+  computeToken(dollarParams, dollarPassword) === dollarExpected,
+  "computeToken signs a $-containing password verbatim",
+);
+assert(
+  computeToken(dollarParams, dollarPassword) !== computeToken(dollarParams, "abcdef"),
+  "dropping the $ chars yields a different token (delivery must preserve $)",
+);
+
+// --- null/undefined params do not participate in the token ---
+// computeToken drops undefined/null scalars, so absent optional fields must not
+// change the digest. (Empty-string pruning is handled separately by signedPost
+// before signing, keeping the signed set equal to the sent set.)
+const base = { TerminalKey: "T", CustomerKey: "u-1", CheckType: "3DS" };
+const withEmpties = { ...base, IP: undefined, ResidentState: null };
+assert(
+  computeToken(withEmpties as any, "pw") === computeToken(base, "pw"),
+  "computeToken ignores undefined/null params",
+);
+
 if (!process.exitCode) console.log("\nAll T-Bank token smoke checks passed.");

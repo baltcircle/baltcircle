@@ -77,6 +77,41 @@ export function isTbankConfigured(): boolean {
   return getTbankConfig() !== null;
 }
 
+// Non-secret diagnostics for operators to confirm the terminal is wired up
+// correctly WITHOUT exposing any secret. Crucially this never returns the
+// password or the full terminal key — only lengths and a short suffix, which is
+// enough to spot a truncated/whitespace-mangled value (e.g. a password whose
+// leading `$` was eaten by shell/compose interpolation would show a shorter
+// length than expected) without leaking anything usable.
+export interface TbankDiagnostics {
+  configured: boolean;
+  apiBase?: string;
+  checkType?: CardCheckType;
+  terminalKeyLength?: number;
+  terminalKeyLast4?: string;
+  passwordLength?: number;
+  // True when the configured password contains a `$`. A surprising false here
+  // (when you set a $-prefixed password) is a strong signal that env/compose
+  // interpolation stripped it. We expose only the boolean, never the value.
+  passwordHasDollar?: boolean;
+  publicAppUrl?: string;
+}
+
+export function getTbankDiagnostics(): TbankDiagnostics {
+  const cfg = getTbankConfig();
+  if (!cfg) return { configured: false };
+  return {
+    configured: true,
+    apiBase: cfg.apiBase,
+    checkType: cfg.addCardCheckType,
+    terminalKeyLength: cfg.terminalKey.length,
+    terminalKeyLast4: cfg.terminalKey.slice(-4),
+    passwordLength: cfg.password.length,
+    passwordHasDollar: cfg.password.includes("$"),
+    publicAppUrl: cfg.publicAppUrl,
+  };
+}
+
 // Values eligible for the token are scalars only. Nested objects/arrays (e.g.
 // Receipt, DATA) are excluded from the signature per the T-Kassa spec, as is
 // the Token field itself.
@@ -125,6 +160,21 @@ function stringifyScalar(v: string | number | boolean): string {
   return String(v);
 }
 
+// Drop null/undefined/empty-string scalar fields so they participate in neither
+// the token nor the request body. Nested objects/arrays are passed through
+// untouched (they never take part in the token but may be valid payload, e.g.
+// Receipt/DATA). Keeping the signed set === the sent set is what prevents code
+// 204 "invalid token".
+function pruneEmpty(params: TbankParams): TbankParams {
+  const out: TbankParams = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined) continue;
+    if (typeof value === "string" && value.length === 0) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 // Verify an inbound notification's Token against the recomputed signature.
 // Returns false when the token is missing or does not match.
 export function verifyNotificationToken(body: Record<string, unknown>, password: string): boolean {
@@ -153,14 +203,21 @@ export interface TbankResponse {
 // Low-level signed POST to a T-Kassa endpoint. Injects TerminalKey + Token,
 // sends JSON, and returns the parsed response. Throws a generic Error on
 // transport failure; the password is never included in any thrown message.
+//
+// The token is computed over the EXACT final payload that goes on the wire
+// (minus any null/undefined fields, which are dropped before both signing and
+// serialization). This guarantees the signed set and the sent set are identical
+// — a mismatch here is the classic cause of T-Kassa code 204 "invalid token".
 async function signedPost(
   cfg: TbankConfig,
   path: string,
   params: TbankParams,
 ): Promise<TbankResponse> {
-  const withTerminal: TbankParams = { TerminalKey: cfg.terminalKey, ...params };
-  const token = computeToken(withTerminal, cfg.password);
-  const payload = { ...withTerminal, Token: token };
+  // Build the final root-level param set, then drop empty values so they are
+  // neither signed nor sent (T-Kassa signs only the fields present in the body).
+  const finalParams = pruneEmpty({ TerminalKey: cfg.terminalKey, ...params });
+  const token = computeToken(finalParams, cfg.password);
+  const payload = { ...finalParams, Token: token };
 
   const url = `${cfg.apiBase}${path}`;
   let res: globalThis.Response;
@@ -199,27 +256,23 @@ export interface AddCardInput {
   // other valid values are NO, 3DSHOLD, HOLD. Defaults to cfg.addCardCheckType
   // (TBANK_ADD_CARD_CHECK_TYPE) when omitted.
   checkType?: CardCheckType;
-  // Optional override URLs; default to PUBLIC_APP_URL-derived endpoints. The
-  // rider is returned to /payment-methods after the hosted form; binding
-  // results arrive asynchronously on the notification endpoint.
-  successUrl?: string;
-  failUrl?: string;
-  notificationUrl?: string;
 }
 
 // Initiate card binding for a customer. Returns a PaymentURL the rider opens to
 // enter their card on T-Bank's hosted form (we never see the PAN/CVC).
 //
-// NOTE: AddCard uses its own redirect-URL field names — SuccessAddCardURL and
-// FailAddCardURL — NOT the generic SuccessURL/FailURL used by Init. Using the
-// generic names leaves the binding without return URLs, which is the root cause
-// of the hosted form failing to complete the redirect back to the app.
+// IMPORTANT — token correctness: the /AddCard method accepts ONLY TerminalKey,
+// CustomerKey, CheckType (plus optional IP/ResidentState) per the T-Bank spec
+// (developer.tbank.ru/eacq/api/add-card). The redirect fields SuccessAddCardURL
+// / FailAddCardURL / NotificationURL are NOT AddCard parameters — they belong to
+// Init. Sending them here folds them into our SHA-256 token while T-Bank signs
+// only its own known field set, so the signatures never match and the acquirer
+// answers code 204 "invalid token". Those URLs are configured on the terminal
+// in the merchant cabinet; binding results still arrive on our notification
+// endpoint. We therefore sign and send exactly the documented AddCard fields.
 export async function tbankAddCard(cfg: TbankConfig, input: AddCardInput): Promise<TbankResponse> {
   return signedPost(cfg, "/AddCard", {
     CustomerKey: input.customerKey,
     CheckType: input.checkType ?? cfg.addCardCheckType,
-    SuccessAddCardURL: input.successUrl ?? `${cfg.publicAppUrl}/payment-methods`,
-    FailAddCardURL: input.failUrl ?? `${cfg.publicAppUrl}/payment-methods`,
-    NotificationURL: input.notificationUrl ?? `${cfg.publicAppUrl}/api/payments/tbank/notification`,
   });
 }

@@ -16,7 +16,8 @@ import {
 import type { UserRole } from "@shared/schema";
 import { sendOtpSms } from "./sms";
 import {
-  getTbankConfig, isTbankConfigured, tbankAddCard, verifyNotificationToken,
+  getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
+  verifyNotificationToken,
 } from "./tbank";
 import { log } from "./index";
 
@@ -217,6 +218,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // of offering a flow that will 503. Never exposes the password/terminal key.
   app.get("/api/payments/tbank/config", (_req, res) => {
     res.json({ configured: isTbankConfigured() });
+  });
+
+  // Admin-only diagnostics to confirm the terminal credentials are wired up
+  // correctly. Returns ONLY non-secret metadata (lengths, last-4 of the terminal
+  // key, a passwordHasDollar flag) — never the password or full terminal key. A
+  // password whose leading `$` was stripped by shell/compose interpolation shows
+  // up as an unexpectedly short passwordLength or passwordHasDollar=false here.
+  app.get("/api/payments/tbank/diagnostics", requireRole("admin"), (_req, res) => {
+    res.json(getTbankDiagnostics());
   });
 
   // Start a card binding for the current registered rider. Calls AddCard with
