@@ -16,7 +16,21 @@ interface RidePaymentStatus {
   amountKopecks: number;
   rideId: number | null;
   error?: string;
+  // Acquirer failure detail (non-secret) for debugging declined payments.
+  errorCode?: string;
+  errorMessage?: string;
+  errorDetails?: string;
 }
+
+// Map a raw T-Bank status to a short Russian label for the result page. Unknown
+// statuses are shown verbatim so support still sees the acquirer's exact value.
+const STATUS_LABELS: Record<string, string> = {
+  REJECTED: "Отклонён",
+  CANCELED: "Отменён",
+  CANCELLED: "Отменён",
+  AUTH_FAIL: "Ошибка авторизации",
+  DEADLINE_EXPIRED: "Истёк срок оплаты",
+};
 
 // Landing page after the rider returns from T-Bank's hosted payment form.
 // The webhook may not have arrived yet, so we poll the order status until it
@@ -26,7 +40,26 @@ export function PaymentResultPage() {
   const search = useSearch();
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
-  const orderId = new URLSearchParams(search).get("orderId") ?? "";
+  const params = new URLSearchParams(search);
+  const orderId = params.get("orderId") ?? "";
+
+  // T-Bank may append acquirer fields to the FailURL it redirects back to
+  // (Success=false, ErrorCode, Message, Details). We surface these as a hint
+  // while the webhook is still in flight — the persisted order is authoritative
+  // once it settles, but this lets the rider/support see a reason immediately.
+  const redirectError = (() => {
+    const success = (params.get("Success") ?? "").toLowerCase();
+    const code = (params.get("ErrorCode") ?? "").trim();
+    const message = (params.get("Message") ?? "").trim();
+    const details = (params.get("Details") ?? "").trim();
+    const declined = success === "false" || (code !== "" && code !== "0");
+    if (!declined && !message && !details) return null;
+    return {
+      code: code && code !== "0" ? code : undefined,
+      message: message || undefined,
+      details: details || undefined,
+    };
+  })();
 
   const statusQ = useQuery<RidePaymentStatus>({
     queryKey: ["/api/payments/tbank/ride", orderId],
@@ -94,8 +127,16 @@ export function PaymentResultPage() {
           <XCircle className="w-12 h-12 mx-auto text-destructive opacity-80" />
           <div className="font-display text-xl font-light">Оплата не прошла</div>
           <div className="text-sm text-muted-foreground">
-            {statusQ.data?.error || "Платёж отклонён. Велосипед остался свободен — попробуйте ещё раз."}
+            {statusQ.data?.errorMessage ||
+              statusQ.data?.error ||
+              "Платёж отклонён. Велосипед остался свободен — попробуйте ещё раз."}
           </div>
+          <PaymentErrorDetails
+            code={statusQ.data?.errorCode ?? redirectError?.code}
+            message={statusQ.data?.errorMessage ?? redirectError?.message}
+            details={statusQ.data?.errorDetails ?? redirectError?.details}
+            status={statusQ.data?.status}
+          />
           <Button asChild variant="outline"><Link href="/">Выбрать велосипед</Link></Button>
         </Card>
       ) : (
@@ -106,10 +147,70 @@ export function PaymentResultPage() {
             Это занимает несколько секунд. Аренда начнётся автоматически, как только
             банк подтвердит платёж — страница обновится сама.
           </div>
+          {redirectError && (
+            <div className="text-sm text-muted-foreground">
+              Банк сообщил об отклонении. Подтверждаем окончательный статус…
+            </div>
+          )}
+          <PaymentErrorDetails
+            code={redirectError?.code}
+            message={redirectError?.message}
+            details={redirectError?.details}
+          />
           <Button variant="outline" onClick={() => statusQ.refetch()}>
             <RefreshCw className="w-4 h-4 mr-2" /> Обновить сейчас
           </Button>
         </Card>
+      )}
+    </div>
+  );
+}
+
+// Render the acquirer's failure detail (when available) as a compact, labelled
+// block: "Причина", "Код", "Статус". All values come from T-Bank and are
+// non-secret. Renders nothing when there is nothing useful to show.
+function PaymentErrorDetails({
+  code,
+  message,
+  details,
+  status,
+}: {
+  code?: string;
+  message?: string;
+  details?: string;
+  status?: string;
+}) {
+  const statusLabel =
+    status && status !== "failed"
+      ? STATUS_LABELS[status.toUpperCase()] ?? status
+      : undefined;
+  const reason = message || details;
+  if (!reason && !code && !statusLabel) return null;
+
+  return (
+    <div
+      className="text-left text-xs bg-muted/50 rounded-md p-3 space-y-1 text-muted-foreground"
+      data-testid="payment-result-error-detail"
+    >
+      {reason && (
+        <div>
+          <span className="font-medium text-foreground">Причина:</span> {reason}
+        </div>
+      )}
+      {details && message && details !== message && (
+        <div>
+          <span className="font-medium text-foreground">Детали:</span> {details}
+        </div>
+      )}
+      {code && (
+        <div>
+          <span className="font-medium text-foreground">Код:</span> {code}
+        </div>
+      )}
+      {statusLabel && (
+        <div>
+          <span className="font-medium text-foreground">Статус:</span> {statusLabel}
+        </div>
       )}
     </div>
   );

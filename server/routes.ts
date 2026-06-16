@@ -408,7 +408,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       tariffId: order.tariffId,
       amountKopecks: order.amountKopecks,
       rideId: order.rideId,
+      // Acquirer failure detail (non-secret values only) so the result page can
+      // show WHY a payment was declined — code/message/details for debugging
+      // test-card issues, plus a short human message in `error` for the headline.
       error: order.lastErrorMessage ?? undefined,
+      errorCode: order.lastErrorCode ?? undefined,
+      errorMessage: order.lastErrorMessage ?? undefined,
+      errorDetails: order.lastErrorDetails ?? undefined,
     });
   });
 
