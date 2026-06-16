@@ -21,6 +21,15 @@ services:
       # codes instead of sending SMS, so production must set SMS_PROVIDER=smsru.
       SMS_PROVIDER: ${SMS_PROVIDER:-}
       SMSRU_API_ID: ${SMSRU_API_ID:-}
+      # SigmaSMS provider config (used when SMS_PROVIDER=sigmasms). The static
+      # account token is SECRET and read from the host env (set by the deploy
+      # workflow from the GitHub `SIGMASMS` secret). SIGMASMS_TOKEN is an alias
+      # honoured first if present. Sender + API base are optional and default to
+      # "TakeRide" / the production host inside the app when empty.
+      SIGMASMS: ${SIGMASMS:-}
+      SIGMASMS_TOKEN: ${SIGMASMS_TOKEN:-}
+      SIGMASMS_SENDER: ${SIGMASMS_SENDER:-}
+      SIGMASMS_API_BASE: ${SIGMASMS_API_BASE:-}
       # Optional dedicated secret for hashing OTP codes; falls back to
       # SESSION_SECRET when unset.
       OTP_SECRET: ${OTP_SECRET:-}

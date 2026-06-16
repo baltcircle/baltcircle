@@ -28,7 +28,8 @@
     "smoke:tbank-addcard-state": "tsx script/smoke-tbank-addcard-state.ts",
     "smoke:tbank-bind-payment": "tsx script/smoke-tbank-bind-payment.ts",
     "smoke:tbank-ride-payment": "tsx script/smoke-tbank-ride-payment.ts",
-    "smoke:tbank-payment-orders-migration": "tsx script/smoke-tbank-payment-orders-migration.ts"
+    "smoke:tbank-payment-orders-migration": "tsx script/smoke-tbank-payment-orders-migration.ts",
+    "smoke:sigmasms": "tsx script/smoke-sigmasms.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
