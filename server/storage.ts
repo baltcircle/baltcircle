@@ -325,6 +325,34 @@ function migratePaymentMethodsTable() {
 }
 migratePaymentMethodsTable();
 
+// ---------- Payment orders column migration (ride pay-then-start) ----------
+// Earlier prototype DBs created payment_orders before the T-Bank Init metadata
+// columns existed (a previous attempt left a table without payment_id, etc.).
+// SQLite has no "ADD COLUMN IF NOT EXISTS", so inspect the table and add the
+// missing columns in place. Every column added here is nullable or has a
+// default, so the ALTERs are safe on a populated legacy table. The bare
+// CREATE TABLE IF NOT EXISTS above never alters an existing table, which is why
+// the in-place migration is required to fix the "no column named payment_id"
+// insert failure on production DBs.
+function migratePaymentOrdersTable() {
+  const cols = (sqlite.prepare("PRAGMA table_info(payment_orders)").all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  const addColumn = (name: string, ddl: string) => {
+    if (!cols.includes(name)) sqlite.exec(`ALTER TABLE payment_orders ADD COLUMN ${ddl}`);
+  };
+  addColumn("payment_id", "payment_id TEXT");
+  addColumn("payment_url", "payment_url TEXT");
+  addColumn("status", "status TEXT NOT NULL DEFAULT 'pending'");
+  addColumn("ride_id", "ride_id INTEGER");
+  addColumn("last_error_code", "last_error_code TEXT");
+  addColumn("last_error_message", "last_error_message TEXT");
+  addColumn("last_error_details", "last_error_details TEXT");
+  addColumn("amount_kopecks", "amount_kopecks INTEGER");
+  addColumn("updated_at", "updated_at INTEGER");
+}
+migratePaymentOrdersTable();
+
 const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
 
 // Bump this whenever the demo geography/seed data changes so existing

@@ -366,17 +366,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!resp.Success || !resp.PaymentURL) {
         return res.status(502).json(tbankErrorBody(resp));
       }
-      const order = storage.createRidePaymentOrder({
-        orderId,
-        userId: user.id,
-        bikeId: bike.id,
-        tariffId: tariffDef.id,
-        amountKopecks,
-      });
-      storage.updateRidePaymentOrder(order.id, {
-        paymentId: resp.PaymentId != null ? String(resp.PaymentId) : null,
-        paymentUrl: resp.PaymentURL,
-      });
+      try {
+        const order = storage.createRidePaymentOrder({
+          orderId,
+          userId: user.id,
+          bikeId: bike.id,
+          tariffId: tariffDef.id,
+          amountKopecks,
+        });
+        storage.updateRidePaymentOrder(order.id, {
+          paymentId: resp.PaymentId != null ? String(resp.PaymentId) : null,
+          paymentUrl: resp.PaymentURL,
+        });
+      } catch (dbErr) {
+        // The payment was created at T-Bank but we failed to persist the order
+        // locally (e.g. a legacy DB missing columns the startup migration should
+        // have added). Don't leak the raw SQLite error to the rider.
+        log(`[tbank] failed to persist ride payment order: ${(dbErr as Error)?.message ?? "?"}`, "tbank");
+        return res.status(500).json({ error: "Не удалось сохранить заказ оплаты. Попробуйте позже." });
+      }
       res.json({ orderId, paymentUrl: resp.PaymentURL, amountKopecks });
     } catch (err: any) {
       res.status(502).json({ error: err?.message ?? "Не удалось создать оплату. Попробуйте позже." });
