@@ -17,6 +17,7 @@ import {
   describeSigmaSmsError,
   describeFetchException,
   describeNonJsonBody,
+  sigmaSmsText,
   sigmaSmsRecipient,
   sigmaSmsApiBase,
   getSmsDiagnostics,
@@ -54,7 +55,33 @@ delete process.env.SIGMASMS_API_BASE;
   assert(req.body.recipient === PHONE, "body.recipient is the +7 phone");
   assert(req.body.type === "sms", "body.type is \"sms\"");
   assert(req.body.payload.sender === "TakeRide", "default sender is TakeRide");
-  assert(req.body.payload.text === otpMessage(CODE), "body.payload.text is the OTP message");
+  // TEMPORARY (SigmaSMS moderation test): SigmaSMS sends the fixed moderation
+  // test text, not the OTP message. The real OTP is still generated server-side.
+  assert(
+    req.body.payload.text === sigmaSmsText(CODE),
+    "body.payload.text is the SigmaSMS moderation test message",
+  );
+  assert(
+    req.body.payload.text !== otpMessage(CODE),
+    "SigmaSMS text is overridden, not the real OTP message",
+  );
+}
+
+// --- 1b. SigmaSMS message override (temporary moderation test) -------------
+{
+  delete process.env.SIGMASMS_MESSAGE_TEMPLATE;
+  assert(
+    sigmaSmsText(CODE) ===
+      "Это тестовое сообщение.\nИзменённый текст будет отправлен на модерацию.",
+    "default SigmaSMS text is the moderation test message with a newline",
+  );
+  assert(!sigmaSmsText(CODE).includes(CODE), "default SigmaSMS text does not contain the OTP code");
+  process.env.SIGMASMS_MESSAGE_TEMPLATE = "custom moderation text";
+  assert(
+    sigmaSmsText(CODE) === "custom moderation text",
+    "SIGMASMS_MESSAGE_TEMPLATE overrides the SigmaSMS text",
+  );
+  delete process.env.SIGMASMS_MESSAGE_TEMPLATE;
 }
 
 // --- 2. Sender + API base overrides + trailing-slash trimming -------------
