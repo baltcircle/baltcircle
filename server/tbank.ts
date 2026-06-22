@@ -524,6 +524,22 @@ export async function tbankGetAddCardState(
   return signedPost(cfg, "/GetAddCardState", { RequestKey: requestKey });
 }
 
+// Poll the status of a payment created with Init by its PaymentId. /GetState
+// accepts ONLY TerminalKey + PaymentId (plus the injected Token) per the T-Bank
+// spec — sending extra fields would fold them into our token while T-Bank signs
+// only its own set (the same code 204 "invalid token" trap), so we sign and send
+// exactly PaymentId. On success the response carries Status and, for a
+// Recurrent=Y verification payment, a RebillId (the recurring token) plus
+// CardId/Pan when available. Used to resolve an Init-bind method stuck on
+// "pending" when the notification webhook never arrived (the Init flow has a
+// PaymentId but no RequestKey, so GetAddCardState cannot resolve it).
+export async function tbankGetState(
+  cfg: TbankConfig,
+  paymentId: string,
+): Promise<TbankResponse> {
+  return signedPost(cfg, "/GetState", { PaymentId: paymentId });
+}
+
 // Map a T-Bank AddCard binding response/notification to our lifecycle status.
 // A binding is "active" once the acquirer returns a CardId or a COMPLETED
 // status; it is "failed" on an explicit terminal rejection; everything else is

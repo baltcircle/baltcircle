@@ -99,6 +99,57 @@ export function PaymentMethodsPage() {
       toast.toast({ title: "Не удалось проверить статус", description: cleanErr(e), variant: "destructive" }),
   });
 
+  // Re-check a pending Init-bind method (the primary bind-card-payment flow) by
+  // polling T-Bank GetState via its stored PaymentId. These rows have no
+  // RequestKey, so the AddCard /refresh above can't resolve them — this is the
+  // recovery path when the notification webhook never arrived.
+  const refreshBindMut = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("GET", `/api/payments/tbank/refresh-bind/${id}`);
+      return (await res.json()) as PaymentMethod;
+    },
+    onSuccess: (m) => {
+      queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+      if (m.status === "active") toast.toast({ title: "Карта привязана" });
+      else if (m.status === "failed")
+        toast.toast({ title: "Привязка не удалась", description: methodError(m), variant: "destructive" });
+    },
+  });
+
+  // Auto-reconcile pending Init-bind methods. When the rider lands back on this
+  // page (or it's open while a binding is in flight) we poll GetState every 2s
+  // for up to ~30s so a missed webhook still resolves the card without a manual
+  // reload. Stops as soon as no pending Init-bind method remains.
+  useEffect(() => {
+    const pending = methods.filter(
+      (m) => m.provider === "tbank" && m.status === "pending" && !m.requestKey && !!m.paymentId,
+    );
+    if (pending.length === 0) return;
+    let tries = 0;
+    let cancelled = false;
+    const tick = async () => {
+      await Promise.all(
+        pending.map((m) =>
+          apiRequest("GET", `/api/payments/tbank/refresh-bind/${m.id}`).catch(() => undefined),
+        ),
+      );
+      if (!cancelled) queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+    };
+    const interval = setInterval(() => {
+      if (++tries >= 15) {
+        clearInterval(interval);
+        return;
+      }
+      void tick();
+    }, 2000);
+    void tick();
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [methods]);
+
   // When T-Bank redirects the rider back to /payment-methods after the hosted
   // form, the Success/Fail URL may carry Success / RequestKey / ErrorCode query
   // params. We don't trust these for state changes (the notification webhook is
@@ -148,7 +199,12 @@ export function PaymentMethodsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [methods]);
 
-  const busy = bindCardMut.isPending || unlinkMut.isPending || refreshMut.isPending || redirecting;
+  const busy =
+    bindCardMut.isPending ||
+    unlinkMut.isPending ||
+    refreshMut.isPending ||
+    refreshBindMut.isPending ||
+    redirecting;
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-2xl mx-auto" data-testid="page-payment-methods">
@@ -175,6 +231,10 @@ export function PaymentMethodsPage() {
             {methods.map((m) => {
               const st = statusLabel(m.status);
               const canRefresh = m.provider === "tbank" && !!m.requestKey && m.status !== "active";
+              // Init-bind rows (the primary flow) have a PaymentId but no
+              // RequestKey — they're re-checked via GetState (/refresh-bind).
+              const canRefreshBind =
+                m.provider === "tbank" && !m.requestKey && !!m.paymentId && m.status !== "active";
               const err = methodError(m);
               return (
                 <li
@@ -211,6 +271,22 @@ export function PaymentMethodsPage() {
                         )}
                       </Button>
                     )}
+                    {canRefreshBind && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => refreshBindMut.mutate(m.id)}
+                        data-testid={`button-refresh-bind-${m.id}`}
+                        title="Проверить статус"
+                      >
+                        {refreshBindMut.isPending && refreshBindMut.variables === m.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        )}
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="outline"
@@ -232,7 +308,7 @@ export function PaymentMethodsPage() {
                   )}
                   {m.status === "pending" && (
                     <div className="mt-2 text-xs text-muted-foreground" data-testid={`method-pending-hint-${m.id}`}>
-                      {canRefresh
+                      {canRefresh || canRefreshBind
                         ? "Если форма банка уже закрыта, нажмите «Проверить статус»."
                         : "Статус обновится автоматически после подтверждения платежа банком."}
                     </div>

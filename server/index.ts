@@ -20,11 +20,25 @@ const httpServer = createServer(app);
 // registered rider stays logged in across deploys without re-registering.
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
 const SqliteStore = createSqliteStore(session);
+
+// Session signing secret. The dev default is a public string and must NEVER be
+// used in production — signing sessions with a known secret lets anyone forge a
+// session cookie. Fail fast at startup rather than silently running insecure.
+const DEV_SESSION_SECRET = "baltcircle-dev-session-secret";
+const sessionSecret = process.env.SESSION_SECRET || DEV_SESSION_SECRET;
+if (process.env.NODE_ENV === "production" && sessionSecret === DEV_SESSION_SECRET) {
+  console.error(
+    "FATAL: SESSION_SECRET is not set (or equals the public dev default) in production. " +
+      "Set a strong, secret SESSION_SECRET and restart. Refusing to start.",
+  );
+  process.exit(1);
+}
+
 app.set("trust proxy", 1);
 app.use(
   session({
     name: "bc.sid",
-    secret: process.env.SESSION_SECRET || "baltcircle-dev-session-secret",
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     store: new SqliteStore({

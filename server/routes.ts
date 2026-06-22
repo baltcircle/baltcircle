@@ -14,7 +14,7 @@ import {
   createTicketSchema, updateTicketSchema, addTicketCommentSchema,
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
 } from "@shared/schema";
-import type { UserRole, PaymentMethod, PaymentOrder } from "@shared/schema";
+import type { UserRole, PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
 import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./sms";
 import {
   getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
@@ -22,6 +22,7 @@ import {
   tbankInitBindCard, verifyNotificationToken, generateBindOrderId,
   tbankInitRidePayment, generateRideOrderId, classifyRidePayment,
   tbankInitSavedCardCharge, tbankCharge, generateSavedCardRideOrderId,
+  tbankGetState,
 } from "./tbank";
 import { log } from "./index";
 
@@ -30,6 +31,21 @@ import { log } from "./index";
 // MVP (map, demo rides, analytics) keeps working without registration.
 function riderId(req: Request): string {
   return req.session?.userId ?? "demo";
+}
+
+// True when the session belongs to operator/admin staff. Staff may read/manage
+// any rider's rides; ordinary riders are confined to their own.
+function isStaffSession(req: Request): boolean {
+  const id = req.session?.userId;
+  const user = id ? storage.getUser(id) : undefined;
+  return user?.role === "operator" || user?.role === "admin";
+}
+
+// Ownership guard for a ride: the acting rider owns it, or the caller is staff.
+// Uses riderId() (which falls back to "demo") so the public demo flow — where an
+// unregistered rider owns "demo" rides — keeps working.
+function canManageRide(req: Request, ride: Ride): boolean {
+  return ride.userId === riderId(req) || isStaffSession(req);
 }
 
 // Display name of the acting staff member for ticket history. Falls back to a
@@ -726,6 +742,84 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     return res.json(updated);
   });
 
+  // Refresh a pending Init-bind card binding by polling GetState with the stored
+  // PaymentId. This is the recovery path for the PRIMARY binding flow
+  // (POST /api/payments/tbank/bind-card-payment): its rows carry a PaymentId but
+  // NO RequestKey, so the AddCard-only /refresh above cannot resolve them. When
+  // the notification webhook never arrives (localhost, tunnel timeout, rider
+  // closed the tab) the method would otherwise stay "pending" with no RebillId
+  // forever. The rider can refresh only their OWN method; staff may refresh any.
+  // On AUTHORIZED/CONFIRMED with a RebillId we activate the method and persist
+  // rebillId/cardId/masked PAN. Returns the updated method so the UI re-renders.
+  app.get("/api/payments/tbank/refresh-bind/:paymentMethodId", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Требуется вход" });
+
+    const method = storage.getPaymentMethod(Number(req.params.paymentMethodId));
+    if (!method) return res.status(404).json({ error: "Способ оплаты не найден" });
+
+    const actor = storage.getUser(userId);
+    const isStaff = actor?.role === "admin" || actor?.role === "operator";
+    if (method.userId !== userId && !isStaff) {
+      return res.status(404).json({ error: "Способ оплаты не найден" });
+    }
+
+    if (method.provider !== "tbank" || !method.paymentId) {
+      return res.status(400).json({ error: "Для этого способа оплаты проверка статуса недоступна." });
+    }
+    if (method.status === "active") {
+      return res.json(method); // already resolved; nothing to poll
+    }
+
+    const cfg = getTbankConfig();
+    if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
+
+    let resp;
+    try {
+      resp = await tbankGetState(cfg, method.paymentId);
+    } catch (err: any) {
+      return res.status(502).json({ error: err?.message ?? "Не удалось проверить статус. Попробуйте позже." });
+    }
+
+    if (!resp.Success) {
+      // The poll itself was rejected (bad PaymentId, etc.). Surface the
+      // acquirer's reason but do NOT mark the method failed — the binding state
+      // is unknown, only our query failed.
+      return res.status(502).json(tbankErrorBody(resp));
+    }
+
+    const status = typeof resp.Status === "string" ? resp.Status : "";
+    const rebillId = resp.RebillId != null ? String(resp.RebillId) : "";
+    const cardId = typeof resp.CardId === "string" ? resp.CardId : "";
+    const pan = typeof resp.Pan === "string" ? resp.Pan : "";
+    // resp.Success is already true here (guarded above); classify by status only.
+    const outcome = classifyInitBinding({ status, rebillId });
+
+    if (outcome === "active") {
+      const updated = storage.updatePaymentMethod(method.id, {
+        status: "active",
+        rebillId: rebillId || method.rebillId,
+        cardId: cardId || method.cardId,
+        paymentId: method.paymentId,
+        label: pan ? maskPan(pan) : method.label === "Карта (привязывается…)" ? "Карта" : method.label,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+        lastErrorDetails: null,
+      });
+      return res.json(updated);
+    }
+    if (outcome === "failed") {
+      const updated = storage.updatePaymentMethod(method.id, {
+        status: "failed",
+        ...bindingErrorPatch(resp),
+      });
+      return res.json(updated);
+    }
+    // Still pending — the webhook may yet arrive; report unchanged.
+    const updated = storage.updatePaymentMethod(method.id, { status: "pending" });
+    return res.json(updated);
+  });
+
   // -------------- Support tickets (rider help requests) --------------
   app.get("/api/support/tickets", (req, res) => {
     res.json(storage.listSupportTickets(riderId(req)));
@@ -805,11 +899,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!b) return res.status(404).json({ error: "Велосипед не найден" });
     res.json(b);
   });
-  app.patch("/api/bikes/:id", (req, res) => {
-    const b = storage.updateBike(req.params.id, req.body);
-    if (!b) return res.status(404).json({ error: "Велосипед не найден" });
-    res.json(b);
-  });
+  // NOTE: there is intentionally no public PATCH /api/bikes/:id. Bike mutations
+  // go through the staff-guarded PATCH /api/admin/bikes/:id (validated +
+  // role-checked). An unguarded public PATCH passing req.body straight to
+  // updateBike was an unauthenticated mass-assignment hole and has been removed.
   // Public read: only active, non-archived parking points reach the customer
   // app. The admin page uses /api/admin/parkings for the full list.
   app.get("/api/parkings", (_req, res) => res.json(storage.listParkings()));
@@ -912,9 +1005,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // -------------- Rides --------------
   app.get("/api/rides", (req, res) => {
-    const userId = (req.query.userId as string) ?? undefined;
+    const requested = (req.query.userId as string) ?? undefined;
     const limit = req.query.limit ? Number(req.query.limit) : 100;
-    res.json(storage.listRides({ userId, limit }));
+    const staff = isStaffSession(req);
+    // An explicit userId filter may only target your own rides unless you are
+    // staff — otherwise it leaks any rider's history (IDOR).
+    if (requested !== undefined) {
+      if (!staff && requested !== riderId(req)) {
+        return res.status(403).json({ error: "Нет доступа" });
+      }
+      return res.json(storage.listRides({ userId: requested, limit }));
+    }
+    // No filter: staff get the full operational list; everyone else is confined
+    // to their own rides so an unfiltered call can't dump the whole table.
+    if (staff) return res.json(storage.listRides({ limit }));
+    return res.json(storage.listRides({ userId: riderId(req), limit }));
   });
   app.get("/api/rides/active", (req, res) => {
     const ride = storage.getActiveRide(riderId(req));
@@ -937,11 +1042,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const schema = z.object({ x: z.number(), y: z.number() });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
+    const ride = storage.getRide(Number(req.params.id));
+    if (!ride) return res.status(404).json({ error: "Поездка не активна" });
+    if (!canManageRide(req, ride)) return res.status(403).json({ error: "Нет доступа" });
     const r = storage.appendRidePoint(Number(req.params.id), parsed.data.x, parsed.data.y);
     if (!r) return res.status(404).json({ error: "Поездка не активна" });
     res.json(r);
   });
   app.post("/api/rides/:id/end", (req, res) => {
+    const ride = storage.getRide(Number(req.params.id));
+    if (!ride) return res.status(404).json({ error: "Поездка не активна" });
+    if (!canManageRide(req, ride)) return res.status(403).json({ error: "Нет доступа" });
     const r = storage.endRide(Number(req.params.id));
     if (!r) return res.status(404).json({ error: "Поездка не активна" });
     res.json(r);
