@@ -40,6 +40,9 @@ interface Props {
   showLabels?: boolean;
   interactive?: boolean;
   liveLocation?: { x: number; y: number } | null;
+  /** Initial/desired map center as real [lat, lng]. Defaults to REAL_CENTER.
+   *  Updates pan the map (e.g. once the rider's GPS position resolves). */
+  center?: [number, number] | null;
   /** When the user clicks the map, receive [lat, lng]. Enables editor mode. */
   onMapClick?: (coords: [number, number]) => void;
   /** Receives a function that returns the current map center as [lat, lng].
@@ -76,7 +79,7 @@ export function YandexMap(props: Props) {
     bikes = [], parkings = [], ride = null, activeRides = [], tickets = [],
     mapObjects = [], layers = {},
     selectedBikeId, onSelectBike, onSelectParking, onSelectRide, onSelectTicket,
-    height = 520, interactive = true, onMapClick, onCenterGetter,
+    height = 520, interactive = true, onMapClick, onCenterGetter, center = null,
   } = props;
 
   // A layer renders unless its flag is explicitly false (default: visible).
@@ -128,7 +131,7 @@ export function YandexMap(props: Props) {
         const map = new ymaps.Map(
           containerRef.current,
           {
-            center: REAL_CENTER,
+            center: center ?? REAL_CENTER,
             zoom: 12,
             controls: [],
           },
@@ -205,6 +208,13 @@ export function YandexMap(props: Props) {
     renderSavedObjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, mapObjects, show.objects]);
+
+  // Pan to the desired center once the map is ready and whenever it changes
+  // (e.g. the rider's GPS position resolves after init).
+  useEffect(() => {
+    if (!ready || !center || !mapRef.current) return;
+    try { mapRef.current.setCenter(center); } catch { /* ignore */ }
+  }, [ready, center]);
 
   function renderSavedObjects() {
     const ymaps = ymapsRef.current;
