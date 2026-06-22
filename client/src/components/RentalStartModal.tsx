@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
-import type { Bike } from "@shared/schema";
-import { TBANK_CONFIG_KEY, type TbankConfigResponse } from "@/lib/payment";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import type { Bike, PaymentMethod } from "@shared/schema";
+import {
+  TBANK_CONFIG_KEY, PAYMENT_METHODS_KEY, type TbankConfigResponse,
+} from "@/lib/payment";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -29,12 +32,26 @@ interface RideInitResponse {
   amountKopecks: number;
 }
 
+interface ChargeSavedCardResponse {
+  orderId: string;
+  status: "paid" | "pending";
+  rideId?: number;
+  amountKopecks: number;
+}
+
 export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
   const toast = useToast();
+  const [, navigate] = useLocation();
   const [tariff, setTariff] = useState<Tariff["id"]>("h1");
+  // When the rider has a saved card we default to charging it; this lets them
+  // opt into the hosted form ("pay with another card") instead.
+  const [useOtherCard, setUseOtherCard] = useState(false);
 
   useEffect(() => {
-    if (open) setTariff("h1");
+    if (open) {
+      setTariff("h1");
+      setUseOtherCard(false);
+    }
   }, [open]);
 
   // Whether real T-Bank acquiring is configured. When it isn't, we surface a
@@ -45,6 +62,17 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
     enabled: open,
   });
   const paymentsConfigured = configQ.data?.configured ?? false;
+
+  // The rider's linked payment methods, used to detect a saved card eligible for
+  // a one-tap recurring charge (active T-Bank card with a RebillId).
+  const methodsQ = useQuery<PaymentMethod[]>({
+    queryKey: PAYMENT_METHODS_KEY,
+    enabled: open,
+  });
+  const savedCard = (methodsQ.data ?? []).find(
+    (m) => m.type === "card" && m.status === "active" && m.provider === "tbank" && !!m.rebillId,
+  );
+  const useSavedCard = !!savedCard && !useOtherCard;
 
   // Pay-then-start: create a T-Bank payment for the selected tariff and send the
   // rider to T-Bank's hosted form. The ride only starts after the payment is
@@ -69,9 +97,44 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
     },
   });
 
-  const submitting = payMut.isPending;
+  // One-tap charge against the saved card. On a synchronous "paid" the ride is
+  // already started server-side, so we refresh the active-ride query, close the
+  // modal and route into the ride. A "pending" charge (e.g. 3DS step-up) sends
+  // the rider to the result page which polls until the webhook resolves it.
+  const chargeMut = useMutation<ChargeSavedCardResponse, Error, void>({
+    mutationFn: async () => {
+      if (!bike) throw new Error("Велосипед не выбран");
+      const res = await apiRequest("POST", "/api/payments/tbank/ride/charge-saved-card", {
+        bikeId: bike.id,
+        tariffId: tariff,
+        paymentMethodId: savedCard?.id,
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+      if (data.status === "paid") {
+        toast.toast({ title: "Оплачено", description: "Аренда началась." });
+        onOpenChange(false);
+        navigate("/rent");
+      } else {
+        // Deferred — let the result page poll the order to completion.
+        navigate(`/payment-result?orderId=${encodeURIComponent(data.orderId)}`);
+      }
+    },
+    onError: (err) => {
+      toast.toast({ title: "Не удалось списать оплату", description: cleanErr(err), variant: "destructive" });
+    },
+  });
+
+  const submitting = payMut.isPending || chargeMut.isPending;
   const selectedTariff = TARIFFS.find((t) => t.id === tariff);
   const canPay = !!bike && bike.status === "available" && paymentsConfigured && !submitting;
+
+  function onPrimary() {
+    if (useSavedCard) chargeMut.mutate();
+    else payMut.mutate();
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -182,11 +245,32 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
           </li>
         </ul>
 
-        {/* Error state if creating the payment fails. */}
-        {payMut.isError && (
+        {/* Saved card: when present, show it as the default payment source with a
+            one-tap charge, plus an opt-out to the hosted form. */}
+        {paymentsConfigured && savedCard && (
+          <div className="rounded-xl border border-card-border bg-muted/40 p-3 text-xs space-y-1.5" data-testid="rental-saved-card">
+            <div className="flex items-center gap-2">
+              <CreditCard className="w-3.5 h-3.5 shrink-0" />
+              <span className="font-medium text-foreground">{savedCard.label}</span>
+              {useSavedCard && <Check className="w-3.5 h-3.5 text-primary ml-auto" />}
+            </div>
+            <button
+              type="button"
+              className="text-muted-foreground underline-offset-2 hover:underline"
+              onClick={() => setUseOtherCard((v) => !v)}
+              disabled={submitting}
+              data-testid="button-toggle-other-card"
+            >
+              {useSavedCard ? "Оплатить другой картой" : "Списать с сохранённой карты"}
+            </button>
+          </div>
+        )}
+
+        {/* Error state if creating the payment / charging the card fails. */}
+        {(payMut.isError || chargeMut.isError) && (
           <div className="rounded-md bg-destructive/10 text-destructive text-xs p-2.5 flex items-start gap-1.5" data-testid="rental-start-error">
             <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <span>{cleanErr(payMut.error)}</span>
+            <span>{cleanErr((payMut.error ?? chargeMut.error) as Error)}</span>
           </div>
         )}
 
@@ -194,11 +278,19 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
           <Button
             className="w-full"
             disabled={!canPay}
-            onClick={() => payMut.mutate()}
+            onClick={onPrimary}
             data-testid="button-start-rental"
           >
             {submitting ? (
-              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Переходим к оплате…</>
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                {useSavedCard ? "Списываем оплату…" : "Переходим к оплате…"}
+              </>
+            ) : useSavedCard ? (
+              <>
+                <CreditCard className="w-4 h-4 mr-2" />
+                Начать аренду — списать{selectedTariff ? ` ${selectedTariff.price} ₽` : ""}
+              </>
             ) : (
               <>
                 <CreditCard className="w-4 h-4 mr-2" />

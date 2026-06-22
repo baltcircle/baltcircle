@@ -72,6 +72,9 @@ async function main() {
   for (const col of [
     "payment_id",
     "payment_url",
+    "source",
+    "payment_method_id",
+    "rebill_id",
     "status",
     "ride_id",
     "last_error_code",
@@ -105,6 +108,23 @@ async function main() {
   });
   assert(updated?.paymentId === "999888777", "updateRidePaymentOrder persists payment_id");
   assert(updated?.paymentUrl === "https://securepay.tinkoff.ru/abc", "updateRidePaymentOrder persists payment_url");
+
+  // ---- 5. A saved-card order records its source + RebillId reference ----
+  const savedOrder = storage.createRidePaymentOrder({
+    orderId: "SMOKE-ORDER-SAVED-1",
+    userId: "smoke-user",
+    bikeId: "BC-003",
+    tariffId: "h3",
+    amountKopecks: 80000,
+    source: "saved_card",
+    paymentMethodId: 42,
+    rebillId: "555000",
+  });
+  assert(savedOrder.source === "saved_card", "saved-card order records source=saved_card");
+  assert(savedOrder.paymentMethodId === 42, "saved-card order records the payment_method_id");
+  assert(savedOrder.rebillId === "555000", "saved-card order records the rebill_id reference");
+  // The hosted path keeps defaulting to source=hosted.
+  assert(order.source === "hosted", "hosted order defaults to source=hosted");
 
   if (!process.exitCode) console.log("\nAll payment_orders migration smoke checks passed.");
 }

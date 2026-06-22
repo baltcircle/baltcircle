@@ -505,6 +505,13 @@ export const paymentOrders = sqliteTable("payment_orders", {
   amountKopecks: integer("amount_kopecks").notNull(),
   paymentId: text("payment_id"),                  // T-Bank PaymentId returned by Init
   paymentUrl: text("payment_url"),                // hosted PaymentURL the rider opens (not a secret)
+  // How the rider paid: "hosted" = T-Bank hosted form (default MVP path);
+  // "saved_card" = recurring Charge against a stored RebillId (no hosted form).
+  source: text("source").notNull().default("hosted"),
+  // For saved-card charges: which payment method (and its RebillId) was charged.
+  // The RebillId is a recurring token, NOT card data — no PAN/CVC is ever stored.
+  paymentMethodId: integer("payment_method_id"),
+  rebillId: text("rebill_id"),                    // RebillId used for the saved-card charge
   status: text("status").notNull().default("pending"), // pending | paid | failed
   rideId: integer("ride_id"),                     // set once the paid ride is started
   // Last acquirer error (notification/Init), non-secret values only.
@@ -524,6 +531,17 @@ export const rideInitPaymentSchema = z.object({
   tariffId: z.enum(["h1", "h2", "h3"]),
 });
 export type RideInitPaymentInput = z.infer<typeof rideInitPaymentSchema>;
+
+// Start a ride by charging the rider's SAVED card (stored RebillId) for the
+// chosen tariff — no hosted form. Only the bike + tariff are required; the
+// amount/price is resolved authoritatively server-side. paymentMethodId is
+// optional: when omitted the server uses the rider's most recent active card.
+export const rideChargeSavedCardSchema = z.object({
+  bikeId: z.string().trim().min(1, "Укажите велосипед").max(20),
+  tariffId: z.enum(["h1", "h2", "h3"]),
+  paymentMethodId: z.number().int().positive().optional(),
+});
+export type RideChargeSavedCardInput = z.infer<typeof rideChargeSavedCardSchema>;
 
 /* ------- SUPPORT TICKETS (rider help requests) ------- */
 // Lightweight contact form persistence for the current user. Riders can submit

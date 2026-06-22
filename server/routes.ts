@@ -9,6 +9,7 @@ import {
   adminSetRoleSchema, adminSetBlockedSchema,
   phoneChangeStartSchema, phoneChangeVerifySchema,
   linkPaymentMethodSchema, createSupportTicketSchema, rideInitPaymentSchema,
+  rideChargeSavedCardSchema,
   adminCreateBikeSchema, adminUpdateBikeSchema,
   createTicketSchema, updateTicketSchema, addTicketCommentSchema,
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
@@ -20,6 +21,7 @@ import {
   tbankGetAddCardState, classifyCardBinding, classifyInitBinding,
   tbankInitBindCard, verifyNotificationToken, generateBindOrderId,
   tbankInitRidePayment, generateRideOrderId, classifyRidePayment,
+  tbankInitSavedCardCharge, tbankCharge, generateSavedCardRideOrderId,
 } from "./tbank";
 import { log } from "./index";
 
@@ -458,6 +460,142 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json({ orderId, paymentUrl: resp.PaymentURL, amountKopecks });
     } catch (err: any) {
       res.status(502).json({ error: err?.message ?? "Не удалось создать оплату. Попробуйте позже." });
+    }
+  });
+
+  // Start a ride by charging the rider's SAVED card (stored RebillId) for the
+  // chosen tariff — the recurring (merchant-initiated) flow, no hosted form. We
+  // validate the rider/bike/tariff exactly like ride/init, resolve the price
+  // server-side, then run Init + Charge against the saved card's RebillId. On a
+  // synchronous CONFIRMED/AUTHORIZED we start the ride immediately and return it.
+  // On a deferred state we leave the order pending and the notification webhook
+  // finishes it. On failure we surface the acquirer's sanitized reason and leave
+  // the bike available. No card data is ever touched — only the RebillId token.
+  app.post("/api/payments/tbank/ride/charge-saved-card", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Требуется вход" });
+    const user = storage.getUser(userId);
+    if (!user) return res.status(401).json({ error: "Требуется вход" });
+    if (user.blockedAt) {
+      return res.status(403).json({ error: "Аккаунт заблокирован. Обратитесь в поддержку." });
+    }
+
+    const parsed = rideChargeSavedCardSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+
+    const bike = storage.getBike(parsed.data.bikeId);
+    if (!bike) return res.status(404).json({ error: "Велосипед не найден" });
+    if (bike.status !== "available" && bike.status !== "reserved") {
+      return res.status(409).json({ error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` });
+    }
+    if (storage.getActiveRide(userId)) {
+      return res.status(409).json({ error: "У вас уже есть активная поездка" });
+    }
+
+    const tariffDef = TARIFFS.find((t) => t.id === parsed.data.tariffId);
+    if (!tariffDef) return res.status(400).json({ error: "Неизвестный тариф" });
+    const amountKopecks = Math.round(tariffDef.price * 100);
+
+    const cfg = getTbankConfig();
+    if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
+
+    // Resolve a usable saved card (active T-Bank method with a RebillId). When
+    // none exists the client should fall back to the hosted payment flow.
+    const card = storage.getActiveSavedCard(userId, parsed.data.paymentMethodId);
+    if (!card || !card.rebillId) {
+      return res.status(409).json({ error: "Нет сохранённой карты для списания. Оплатите другой картой." });
+    }
+
+    const orderId = generateSavedCardRideOrderId();
+
+    try {
+      // Step 1: Init registers the payment object and yields a PaymentId.
+      const init = await tbankInitSavedCardCharge(cfg, {
+        orderId,
+        amountKopecks,
+        customerKey: card.customerKey ?? user.id,
+        description: `Аренда велосипеда ${bike.id} • ${tariffDef.name}`,
+        notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
+      });
+      if (!init.Success || init.PaymentId == null) {
+        return res.status(502).json(tbankErrorBody(init));
+      }
+      const paymentId = String(init.PaymentId);
+
+      // Persist the pending order BEFORE charging so a confirming webhook that
+      // races our synchronous response can correlate by OrderId.
+      let order: PaymentOrder;
+      try {
+        order = storage.createRidePaymentOrder({
+          orderId,
+          userId: user.id,
+          bikeId: bike.id,
+          tariffId: tariffDef.id,
+          amountKopecks,
+          source: "saved_card",
+          paymentMethodId: card.id,
+          rebillId: card.rebillId,
+        });
+        storage.updateRidePaymentOrder(order.id, { paymentId });
+      } catch (dbErr) {
+        log(`[tbank] failed to persist saved-card order: ${(dbErr as Error)?.message ?? "?"}`, "tbank");
+        return res.status(500).json({ error: "Не удалось сохранить заказ оплаты. Попробуйте позже." });
+      }
+
+      // Step 2: Charge debits the saved card using PaymentId + RebillId.
+      const charge = await tbankCharge(cfg, { paymentId, rebillId: card.rebillId });
+      const status = typeof charge.Status === "string" ? charge.Status : "";
+      const outcome = classifyRidePayment({ status, success: charge.Success === false ? false : undefined });
+
+      if (outcome === "paid") {
+        // Start the ride now (guarded — a racing webhook cannot double-start).
+        let rideId = order.rideId ?? null;
+        if (rideId == null) {
+          const existing = storage.getActiveRide(user.id);
+          if (existing && existing.bikeId === bike.id) {
+            rideId = existing.id;
+          } else {
+            const started = storage.startRide({ bikeId: bike.id, userId: user.id, tariff: tariffDef.id });
+            if ("error" in started) {
+              storage.updateRidePaymentOrder(order.id, {
+                status: "paid",
+                paymentId,
+                lastErrorMessage: started.error,
+              });
+              return res.status(409).json({ error: started.error });
+            }
+            rideId = started.id;
+          }
+        }
+        storage.updateRidePaymentOrder(order.id, {
+          status: "paid",
+          paymentId,
+          rideId,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+          lastErrorDetails: null,
+        });
+        return res.json({ orderId, status: "paid", rideId, amountKopecks });
+      }
+
+      if (outcome === "failed") {
+        storage.updateRidePaymentOrder(order.id, {
+          status: "failed",
+          paymentId,
+          ...bindingErrorPatch(charge),
+        });
+        // 402 Payment Required — the charge was declined; bike stays available.
+        return res.status(402).json(tbankErrorBody(charge));
+      }
+
+      // Deferred (e.g. 3DS step-up). Leave pending; the webhook resolves it and
+      // the client polls the status endpoint below.
+      return res.json({ orderId, status: "pending", amountKopecks });
+    } catch (err: any) {
+      return res.status(502).json({ error: err?.message ?? "Не удалось списать оплату. Попробуйте позже." });
     }
   });
 

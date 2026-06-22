@@ -187,6 +187,9 @@ CREATE TABLE IF NOT EXISTS payment_orders (
   amount_kopecks INTEGER NOT NULL,
   payment_id TEXT,
   payment_url TEXT,
+  source TEXT NOT NULL DEFAULT 'hosted',
+  payment_method_id INTEGER,
+  rebill_id TEXT,
   status TEXT NOT NULL DEFAULT 'pending',
   ride_id INTEGER,
   last_error_code TEXT,
@@ -368,6 +371,9 @@ function migratePaymentOrdersTable() {
   };
   addColumn("payment_id", "payment_id TEXT");
   addColumn("payment_url", "payment_url TEXT");
+  addColumn("source", "source TEXT NOT NULL DEFAULT 'hosted'");
+  addColumn("payment_method_id", "payment_method_id INTEGER");
+  addColumn("rebill_id", "rebill_id TEXT");
   addColumn("status", "status TEXT NOT NULL DEFAULT 'pending'");
   addColumn("ride_id", "ride_id INTEGER");
   addColumn("last_error_code", "last_error_code TEXT");
@@ -703,13 +709,18 @@ export interface IStorage {
   findCardMethodByOrderId(orderId: string): PaymentMethod | undefined;
   findCardMethodByRequestKey(userId: string, requestKey: string): PaymentMethod | undefined;
   updatePaymentMethod(id: number, patch: Partial<PaymentMethod>): PaymentMethod | undefined;
-  // T-Bank ordinary ride payment orders (pay-then-start, no saved card)
+  // The rider's saved T-Bank card usable for a recurring charge (active + RebillId)
+  getActiveSavedCard(userId: string, paymentMethodId?: number): PaymentMethod | undefined;
+  // T-Bank ride payment orders (hosted pay-then-start AND saved-card charge)
   createRidePaymentOrder(input: {
     orderId: string;
     userId: string;
     bikeId: string;
     tariffId: string;
     amountKopecks: number;
+    source?: "hosted" | "saved_card";
+    paymentMethodId?: number;
+    rebillId?: string;
   }): PaymentOrder;
   getRidePaymentOrder(orderId: string): PaymentOrder | undefined;
   updateRidePaymentOrder(id: number, patch: Partial<PaymentOrder>): PaymentOrder | undefined;
@@ -1188,6 +1199,11 @@ export class DatabaseStorage implements IStorage {
     bikeId: string;
     tariffId: string;
     amountKopecks: number;
+    // "hosted" (default) for the hosted-form path; "saved_card" for a recurring
+    // charge against a stored RebillId.
+    source?: "hosted" | "saved_card";
+    paymentMethodId?: number;
+    rebillId?: string;
   }) {
     const now = Date.now();
     return db.insert(paymentOrders).values({
@@ -1196,10 +1212,31 @@ export class DatabaseStorage implements IStorage {
       bikeId: input.bikeId,
       tariffId: input.tariffId,
       amountKopecks: input.amountKopecks,
+      source: input.source ?? "hosted",
+      paymentMethodId: input.paymentMethodId ?? null,
+      rebillId: input.rebillId ?? null,
       status: "pending",
       createdAt: now,
       updatedAt: now,
     } as any).returning().get() as PaymentOrder;
+  }
+
+  // Resolve the rider's saved T-Bank card eligible for a recurring charge: an
+  // active card-type method with a RebillId. When paymentMethodId is given it
+  // must belong to the rider and be active with a RebillId; otherwise the most
+  // recent qualifying card is returned. Returns undefined when no usable saved
+  // card exists (the caller then falls back to the hosted payment flow).
+  getActiveSavedCard(userId: string, paymentMethodId?: number) {
+    if (paymentMethodId != null) {
+      const m = this.getPaymentMethod(paymentMethodId);
+      if (!m || m.userId !== userId) return undefined;
+      if (m.provider !== "tbank" || m.status !== "active" || !m.rebillId) return undefined;
+      return m;
+    }
+    return db.select().from(paymentMethods)
+      .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.provider} = 'tbank' AND ${paymentMethods.status} = 'active' AND ${paymentMethods.rebillId} IS NOT NULL AND ${paymentMethods.rebillId} != ''`)
+      .orderBy(desc(paymentMethods.createdAt))
+      .get() as PaymentMethod | undefined;
   }
 
   getRidePaymentOrder(orderId: string) {

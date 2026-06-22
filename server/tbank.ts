@@ -414,6 +414,82 @@ export async function tbankInitRidePayment(
   });
 }
 
+// Build a compact, collision-resistant OrderId for a SAVED-CARD ride payment
+// (recurring charge via a stored RebillId). Same constraints as the other
+// generators — <= 50 chars, ASCII latin/digits/dash only. A distinct "TRSC"
+// (TakeRide Saved Card) prefix lets the notification handler/logs tell a
+// recurring saved-card charge apart from a hosted ride payment at a glance.
+export function generateSavedCardRideOrderId(): string {
+  const ts = Date.now().toString(36); // ~8 chars through year ~2059
+  let rand = "";
+  while (rand.length < 6) rand += randomInt(36).toString(36);
+  return `TRSC-${ts}-${rand.slice(0, 6)}`; // e.g. TRSC-lk3p9q2-a8f1zq (~20 chars)
+}
+
+export interface InitSavedCardChargeInput {
+  // Our order id for this saved-card charge (unique per attempt, <= 50 chars).
+  orderId: string;
+  // Amount in kopecks for the tariff (e.g. 35000 = 350 ₽).
+  amountKopecks: number;
+  description: string;
+  // CustomerKey ties the charge to the rider whose card we're charging; it must
+  // match the CustomerKey the RebillId was issued under.
+  customerKey: string;
+  // Where T-Bank POSTs the asynchronous result (CONFIRMED/REJECTED). The Charge
+  // call below is usually synchronous, but a NotificationURL keeps us correct if
+  // the acquirer defers (e.g. 3DS step-up on a recurring charge).
+  notificationUrl: string;
+}
+
+// Create the payment object for a recurring (merchant-initiated) charge against
+// a SAVED card via /Init, then /Charge with the RebillId. This is the two-step
+// recurrent flow: Init registers the payment (NO Recurrent=Y — that flag is only
+// for the PARENT credential-capturing payment) and returns a PaymentId; Charge
+// then debits the stored card using PaymentId + RebillId without the rider
+// re-entering any card data.
+//
+// OperationInitiatorType="R" marks this as MIT (merchant-initiated) recurring,
+// the value required by the T-Bank spec for a recurring charge that reuses a
+// previously captured credential (the parent capture used "1"/CIT). Token
+// correctness: Init signs only ROOT-LEVEL scalar params and signedPost signs the
+// exact payload sent, so the signed set === the sent set (avoids code 204).
+export async function tbankInitSavedCardCharge(
+  cfg: TbankConfig,
+  input: InitSavedCardChargeInput,
+): Promise<TbankResponse> {
+  return signedPost(cfg, "/Init", {
+    Amount: input.amountKopecks,
+    OrderId: input.orderId,
+    Description: input.description,
+    CustomerKey: input.customerKey,
+    OperationInitiatorType: "R",
+    NotificationURL: input.notificationUrl,
+  });
+}
+
+export interface ChargeInput {
+  // PaymentId returned by the preceding Init for this charge.
+  paymentId: string;
+  // The stored recurring token issued when the rider's card was bound.
+  rebillId: string;
+}
+
+// Debit a saved card via /Charge using the PaymentId from Init plus the stored
+// RebillId. No card data is involved — the RebillId is the recurring token. On
+// success the response Status is AUTHORIZED/CONFIRMED (synchronous capture);
+// classifyRidePayment maps those to "paid". A deferred/3DS charge returns a
+// non-terminal status and the result arrives later on the NotificationURL.
+//
+// Token correctness: Charge signs only ROOT-LEVEL scalar params (TerminalKey is
+// injected by signedPost); we sign and send exactly PaymentId + RebillId so the
+// signed set === the sent set (avoids code 204 "invalid token").
+export async function tbankCharge(cfg: TbankConfig, input: ChargeInput): Promise<TbankResponse> {
+  return signedPost(cfg, "/Charge", {
+    PaymentId: input.paymentId,
+    RebillId: input.rebillId,
+  });
+}
+
 // Map an ordinary ride-payment notification/state to our order lifecycle. The
 // payment is "paid" once it reaches AUTHORIZED or CONFIRMED (we start the ride
 // on either — AUTHORIZED is a held auth, CONFIRMED a captured one; for the MVP
