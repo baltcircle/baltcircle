@@ -750,6 +750,7 @@ export interface IStorage {
   startRide(input: { bikeId: string; userId: string; tariff: string }): Ride | { error: string };
   appendRidePoint(rideId: number, x: number, y: number): Ride | undefined;
   endRide(rideId: number): Ride | undefined;
+  getRide(rideId: number): Ride | undefined;
   getActiveRide(userId: string): Ride | undefined;
   listRides(opts?: { userId?: string; limit?: number }): Ride[];
   listAdminRides(opts?: { limit?: number }): AdminRide[];
@@ -1531,6 +1532,10 @@ export class DatabaseStorage implements IStorage {
       description: `Поездка ${r.bikeId} • ${Math.round(minutes)} мин`, createdAt: endedAt,
     }).run();
     return db.select().from(rides).where(eq(rides.id, rideId)).get() as Ride;
+  }
+
+  getRide(rideId: number) {
+    return db.select().from(rides).where(eq(rides.id, rideId)).get() as Ride | undefined;
   }
 
   getActiveRide(userId: string) {
