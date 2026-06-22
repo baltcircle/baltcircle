@@ -1,14 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Bike, Parking, ZoneRow, Ride } from "@shared/schema";
-import { CoastMap } from "./CoastMap";
+import { YandexMap } from "./YandexMap";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { fmtDistance, fmtDuration, fmtRub, fmtTariff } from "@/lib/format";
-import { Pause, Lock, MapPin, AlertTriangle, Sparkles, Gauge } from "lucide-react";
-import { checkZoneState } from "@shared/geo";
+import { Lock, MapPin, AlertTriangle, Sparkles, Gauge } from "lucide-react";
+import { checkZoneState, mapToReal } from "@shared/geo";
 import { useToast } from "@/hooks/use-toast";
 
 export function ActiveRidePanel({ ride }: { ride: Ride }) {
@@ -17,6 +17,9 @@ export function ActiveRidePanel({ ride }: { ride: Ride }) {
   const zones = useQuery<ZoneRow[]>({ queryKey: ["/api/zones"] });
   const bikes = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
   const [now, setNow] = useState(Date.now());
+  // Rider's real GPS position, once granted. Falls back to the bike's last
+  // known coordinates from the ride track when geolocation is unavailable.
+  const [geoCenter, setGeoCenter] = useState<[number, number] | null>(null);
 
   const elapsed = now - ride.startedAt;
 
@@ -92,9 +95,29 @@ export function ActiveRidePanel({ ride }: { ride: Ride }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ride.id, parkings.data]);
 
+  // Center the map on the rider's GPS position; while it resolves (or if
+  // permission is denied) fall back to the bike's last known coordinates.
+  useEffect(() => {
+    if (!("geolocation" in navigator)) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setGeoCenter([pos.coords.latitude, pos.coords.longitude]),
+      () => { /* keep bike-based fallback */ },
+      { enableHighAccuracy: true, timeout: 8000 },
+    );
+  }, []);
+
   const last = lastPoint(ride);
   const zoneState = last ? checkZoneState(last[0], last[1]) : null;
   const speedKmh = 14 + Math.round(Math.sin(now / 4000) * 4);
+  // Stable center reference so the map only re-centers when the GPS fix or the
+  // bike's last position actually changes (not on every 1s clock tick).
+  const bikeLat = last ? mapToReal(last[0], last[1])[0] : null;
+  const bikeLng = last ? mapToReal(last[0], last[1])[1] : null;
+  const mapCenter = useMemo<[number, number] | null>(() => {
+    if (geoCenter) return geoCenter;
+    if (bikeLat !== null && bikeLng !== null) return [bikeLat, bikeLng];
+    return null;
+  }, [geoCenter, bikeLat, bikeLng]);
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-6xl mx-auto" data-testid="page-active-ride">
@@ -107,22 +130,21 @@ export function ActiveRidePanel({ ride }: { ride: Ride }) {
       </header>
 
       <div className="grid lg:grid-cols-[1fr_360px] gap-5">
-        <CoastMap
+        <YandexMap
           bikes={bikes.data ?? []}
           parkings={parkings.data ?? []}
           zones={zones.data ?? []}
           ride={ride}
+          center={mapCenter}
           height="60vh"
           showLabels={false}
-          interactive={false}
         />
 
         <div className="space-y-4">
           <Card className="p-5">
-            <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="grid grid-cols-2 gap-2 text-center">
               <Big label="Время" value={fmtDuration(elapsed)} testId="text-ride-duration" />
               <Big label="Расстояние" value={fmtDistance(ride.distanceM)} testId="text-ride-distance" />
-              <Big label="К оплате" value={fmtRub(ride.cost)} testId="text-ride-cost" />
             </div>
           </Card>
 
