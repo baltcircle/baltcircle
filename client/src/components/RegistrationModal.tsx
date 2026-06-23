@@ -67,17 +67,22 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
 
   // Resend countdown ticker.
   useEffect(() => {
-    if (resendIn <= 0) {
-      if (timerRef.current) clearInterval(timerRef.current);
-      return;
-    }
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (resendIn <= 0) return;
     timerRef.current = setInterval(() => {
-      setResendIn((s) => (s <= 1 ? 0 : s - 1));
+      setResendIn((s) => {
+        if (s <= 1) {
+          clearInterval(timerRef.current!);
+          return 0;
+        }
+        return s - 1;
+      });
     }, 1000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [resendIn]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resendIn > 0]);
 
   const startMut = useMutation<StartResponse, Error, void>({
     mutationFn: async () => {
