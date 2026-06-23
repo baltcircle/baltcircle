@@ -154,22 +154,14 @@ function smsRuError(code: number): string {
 const SIGMASMS_DEFAULT_API_BASE = "https://user.sigmasms.ru/api";
 const SIGMASMS_DEFAULT_SENDER = "TakeRide";
 
-// TODO(temporary): SigmaSMS moderation test. SigmaSMS reports our OTP text fails
-// moderation, so for this provider only we send a fixed, moderation-friendly
-// message instead of the real OTP text to check whether messages arrive at all.
-// The real OTP is still generated/stored/verified server-side — the user just
-// won't receive the code in this message, so OTP login won't work until this is
-// reverted (or the override resolves to a text that includes the code again).
-// Override via SIGMASMS_MESSAGE_TEMPLATE; defaults to the test text below.
-const SIGMASMS_TEST_MESSAGE =
-  "Это тестовое сообщение.\nИзменённый текст будет отправлен на модерацию.";
-
-// Message text for SigmaSMS only. Defaults to the moderation test message; can
-// be overridden with SIGMASMS_MESSAGE_TEMPLATE. The `code` is accepted so a
-// future template could re-include it, but the default intentionally ignores it.
-export function sigmaSmsText(_code: string): string {
-  const override = (process.env.SIGMASMS_MESSAGE_TEMPLATE || "").trim();
-  return override || SIGMASMS_TEST_MESSAGE;
+// Message text for SigmaSMS. Uses otpMessage() by default (same text as SMS.RU);
+// can be overridden with SIGMASMS_MESSAGE_TEMPLATE env var (use {code} as placeholder).
+export function sigmaSmsText(code: string): string {
+  const template = (process.env.SIGMASMS_MESSAGE_TEMPLATE || "").trim();
+  if (template) {
+    return template.replace("{code}", code);
+  }
+  return otpMessage(code);
 }
 
 // Read the SigmaSMS token. Supports both SIGMASMS (the GitHub secret name) and
