@@ -37,23 +37,29 @@ export function DrawerMenu({ open, onClose }: Props) {
           </button>
         </div>
         <nav className="px-4 py-4 flex flex-col gap-1 flex-1">
-          <Link href="/profile" onClick={onClose}>
-            <a className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-gray-50 dark:hover:bg-zinc-800 text-gray-700 dark:text-zinc-200 transition-colors">
-              <User className="w-5 h-5 text-gray-400 dark:text-zinc-500" />
-              Профиль
-            </a>
+          <Link
+            href="/profile"
+            onClick={onClose}
+            className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-gray-50 dark:hover:bg-zinc-800 text-gray-700 dark:text-zinc-200 transition-colors"
+          >
+            <User className="w-5 h-5 text-gray-400 dark:text-zinc-500" />
+            Профиль
           </Link>
-          <Link href="/profile/payments" onClick={onClose}>
-            <a className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-gray-50 dark:hover:bg-zinc-800 text-gray-700 dark:text-zinc-200 transition-colors">
-              <CreditCard className="w-5 h-5 text-gray-400 dark:text-zinc-500" />
-              Оплата
-            </a>
+          <Link
+            href="/profile/payments"
+            onClick={onClose}
+            className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-gray-50 dark:hover:bg-zinc-800 text-gray-700 dark:text-zinc-200 transition-colors"
+          >
+            <CreditCard className="w-5 h-5 text-gray-400 dark:text-zinc-500" />
+            Оплата
           </Link>
-          <Link href="/support" onClick={onClose}>
-            <a className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-gray-50 dark:hover:bg-zinc-800 text-gray-700 dark:text-zinc-200 transition-colors">
-              <LifeBuoy className="w-5 h-5 text-gray-400 dark:text-zinc-500" />
-              Поддержка
-            </a>
+          <Link
+            href="/support"
+            onClick={onClose}
+            className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-gray-50 dark:hover:bg-zinc-800 text-gray-700 dark:text-zinc-200 transition-colors"
+          >
+            <LifeBuoy className="w-5 h-5 text-gray-400 dark:text-zinc-500" />
+            Поддержка
           </Link>
           <button
             onClick={() => { toggle(); onClose(); }}
