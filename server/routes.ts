@@ -162,26 +162,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(getSmsDiagnostics());
   });
 
-  // TEMPORARY: open diagnostics endpoint for debugging SMS issues (no auth).
-  // TODO: remove after SMS is confirmed working.
-  app.get("/api/sms/diagnostics-open", async (_req, res) => {
-    const diag = getSmsDiagnostics();
-    // Also fire a live test request to SigmaSMS to see the raw response.
-    let liveTest: any = null;
-    if (diag.provider === "sigmasms" && diag.configured) {
-      try {
-        const { buildSigmaSmsRequest } = await import("./sms");
-        const req = buildSigmaSmsRequest("+70000000000", "0000", (process.env.SIGMASMS_TOKEN || process.env.SIGMASMS || "").trim());
-        const r = await fetch(req.url, { method: "POST", headers: req.headers, body: JSON.stringify(req.body) });
-        let body: any;
-        try { body = await r.json(); } catch { body = await r.text(); }
-        liveTest = { httpStatus: r.status, ok: r.ok, body };
-      } catch (e: any) {
-        liveTest = { error: e?.message };
-      }
-    }
-    res.json({ diag, liveTest });
-  });
 
   // Admin-only OTP delivery diagnostics for a phone. Returns the stored provider
   // metadata for the last OTP send (provider, sending id, status, error, and the
