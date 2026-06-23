@@ -133,15 +133,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </span>
             <ChevronRight className="w-4 h-4 opacity-50" />
           </button>
-          {!isAdmin && (
-            <Link
-              href="/profile"
-              data-testid="link-profile"
-              className="w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
-            >
-              <User className="w-4 h-4 opacity-80" /> Профиль
-            </Link>
-          )}
+
           <div className="px-3 py-2 text-xs opacity-70">
             <div className="flex items-center gap-1.5"><Bike className="w-3 h-3" /> демо-аккаунт</div>
             <div className="mt-1 opacity-70">demo@takeride.ru</div>
@@ -189,13 +181,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               </button>
               <Link
-                href="/profile"
-                data-testid="link-profile-mobile"
-                aria-label="Профиль"
+                href="javascript:history.back()"
+                data-testid="link-back-mobile"
+                aria-label="Назад"
                 className="p-1 rounded-full hover-elevate"
+                onClick={(e) => { e.preventDefault(); history.back(); }}
               >
                 <span className="flex items-center justify-center w-8 h-8 rounded-full bg-sidebar-accent/70 text-sidebar-foreground">
-                  <User className="w-5 h-5" />
+                  <ArrowLeft className="w-5 h-5" />
                 </span>
               </Link>
             </>
