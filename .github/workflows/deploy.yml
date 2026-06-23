@@ -23,42 +23,26 @@ jobs:
 
       - name: Rebuild and restart Docker app
         env:
-          # Forwarded into the docker-compose build arg so Vite can inline it
-          # into the client bundle at build time.
           VITE_YANDEX_MAPS_API_KEY: ${{ secrets.VITE_YANDEX_MAPS_API_KEY }}
-          # SMS OTP runtime config — consumed by the backend container at
-          # runtime (docker-compose `environment:`), never inlined into the
-          # client bundle. Secrets are passed through, not hardcoded.
           SMS_PROVIDER: ${{ secrets.SMS_PROVIDER }}
-          # SigmaSMS provider (used when SMS_PROVIDER=sigmasms).
           SIGMASMS_TOKEN: ${{ secrets.SIGMASMS_TOKEN }}
           SIGMASMS_SENDER: ${{ secrets.SIGMASMS_SENDER }}
           OTP_SECRET: ${{ secrets.OTP_SECRET }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
-          # Comma-separated phone numbers granted the admin role (temporary
-          # bootstrap). Passed through to the container at runtime, never
-          # hardcoded. Empty when the secret is unset -> no auto-admins.
           ADMIN_PHONE_NUMBERS: ${{ secrets.ADMIN_PHONE_NUMBERS }}
-          # T-Bank / T-Kassa acquiring runtime config — consumed by the backend
-          # container at runtime (docker-compose `environment:`), never inlined
-          # into the client bundle. Terminal key + password are secrets; the API
-          # base and public URL fall back to in-app defaults when unset.
           TBANK_TERMINAL_KEY: ${{ secrets.TBANK_TERMINAL_KEY }}
           TBANK_PASSWORD: ${{ secrets.TBANK_PASSWORD }}
           TBANK_API_BASE: ${{ secrets.TBANK_API_BASE }}
           PUBLIC_APP_URL: ${{ secrets.PUBLIC_APP_URL }}
         run: |
           set -e
-          docker compose build --no-cache
-          docker compose up -d --force-recreate
+          docker compose up -d --build --force-recreate
           docker image prune -f
           docker ps --filter "name=baltcircle"
 
       - name: Smoke test local app
         run: |
           set -e
-          # The container may still be restarting right after `compose up`,
-          # so retry each endpoint for up to ~120s instead of failing instantly.
           wait_for() {
             local url="$1"
             local label="$2"
@@ -76,3 +60,16 @@ jobs:
           wait_for http://127.0.0.1:5000 "app root"
           wait_for http://127.0.0.1:5000/api/bikes "bikes API"
           wait_for http://127.0.0.1:5000/api/parkings "parkings API"
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "✅ Деплой завершён успешно: $(date '+%Y-%m-%d %H:%M:%S')"
+          echo "Коммит: ${{ github.sha }}"
+          echo "Автор: ${{ github.actor }}"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Деплой завершился с ошибкой: $(date '+%Y-%m-%d %H:%M:%S')"
+          echo "Коммит: ${{ github.sha }}"
