@@ -30,13 +30,9 @@ jobs:
           # runtime (docker-compose `environment:`), never inlined into the
           # client bundle. Secrets are passed through, not hardcoded.
           SMS_PROVIDER: ${{ secrets.SMS_PROVIDER }}
-          SMSRU_API_ID: ${{ secrets.SMSRU_API_ID }}
-          # SigmaSMS provider (used when SMS_PROVIDER=sigmasms). The static token
-          # lives in the `SIGMASMS` secret; sender/API base are optional secrets
-          # that fall back to in-app defaults when unset.
-          SIGMASMS: ${{ secrets.SIGMASMS }}
+          # SigmaSMS provider (used when SMS_PROVIDER=sigmasms).
+          SIGMASMS_TOKEN: ${{ secrets.SIGMASMS_TOKEN }}
           SIGMASMS_SENDER: ${{ secrets.SIGMASMS_SENDER }}
-          SIGMASMS_API_BASE: ${{ secrets.SIGMASMS_API_BASE }}
           OTP_SECRET: ${{ secrets.OTP_SECRET }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
           # Comma-separated phone numbers granted the admin role (temporary
