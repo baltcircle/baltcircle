@@ -7,12 +7,14 @@ import { RentalStartModal } from "@/components/RentalStartModal";
 import { RegistrationModal } from "@/components/RegistrationModal";
 import { QrScanModal } from "@/components/QrScanModal";
 import { DrawerMenu } from "@/components/DrawerMenu";
+import { Logo } from "@/components/Logo";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import { useTheme } from "@/lib/theme";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDuration } from "@/lib/format";
 import { PENDING_BIKE_KEY } from "@/lib/pending-bike";
-import { QrCode, Lock, Clock, ChevronRight, Menu, MapPin } from "lucide-react";
+import { QrCode, Lock, Clock, ChevronRight, Menu, MapPin, Sun, Moon } from "lucide-react";
 
 const INTRO_SHOWN_KEY = "bc.registration.intro.shown";
 
@@ -26,6 +28,7 @@ export function MapPage() {
     refetchInterval: 4000,
   });
   const { isRegistered, isLoading: userLoading } = useCurrentUser();
+  const { theme, toggle } = useTheme();
 
   const activeRide = activeQ.data ?? null;
 
@@ -44,8 +47,6 @@ export function MapPage() {
   useEffect(() => {
     if (!selected && availableBikes[0]) setSelected(availableBikes[0].id);
   }, [availableBikes, selected]);
-
-  const canRent = !!bike && bike.status === "available";
 
   const [rentalOpen, setRentalOpen] = useState(false);
   const [rentalMulti, setRentalMulti] = useState(false);
@@ -162,17 +163,40 @@ export function MapPage() {
         className="absolute inset-0 w-full h-full"
       />
 
-      {/* Hamburger menu button — top right */}
-      <button
-        type="button"
-        onClick={() => setDrawerOpen(true)}
-        aria-label="Открыть меню"
-        data-testid="home-menu-button"
-        className="absolute right-4 z-20 w-12 h-12 rounded-full bg-white/85 backdrop-blur-sm shadow-lg flex items-center justify-center text-gray-700 hover:bg-white active:scale-95 transition-all"
+      {/* Top bar — logo left, theme + burger right */}
+      <div
+        className="absolute left-0 right-0 z-20 flex items-center justify-between px-4"
         style={{ top: "max(1rem, env(safe-area-inset-top))" }}
       >
-        <Menu className="w-5 h-5" />
-      </button>
+        {/* Logo — top left */}
+        <div className="rounded-2xl bg-white/85 backdrop-blur-sm shadow-lg px-3 py-2">
+          <Logo className="text-foreground h-8" />
+        </div>
+
+        {/* Right controls: theme toggle + hamburger */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label={theme === "dark" ? "Светлая тема" : "Тёмная тема"}
+            className="w-12 h-12 rounded-full bg-white/85 backdrop-blur-sm shadow-lg flex items-center justify-center text-gray-700 hover:bg-white active:scale-95 transition-all"
+          >
+            {theme === "dark"
+              ? <Sun className="w-5 h-5" />
+              : <Moon className="w-5 h-5" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Открыть меню"
+            data-testid="home-menu-button"
+            className="w-12 h-12 rounded-full bg-white/85 backdrop-blur-sm shadow-lg flex items-center justify-center text-gray-700 hover:bg-white active:scale-95 transition-all"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
 
       {/* Geolocation button — bottom right, above scan button */}
       <button
