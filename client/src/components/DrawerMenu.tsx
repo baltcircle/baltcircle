@@ -1,6 +1,5 @@
-import { X, User, LifeBuoy, Sun, Moon, Wallet, Route, ShieldCheck, Settings, ChevronRight } from "lucide-react";
+import { X, User, LifeBuoy, Wallet, Route, ShieldCheck, UserCircle, ChevronRight } from "lucide-react";
 import { Link } from "wouter";
-import { useTheme } from "@/lib/theme";
 
 interface Props {
   open: boolean;
@@ -31,7 +30,6 @@ function MenuItem({ href, icon: Icon, label, onClose }: MenuItemProps) {
 }
 
 export function DrawerMenu({ open, onClose }: Props) {
-  const { theme, toggle } = useTheme();
   return (
     <>
       {/* Backdrop */}
@@ -56,7 +54,7 @@ export function DrawerMenu({ open, onClose }: Props) {
             <span className="w-10 h-10 rounded-full bg-gray-100 dark:bg-zinc-800 flex items-center justify-center">
               <User className="w-5 h-5 text-gray-500 dark:text-zinc-400" />
             </span>
-            <span className="text-base font-semibold text-gray-900 dark:text-white">Профиль</span>
+            <span className="text-base font-semibold text-gray-900 dark:text-white">Меню</span>
           </div>
           <button
             onClick={onClose}
@@ -73,29 +71,9 @@ export function DrawerMenu({ open, onClose }: Props) {
             <MenuItem href="/rides"           icon={Route}       label="История"         onClose={onClose} />
             <MenuItem href="/safety"          icon={ShieldCheck} label="Информация"      onClose={onClose} />
             <MenuItem href="/support"         icon={LifeBuoy}    label="Помощь"          onClose={onClose} />
-            <MenuItem href="/settings"        icon={Settings}    label="Настройки"       onClose={onClose} />
+            <MenuItem href="/profile"         icon={UserCircle}  label="Профиль"         onClose={onClose} />
           </div>
         </nav>
-
-        {/* Footer — theme toggle */}
-        <div
-          className="px-4 pb-4 border-t border-gray-100 dark:border-zinc-800 pt-3"
-          style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
-        >
-          <button
-            onClick={() => { toggle(); onClose(); }}
-            className="w-full flex items-center gap-4 px-4 py-3 rounded-2xl border border-gray-100 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800/60 transition-colors text-left"
-          >
-            <span className="w-9 h-9 rounded-full bg-gray-100 dark:bg-zinc-800 flex items-center justify-center shrink-0">
-              {theme === "dark"
-                ? <Sun className="w-4 h-4 text-gray-500 dark:text-zinc-400" />
-                : <Moon className="w-4 h-4 text-gray-500 dark:text-zinc-400" />}
-            </span>
-            <span className="flex-1 text-base text-gray-800 dark:text-zinc-100">
-              {theme === "dark" ? "Светлая тема" : "Тёмная тема"}
-            </span>
-          </button>
-        </div>
       </div>
     </>
   );
