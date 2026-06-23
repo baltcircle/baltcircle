@@ -116,6 +116,8 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
     },
     onError: (err) => {
       setError(errorMessage(err, "Не удалось отправить код"));
+      // Keep resendIn if server set a cooldown (e.g. duplicate sending),
+      // but don't reset it — let the existing countdown keep running.
     },
   });
 
@@ -245,6 +247,13 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
               </p>
             )}
 
+            {resendIn > 0 && (
+              <p className="text-xs text-muted-foreground" data-testid="text-resend-cooldown">
+                Повторная отправка будет доступна через{" "}
+                <span className="tabular-nums font-medium">{resendIn}</span> с
+              </p>
+            )}
+
             <DialogFooter className="gap-2 sm:gap-2">
               <Button
                 type="button"
@@ -256,10 +265,10 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
               </Button>
               <Button
                 type="submit"
-                disabled={startMut.isPending || !consent}
+                disabled={startMut.isPending || !consent || resendIn > 0}
                 data-testid="button-send-otp"
               >
-                {startMut.isPending ? "Отправка…" : "Получить код"}
+                {startMut.isPending ? "Отправка…" : resendIn > 0 ? `Подождите ${resendIn} с` : "Получить код"}
               </Button>
             </DialogFooter>
           </form>
