@@ -158,8 +158,6 @@ export function MapPage() {
 
   return (
     <div className="relative flex flex-col h-full min-h-0 overflow-hidden">
-      {/* DEPLOY TEST BANNER — remove after confirming changes arrive */}
-      <div style={{position:"fixed",top:0,left:0,right:0,zIndex:9999,background:"#ff0000",color:"#fff",fontSize:"20px",fontWeight:"bold",textAlign:"center",padding:"12px"}}>✅ ДЕПЛОЙ РАБОТАЕТ — {new Date().toISOString()}</div>
       {/* Floating header — sits over the map for a clean, full-bleed mobile
           look. TakeRide wordmark on the left, profile button on the right. */}
       <header
