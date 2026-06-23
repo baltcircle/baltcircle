@@ -26,7 +26,6 @@ services:
       # workflow from the GitHub `SIGMASMS` secret). SIGMASMS_TOKEN is an alias
       # honoured first if present. Sender + API base are optional and default to
       # "TakeRide" / the production host inside the app when empty.
-      SIGMASMS: ${SIGMASMS:-}
       SIGMASMS_TOKEN: ${SIGMASMS_TOKEN:-}
       SIGMASMS_SENDER: ${SIGMASMS_SENDER:-}
       SIGMASMS_API_BASE: ${SIGMASMS_API_BASE:-}
