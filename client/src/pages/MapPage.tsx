@@ -150,7 +150,7 @@ export function MapPage() {
   }, [userLoading, bikesQ.data, isRegistered]);
 
   return (
-    <div className="relative w-full h-full overflow-hidden" data-testid="map-page">
+    <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
       {/* Map — fills the entire screen */}
       <YandexMap
         parkings={parkingsQ.data ?? []}
