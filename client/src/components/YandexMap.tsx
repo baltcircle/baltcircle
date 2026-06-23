@@ -82,6 +82,7 @@ export function YandexMap(props: Props) {
     mapObjects = [], layers = {},
     selectedBikeId, onSelectBike, onSelectParking, onSelectRide, onSelectTicket,
     height = 520, interactive = true, onMapClick, onCenterGetter, center = null,
+    className,
   } = props;
 
   // A layer renders unless its flag is explicitly false (default: visible).
