@@ -23,6 +23,7 @@ import {
   tbankInitRidePayment, generateRideOrderId, classifyRidePayment,
   tbankInitSavedCardCharge, tbankCharge, generateSavedCardRideOrderId,
   tbankGetState,
+  tbankCancel,
 } from "./tbank";
 import { log } from "./index";
 
@@ -658,7 +659,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
 
     try {
-      handleTbankNotification(body);
+      handleTbankNotification(body, cfg);
     } catch (err) {
       // Log but still ack so T-Bank doesn't hammer us; reconciliation can be
       // done out of band via GetState.
@@ -807,6 +808,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         lastErrorMessage: null,
         lastErrorDetails: null,
       });
+      // Refund the 1 ₽ verification charge — fire-and-forget, non-fatal.
+      if (method.paymentId) tbankCancel(cfg, method.paymentId);
       return res.json(updated);
     }
     if (outcome === "failed") {
@@ -1226,7 +1229,7 @@ function tbankErrorBody(resp: {
 //
 // The notification is assumed signature-verified by the caller. Statuses follow
 // the T-Kassa lifecycle (NEW/FORM_SHOWED/AUTHORIZED/CONFIRMED/REJECTED/...).
-function handleTbankNotification(body: Record<string, unknown>): void {
+function handleTbankNotification(body: Record<string, unknown>, cfg?: TbankConfig | null): void {
   const orderId = typeof body.OrderId === "string" ? body.OrderId : "";
 
   if (orderId) {
@@ -1243,7 +1246,7 @@ function handleTbankNotification(body: Record<string, unknown>): void {
     // means this is a verification payment, not a ride/topup payment.
     const byOrder = storage.findCardMethodByOrderId(orderId);
     if (byOrder && byOrder.purpose === "card_binding") {
-      handleInitBindingNotification(byOrder, body);
+      handleInitBindingNotification(byOrder, body, cfg);
       return;
     }
   }
@@ -1322,6 +1325,7 @@ function handleRidePaymentNotification(
 function handleInitBindingNotification(
   method: PaymentMethod,
   body: Record<string, unknown>,
+  cfg?: TbankConfig | null,
 ): void {
   if (method.status === "active") return; // already resolved
 
@@ -1344,6 +1348,9 @@ function handleInitBindingNotification(
       lastErrorMessage: null,
       lastErrorDetails: null,
     });
+    // Refund the 1 ₽ verification charge — fire-and-forget, non-fatal.
+    const effectivePaymentId = paymentId || method.paymentId;
+    if (cfg && effectivePaymentId) tbankCancel(cfg, effectivePaymentId);
   } else if (outcome === "failed") {
     storage.updatePaymentMethod(method.id, {
       status: "failed",
