@@ -36,7 +36,9 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
   const toast = useToast();
   const [step, setStep] = useState<"contact" | "code">("contact");
   const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
+  // Phone digits only (without +7 prefix — we prepend it on submit)
+  const [phoneDigits, setPhoneDigits] = useState("");
+  const phone = phoneDigits ? "+7" + phoneDigits : "";
   const [consent, setConsent] = useState(false);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +57,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
     if (open) {
       setStep("contact");
       setName("");
-      setPhone("");
+      setPhoneDigits("");
       setConsent(false);
       setCode("");
       setError(null);
@@ -196,16 +198,23 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="registration-phone">Номер телефона</Label>
-              <Input
-                id="registration-phone"
-                type="tel"
-                inputMode="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="+7 900 000-00-00"
-                autoComplete="tel"
-                data-testid="input-registration-phone"
-              />
+              <div className="flex items-center border rounded-md overflow-hidden focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-0">
+                <span className="px-3 py-2 bg-muted text-muted-foreground text-sm select-none border-r">+7</span>
+                <input
+                  id="registration-phone"
+                  type="tel"
+                  inputMode="numeric"
+                  value={phoneDigits}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
+                    setPhoneDigits(digits);
+                  }}
+                  placeholder="900 000-00-00"
+                  autoComplete="tel-national"
+                  data-testid="input-registration-phone"
+                  className="flex-1 px-3 py-2 text-sm bg-background outline-none"
+                />
+              </div>
             </div>
 
             <div className="flex items-start gap-2.5">
