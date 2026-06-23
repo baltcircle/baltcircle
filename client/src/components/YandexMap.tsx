@@ -48,6 +48,8 @@ interface Props {
   /** Receives a function that returns the current map center as [lat, lng].
    *  Lets the editor add a point at the map center without a map click. */
   onCenterGetter?: (getCenter: () => [number, number]) => void;
+  /** Extra CSS classes for the root container div. Defaults to the card-style wrapper. */
+  className?: string;
 }
 
 // Resolved brand-ish colors (Yandex overlays can't read CSS variables).
@@ -390,7 +392,7 @@ export function YandexMap(props: Props) {
 
   return (
     <div
-      className="relative w-full overflow-hidden rounded-xl border border-card-border bg-card"
+      className={className ?? "relative w-full overflow-hidden rounded-xl border border-card-border bg-card"}
       style={{ height }}
       data-testid="map-yandex"
     >
