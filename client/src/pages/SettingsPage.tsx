@@ -1,25 +1,43 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { CURRENT_USER_KEY } from "@/hooks/use-current-user";
-import type { User as UserType } from "@shared/schema";
+import type { Ride, User as UserType } from "@shared/schema";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { PhoneChangeModal } from "@/components/PhoneChangeModal";
-import { fmtDate } from "@/lib/format";
-import { ArrowLeft, User, Save, Lock, Smartphone, ShieldCheck } from "lucide-react";
+import { fmtDate, fmtDistance } from "@/lib/format";
+import { ArrowLeft, User, Save, Lock, Smartphone, ShieldCheck, Route as RouteIcon } from "lucide-react";
+
+function greeting(d = new Date()) {
+  const h = d.getHours();
+  if (h < 6) return "Доброй ночи";
+  if (h < 12) return "Доброе утро";
+  if (h < 18) return "Добрый день";
+  return "Добрый вечер";
+}
 
 export function SettingsPage() {
   const toast = useToast();
   const { user, isRegistered } = useCurrentUser();
+  const userId = user?.id ?? "demo";
 
-  // Profile fields. Name/email persist to the backend for a registered rider.
-  // Phone is read-only here — changing it requires SMS confirmation, which is
-  // not part of this step, so the field is shown but locked.
+  // Ride stats
+  const ridesQ = useQuery<Ride[]>({
+    queryKey: ["/api/rides", { userId, limit: 100 }],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/rides?userId=${encodeURIComponent(userId)}&limit=100`);
+      return res.json();
+    },
+  });
+  const rides = ridesQ.data ?? [];
+  const totalMeters = rides.reduce((sum, r) => sum + (r.distanceM ?? 0), 0);
+
+  // Profile fields
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
 
@@ -58,11 +76,13 @@ export function SettingsPage() {
   return (
     <div className="min-h-full bg-background" data-testid="page-settings">
       <div className="mx-auto max-w-md px-5 pt-6 pb-12">
+
+        {/* Header with back arrow */}
         <header className="mb-6 flex items-center gap-3">
           <Link
-            href="/profile"
+            href="/"
             data-testid="link-settings-back"
-            aria-label="Назад в профиль"
+            aria-label="На главную"
             className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground hover-elevate shrink-0"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -71,11 +91,38 @@ export function SettingsPage() {
             <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
               TakeRide
             </div>
-            <h1 className="font-display text-2xl font-light leading-tight">Настройки</h1>
+            <h1 className="font-display text-2xl font-light leading-tight">Профиль</h1>
           </div>
         </header>
 
-        {/* Основные */}
+        {/* Greeting + stats hero */}
+        <div className="rounded-2xl border border-card-border bg-card px-5 py-4 mb-6 flex items-center gap-4">
+          <span className="flex items-center justify-center w-12 h-12 rounded-full bg-brand-sand-soft text-brand-bark shrink-0">
+            <User className="w-6 h-6" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">TakeRide</p>
+            <p className="font-display text-xl font-light leading-tight truncate" data-testid="text-greeting">
+              {user ? `${greeting()}, ${user.name}` : greeting()}
+            </p>
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          <div className="rounded-2xl border border-card-border bg-card p-4 flex flex-col items-center gap-1" data-testid="stat-distance">
+            <RouteIcon className="w-5 h-5 text-muted-foreground mb-1" />
+            <span className="font-display text-2xl font-light tabular-nums">{fmtDistance(totalMeters)}</span>
+            <span className="text-xs text-muted-foreground uppercase tracking-widest">километров</span>
+          </div>
+          <div className="rounded-2xl border border-card-border bg-card p-4 flex flex-col items-center gap-1" data-testid="stat-rides">
+            <User className="w-5 h-5 text-muted-foreground mb-1" />
+            <span className="font-display text-2xl font-light tabular-nums">{rides.length}</span>
+            <span className="text-xs text-muted-foreground uppercase tracking-widest">поездок</span>
+          </div>
+        </div>
+
+        {/* Edit form */}
         <Section icon={User} title="Основные" testId="section-general">
           <div className="space-y-4">
             {!isRegistered && (
