@@ -244,7 +244,7 @@ export function MapPage() {
             data-testid="home-primary-scan"
             className="w-full h-14 rounded-full bg-blue-500 hover:bg-blue-600 text-white font-medium text-lg flex items-center justify-between px-6 shadow-xl active:scale-[0.98] transition-all"
           >
-            <span>Сканировать</span>
+            <span style={{fontFamily: "Roboto Flex, Roboto, sans-serif", fontWeight: 500}}>Сканировать</span>
             <QrCode className="w-6 h-6" />
           </button>
         )}
