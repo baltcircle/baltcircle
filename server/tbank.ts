@@ -586,3 +586,22 @@ export function classifyInitBinding(args: {
   }
   return "pending";
 }
+
+// Cancel a payment by PaymentId. Used after card binding to refund the 1 ₽
+// verification charge. Logs and swallows errors — a failed cancel is not fatal
+// (the binding succeeded), but should be investigated.
+export async function tbankCancel(
+  cfg: TbankConfig,
+  paymentId: string,
+): Promise<void> {
+  try {
+    const resp = await signedPost(cfg, "Cancel", { PaymentId: paymentId });
+    if (!resp.Success) {
+      log(`[tbank] Cancel failed for PaymentId=${paymentId}: ${resp.Message ?? resp.Details ?? "unknown"}`, "tbank");
+    } else {
+      log(`[tbank] Cancel OK for PaymentId=${paymentId}`, "tbank");
+    }
+  } catch (err: any) {
+    log(`[tbank] Cancel error for PaymentId=${paymentId}: ${err?.message}`, "tbank");
+  }
+}
