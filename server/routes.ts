@@ -865,6 +865,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (actor.id === target.id && actor.role === "admin" && parsed.data.role !== "admin") {
       return res.status(400).json({ error: "Нельзя снять роль администратора с самого себя" });
     }
+    // Admins cannot change each other's roles.
+    if (actor.id !== target.id && target.role === "admin") {
+      return res.status(403).json({ error: "Нельзя изменить роль другого администратора" });
+    }
 
     const result = storage.setUserRole(targetId, parsed.data.role);
     if ("error" in result) return res.status(404).json(result);
@@ -883,9 +887,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (actor.id === target.id) {
       return res.status(400).json({ error: "Нельзя заблокировать самого себя" });
     }
-    // Blocking an admin requires admin privileges.
-    if (target.role === "admin" && actor.role !== "admin") {
-      return res.status(403).json({ error: "Недостаточно прав для блокировки администратора" });
+    // Admins cannot block each other.
+    if (target.role === "admin") {
+      return res.status(403).json({ error: "Нельзя заблокировать другого администратора" });
     }
 
     const result = storage.setUserBlocked(targetId, parsed.data.blocked, parsed.data.reason);
