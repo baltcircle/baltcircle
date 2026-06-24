@@ -9,7 +9,7 @@ export const CURRENT_USER_KEY = ["/api/users/current"] as const;
 export function useCurrentUser() {
   const query = useQuery<User | null>({
     queryKey: CURRENT_USER_KEY,
-    staleTime: 1000 * 60,
+    staleTime: 0,
   });
 
   const user = query.data ?? null;
