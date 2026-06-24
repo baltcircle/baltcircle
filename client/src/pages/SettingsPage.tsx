@@ -62,7 +62,7 @@ export function SettingsPage() {
   return (
     // Full viewport, no scroll, uniform background
     <div
-      className="flex flex-col bg-gray-50 dark:bg-zinc-900"
+      className="flex flex-col bg-gray-50 dark:bg-zinc-900 animate-slide-up"
       style={{ height: "var(--app-height, 100svh)" }}
       data-testid="page-settings"
     >
@@ -151,7 +151,7 @@ export function SettingsPage() {
             )}
             <p className="text-xs mt-0.5">
               <span className="text-gray-400 dark:text-zinc-500">Email</span>
-              {email && <span className="text-green-500 ml-1">· Подтверждён</span>}
+              {user?.email && email === user.email && user?.phone && <span className="text-green-500 ml-1">· Подтверждён</span>}
             </p>
           </div>
         </div>
