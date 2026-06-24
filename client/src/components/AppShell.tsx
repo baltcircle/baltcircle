@@ -134,10 +134,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <ChevronRight className="w-4 h-4 opacity-50" />
           </button>
 
-          <div className="px-3 py-2 text-xs opacity-70">
-            <div className="flex items-center gap-1.5"><Bike className="w-3 h-3" /> демо-аккаунт</div>
-            <div className="mt-1 opacity-70">demo@takeride.ru</div>
-          </div>
+          {user && (
+            <div className="px-3 py-2 text-xs opacity-70">
+              <div className="flex items-center gap-1.5 font-medium">{user.name}</div>
+              <div className="mt-1 opacity-70">{user.phone}</div>
+            </div>
+          )}
         </div>
       </aside>
 
