@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useTheme } from "@/lib/theme";
@@ -34,6 +33,7 @@ export function SettingsPage() {
   const [editingEmail, setEditingEmail] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [phoneModalOpen, setPhoneModalOpen] = useState(false);
+  const [exiting, setExiting] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -62,7 +62,7 @@ export function SettingsPage() {
   return (
     // Full viewport, no scroll, uniform background
     <div
-      className="flex flex-col bg-gray-50 dark:bg-zinc-900 animate-slide-up"
+      className={`flex flex-col bg-gray-50 dark:bg-zinc-900 ${exiting ? "animate-slide-down" : "animate-slide-up"}`}
       style={{ height: "var(--app-height, 100svh)" }}
       data-testid="page-settings"
     >
@@ -71,13 +71,13 @@ export function SettingsPage() {
         className="flex items-center justify-center px-4 pb-3 shrink-0 bg-gray-50 dark:bg-zinc-900"
         style={{ paddingTop: "max(1.25rem, env(safe-area-inset-top))" }}
       >
-        <Link
-          href="/"
+        <button
+          onClick={() => { setExiting(true); setTimeout(() => window.history.back(), 300); }}
           className="absolute left-4 flex items-center justify-center w-9 h-9 rounded-full hover:bg-gray-200 dark:hover:bg-zinc-800 transition-colors"
           style={{ top: "max(1.25rem, env(safe-area-inset-top))" }}
         >
           <ArrowLeft className="w-5 h-5 text-gray-700 dark:text-zinc-300" />
-        </Link>
+        </button>
         <h1 className="text-base font-semibold text-gray-900 dark:text-white">Профиль</h1>
       </div>
 
