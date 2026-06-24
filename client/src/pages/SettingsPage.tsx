@@ -71,7 +71,7 @@ export function SettingsPage() {
         style={{ paddingTop: "max(1.25rem, env(safe-area-inset-top))" }}
       >
         <button
-          onClick={() => window.history.back()}
+          onClick={() => window.dispatchEvent(new Event("overlay:back"))}
           className="absolute left-4 flex items-center justify-center w-9 h-9 rounded-full hover:bg-gray-200 dark:hover:bg-zinc-800 transition-colors"
           style={{ top: "max(1.25rem, env(safe-area-inset-top))" }}
         >

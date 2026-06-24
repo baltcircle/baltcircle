@@ -32,26 +32,34 @@ import { OperationsMapPage } from "@/pages/OperationsMapPage";
 import NotFound from "@/pages/not-found";
 
 // OverlayRouter — renders customer pages as a fixed overlay on top of the map.
-// Handles slide-up (enter) and slide-down (exit) animations at 0.3s ease-in-out.
+// Exit animation: pages dispatch "overlay:back" event → OverlayRouter plays
+// slide-down for 300ms, then calls history.back() itself.
 function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) {
-  // We keep the overlay mounted briefly after isOverlay becomes false
-  // so the exit animation can play before unmounting.
   const [visible, setVisible] = useState(isOverlay);
   const [exiting, setExiting] = useState(false);
-  const prevLocRef = useRef(loc);
 
+  // On enter: reset animation state
   useEffect(() => {
     if (isOverlay) {
       setVisible(true);
       setExiting(false);
-      prevLocRef.current = loc;
-    } else if (visible) {
-      // Trigger exit animation, then unmount
-      setExiting(true);
-      const t = setTimeout(() => setVisible(false), 300);
-      return () => clearTimeout(t);
     }
-  }, [isOverlay]);
+  }, [isOverlay, loc]);
+
+  // Listen for back-navigation requests from child pages
+  useEffect(() => {
+    const handler = () => {
+      if (!visible || exiting) return;
+      setExiting(true);
+      setTimeout(() => {
+        setExiting(false);
+        setVisible(false);
+        window.history.back();
+      }, 300);
+    };
+    window.addEventListener("overlay:back", handler);
+    return () => window.removeEventListener("overlay:back", handler);
+  }, [visible, exiting]);
 
   if (!visible) return null;
 

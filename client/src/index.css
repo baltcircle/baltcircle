@@ -324,9 +324,9 @@
   to   { transform: translateY(100%); opacity: 0; }
 }
 .animate-slide-up {
-  animation: slide-up-in 0.3s ease-in-out both;
+  animation: slide-up-in 0.3s ease-in-out;
 }
 .animate-slide-down {
-  animation: slide-down-out 0.3s ease-in-out both;
+  animation: slide-down-out 0.3s ease-in-out forwards;
 }
 
