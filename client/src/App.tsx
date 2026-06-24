@@ -32,10 +32,17 @@ import { OperationsMapPage } from "@/pages/OperationsMapPage";
 import NotFound from "@/pages/not-found";
 
 function AppRouter() {
+  const [loc] = useLocation();
+  const isHome = loc === "/";
   return (
+    <>
+      {/* MapPage is always mounted to keep Yandex Map alive — hidden when not on "/" */}
+      <div style={{ display: isHome ? "contents" : "none" }} aria-hidden={!isHome}>
+        <MapPage />
+      </div>
     <Switch>
       {/* Customer / rider interface */}
-      <Route path="/" component={MapPage} />
+      <Route path="/"><></></Route>
       {/* QR deep link: a scanned bike URL (".../bike/BC-001") lands here, is
           stashed, and redirects to the map which auto-opens the rental flow. */}
       <Route path="/bike/:id">{(params) => <BikeDeepLink id={params.id} />}</Route>
@@ -76,6 +83,7 @@ function AppRouter() {
 
       <Route component={NotFound} />
     </Switch>
+    </>
   );
 }
 
