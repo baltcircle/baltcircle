@@ -1,5 +1,5 @@
 import { Switch, Route, Router, Redirect, useLocation } from "wouter";
-import { useEffect } from "react";
+import { useEffect, useState, useRef } from "react";
 import { PENDING_BIKE_KEY } from "@/lib/pending-bike";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -31,30 +31,89 @@ import { ParkingsPage } from "@/pages/ParkingsPage";
 import { OperationsMapPage } from "@/pages/OperationsMapPage";
 import NotFound from "@/pages/not-found";
 
+// OverlayRouter — renders customer pages as a fixed overlay on top of the map.
+// Handles slide-up (enter) and slide-down (exit) animations at 0.3s ease-in-out.
+function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) {
+  // We keep the overlay mounted briefly after isOverlay becomes false
+  // so the exit animation can play before unmounting.
+  const [visible, setVisible] = useState(isOverlay);
+  const [exiting, setExiting] = useState(false);
+  const prevLocRef = useRef(loc);
+
+  useEffect(() => {
+    if (isOverlay) {
+      setVisible(true);
+      setExiting(false);
+      prevLocRef.current = loc;
+    } else if (visible) {
+      // Trigger exit animation, then unmount
+      setExiting(true);
+      const t = setTimeout(() => setVisible(false), 300);
+      return () => clearTimeout(t);
+    }
+  }, [isOverlay]);
+
+  if (!visible) return null;
+
+  return (
+    <div className={`fixed inset-0 z-50 ${exiting ? "animate-slide-down" : "animate-slide-up"}`}>
+      <Switch>
+        <Route path="/settings" component={SettingsPage} />
+        <Route path="/rides" component={RidesPage} />
+        <Route path="/payment-methods" component={PaymentMethodsPage} />
+        <Route path="/support" component={SupportPage} />
+        <Route path="/safety" component={SafetyPage} />
+        <Route path="/tariffs" component={TariffsPage} />
+        <Route path="/rent" component={RentPage} />
+        <Route path="/payment-result" component={PaymentResultPage} />
+      </Switch>
+    </div>
+  );
+}
+
+// Customer routes rendered as overlays on top of the always-alive MapPage.
+// Add new customer pages here — they will slide up over the map.
+const OVERLAY_ROUTES = [
+  "/settings",
+  "/rides",
+  "/payment-methods",
+  "/support",
+  "/safety",
+  "/tariffs",
+  "/rent",
+  "/payment-result",
+];
+
 function AppRouter() {
   const [loc] = useLocation();
-  const isHome = loc === "/";
+  const isHome = loc === "/" || loc.startsWith("/bike/");
+  // Check if current route is an overlay (customer page over map)
+  const isOverlay = OVERLAY_ROUTES.some(r => loc === r || loc.startsWith(r + "/"));
   return (
     <>
-      {/* MapPage is always mounted to keep Yandex Map alive — hidden when not on "/" */}
-      <div style={{ display: isHome ? "contents" : "none" }} aria-hidden={!isHome}>
+      {/* MapPage is always mounted to keep Yandex Map alive */}
+      <div style={{ display: isHome || isOverlay ? "contents" : "none" }} aria-hidden={!isHome && !isOverlay}>
         <MapPage />
       </div>
+
+      {/* Overlay customer pages — rendered as fixed layer on top of map with slide-up/down animation */}
+      <OverlayRouter loc={loc} isOverlay={isOverlay} />
+
     <Switch>
       {/* Customer / rider interface */}
       <Route path="/"><></></Route>
       {/* QR deep link: a scanned bike URL (".../bike/BC-001") lands here, is
           stashed, and redirects to the map which auto-opens the rental flow. */}
       <Route path="/bike/:id">{(params) => <BikeDeepLink id={params.id} />}</Route>
-      <Route path="/rent" component={RentPage} />
-      <Route path="/tariffs" component={TariffsPage} />
-      <Route path="/rides" component={RidesPage} />
+      <Route path="/rent"><></></Route>
+      <Route path="/tariffs"><></></Route>
+      <Route path="/rides"><></></Route>
       <Route path="/profile" component={ProfilePage} />
-      <Route path="/payment-methods" component={PaymentMethodsPage} />
-      <Route path="/payment-result" component={PaymentResultPage} />
-      <Route path="/settings" component={SettingsPage} />
-      <Route path="/support" component={SupportPage} />
-      <Route path="/safety" component={SafetyPage} />
+      <Route path="/payment-methods"><></></Route>
+      <Route path="/payment-result"><></></Route>
+      <Route path="/settings"><></></Route>
+      <Route path="/support"><></></Route>
+      <Route path="/safety"><></></Route>
 
       {/* Legal documents */}
       <Route path="/legal" component={LegalIndexPage} />

@@ -164,7 +164,6 @@ export function DrawerMenu({ open, onClose }: Props) {
           <MenuItem href="/rides"           icon={Route}       label="История"         onClose={onClose} />
           <MenuItem href="/safety"          icon={ShieldCheck} label="Информация"      onClose={onClose} />
           <MenuItem href="/support"         icon={LifeBuoy}    label="Помощь"          onClose={onClose} />
-          <MenuItem href="/settings"        icon={UserCircle}  label="Профиль"         onClose={onClose} />
           {isStaff && (
             <MenuItem href="/admin"         icon={Shield}      label="Операторская"    onClose={onClose} />
           )}

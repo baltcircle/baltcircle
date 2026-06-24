@@ -33,7 +33,6 @@ export function SettingsPage() {
   const [editingEmail, setEditingEmail] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [phoneModalOpen, setPhoneModalOpen] = useState(false);
-  const [exiting, setExiting] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -62,7 +61,7 @@ export function SettingsPage() {
   return (
     // Full viewport, no scroll, uniform background
     <div
-      className={`flex flex-col bg-gray-50 dark:bg-zinc-900 ${exiting ? "animate-slide-down" : "animate-slide-up"}`}
+      className="flex flex-col bg-gray-50 dark:bg-zinc-900"
       style={{ height: "var(--app-height, 100svh)" }}
       data-testid="page-settings"
     >
@@ -72,7 +71,7 @@ export function SettingsPage() {
         style={{ paddingTop: "max(1.25rem, env(safe-area-inset-top))" }}
       >
         <button
-          onClick={() => { setExiting(true); setTimeout(() => window.history.back(), 300); }}
+          onClick={() => window.history.back()}
           className="absolute left-4 flex items-center justify-center w-9 h-9 rounded-full hover:bg-gray-200 dark:hover:bg-zinc-800 transition-colors"
           style={{ top: "max(1.25rem, env(safe-area-inset-top))" }}
         >
