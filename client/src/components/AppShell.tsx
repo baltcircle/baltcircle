@@ -47,7 +47,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Hide operator entry points until the session resolves and the role is
   // known to be operator/admin. Defaulting to hidden avoids a flash of the
   // admin link for unregistered or regular riders.
-  const { isStaff, role } = useCurrentUser();
+  const { isStaff, role, user } = useCurrentUser();
 
   const isAdmin = loc === "/admin" || loc.startsWith("/admin/");
   // Mechanics see a trimmed operator nav (service + fleet only); operators and
