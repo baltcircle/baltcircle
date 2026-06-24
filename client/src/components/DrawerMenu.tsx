@@ -37,12 +37,13 @@ export function DrawerMenu({ open, onClose }: Props) {
   const { user, isStaff, isRegistered } = useCurrentUser();
 
   const ridesQ = useQuery<Ride[]>({
-    queryKey: ["/api/rides"],
+    queryKey: ["/api/rides", "drawer", user?.id],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/rides");
+      const res = await apiRequest("GET", "/api/rides?limit=500");
       return res.json();
     },
-    enabled: isRegistered,
+    enabled: isRegistered && !!user?.id,
+    staleTime: 0,
   });
 
   const methodsQ = useQuery<any[]>({
