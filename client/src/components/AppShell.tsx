@@ -63,7 +63,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // The customer map page is a single-screen, non-scrolling layout: lock the
   // shell to the exact visible viewport and clip overflow. All other routes
   // (admin, profile, tariffs, …) keep the default min-h-screen scroll behaviour.
-  const isCustomerMap = loc === "/";
+  const isCustomerMap = loc === "/" || loc === "/settings";
   useAppViewport(isCustomerMap);
 
   return (
