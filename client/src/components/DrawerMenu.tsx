@@ -36,14 +36,14 @@ const PAYMENT_BANNER_KEY = "bc.payment.banner.dismissed";
 export function DrawerMenu({ open, onClose }: Props) {
   const { user, isStaff, isRegistered } = useCurrentUser();
 
+  const userId = user?.id ?? "";
   const ridesQ = useQuery<Ride[]>({
-    queryKey: ["/api/rides", "drawer", user?.id],
+    queryKey: ["/api/rides", { userId, limit: 100 }],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/rides?limit=500");
+      const res = await apiRequest("GET", `/api/rides?userId=${encodeURIComponent(userId)}&limit=100`);
       return res.json();
     },
-    enabled: isRegistered && !!user?.id,
-    staleTime: 0,
+    enabled: isRegistered && !!userId,
   });
 
   const methodsQ = useQuery<any[]>({
