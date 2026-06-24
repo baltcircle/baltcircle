@@ -178,6 +178,22 @@ export function YandexMap(props: Props) {
         // to render here with the (possibly stale) init-time closures.
         setReady(true);
 
+        // Re-fit the map whenever the container becomes visible again (e.g.
+        // after navigating away and back — the container was display:none).
+        if (containerRef.current) {
+          const obs = new IntersectionObserver((entries) => {
+            if (entries[0]?.isIntersecting) {
+              try { map.container.fitToViewport(); } catch { /* ignore */ }
+            }
+          }, { threshold: 0.01 });
+          obs.observe(containerRef.current);
+          const origCleanup = cleanup;
+          cleanup = () => {
+            obs.disconnect();
+            origCleanup?.();
+          };
+        }
+
         cleanup = () => {
           try { map.destroy(); } catch { /* ignore */ }
         };
