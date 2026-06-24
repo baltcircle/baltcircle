@@ -29,7 +29,7 @@ export function fmtRub(value: number) {
 }
 export function fmtDistance(meters: number) {
   if (meters < 1000) return Math.round(meters) + " м";
-  return (meters / 1000).toFixed(meters < 10000 ? 2 : 1) + " км";
+  return (meters / 1000).toFixed(1) + " км";
 }
 export function fmtDuration(ms: number) {
   const total = Math.max(0, Math.floor(ms / 1000));
