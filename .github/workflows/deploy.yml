@@ -23,6 +23,8 @@ jobs:
 
       - name: Rebuild and restart Docker app
         env:
+          DOCKER_BUILDKIT: "1"
+          COMPOSE_DOCKER_CLI_BUILD: "1"
           VITE_YANDEX_MAPS_API_KEY: ${{ secrets.VITE_YANDEX_MAPS_API_KEY }}
           SMS_PROVIDER: ${{ secrets.SMS_PROVIDER }}
           SIGMASMS_TOKEN: ${{ secrets.SIGMASMS_TOKEN }}

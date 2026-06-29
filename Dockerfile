@@ -1,20 +1,22 @@
+# syntax=docker/dockerfile:1.4
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
-RUN npm ci
+# Cache node_modules across builds — only re-installs when package*.json changes
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 
 FROM deps AS build
 WORKDIR /app
 COPY . .
-# Vite inlines import.meta.env.VITE_* at build time, so the Yandex Maps key
-# must be present during `npm run build`. Passed in as a build arg; only the
-# resulting client bundle (not a persistent env layer) carries the value.
 ARG VITE_YANDEX_MAPS_API_KEY=""
 ENV VITE_YANDEX_MAPS_API_KEY=$VITE_YANDEX_MAPS_API_KEY
-RUN npm run build
+# Cache Vite build output — only rebuilds changed files
+RUN --mount=type=cache,target=/app/node_modules/.cache \
+    npm run build
 RUN npm prune --omit=dev
 
 FROM node:20-bookworm-slim AS runtime
@@ -28,4 +30,3 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 EXPOSE 5000
 CMD ["node", "dist/index.cjs"]
-
