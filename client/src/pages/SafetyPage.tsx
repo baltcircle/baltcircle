@@ -122,7 +122,6 @@ export function SafetyPage() {
         </Link>
       </div>
       </div>
-    </div>
     </OverlayShell>
   );
 }
