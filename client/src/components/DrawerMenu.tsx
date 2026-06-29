@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { Ride } from "@shared/schema";
 
 interface Props {
@@ -35,6 +35,29 @@ const PAYMENT_BANNER_KEY = "bc.payment.banner.dismissed";
 
 export function DrawerMenu({ open, onClose }: Props) {
   const { user, isStaff, isRegistered } = useCurrentUser();
+
+  // Track iOS edge-swipe: suppress backdrop click that fires after the gesture
+  const swipingRef = useRef(false);
+  useEffect(() => {
+    if (!open) return;
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches[0].clientX <= 30) {
+        swipingRef.current = true;
+      }
+    };
+    const onTouchEnd = () => {
+      if (swipingRef.current) {
+        // Keep flag for a bit — synthetic click fires shortly after touchend
+        setTimeout(() => { swipingRef.current = false; }, 400);
+      }
+    };
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [open]);
 
   const userId = user?.id ?? "";
   const ridesQ = useQuery<Ride[]>({
@@ -71,21 +94,13 @@ export function DrawerMenu({ open, onClose }: Props) {
 
   return (
     <>
-      {/* Backdrop — closes on tap, but ignores horizontal swipe gestures
-          (iOS edge-swipe triggers a touch+click on the backdrop; we suppress
-          those by tracking touch start X and skipping clicks that followed
-          a significant horizontal movement). */}
+      {/* Backdrop — closes on tap, but not on iOS edge-swipe */}
       <div
         className={`fixed inset-0 bg-black/40 z-30 transition-opacity duration-300 ${
           open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
-        onTouchStart={(e) => {
-          (e.currentTarget as any)._touchStartX = e.touches[0].clientX;
-        }}
-        onClick={(e) => {
-          const startX: number | undefined = (e.currentTarget as any)._touchStartX;
-          // If the touch moved more than 20px horizontally, it was a swipe — ignore
-          if (startX !== undefined && Math.abs(e.clientX - startX) > 20) return;
+        onClick={() => {
+          if (swipingRef.current) return;
           onClose();
         }}
       />
