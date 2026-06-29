@@ -56,7 +56,8 @@ export function RidesPage() {
           </Card>
         ))}
       </div>
-    </div>
+      </div>
+    </OverlayShell>
   );
 }
 
@@ -66,6 +67,5 @@ function Cell({ icon, label, value }: { icon: React.ReactNode; label: string; va
       <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1">{icon}{label}</div>
       <div className="font-display font-light mt-0.5">{value}</div>
           </div>
-    </OverlayShell>
   );
 }
