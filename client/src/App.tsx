@@ -100,7 +100,9 @@ function AppRouter() {
   return (
     <>
       {/* MapPage is always mounted to keep Yandex Map alive */}
-      <div style={{ display: isHome || isOverlay ? "contents" : "none" }} aria-hidden={!isHome && !isOverlay}>
+      {/* MapPage: always mounted (keeps Yandex Map alive), visible only on home.
+          On overlay routes we hide it visually but keep it in DOM. */}
+      <div style={{ display: isHome ? "contents" : "none" }} aria-hidden={!isHome}>
         <MapPage />
       </div>
 

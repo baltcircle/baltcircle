@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { OverlayShell } from "@/components/OverlayShell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +16,8 @@ export function TariffsPage() {
   const [selectedTariff, setSelectedTariff] = useState<Tariff["id"]>("h1");
 
   return (
-    <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-6xl mx-auto" data-testid="page-tariffs">
+    <OverlayShell title="Тарифы">
+      <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-tariffs">
       <header className="mb-6">
         <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Тарифы</div>
         <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Выберите тариф</h1>
@@ -64,6 +66,7 @@ export function TariffsPage() {
       <p className="text-xs text-muted-foreground max-w-prose" data-testid="text-charge-note">
         Списание производится автоматически после завершения поездки с привязанной карты или по СБП. Внутреннего баланса нет.
       </p>
-    </div>
+          </div>
+    </OverlayShell>
   );
 }

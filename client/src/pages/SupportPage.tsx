@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { OverlayShell } from "@/components/OverlayShell";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { SupportTicket } from "@shared/schema";
 import { Card } from "@/components/ui/card";
@@ -71,7 +72,8 @@ export function SupportPage() {
   }
 
   return (
-    <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-2xl mx-auto" data-testid="page-support">
+    <OverlayShell title="Помощь">
+      <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-support">
       <header className="mb-6">
         <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Поддержка</div>
         <h1 className="font-display text-2xl lg:text-3xl font-light mt-1 flex items-center gap-2">
@@ -174,6 +176,7 @@ export function SupportPage() {
           </ul>
         )}
       </Card>
-    </div>
+          </div>
+    </OverlayShell>
   );
 }

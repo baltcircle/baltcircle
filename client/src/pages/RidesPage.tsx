@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { OverlayShell } from "@/components/OverlayShell";
 import type { Ride } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { fmtDate, fmtDistance, fmtDuration, fmtRub, fmtTariff } from "@/lib/format";
@@ -23,7 +24,8 @@ export function RidesPage() {
   const rides = ridesQ.data ?? [];
 
   return (
-    <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-5xl mx-auto" data-testid="page-rides">
+    <OverlayShell title="История поездок">
+      <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-rides">
       <header className="mb-6">
         <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">История</div>
         <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Ваши поездки</h1>
@@ -63,6 +65,7 @@ function Cell({ icon, label, value }: { icon: React.ReactNode; label: string; va
     <div>
       <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1">{icon}{label}</div>
       <div className="font-display font-light mt-0.5">{value}</div>
-    </div>
+          </div>
+    </OverlayShell>
   );
 }

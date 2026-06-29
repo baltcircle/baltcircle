@@ -1,4 +1,5 @@
 import { Link } from "wouter";
+import { OverlayShell } from "@/components/OverlayShell";
 import {
   ArrowLeft, ShieldCheck, HardHat, TrafficCone, Gauge, ParkingSquare,
   Moon, Lock, KeyRound, Database, Scale, ChevronRight,
@@ -66,7 +67,8 @@ const PRIVACY_TOPICS: Topic[] = [
 
 export function SafetyPage() {
   return (
-    <div className="min-h-full bg-background" data-testid="page-safety">
+    <OverlayShell title="Безопасность">
+      <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-safety">
       <div className="mx-auto max-w-md px-5 pt-6 pb-12">
         <header className="mb-6 flex items-center gap-3">
           <Link
@@ -159,6 +161,7 @@ function TopicCard({ topic }: { topic: Topic }) {
         <div className="font-light">{topic.title}</div>
         <p className="text-sm text-muted-foreground mt-0.5 leading-relaxed">{topic.text}</p>
       </div>
-    </div>
+          </div>
+    </OverlayShell>
   );
 }
