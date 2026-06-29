@@ -54,23 +54,31 @@ export function MapPage() {
   const [scanOpen, setScanOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // When drawer opens, push a guard history entry so iOS swipe-back
-  // closes the drawer instead of navigating away.
-  useEffect(() => {
-    if (drawerOpen) {
-      window.history.pushState({ drawerGuard: true }, "");
-    }
-  }, [drawerOpen]);
-
-  // Intercept popstate (iOS edge-swipe / browser back) while drawer is open.
+  // Detect iOS edge-swipe-back gesture directly via touch events.
+  // When the drawer is open, a swipe starting from the left 20px of the screen
+  // that moves right by 60px+ is treated as "close drawer" — no history tricks needed.
+  const touchStartX = useRef<number | null>(null);
   useEffect(() => {
     if (!drawerOpen) return;
-    const handler = (e: PopStateEvent) => {
-      // Close the drawer — the guard entry was already popped by the browser
-      setDrawerOpen(false);
+    const onTouchStart = (e: TouchEvent) => {
+      const x = e.touches[0].clientX;
+      // Only track touches starting near the left edge (iOS back-swipe zone)
+      touchStartX.current = x <= 30 ? x : null;
     };
-    window.addEventListener("popstate", handler);
-    return () => window.removeEventListener("popstate", handler);
+    const onTouchEnd = (e: TouchEvent) => {
+      if (touchStartX.current === null) return;
+      const dx = e.changedTouches[0].clientX - touchStartX.current;
+      if (dx > 60) {
+        setDrawerOpen(false);
+      }
+      touchStartX.current = null;
+    };
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchend", onTouchEnd);
+    };
   }, [drawerOpen]);
 
   // Geolocation: center map on user position
