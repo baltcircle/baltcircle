@@ -54,6 +54,25 @@ export function MapPage() {
   const [scanOpen, setScanOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  // When drawer opens, push a guard history entry so iOS swipe-back
+  // closes the drawer instead of navigating away.
+  useEffect(() => {
+    if (drawerOpen) {
+      window.history.pushState({ drawerGuard: true }, "");
+    }
+  }, [drawerOpen]);
+
+  // Intercept popstate (iOS edge-swipe / browser back) while drawer is open.
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const handler = (e: PopStateEvent) => {
+      // Close the drawer — the guard entry was already popped by the browser
+      setDrawerOpen(false);
+    };
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, [drawerOpen]);
+
   // Geolocation: center map on user position
   const [geoCenter, setGeoCenter] = useState<[number, number] | null>(null);
   const handleGeolocate = () => {
