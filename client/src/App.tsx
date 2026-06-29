@@ -32,34 +32,75 @@ import { OperationsMapPage } from "@/pages/OperationsMapPage";
 import NotFound from "@/pages/not-found";
 
 // OverlayRouter — renders customer pages as a fixed overlay on top of the map.
-// Exit animation: pages dispatch "overlay:back" event → OverlayRouter plays
-// slide-down for 300ms, then calls history.back() itself.
+//
+// Two exit paths:
+//   1. Button tap  → child dispatches "overlay:back" custom event
+//   2. iOS edge-swipe / browser back → fires "popstate" before URL changes
+//
+// In both cases we play slide-down (0.3s) then let the navigation complete.
+// While exiting, MapPage is already visible underneath (no black flash).
 function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) {
   const [visible, setVisible] = useState(isOverlay);
   const [exiting, setExiting] = useState(false);
+  const exitingRef = useRef(false); // stable ref so event handlers don't close over stale state
 
-  // On enter: reset animation state
+  const startExit = (thenNavigate?: () => void) => {
+    if (exitingRef.current) return; // already animating
+    exitingRef.current = true;
+    setExiting(true);
+    setTimeout(() => {
+      exitingRef.current = false;
+      setExiting(false);
+      setVisible(false);
+      thenNavigate?.();
+    }, 300);
+  };
+
+  // On enter: reset
   useEffect(() => {
     if (isOverlay) {
       setVisible(true);
       setExiting(false);
+      exitingRef.current = false;
     }
   }, [isOverlay, loc]);
 
-  // Listen for back-navigation requests from child pages
+  // 1. Button-driven back: child dispatches "overlay:back"
   useEffect(() => {
     const handler = () => {
-      if (!visible || exiting) return;
-      setExiting(true);
-      setTimeout(() => {
-        setExiting(false);
-        setVisible(false);
-        window.history.back();
-      }, 300);
+      startExit(() => window.history.back());
     };
     window.addEventListener("overlay:back", handler);
     return () => window.removeEventListener("overlay:back", handler);
-  }, [visible, exiting]);
+  }, []);
+
+  // 2. iOS edge-swipe / browser back (popstate fires BEFORE URL changes in
+  //    some browsers, or simultaneously). We push a synthetic history entry on
+  //    mount so there is always one step to intercept, then on popstate we
+  //    animate-out and let the navigation proceed.
+  useEffect(() => {
+    if (!visible) return;
+    // Push a guard entry so swipe-back has something to pop
+    window.history.pushState({ overlayGuard: true }, "");
+
+    const onPopState = (e: PopStateEvent) => {
+      // If we caused this pop by calling history.back() ourselves, ignore it
+      if (exitingRef.current) return;
+      // Animate, then allow the URL change to settle naturally
+      setExiting(true);
+      exitingRef.current = true;
+      setTimeout(() => {
+        exitingRef.current = false;
+        setExiting(false);
+        setVisible(false);
+      }, 300);
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+    };
+  }, [visible]);
 
   if (!visible) return null;
 
@@ -99,10 +140,10 @@ function AppRouter() {
   const isOverlay = OVERLAY_ROUTES.some(r => loc === r || loc.startsWith(r + "/"));
   return (
     <>
-      {/* MapPage is always mounted to keep Yandex Map alive */}
-      {/* MapPage: always mounted (keeps Yandex Map alive), visible only on home.
-          On overlay routes we hide it visually but keep it in DOM. */}
-      <div style={{ display: isHome ? "contents" : "none" }} aria-hidden={!isHome}>
+      {/* MapPage: always mounted (keeps Yandex Map alive).
+          Visible on home AND on overlay routes — overlays sit at z-50 on top,
+          so the map is already rendered when the exit animation plays. */}
+      <div style={{ display: isHome || isOverlay ? "contents" : "none" }} aria-hidden={!isHome && !isOverlay}>
         <MapPage />
       </div>
 
