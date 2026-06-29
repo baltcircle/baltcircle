@@ -71,12 +71,23 @@ export function DrawerMenu({ open, onClose }: Props) {
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop — closes on tap, but ignores horizontal swipe gestures
+          (iOS edge-swipe triggers a touch+click on the backdrop; we suppress
+          those by tracking touch start X and skipping clicks that followed
+          a significant horizontal movement). */}
       <div
         className={`fixed inset-0 bg-black/40 z-30 transition-opacity duration-300 ${
           open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
-        onClick={onClose}
+        onTouchStart={(e) => {
+          (e.currentTarget as any)._touchStartX = e.touches[0].clientX;
+        }}
+        onClick={(e) => {
+          const startX: number | undefined = (e.currentTarget as any)._touchStartX;
+          // If the touch moved more than 20px horizontally, it was a swipe — ignore
+          if (startX !== undefined && Math.abs(e.clientX - startX) > 20) return;
+          onClose();
+        }}
       />
 
       {/* Drawer panel */}

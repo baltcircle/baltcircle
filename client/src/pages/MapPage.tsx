@@ -54,32 +54,7 @@ export function MapPage() {
   const [scanOpen, setScanOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // Detect iOS edge-swipe-back gesture directly via touch events.
-  // When the drawer is open, a swipe starting from the left 20px of the screen
-  // that moves right by 60px+ is treated as "close drawer" — no history tricks needed.
-  const touchStartX = useRef<number | null>(null);
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const onTouchStart = (e: TouchEvent) => {
-      const x = e.touches[0].clientX;
-      // Only track touches starting near the left edge (iOS back-swipe zone)
-      touchStartX.current = x <= 30 ? x : null;
-    };
-    const onTouchEnd = (e: TouchEvent) => {
-      if (touchStartX.current === null) return;
-      const dx = e.changedTouches[0].clientX - touchStartX.current;
-      if (dx > 60) {
-        setDrawerOpen(false);
-      }
-      touchStartX.current = null;
-    };
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchend", onTouchEnd, { passive: true });
-    return () => {
-      window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchend", onTouchEnd);
-    };
-  }, [drawerOpen]);
+
 
   // Geolocation: center map on user position
   const [geoCenter, setGeoCenter] = useState<[number, number] | null>(null);
