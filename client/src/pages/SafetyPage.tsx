@@ -162,7 +162,6 @@ function TopicCard({ topic }: { topic: Topic }) {
         <div className="font-light">{topic.title}</div>
         <p className="text-sm text-muted-foreground mt-0.5 leading-relaxed">{topic.text}</p>
       </div>
-          </div>
     </div>
   );
 }
