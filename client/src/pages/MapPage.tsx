@@ -54,8 +54,6 @@ export function MapPage() {
   const [scanOpen, setScanOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-
-
   // Geolocation: center map on user position
   const [geoCenter, setGeoCenter] = useState<[number, number] | null>(null);
   const handleGeolocate = () => {

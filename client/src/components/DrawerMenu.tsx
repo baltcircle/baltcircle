@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import type { Ride } from "@shared/schema";
 
 interface Props {
@@ -18,11 +18,10 @@ interface MenuItemProps {
   onClose: () => void;
 }
 
-function MenuItem({ href, icon: Icon, label, onClose }: MenuItemProps) {
+function MenuItem({ href, icon: Icon, label }: Omit<MenuItemProps, "onClose">) {
   return (
     <Link
       href={href}
-      onClick={onClose}
       className="flex items-center gap-4 px-2 py-3 rounded-xl hover:bg-gray-50 dark:hover:bg-zinc-800/60 transition-colors"
     >
       <Icon className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
@@ -35,29 +34,6 @@ const PAYMENT_BANNER_KEY = "bc.payment.banner.dismissed";
 
 export function DrawerMenu({ open, onClose }: Props) {
   const { user, isStaff, isRegistered } = useCurrentUser();
-
-  // Track iOS edge-swipe: suppress backdrop click that fires after the gesture
-  const swipingRef = useRef(false);
-  useEffect(() => {
-    if (!open) return;
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches[0].clientX <= 30) {
-        swipingRef.current = true;
-      }
-    };
-    const onTouchEnd = () => {
-      if (swipingRef.current) {
-        // Keep flag for a bit — synthetic click fires shortly after touchend
-        setTimeout(() => { swipingRef.current = false; }, 400);
-      }
-    };
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchend", onTouchEnd, { passive: true });
-    return () => {
-      window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchend", onTouchEnd);
-    };
-  }, [open]);
 
   const userId = user?.id ?? "";
   const ridesQ = useQuery<Ride[]>({
@@ -94,15 +70,12 @@ export function DrawerMenu({ open, onClose }: Props) {
 
   return (
     <>
-      {/* Backdrop — closes on tap, but not on iOS edge-swipe */}
+      {/* Backdrop */}
       <div
         className={`fixed inset-0 bg-black/40 z-30 transition-opacity duration-300 ${
           open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
-        onClick={() => {
-          if (swipingRef.current) return;
-          onClose();
-        }}
+        onClick={onClose}
       />
 
       {/* Drawer panel */}
@@ -127,7 +100,6 @@ export function DrawerMenu({ open, onClose }: Props) {
         {/* User info block — кликабельный, ведёт в /settings */}
         <Link
           href="/settings"
-          onClick={onClose}
           className="mx-4 mt-2 block rounded-2xl hover:bg-gray-50 dark:hover:bg-zinc-800/60 transition-colors px-2 py-2"
         >
           <div className="flex items-start justify-between gap-2">
@@ -173,7 +145,6 @@ export function DrawerMenu({ open, onClose }: Props) {
             </div>
             <Link
               href="/payment-methods"
-              onClick={onClose}
               className="mt-3 flex items-center justify-center w-full h-10 rounded-full bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors"
             >
               Добавить оплату
@@ -186,12 +157,12 @@ export function DrawerMenu({ open, onClose }: Props) {
 
         {/* Nav items */}
         <nav className="flex-1 overflow-y-auto px-4">
-          <MenuItem href="/payment-methods" icon={Wallet}      label="Способы оплаты" onClose={onClose} />
-          <MenuItem href="/rides"           icon={Route}       label="История"         onClose={onClose} />
-          <MenuItem href="/safety"          icon={ShieldCheck} label="Информация"      onClose={onClose} />
-          <MenuItem href="/support"         icon={LifeBuoy}    label="Помощь"          onClose={onClose} />
+          <MenuItem href="/payment-methods" icon={Wallet}      label="Способы оплаты" />
+          <MenuItem href="/rides"           icon={Route}       label="История"         />
+          <MenuItem href="/safety"          icon={ShieldCheck} label="Информация"      />
+          <MenuItem href="/support"         icon={LifeBuoy}    label="Помощь"          />
           {isStaff && (
-            <MenuItem href="/admin"         icon={Shield}      label="Операторская"    onClose={onClose} />
+            <MenuItem href="/admin"         icon={Shield}      label="Операторская"    />
           )}
         </nav>
       </div>
