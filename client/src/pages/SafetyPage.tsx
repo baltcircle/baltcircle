@@ -121,7 +121,9 @@ export function SafetyPage() {
           <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
         </Link>
       </div>
+      </div>
     </div>
+    </OverlayShell>
   );
 }
 
@@ -162,6 +164,6 @@ function TopicCard({ topic }: { topic: Topic }) {
         <p className="text-sm text-muted-foreground mt-0.5 leading-relaxed">{topic.text}</p>
       </div>
           </div>
-    </OverlayShell>
+    </div>
   );
 }
