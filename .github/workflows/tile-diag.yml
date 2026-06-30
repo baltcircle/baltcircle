@@ -6,21 +6,35 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: check proxy
+      - name: check dist in container
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          D1=$(docker exec baltcircle-mvp grep -c "tile-proxy" /app/dist/index.cjs 2>/dev/null || echo "ERR")
-          D2=$(docker exec baltcircle-mvp grep -c "app.use" /app/dist/index.cjs 2>/dev/null || echo "ERR")
-          R1=$(curl -so /dev/null -w '%{http_code}' http://localhost:5000/tiles/data/kaliningrad.json)
-          R2=$(curl -s http://localhost:5000/tiles/data/kaliningrad.json 2>/dev/null | head -c 200)
-          printf "dist_tile_proxy=%s\ndist_app_use_count=%s\nproxy_json_http=%s\nproxy_json_body=%.150s\n" \
-            "$D1" "$D2" "$R1" "$R2" > /tmp/r.txt
-          ENC=$(base64 -w0 /tmp/r.txt)
+          # Check dist directly
+          PROXY_IN_DIST=$(docker exec baltcircle-mvp grep -c "tile-proxy" /app/dist/index.cjs 2>&1)
+          APPUSE_IN_DIST=$(docker exec baltcircle-mvp grep -c "tiles" /app/dist/index.cjs 2>&1)
+          PROXY_HTTP=$(curl -so /dev/null -w '%{http_code}' http://localhost:5000/tiles/data/kaliningrad.json)
+          
+          # Write to host file and then push via API
+          echo "proxy_in_dist=$PROXY_IN_DIST" > /tmp/r2.txt
+          echo "tiles_in_dist=$APPUSE_IN_DIST" >> /tmp/r2.txt
+          echo "proxy_http=$PROXY_HTTP" >> /tmp/r2.txt
+          
+          cat /tmp/r2.txt
+          
+          ENC=$(base64 -w0 /tmp/r2.txt)
           SHA=$(curl -sf -H "Authorization: token $TOKEN" \
-            https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt \
-            | grep -o '"sha":"[^"]*"' | head -1 | cut -d'"' -f4)
-          curl -sf -X PUT -H "Authorization: token $TOKEN" \
-            -d "{\"message\":\"ci: diag v11 [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" \
-            https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt || true
+            "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['sha'])" 2>/dev/null || echo "")
+          
+          if [ -n "$SHA" ]; then
+            curl -sf -X PUT \
+              -H "Authorization: token $TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
+              -d "{\"message\":\"ci: diag v12 [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" \
+              && echo "PUSHED OK" || echo "PUSH FAILED"
+          else
+            echo "SHA empty"
+          fi
