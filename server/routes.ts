@@ -1214,32 +1214,45 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.setHeader("Cache-Control", "public, max-age=86400");
 
-        if (isTileJson && !ce) {
-          // Buffer TileJSON and rewrite internal tile/grid URLs to absolute /tiles/... URLs.
-          // MapLibre GL requires absolute URLs in tiles[] — relative URLs cause the source
-          // to stay stuck in "loading" state indefinitely.
+        if (isTileJson) {
+          // Buffer TileJSON (possibly gzip-encoded) and rewrite tile/grid URLs to absolute.
+          // MapLibre GL requires absolute URLs in tiles[] — relative URLs keep source in
+          // "loading" state indefinitely. Handle gzip via zlib.gunzip.
+          const zlib = require("zlib") as typeof import("zlib");
           const chunks: Buffer[] = [];
           proxyRes.on("data", (chunk: Buffer) => chunks.push(chunk));
           proxyRes.on("end", () => {
-            try {
-              const body = Buffer.concat(chunks).toString("utf8");
-              const json = JSON.parse(body);
-              // Resolve public origin robustly behind reverse proxy:
-              // x-forwarded-host/proto set by nginx, fallback to HOST env var, then takeride.ru
-              const fwdProto = (req.headers["x-forwarded-proto"] as string | undefined)?.split(",")[0]?.trim();
-              const fwdHost  = (req.headers["x-forwarded-host"]  as string | undefined)?.split(",")[0]?.trim();
-              const proto  = fwdProto || req.protocol || "https";
-              const host   = fwdHost  || req.get("host") || process.env.PUBLIC_HOST || "takeride.ru";
-              const origin = `${proto}://${host}`;
-              const rewrite = (url: string) => `${origin}${url.replace(/^https?:\/\/[^/]+/, "/tiles")}`;
-              if (Array.isArray(json.tiles)) json.tiles = (json.tiles as string[]).map(rewrite);
-              if (Array.isArray(json.grids)) json.grids = (json.grids as string[]).map(rewrite);
-              res.setHeader("Content-Type", "application/json");
-              res.status(proxyRes.statusCode ?? 200).end(JSON.stringify(json));
-            } catch {
+            const raw = Buffer.concat(chunks);
+            const decode = (buf: Buffer): Promise<Buffer> =>
+              ce === "gzip" || ce === "deflate"
+                ? new Promise((ok, fail) => zlib.gunzip(buf, (err, r) => err ? fail(err) : ok(r)))
+                : Promise.resolve(buf);
+
+            decode(raw).then((buf) => {
+              try {
+                const json = JSON.parse(buf.toString("utf8"));
+                // Resolve public origin behind nginx reverse proxy
+                const fwdProto = (req.headers["x-forwarded-proto"] as string | undefined)?.split(",")[0]?.trim();
+                const fwdHost  = (req.headers["x-forwarded-host"]  as string | undefined)?.split(",")[0]?.trim();
+                const proto  = fwdProto || req.protocol || "https";
+                const host   = fwdHost  || req.get("host") || process.env.PUBLIC_HOST || "takeride.ru";
+                const origin = `${proto}://${host}`;
+                const rewrite = (url: string) => `${origin}${url.replace(/^https?:\/\/[^/]+/, "/tiles")}`;
+                if (Array.isArray(json.tiles)) json.tiles = (json.tiles as string[]).map(rewrite);
+                if (Array.isArray(json.grids)) json.grids = (json.grids as string[]).map(rewrite);
+                res.setHeader("Content-Type", "application/json");
+                // Never forward Content-Encoding — we're sending decompressed JSON
+                res.status(proxyRes.statusCode ?? 200).end(JSON.stringify(json));
+              } catch {
+                res.setHeader("Content-Type", ct);
+                if (ce) res.setHeader("Content-Encoding", ce);
+                res.status(proxyRes.statusCode ?? 200).end(raw);
+              }
+            }).catch(() => {
               res.setHeader("Content-Type", ct);
-              res.status(proxyRes.statusCode ?? 200).end(Buffer.concat(chunks));
-            }
+              if (ce) res.setHeader("Content-Encoding", ce);
+              res.status(proxyRes.statusCode ?? 200).end(raw);
+            });
           });
         } else {
           if (ce) res.setHeader("Content-Encoding", ce);
