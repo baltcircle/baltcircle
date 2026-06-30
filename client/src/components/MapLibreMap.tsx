@@ -55,7 +55,8 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
     },
   },
   layers: [
-    { id: "background", type: "background", paint: { "background-color": "#e8f0f7" } },
+    // Background = water color so empty sea tiles (outside OSM extract bbox) look like ocean
+    { id: "background", type: "background", paint: { "background-color": "#a8d5e8" } },
     // Landcover fills — farmland, grass, wood, wetland, sand
     // These cover the areas that look empty (fields, forests, meadows)
     {
