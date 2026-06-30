@@ -6,15 +6,17 @@ jobs:
     steps:
       - name: Proxy diagnostics
         run: |
-          echo "=== tileserver direct ==="
-          STATUS=$(curl -so /dev/null -w "%{http_code}" http://localhost:8080/data/kaliningrad.json)
-          echo "tileserver json: $STATUS"
-          STATUS2=$(curl -so /dev/null -w "%{http_code}" "http://localhost:8080/data/kaliningrad/11/1140/650.pbf")
-          echo "tileserver tile z11: $STATUS2"
-          echo "=== app proxy ==="
-          STATUS3=$(curl -so /dev/null -w "%{http_code}" http://localhost:5000/tiles/data/kaliningrad.json)
-          echo "proxy json: $STATUS3"
-          STATUS4=$(curl -so /dev/null -w "%{http_code}" "http://localhost:5000/tiles/data/kaliningrad/11/1140/650.pbf")
-          echo "proxy tile z11: $STATUS4"
-          echo "=== tilejson tiles field ==="
-          curl -s http://localhost:5000/tiles/data/kaliningrad.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('tiles:', d.get('tiles'))" 2>/dev/null || echo "parse failed"
+          {
+            echo "=== tileserver direct ==="
+            curl -so /dev/null -w "tileserver json: %{http_code}\n" http://localhost:8080/data/kaliningrad.json
+            curl -so /dev/null -w "tileserver tile z11: %{http_code}\n" "http://localhost:8080/data/kaliningrad/11/1140/650.pbf"
+            echo "=== app proxy ==="
+            curl -so /dev/null -w "proxy json: %{http_code}\n" http://localhost:5000/tiles/data/kaliningrad.json
+            curl -so /dev/null -w "proxy tile z11: %{http_code}\n" "http://localhost:5000/tiles/data/kaliningrad/11/1140/650.pbf"
+            echo "=== tilejson tiles field ==="
+            curl -s http://localhost:5000/tiles/data/kaliningrad.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('tiles:', d.get('tiles'))" 2>/dev/null || echo "parse failed"
+          } | tee /tmp/diag-output.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diag-output
+          path: /tmp/diag-output.txt
