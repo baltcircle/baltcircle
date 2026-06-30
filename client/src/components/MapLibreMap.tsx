@@ -56,6 +56,22 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
   },
   layers: [
     { id: "background", type: "background", paint: { "background-color": "#e8f0f7" } },
+    // Landcover fills — farmland, grass, wood, wetland, sand
+    // These cover the areas that look empty (fields, forests, meadows)
+    {
+      id: "landcover", type: "fill", source: "kaliningrad", "source-layer": "landcover",
+      paint: {
+        "fill-color": ["match", ["get", "class"],
+          "farmland",  "#eee8d8",
+          "grass",     "#d4edda",
+          "wood",      "#b5d5a0",
+          "wetland",   "#c8dfd0",
+          "sand",      "#f0e8c8",
+          "#e8e0d0"
+        ],
+        "fill-opacity": 0.85,
+      },
+    },
     {
       id: "water", type: "fill", source: "kaliningrad", "source-layer": "water",
       paint: { "fill-color": "#a8d5e8" },
