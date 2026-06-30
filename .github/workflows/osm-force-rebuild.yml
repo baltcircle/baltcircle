@@ -6,25 +6,21 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Remove broken files
-        run: |
-          echo "Before: $(ls -lh /home/yc-user/osm/*.pbf /home/yc-user/osm/*.mbtiles 2>/dev/null)"
-          rm -f /home/yc-user/osm/kaliningrad.mbtiles
-          rm -f /home/yc-user/osm/kaliningrad.osm.pbf
-          echo "Removed"
-
-      - name: Download OSM PBF
+      - name: Remove broken files and re-download
         run: |
           cd /home/yc-user/osm
-          echo "Downloading..."
-          curl -L --retry 3 --retry-delay 5 -o kaliningrad.osm.pbf \
-            "https://download.geofabrik.de/russia/kaliningradskaya-oblast-latest.osm.pbf"
+          rm -f kaliningrad.osm.pbf kaliningrad.mbtiles
+          echo "Downloading from Geofabrik (correct URL)..."
+          curl -L --retry 3 --retry-delay 5 --max-time 300 \
+            -o kaliningrad.osm.pbf \
+            "https://download.geofabrik.de/russia/kaliningrad-latest.osm.pbf"
           echo "Downloaded: $(du -sh kaliningrad.osm.pbf)"
           ls -lh kaliningrad.osm.pbf
 
       - name: Build MBTiles
         run: |
           cd /home/yc-user/osm
+          echo "Building tiles..."
           tilemaker \
             --input kaliningrad.osm.pbf \
             --output kaliningrad.mbtiles \
@@ -33,13 +29,16 @@ jobs:
             --bbox 19.0,54.0,23.0,56.0 \
             --threads 2
           echo "Result: $(du -sh kaliningrad.mbtiles)"
+          ls -lh kaliningrad.mbtiles
 
       - name: Restart tileserver
         run: |
           cd /home/yc-user/osm
           docker compose restart tileserver
-          sleep 5
-          curl -s http://localhost:8080/data/kaliningrad.json | grep -o '"minzoom":[0-9]*'
+          sleep 8
+          echo "Smoke: $(curl -so /dev/null -w '%{http_code}' http://localhost:8080/data/kaliningrad.json)"
+          echo "Tile z10: $(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/data/kaliningrad/10/570/325.pbf')"
+          echo "Tile z10 size: $(curl -s 'http://localhost:8080/data/kaliningrad/10/570/325.pbf' | wc -c) bytes"
 
       - name: Write result
         env:
@@ -47,10 +46,12 @@ jobs:
         run: |
           set +e
           MBT=$(ls -lh /home/yc-user/osm/kaliningrad.mbtiles 2>/dev/null | awk '{print $5}')
-          PBF=$(ls -lh /home/yc-user/osm/kaliningrad.osm.pbf 2>/dev/null | awk '{print $5}')
           T10=$(curl -so /dev/null -w '%{http_code}' "http://localhost:8080/data/kaliningrad/10/570/325.pbf")
           S10=$(curl -s "http://localhost:8080/data/kaliningrad/10/570/325.pbf" | wc -c)
-          printf "mbt=%s\npbf=%s\nts_z10=%s\nts_z10_size=%s\n" "$MBT" "$PBF" "$T10" "$S10" > /tmp/r.txt
+          PROXY=$(curl -so /dev/null -w '%{http_code}' "http://localhost:5000/tiles/data/kaliningrad/10/570/325.pbf")
+          PROXY_S=$(curl -s "http://localhost:5000/tiles/data/kaliningrad/10/570/325.pbf" | wc -c)
+          printf "mbt=%s\nts_z10=%s\nts_z10_size=%s\nproxy_z10=%s\nproxy_z10_size=%s\n" \
+            "$MBT" "$T10" "$S10" "$PROXY" "$PROXY_S" > /tmp/r.txt
           cat /tmp/r.txt
           ENC=$(base64 -w0 /tmp/r.txt)
           SHA=$(curl -sf -H "Authorization: token $TOKEN" \
@@ -58,4 +59,4 @@ jobs:
             | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
           curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: osm rebuild result [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo "Written"
+            -d "{\"message\":\"ci: osm rebuild2 result [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo "Written"
