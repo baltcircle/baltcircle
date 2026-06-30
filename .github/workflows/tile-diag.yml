@@ -3,13 +3,38 @@ on: [workflow_dispatch]
 jobs:
   diag:
     runs-on: [self-hosted, baltcircle-prod]
+    permissions:
+      contents: write
     steps:
-      - name: nginx and network info
+      - name: Run diagnostics and commit result via API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "=== nginx sites ==="
-          ls /etc/nginx/sites-enabled/ 2>/dev/null
-          cat /etc/nginx/sites-enabled/* 2>/dev/null
-          echo "=== nginx sites-available ==="
-          ls /etc/nginx/sites-available/ 2>/dev/null
-          echo "=== listening ports ==="
-          ss -tlnp 2>/dev/null | grep -E "5000|8080|80|443"
+          RESULT=""
+          RESULT+="nginx_sites=$(ls /etc/nginx/sites-enabled/ 2>/dev/null | tr '\n' ',' || echo none)\n"
+          RESULT+="nginx_conf=$(cat /etc/nginx/sites-enabled/* 2>/dev/null | grep -E 'server_name|proxy_pass|listen' | tr '\n' '|' || echo none)\n"
+          RESULT+="ports=$(ss -tlnp 2>/dev/null | grep -E '5000|8080|80|443' | awk '{print $4}' | tr '\n' ',' || echo none)\n"
+          RESULT+="ts_json=$(curl -so /dev/null -w '%{http_code}' http://localhost:8080/data/kaliningrad.json)\n"
+          RESULT+="ts_tile=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/data/kaliningrad/11/1140/650.pbf')\n"
+          RESULT+="proxy_json=$(curl -so /dev/null -w '%{http_code}' http://localhost:5000/tiles/data/kaliningrad.json)\n"
+          RESULT+="proxy_tile=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:5000/tiles/data/kaliningrad/11/1140/650.pbf')\n"
+          RESULT+="tiles_url=$(curl -s http://localhost:5000/tiles/data/kaliningrad.json | grep -o '"'"'"tiles":\["[^"]*"'"'"' | head -1)\n"
+          
+          printf "$RESULT" > /tmp/result.txt
+          cat /tmp/result.txt
+          
+          CONTENT=$(base64 -w0 /tmp/result.txt)
+          EXISTING_SHA=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" | grep '"sha"' | head -1 | grep -o '"[a-f0-9]\{40\}"' | tr -d '"')
+          
+          PAYLOAD="{\"message\":\"ci: diag result [skip ci]\",\"content\":\"$CONTENT\""
+          if [ -n "$EXISTING_SHA" ]; then
+            PAYLOAD+=",\"sha\":\"$EXISTING_SHA\""
+          fi
+          PAYLOAD+="}"
+          
+          curl -s -X PUT \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" | grep -E '"sha"|"message"' | head -3
