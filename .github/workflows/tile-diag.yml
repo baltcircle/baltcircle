@@ -4,17 +4,12 @@ jobs:
   diag:
     runs-on: [self-hosted, baltcircle-prod]
     steps:
-      - name: nginx config
-        run: cat /etc/nginx/sites-enabled/* 2>/dev/null || echo "no sites-enabled"
-      - name: tileserver direct
+      - name: nginx and network info
         run: |
-          curl -so /dev/null -w "%{http_code}" http://localhost:8080/data/kaliningrad.json && echo " tileserver-json"
-          curl -so /dev/null -w "%{http_code}" "http://localhost:8080/data/kaliningrad/11/1140/650.pbf" && echo " tileserver-tile-z11"
-      - name: app proxy
-        run: |
-          curl -so /dev/null -w "%{http_code}" http://localhost:5000/tiles/data/kaliningrad.json && echo " proxy-json"
-          curl -so /dev/null -w "%{http_code}" "http://localhost:5000/tiles/data/kaliningrad/11/1140/650.pbf" && echo " proxy-tile-z11"
-      - name: tilejson tiles field
-        run: curl -s http://localhost:5000/tiles/data/kaliningrad.json | grep -o '"tiles":\["[^"]*"' | head -3
-      - name: docker ps
-        run: docker ps --format "{{.Names}} {{.Ports}} {{.Status}}"
+          echo "=== nginx sites ==="
+          ls /etc/nginx/sites-enabled/ 2>/dev/null
+          cat /etc/nginx/sites-enabled/* 2>/dev/null
+          echo "=== nginx sites-available ==="
+          ls /etc/nginx/sites-available/ 2>/dev/null
+          echo "=== listening ports ==="
+          ss -tlnp 2>/dev/null | grep -E "5000|8080|80|443"
