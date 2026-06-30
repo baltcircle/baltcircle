@@ -18,7 +18,8 @@ interface MapLibreMapProps {
 
 const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object => ({
   version: 8,
-  // No glyphs — no symbol layers, demotiles.maplibre.org is unreachable and blocks map.loaded()
+  // Glyphs proxied via same-origin /glyphs/ → protomaps CDN, avoids iOS WKWebView CORS issues
+  glyphs: "/glyphs/{fontstack}/{range}.pbf",
   sources: {
     kaliningrad: { type: "vector", tiles: [tileUrl], minzoom, maxzoom },
   },
@@ -57,6 +58,44 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
       id: "building", type: "fill", source: "kaliningrad", "source-layer": "building",
       minzoom: 14,
       paint: { "fill-color": "#ddd6cc", "fill-outline-color": "#c9c0b5" },
+    },
+    // City / town / village names — Russian label preferred
+    {
+      id: "place-labels", type: "symbol", source: "kaliningrad", "source-layer": "place",
+      filter: ["in", ["get", "class"], ["literal", ["city", "town", "village", "suburb", "hamlet"]]],
+      layout: {
+        "text-field": ["coalesce", ["get", "name:ru"], ["get", "name"]],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": ["interpolate", ["linear"], ["zoom"],
+          7, ["match", ["get", "class"], ["city"], 14, ["town"], 12, 10],
+          12, ["match", ["get", "class"], ["city"], 18, ["town"], 15, 12],
+        ],
+        "text-max-width": 8,
+        "text-anchor": "center",
+        "text-padding": 4,
+        "symbol-sort-key": ["match", ["get", "class"], "city", 1, "town", 2, "village", 3, 4],
+      },
+      paint: {
+        "text-color": "#2d3a4a",
+        "text-halo-color": "rgba(255,255,255,0.85)",
+        "text-halo-width": 1.5,
+      },
+    },
+    // House numbers — only visible at very close zoom
+    {
+      id: "housenumber-labels", type: "symbol", source: "kaliningrad", "source-layer": "housenumber",
+      minzoom: 17,
+      layout: {
+        "text-field": ["get", "housenumber"],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": 10,
+        "text-anchor": "center",
+      },
+      paint: {
+        "text-color": "#7a6a55",
+        "text-halo-color": "rgba(255,255,255,0.8)",
+        "text-halo-width": 1,
+      },
     },
   ],
 });
