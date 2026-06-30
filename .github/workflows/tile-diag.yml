@@ -4,11 +4,13 @@ jobs:
   diag:
     runs-on: [self-hosted, baltcircle-prod]
     steps:
-      - name: Check tileserver
+      - name: Check proxy and tiles
         run: |
-          echo "=== tileserver.json ==="
-          curl -s http://localhost:8080/data/kaliningrad.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('bounds:', d.get('bounds')); print('minzoom:', d.get('minzoom')); print('maxzoom:', d.get('maxzoom')); print('format:', d.get('format')); print('vector_layers:', [l['id'] for l in d.get('vector_layers',[])])"
-          echo "=== tile test ==="
-          curl -si "http://localhost:8080/data/kaliningrad/11/1134/614.pbf" | head -8
-          echo "=== app proxy test ==="
-          curl -si "http://localhost:5000/tiles/data/kaliningrad.json" | head -15
+          echo "=== correct tile z=11/1140/650 ==="
+          curl -si "http://localhost:8080/data/kaliningrad/11/1140/650.pbf" | head -6
+          echo "=== proxy tilejson ==="
+          curl -si "http://localhost:5000/tiles/data/kaliningrad.json" | head -6
+          echo "=== proxy tile ==="
+          curl -si "http://localhost:5000/tiles/data/kaliningrad/11/1140/650.pbf" | head -6
+          echo "=== express routes check ==="
+          curl -s "http://localhost:5000/tiles/data/kaliningrad.json" | python3 -c "import json,sys; d=json.load(sys.stdin); print('OK tiles field:', 'tiles' in d)" 2>/dev/null || echo "NOT JSON"
