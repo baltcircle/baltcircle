@@ -6,23 +6,17 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: check fonts
+      - name: check external fonts
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          # Check tileserver fonts endpoint
-          FONTS=$(curl -s http://localhost:8080/fonts.json 2>/dev/null | head -c 500)
-          FONT_LIST=$(curl -so /dev/null -w '%{http_code}' http://localhost:8080/fonts.json)
-          # Try Noto Sans Regular glyph range
-          NOTO=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/fonts/Noto%20Sans%20Regular/0-255.pbf')
-          NOTO_SZ=$(curl -s 'http://localhost:8080/fonts/Noto%20Sans%20Regular/0-255.pbf' | wc -c)
-          # Try Open Sans
-          OPEN=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/fonts/Open%20Sans%20Regular/0-255.pbf')
-          # tileserver catalog
-          CAT=$(curl -s http://localhost:8080/ | python3 -c "import json,sys; d=json.load(sys.stdin); print(list(d.get('fonts',{}).keys())[:5])" 2>/dev/null || echo "no catalog")
-          printf "font_list_http=%s\nnoto_http=%s noto_bytes=%s\nopen_sans_http=%s\nfonts_json=%s\ncatalog_fonts=%s\n" \
-            "$FONT_LIST" "$NOTO" "$NOTO_SZ" "$OPEN" "$FONTS" "$CAT" > /tmp/r.txt
+          # Test protomaps GitHub Pages fonts
+          P1=$(curl -so /dev/null -w '%{http_code}' --max-time 5 'https://protomaps.github.io/basemaps-assets/fonts/Noto%20Sans%20Regular/0-255.pbf')
+          P1S=$(curl -s --max-time 5 'https://protomaps.github.io/basemaps-assets/fonts/Noto%20Sans%20Regular/0-255.pbf' | wc -c)
+          # Test orangemug
+          O1=$(curl -so /dev/null -w '%{http_code}' --max-time 5 'https://orangemug.github.io/font-glyphs/glyphs/Open%20Sans%20Regular/0-255.pbf')
+          printf "protomaps=%s bytes=%s\norangemug=%s\n" "$P1" "$P1S" "$O1" > /tmp/r.txt
           cat /tmp/r.txt
           ENC=$(base64 -w0 /tmp/r.txt)
           SHA_FILE=$(curl -sf -H "Authorization: token $TOKEN" \
