@@ -1193,7 +1193,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Uses app.use() for Express 5 wildcard compatibility.
   app.use("/tiles", (req: Request, res: Response) => {
     const tilePath = req.path; // e.g. "/data/kaliningrad.json"
-    const upstreamUrl = `http://localhost:8080${tilePath}`;
+    // In production the app runs in Docker; tileserver-gl is on the host.
+    // host.docker.internal resolves to the host gateway via extra_hosts.
+    const tileHost = process.env.NODE_ENV === 'production' ? 'host.docker.internal' : 'localhost';
+    const upstreamUrl = `http://${tileHost}:8080${tilePath}`;
     const http = require("http") as typeof import("http");
     const upstream = new URL(upstreamUrl);
     const proxyReq = http.request(
@@ -1465,4 +1468,3 @@ function maskPan(pan: string): string {
   return last4 ? `•••• ${last4}` : "Карта";
 }
 
-// cache-bust: 1782835820
