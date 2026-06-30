@@ -125,7 +125,7 @@ export function MapLibreMap({
       try {
         const map = new ml.Map({
           container: el, style: buildStyle(tileUrl, minzoom, maxzoom),
-          center: DEFAULT_CENTER, zoom: 11,
+          center: DEFAULT_CENTER, zoom: 10,
           attributionControl: false, trackResize: true,
         });
         map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
@@ -182,11 +182,13 @@ export function MapLibreMap({
           log(`tj ok minz=${minzoom} maxz=${maxzoom}`);
           // Test actual tile fetch at z=11 center of Kaliningrad (lng=20.275, lat=54.945)
           // z=11: x=1193, y=630
-          const testUrl = tileUrl.replace("{z}","11").replace("{x}","1193").replace("{y}","630");
-          fetch(testUrl, {cache:"no-store"}).then(async r => {
-            const buf = await r.arrayBuffer();
-            log(`tile11 http=${r.status} bytes=${buf.byteLength} ct=${r.headers.get("content-type")??"?"}`);
-          }).catch(e => log("tile11 ERR:"+(e?.message??e)));
+          // Test z=10 (confirmed working) and z=11 (correct coords for Kaliningrad center)
+          const t10 = tileUrl.replace("{z}","10").replace("{x}","569").replace("{y}","324");
+          const t11 = tileUrl.replace("{z}","11").replace("{x}","1139").replace("{y}","648");
+          Promise.all([
+            fetch(t10,{cache:"no-store"}).then(async r=>({z:10,s:r.status,b:(await r.arrayBuffer()).byteLength})),
+            fetch(t11,{cache:"no-store"}).then(async r=>({z:11,s:r.status,b:(await r.arrayBuffer()).byteLength})),
+          ]).then(rs => rs.forEach(r => log(`t${r.z} http=${r.s} bytes=${r.b}`))).catch(e=>log("tERR:"+(e?.message??e)));
           initMap(tileUrl, minzoom, maxzoom);
         })
         .catch((e: any) => {
