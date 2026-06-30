@@ -11,20 +11,22 @@ jobs:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          # tileserver
+          # tileserver direct
           TS=$(curl -so /dev/null -w '%{http_code}' http://localhost:8080/data/kaliningrad.json)
+          TS11=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/data/kaliningrad/11/1193/630.pbf')
+          TS11S=$(curl -s 'http://localhost:8080/data/kaliningrad/11/1193/630.pbf' | wc -c)
           TS10=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/data/kaliningrad/10/570/325.pbf')
           TS10S=$(curl -s 'http://localhost:8080/data/kaliningrad/10/570/325.pbf' | wc -c)
           # proxy
-          P=$(curl -so /dev/null -w '%{http_code}' http://localhost:5000/tiles/data/kaliningrad.json)
-          P10=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:5000/tiles/data/kaliningrad/10/570/325.pbf')
-          P10S=$(curl -s 'http://localhost:5000/tiles/data/kaliningrad/10/570/325.pbf' | wc -c)
-          # tiles url rewrite
+          P11=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:5000/tiles/data/kaliningrad/11/1193/630.pbf')
+          P11S=$(curl -s 'http://localhost:5000/tiles/data/kaliningrad/11/1193/630.pbf' | wc -c)
+          P11H=$(curl -sI 'http://localhost:5000/tiles/data/kaliningrad/11/1193/630.pbf' 2>&1 | head -5)
+          # nginx current config (HTTPS block)
+          NGINX=$(sudo cat /etc/nginx/sites-enabled/baltcircle 2>/dev/null || sudo cat /etc/nginx/sites-available/baltcircle 2>/dev/null | head -60)
+          # tiles url rewrite check
           TU=$(curl -s http://localhost:5000/tiles/data/kaliningrad.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('tiles',['NONE'])[0])" 2>/dev/null)
-          # maplibre css in html
-          HTML=$(curl -s http://localhost:5000/ | grep -c 'maplibre')
-          printf "ts_json=%s\nts_tile_z10=%s\nts_tile_bytes=%s\nproxy_json=%s\nproxy_tile=%s\nproxy_bytes=%s\ntiles_url=%s\nmaplibre_in_html=%s\n" \
-            "$TS" "$TS10" "$TS10S" "$P" "$P10" "$P10S" "$TU" "$HTML" > /tmp/r.txt
+          printf "ts_json=%s\nts_tile_z11=%s bytes=%s\nts_tile_z10=%s bytes=%s\nproxy_z11=%s bytes=%s\nproxy_z11_headers=%s\ntiles_url=%s\nnginx_conf=\n%s\n" \
+            "$TS" "$TS11" "$TS11S" "$TS10" "$TS10S" "$P11" "$P11S" "$P11H" "$TU" "$NGINX" > /tmp/r.txt
           cat /tmp/r.txt
           ENC=$(base64 -w0 /tmp/r.txt)
           SHA=$(curl -sf -H "Authorization: token $TOKEN" \
