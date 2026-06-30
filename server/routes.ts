@@ -1215,14 +1215,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         res.setHeader("Cache-Control", "public, max-age=86400");
 
         if (isTileJson && !ce) {
-          // Buffer TileJSON and rewrite internal tile/grid URLs to /tiles/...
+          // Buffer TileJSON and rewrite internal tile/grid URLs to absolute /tiles/... URLs.
+          // MapLibre GL requires absolute URLs in tiles[] — relative URLs cause the source
+          // to stay stuck in "loading" state indefinitely.
           const chunks: Buffer[] = [];
           proxyRes.on("data", (chunk: Buffer) => chunks.push(chunk));
           proxyRes.on("end", () => {
             try {
               const body = Buffer.concat(chunks).toString("utf8");
               const json = JSON.parse(body);
-              const rewrite = (url: string) => url.replace(/^https?:\/\/[^/]+/, "/tiles");
+              const origin = `${req.protocol}://${req.get("host")}`;
+              const rewrite = (url: string) => `${origin}${url.replace(/^https?:\/\/[^/]+/, "/tiles")}`;
               if (Array.isArray(json.tiles)) json.tiles = (json.tiles as string[]).map(rewrite);
               if (Array.isArray(json.grids)) json.grids = (json.grids as string[]).map(rewrite);
               res.setHeader("Content-Type", "application/json");
