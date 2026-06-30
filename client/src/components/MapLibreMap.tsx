@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MapObject, Parking, Ride } from "@shared/schema";
 import { REAL_CENTER } from "@shared/geo";
 
@@ -27,83 +27,30 @@ const buildStyle = () => ({
     },
   },
   layers: [
+    { id: "background", type: "background", paint: { "background-color": "#e8f0f7" } },
+    { id: "water", type: "fill", source: "kaliningrad", "source-layer": "water", paint: { "fill-color": "#a8d5e8" } },
+    { id: "waterway", type: "line", source: "kaliningrad", "source-layer": "waterway", paint: { "line-color": "#a8d5e8", "line-width": 1 } },
     {
-      id: "background",
-      type: "background",
-      paint: { "background-color": "#e8f0f7" },
+      id: "landuse", type: "fill", source: "kaliningrad", "source-layer": "landuse",
+      paint: { "fill-color": ["match", ["get", "class"], "park", "#c8e6c9", "wood", "#b5d5a0", "grass", "#d4edda", "residential", "#f5f0eb", "#ede8e0"] },
     },
     {
-      id: "water",
-      type: "fill",
-      source: "kaliningrad",
-      "source-layer": "water",
-      paint: { "fill-color": "#a8d5e8" },
+      id: "road-fill", type: "line", source: "kaliningrad", "source-layer": "transportation",
+      filter: ["in", ["get", "class"], ["literal", ["motorway","trunk","primary","secondary","tertiary","minor","service"]]],
+      paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1, 14, 4, 17, 10] },
     },
     {
-      id: "waterway",
-      type: "line",
-      source: "kaliningrad",
-      "source-layer": "waterway",
-      paint: { "line-color": "#a8d5e8", "line-width": 1 },
+      id: "road-case", type: "line", source: "kaliningrad", "source-layer": "transportation",
+      filter: ["in", ["get", "class"], ["literal", ["motorway","trunk","primary","secondary"]]],
+      paint: { "line-color": "#d4c9bb", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 14, 6, 17, 14] },
     },
-    {
-      id: "landuse",
-      type: "fill",
-      source: "kaliningrad",
-      "source-layer": "landuse",
-      paint: {
-        "fill-color": [
-          "match", ["get", "class"],
-          "park",        "#c8e6c9",
-          "wood",        "#b5d5a0",
-          "grass",       "#d4edda",
-          "residential", "#f5f0eb",
-          "#ede8e0",
-        ],
-      },
-    },
-    {
-      id: "road-fill",
-      type: "line",
-      source: "kaliningrad",
-      "source-layer": "transportation",
-      filter: ["in", ["get", "class"], ["literal",
-        ["motorway","trunk","primary","secondary","tertiary","minor","service"]]],
-      paint: {
-        "line-color": "#ffffff",
-        "line-width": ["interpolate", ["linear"], ["zoom"],
-          10, 1, 14, 4, 17, 10],
-      },
-    },
-    {
-      id: "road-case",
-      type: "line",
-      source: "kaliningrad",
-      "source-layer": "transportation",
-      filter: ["in", ["get", "class"], ["literal",
-        ["motorway","trunk","primary","secondary"]]],
-      paint: {
-        "line-color": "#d4c9bb",
-        "line-width": ["interpolate", ["linear"], ["zoom"],
-          10, 2, 14, 6, 17, 14],
-      },
-    },
-    {
-      id: "building",
-      type: "fill",
-      source: "kaliningrad",
-      "source-layer": "building",
-      minzoom: 14,
-      paint: { "fill-color": "#ddd6cc", "fill-outline-color": "#c9c0b5" },
-    },
+    { id: "building", type: "fill", source: "kaliningrad", "source-layer": "building", minzoom: 14, paint: { "fill-color": "#ddd6cc", "fill-outline-color": "#c9c0b5" } },
   ],
   glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
 });
 
-// Default center: Kaliningrad [lng, lat]
 const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
 
-// Inject MapLibre CSS from CDN once, without polluting the Vite bundle
 function ensureMaplibreCSS() {
   if (document.getElementById("maplibre-css")) return;
   const link = document.createElement("link");
@@ -113,15 +60,19 @@ function ensureMaplibreCSS() {
   document.head.appendChild(link);
 }
 
-// Load MapLibre JS from CDN, call cb when ready
-function loadMaplibre(cb: () => void) {
+function loadMaplibre(cb: (err?: string) => void) {
   if (window.maplibregl) { cb(); return; }
-  const existing = document.getElementById("maplibre-js");
-  if (existing) { existing.addEventListener("load", cb); return; }
+  const existing = document.getElementById("maplibre-js") as HTMLScriptElement | null;
+  if (existing) {
+    existing.addEventListener("load", () => cb());
+    existing.addEventListener("error", () => cb("CDN script load error"));
+    return;
+  }
   const script = document.createElement("script");
   script.id = "maplibre-js";
   script.src = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js";
-  script.onload = cb;
+  script.onload = () => cb();
+  script.onerror = () => cb("CDN script load error (unpkg.com blocked?)");
   document.head.appendChild(script);
 }
 
@@ -137,70 +88,96 @@ export function MapLibreMap({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
 
+  // Diagnostic state — visible overlay in top-left corner
+  const [diag, setDiag] = useState<string[]>(["⏳ init..."]);
+  const addDiag = (msg: string) => setDiag(prev => [...prev.slice(-8), msg]);
+
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
+    if (!el) { addDiag("❌ containerRef null"); return; }
 
     ensureMaplibreCSS();
+    addDiag("📦 CSS injected");
 
-    // Init map — called once MapLibre is loaded AND container has real size
-    const initMap = () => {
-      if (mapRef.current) return; // already initialised
+    const initMap = (cdnErr?: string) => {
+      if (cdnErr) { addDiag("❌ " + cdnErr); return; }
+      if (mapRef.current) { addDiag("ℹ️ already init"); return; }
+
+      addDiag("✅ CDN loaded");
+
       const ml = window.maplibregl;
-      if (!ml) return;
+      if (!ml) { addDiag("❌ window.maplibregl undefined"); return; }
 
-      const { width, height: h } = el.getBoundingClientRect();
-      if (width === 0 || h === 0) return; // wait for ResizeObserver
+      const rect = el.getBoundingClientRect();
+      addDiag(`📐 ${Math.round(rect.width)}×${Math.round(rect.height)}`);
 
-      const map = new ml.Map({
-        container: el,
-        style: buildStyle(),
-        center: DEFAULT_CENTER,
-        zoom: 11,
-        attributionControl: false,
-        trackResize: true,
-      });
+      if (rect.width === 0 || rect.height === 0) {
+        addDiag("⏳ 0×0, waiting ResizeObserver...");
+        return;
+      }
 
-      map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
-      map.once("load", () => map.resize());
+      if (!ml.supported()) { addDiag("❌ WebGL not supported"); return; }
 
-      mapRef.current = map;
+      try {
+        const map = new ml.Map({
+          container: el,
+          style: buildStyle(),
+          center: DEFAULT_CENTER,
+          zoom: 11,
+          attributionControl: false,
+          trackResize: true,
+        });
+
+        map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
+
+        map.on("error", (e: any) => {
+          addDiag("❌ map error: " + (e?.error?.message ?? JSON.stringify(e)));
+        });
+
+        map.once("load", () => {
+          map.resize();
+          addDiag("✅ map loaded!");
+        });
+
+        mapRef.current = map;
+        addDiag("🗺️ Map() created");
+      } catch (e: any) {
+        addDiag("❌ Map() threw: " + e?.message);
+      }
     };
 
-    // ResizeObserver fires when container gets real dimensions
     const ro = new ResizeObserver(() => {
+      const rect = el.getBoundingClientRect();
       if (!mapRef.current) {
-        initMap();
+        addDiag(`🔄 RO: ${Math.round(rect.width)}×${Math.round(rect.height)}`);
+        if (window.maplibregl) initMap();
       } else {
         mapRef.current.resize();
       }
     });
     ro.observe(el);
 
-    // Load CDN script, then try to init
     loadMaplibre(initMap);
 
-    return () => {
-      ro.disconnect();
-      // Do NOT call map.remove() — MapPage is always mounted as overlay
-    };
+    return () => { ro.disconnect(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fly to user geolocation
   useEffect(() => {
     if (!mapRef.current || !center) return;
-    mapRef.current.flyTo({
-      center: [center[1], center[0]],
-      zoom: 14,
-      duration: 1000,
-    });
+    mapRef.current.flyTo({ center: [center[1], center[0]], zoom: 14, duration: 1000 });
   }, [center]);
 
   return (
-    <div
-      ref={containerRef}
-      className={className}
-      style={{ height }}
-    />
+    <div ref={containerRef} className={className} style={{ height }}>
+      {/* DIAGNOSTIC OVERLAY — remove after fixing */}
+      <div style={{
+        position: "absolute", top: 8, left: 8, zIndex: 9999,
+        background: "rgba(0,0,0,0.75)", color: "#0f0", fontFamily: "monospace",
+        fontSize: 11, padding: "6px 10px", borderRadius: 6, maxWidth: 280,
+        pointerEvents: "none", lineHeight: 1.5,
+      }}>
+        {diag.map((d, i) => <div key={i}>{d}</div>)}
+      </div>
+    </div>
   );
 }
