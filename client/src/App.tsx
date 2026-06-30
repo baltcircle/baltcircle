@@ -38,11 +38,18 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
   const [visible, setVisible] = useState(isOverlay);
   const [exiting, setExiting] = useState(false);
 
-  // On enter: reset animation state
+  // On enter: show overlay. On exit via browser swipe (isOverlay → false
+  // without overlay:back event): immediately hide without animation.
   useEffect(() => {
     if (isOverlay) {
       setVisible(true);
       setExiting(false);
+    } else {
+      // Browser swipe-back or programmatic popstate changed URL to a
+      // non-overlay route — hide the overlay instantly so it doesn't
+      // sit on top of the map and eat touch events.
+      setExiting(false);
+      setVisible(false);
     }
   }, [isOverlay, loc]);
 
