@@ -230,7 +230,7 @@ export function MapLibreMap({
   }, [center]);
 
   return (
-    <div ref={containerRef} className={className} style={{ height }}>
+    <div ref={containerRef} className={className} style={{ height, position: "relative", overflow: "hidden" }}>
       <div style={{
         position:"absolute", top:8, left:8, zIndex:9999,
         background:"rgba(0,0,0,0.85)", color:"#0f0", fontFamily:"monospace",
