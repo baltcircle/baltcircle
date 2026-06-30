@@ -16,11 +16,11 @@ interface MapLibreMapProps {
   className?: string;
 }
 
-const buildStyle = (): object => ({
+const buildStyle = (origin: string): object => ({
   version: 8,
   // No glyphs — no symbol layers, fonts not needed
   sources: {
-    kaliningrad: { type: "vector", url: "/tiles/data/kaliningrad.json" },
+    kaliningrad: { type: "vector", url: `${origin}/tiles/data/kaliningrad.json` },
   },
   layers: [
     { id: "background", type: "background", paint: { "background-color": "#e8f0f7" } },
@@ -121,8 +121,10 @@ export function MapLibreMap({
 
       log(`Map() ${Math.round(width)}×${Math.round(h)}`);
       try {
+        const origin = window.location.origin;
+        log("origin:" + origin);
         const map = new ml.Map({
-          container: el, style: buildStyle(),
+          container: el, style: buildStyle(origin),
           center: DEFAULT_CENTER, zoom: 11,
           attributionControl: false, trackResize: true,
         });
@@ -133,7 +135,7 @@ export function MapLibreMap({
         });
 
         // Fetch TileJSON directly to verify absolute URL rewrite
-        fetch("/tiles/data/kaliningrad.json")
+        fetch(`${origin}/tiles/data/kaliningrad.json`)
           .then(r => r.json())
           .then((j: any) => {
             const t0 = (j.tiles ?? [])[0] ?? "none";
