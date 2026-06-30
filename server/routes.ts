@@ -1255,10 +1255,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             });
           });
         } else {
+          // Log tile proxy response for debugging
+          console.log(`[tile-proxy] ${tilePath} -> ${proxyRes.statusCode} ct=${ct} ce=${ce} headers=${JSON.stringify(proxyRes.headers)}`);
           if (ce) res.setHeader("Content-Encoding", ce);
           res.setHeader("Content-Type", ct);
-          res.status(proxyRes.statusCode ?? 200);
-          proxyRes.pipe(res);
+          // Buffer tile and forward — avoids pipe issues with some proxy setups
+          const tileChunks: Buffer[] = [];
+          proxyRes.on("data", (chunk: Buffer) => tileChunks.push(chunk));
+          proxyRes.on("end", () => {
+            const body = Buffer.concat(tileChunks);
+            console.log(`[tile-proxy] ${tilePath} body bytes=${body.length}`);
+            res.status(proxyRes.statusCode ?? 200).end(body);
+          });
         }
       }
     );
