@@ -4,13 +4,17 @@ jobs:
   diag:
     runs-on: [self-hosted, baltcircle-prod]
     steps:
-      - name: Check proxy and tiles
+      - name: Proxy diagnostics
         run: |
-          echo "=== correct tile z=11/1140/650 ==="
-          curl -si "http://localhost:8080/data/kaliningrad/11/1140/650.pbf" | head -6
-          echo "=== proxy tilejson ==="
-          curl -si "http://localhost:5000/tiles/data/kaliningrad.json" | head -6
-          echo "=== proxy tile ==="
-          curl -si "http://localhost:5000/tiles/data/kaliningrad/11/1140/650.pbf" | head -6
-          echo "=== express routes check ==="
-          curl -s "http://localhost:5000/tiles/data/kaliningrad.json" | python3 -c "import json,sys; d=json.load(sys.stdin); print('OK tiles field:', 'tiles' in d)" 2>/dev/null || echo "NOT JSON"
+          echo "=== tileserver direct ==="
+          STATUS=$(curl -so /dev/null -w "%{http_code}" http://localhost:8080/data/kaliningrad.json)
+          echo "tileserver json: $STATUS"
+          STATUS2=$(curl -so /dev/null -w "%{http_code}" "http://localhost:8080/data/kaliningrad/11/1140/650.pbf")
+          echo "tileserver tile z11: $STATUS2"
+          echo "=== app proxy ==="
+          STATUS3=$(curl -so /dev/null -w "%{http_code}" http://localhost:5000/tiles/data/kaliningrad.json)
+          echo "proxy json: $STATUS3"
+          STATUS4=$(curl -so /dev/null -w "%{http_code}" "http://localhost:5000/tiles/data/kaliningrad/11/1140/650.pbf")
+          echo "proxy tile z11: $STATUS4"
+          echo "=== tilejson tiles field ==="
+          curl -s http://localhost:5000/tiles/data/kaliningrad.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('tiles:', d.get('tiles'))" 2>/dev/null || echo "parse failed"
