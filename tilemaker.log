@@ -1,0 +1,38 @@
+Layer place (z0-14)
+Layer boundary (z0-14)
+Layer poi (z12-14)
+Layer poi_detail (z14-14) -> poi
+Layer housenumber (z14-14)
+Layer waterway (z8-14)
+Layer waterway_detail (z12-14) -> waterway
+Layer transportation (z4-14)
+Layer transportation_name (z8-14)
+Layer building (z13-14)
+Layer water (z6-14)
+Layer ocean (z0-14) -> water
+Layer water_name (z14-14)
+Layer water_name_detail (z14-14) -> water_name
+Layer aeroway (z11-14)
+Layer aerodrome_label (z10-14)
+Layer park (z11-14)
+Layer landuse (z4-14)
+Layer urban_areas (z4-8) -> landuse
+Layer landcover (z0-14)
+Layer ice_shelf (z0-9) -> landcover
+Layer glacier (z2-9) -> landcover
+Layer mountain_peak (z11-14)
+Bounding box 19, 54, 23, 56
+Reading .shp ocean
+Unable to open coastline/water_polygons.shp or coastline/water_polygons.SHP.
+Reading .shp urban_areas
+Unable to open landcover/ne_10m_urban_areas/ne_10m_urban_areas.shp or landcover/ne_10m_urban_areas/ne_10m_urban_areas.SHP.
+Reading .shp ice_shelf
+Unable to open landcover/ne_10m_antarctic_ice_shelves_polys/ne_10m_antarctic_ice_shelves_polys.shp or landcover/ne_10m_antarctic_ice_shelves_polys/ne_10m_antarctic_ice_shelves_polys.SHP.
+Reading .shp glacier
+Unable to open landcover/ne_10m_glaciated_areas/ne_10m_glaciated_areas.shp or landcover/ne_10m_glaciated_areas/ne_10m_glaciated_areas.SHP.
+Sorting loaded shapes
+Reading .pbf kaliningrad.osm.pbf
+lua runtime error: process.lua:125: attempt to call a nil value (global 'Find')
+lua runtime error: process.lua:125: attempt to call a nil value (global 'Find')
+terminate called after throwing an instance of 'kaguya::LuaTypeMismatch'
+  what():  type mismatch!!
