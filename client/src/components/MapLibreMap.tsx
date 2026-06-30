@@ -16,8 +16,7 @@ interface MapLibreMapProps {
   className?: string;
 }
 
-// Kaliningrad oblast approximate boundary polygon (GeoJSON coordinates)
-// bbox: ~lng 19.5–22.9, lat 54.2–55.35
+// Kaliningrad oblast real boundary polygon (simplified from OSM/Nominatim, 18 pts)
 const KALININGRAD_BOUNDARY = {
   type: "FeatureCollection" as const,
   features: [
@@ -26,11 +25,24 @@ const KALININGRAD_BOUNDARY = {
       geometry: {
         type: "Polygon" as const,
         coordinates: [[
-          [19.5, 54.2],
-          [22.9, 54.2],
-          [22.9, 55.35],
-          [19.5, 55.35],
-          [19.5, 54.2],
+          [19.4041722,54.6039],
+          [19.6469351,54.4533945],
+          [20.6310714,54.3663108],
+          [22.7920021,54.3633232],
+          [22.6838586,54.585972],
+          [22.743582,54.7314983],
+          [22.886659,54.8140818],
+          [22.5892361,55.070243],
+          [22.0758154,55.0249977],
+          [21.5015124,55.1868198],
+          [21.3843708,55.2936996],
+          [21.0983616,55.2563884],
+          [20.6557167,55.3842167],
+          [20.4010838,55.1806297],
+          [19.7311173,55.1016379],
+          [19.605774,54.979627],
+          [19.577567,54.736809],
+          [19.4041722,54.6039],
         ]],
       },
       properties: {},
@@ -38,7 +50,7 @@ const KALININGRAD_BOUNDARY = {
   ],
 };
 
-// maxBounds: slightly larger than oblast bbox so user can't scroll far outside
+// maxBounds: slightly larger than real oblast bounds so user can't scroll far outside
 // Format: [west, south, east, north]
 const MAX_BOUNDS: [number, number, number, number] = [18.8, 53.8, 23.6, 55.8];
 
@@ -55,8 +67,7 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
     },
   },
   layers: [
-    // Background = water color so empty sea tiles (outside OSM extract bbox) look like ocean
-    { id: "background", type: "background", paint: { "background-color": "#a8d5e8" } },
+    { id: "background", type: "background", paint: { "background-color": "#e8f0f7" } },
     // Landcover fills — farmland, grass, wood, wetland, sand
     // These cover the areas that look empty (fields, forests, meadows)
     {
@@ -145,16 +156,15 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
         "text-halo-width": 1,
       },
     },
-    // Kaliningrad oblast boundary outline — dashed blue-grey line
+    // Kaliningrad oblast boundary — solid line marking the region border
     {
       id: "oblast-boundary",
       type: "line",
       source: "kaliningrad-boundary",
       paint: {
-        "line-color": "#6a8caf",
-        "line-width": 2,
-        "line-dasharray": [4, 3],
-        "line-opacity": 0.8,
+        "line-color": "#4a7aaa",
+        "line-width": 2.5,
+        "line-opacity": 0.9,
       },
     },
   ],
