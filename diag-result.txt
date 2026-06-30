@@ -1,3 +1,9 @@
-proxy_json=200
-proxy_tile=204
-tiles_url="tiles":["/tiles/data/kaliningrad/{z}/{x}/{y}.pbf"
+ts_z8=204
+ts_z9=204
+ts_z10=204
+ts_z11=204
+ts_z12=204
+proxy_z10=204
+proxy_z11=204
+size_z10=0
+size_z11=0
