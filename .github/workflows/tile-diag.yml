@@ -4,17 +4,17 @@ jobs:
   diag:
     runs-on: [self-hosted, baltcircle-prod]
     steps:
-      - name: Full diagnostics
+      - name: nginx config
+        run: cat /etc/nginx/sites-enabled/* 2>/dev/null || echo "no sites-enabled"
+      - name: tileserver direct
         run: |
-          echo "=== NGINX CONFIG ==="
-          cat /etc/nginx/sites-enabled/* 2>/dev/null || cat /etc/nginx/nginx.conf 2>/dev/null | grep -A20 "server {" | head -60
-          echo "=== TILESERVER DIRECT ==="
-          curl -so /dev/null -w "tileserver json HTTP: %{http_code}\n" http://localhost:8080/data/kaliningrad.json
-          curl -so /dev/null -w "tileserver tile z11 HTTP: %{http_code}\n" "http://localhost:8080/data/kaliningrad/11/1140/650.pbf"
-          echo "=== APP PROXY (port 5000) ==="
-          curl -so /dev/null -w "app proxy json HTTP: %{http_code}\n" http://localhost:5000/tiles/data/kaliningrad.json
-          curl -so /dev/null -w "app proxy tile HTTP: %{http_code}\n" "http://localhost:5000/tiles/data/kaliningrad/11/1140/650.pbf"
-          echo "=== TILES URL IN TILEJSON ==="
-          curl -s http://localhost:5000/tiles/data/kaliningrad.json | python3 -c "import json,sys; d=json.load(sys.stdin); t=d.get('tiles',['NONE']); print('tiles[0]:', t[0] if t else 'NONE')" 2>&1
-          echo "=== DOCKER CONTAINERS ==="
-          docker ps --format "table {{.Names}}\t{{.Ports}}\t{{.Status}}" 2>/dev/null
+          curl -so /dev/null -w "%{http_code}" http://localhost:8080/data/kaliningrad.json && echo " tileserver-json"
+          curl -so /dev/null -w "%{http_code}" "http://localhost:8080/data/kaliningrad/11/1140/650.pbf" && echo " tileserver-tile-z11"
+      - name: app proxy
+        run: |
+          curl -so /dev/null -w "%{http_code}" http://localhost:5000/tiles/data/kaliningrad.json && echo " proxy-json"
+          curl -so /dev/null -w "%{http_code}" "http://localhost:5000/tiles/data/kaliningrad/11/1140/650.pbf" && echo " proxy-tile-z11"
+      - name: tilejson tiles field
+        run: curl -s http://localhost:5000/tiles/data/kaliningrad.json | grep -o '"tiles":\["[^"]*"' | head -3
+      - name: docker ps
+        run: docker ps --format "{{.Names}} {{.Ports}} {{.Status}}"
