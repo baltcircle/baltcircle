@@ -1193,6 +1193,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // In Docker, the app cannot reach localhost:8080 — uses host.docker.internal
   // (mapped to host gateway via extra_hosts in docker-compose.yml).
   // For TileJSON responses, rewrites internal tile URLs to same-origin /tiles/...
+  // ── MapLibre Font Proxy ──────────────────────────────────────────────────
+  // Proxies /glyphs/{fontstack}/{range}.pbf → protomaps GitHub Pages CDN.
+  // Serving fonts same-origin avoids CORS issues in iOS WKWebView.
+  app.use("/glyphs", (req: Request, res: Response) => {
+    const https = require("https") as typeof import("https");
+    const upstream = `https://protomaps.github.io/basemaps-assets/fonts${req.path}`;
+    const proxyReq = https.get(upstream, (proxyRes) => {
+      const chunks: Buffer[] = [];
+      proxyRes.on("data", (c: Buffer) => chunks.push(c));
+      proxyRes.on("end", () => {
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Cache-Control", "public, max-age=604800"); // 1 week
+        res.setHeader("Content-Type", "application/x-protobuf");
+        res.status(proxyRes.statusCode ?? 200).end(Buffer.concat(chunks));
+      });
+    });
+    proxyReq.on("error", () => { if (!res.headersSent) res.status(502).end(); });
+  });
+
   app.use("/tiles", (req: Request, res: Response) => {
     const tilePath = req.path; // e.g. "/data/kaliningrad.json"
     const tileHost = process.env.NODE_ENV === "production" ? "host.docker.internal" : "localhost";
