@@ -11,132 +11,126 @@ jobs:
       - baltcircle-prod
 
     steps:
-      - name: Create OSM data directory
+      - name: Create OSM directories
         run: |
-          mkdir -p /home/yc-user/osm/tiles
           mkdir -p /home/yc-user/osm/config
-          echo "Directories created"
+          echo "Directories ready"
 
       - name: Download Kaliningrad OSM data
         run: |
           cd /home/yc-user/osm
-          # Geofabrik — Калининградская область (часть Russia-Northwestern)
-          # Используем готовый extract от Geofabrik
           if [ ! -f "kaliningrad.osm.pbf" ]; then
-            echo "Downloading Kaliningrad OSM extract..."
-            curl -L -o kaliningrad.osm.pbf \
+            echo "Downloading Kaliningrad OSM extract (~50MB)..."
+            curl -L --retry 3 -o kaliningrad.osm.pbf \
               "https://download.geofabrik.de/russia/kaliningradskaya-oblast-latest.osm.pbf"
-            echo "Download complete: $(du -sh kaliningrad.osm.pbf)"
+            echo "Done: $(du -sh kaliningrad.osm.pbf)"
           else
-            echo "Already downloaded: $(du -sh kaliningrad.osm.pbf)"
+            echo "Already exists: $(du -sh kaliningrad.osm.pbf)"
           fi
 
-      - name: Install Tilemaker
+      - name: Install Tilemaker binary
         run: |
-          if ! command -v tilemaker &>/dev/null; then
-            echo "Installing Tilemaker..."
-            cd /tmp
-            curl -L -o tilemaker.tar.gz \
-              https://github.com/systemed/tilemaker/releases/download/v2.4.0/tilemaker-ubuntu-22.04.zip \
-              || curl -L -o tilemaker.tar.gz \
-              https://github.com/systemed/tilemaker/releases/download/v2.4.0/tilemaker-ubuntu-20.04.zip
-            unzip tilemaker.tar.gz -d tilemaker_bin
-            sudo cp tilemaker_bin/tilemaker /usr/local/bin/tilemaker
-            sudo chmod +x /usr/local/bin/tilemaker
-            tilemaker --version
+          if command -v tilemaker &>/dev/null; then
+            echo "Already installed: $(tilemaker --version 2>&1 | head -1)"
           else
-            echo "Tilemaker already installed: $(tilemaker --version)"
+            echo "Installing Tilemaker v2.4.0..."
+            cd /tmp
+            curl -L -o tilemaker.zip \
+              https://github.com/systemed/tilemaker/releases/download/v2.4.0/tilemaker-ubuntu-22.04.zip
+            unzip -o tilemaker.zip
+            # Binary is at build/tilemaker
+            sudo cp build/tilemaker /usr/local/bin/tilemaker
+            sudo chmod +x /usr/local/bin/tilemaker
+            echo "Installed: $(tilemaker --version 2>&1 | head -1)"
           fi
 
-      - name: Get Tilemaker config files
+      - name: Get Tilemaker config
         run: |
           cd /home/yc-user/osm
-          if [ ! -f "config.json" ]; then
-            # Скачиваем стандартные конфиги из репозитория Tilemaker
+          if [ ! -f "process.lua" ]; then
             curl -L -o process.lua \
               https://raw.githubusercontent.com/systemed/tilemaker/master/resources/process-openmaptiles.lua
             curl -L -o config.json \
               https://raw.githubusercontent.com/systemed/tilemaker/master/resources/config-openmaptiles.json
-            echo "Config files downloaded"
+            echo "Config downloaded"
           else
-            echo "Config files already present"
+            echo "Config already present"
           fi
 
-      - name: Build MBTiles from OSM data
+      - name: Build MBTiles
         run: |
           cd /home/yc-user/osm
           if [ ! -f "kaliningrad.mbtiles" ]; then
-            echo "Building tiles (this takes ~5-10 min)..."
+            echo "Building tiles — takes 5-15 min..."
             tilemaker \
               --input  kaliningrad.osm.pbf \
               --output kaliningrad.mbtiles \
               --config config.json \
               --process process.lua \
               --bbox 19.0,54.0,23.0,56.0
-            echo "Build complete: $(du -sh kaliningrad.mbtiles)"
+            echo "Done: $(du -sh kaliningrad.mbtiles)"
           else
-            echo "MBTiles already built: $(du -sh kaliningrad.mbtiles)"
+            echo "Already built: $(du -sh kaliningrad.mbtiles)"
           fi
 
-      - name: Create tileserver-gl config
+      - name: Write tileserver config
         run: |
           cat > /home/yc-user/osm/config/tileserver-config.json << 'TILECONF'
-          {
-            "options": {
-              "paths": {
-                "root": "/data",
-                "mbtiles": "/data"
-              }
-            },
-            "data": {
-              "kaliningrad": {
-                "mbtiles": "kaliningrad.mbtiles"
-              }
-            }
-          }
-          TILECONF
-          echo "tileserver config created"
+{
+  "options": {
+    "paths": {
+      "root": "/data",
+      "mbtiles": "/data"
+    }
+  },
+  "data": {
+    "kaliningrad": {
+      "mbtiles": "kaliningrad.mbtiles"
+    }
+  }
+}
+TILECONF
+          echo "Config written"
 
-      - name: Create docker-compose for tileserver
+      - name: Write tileserver docker-compose
         run: |
           cat > /home/yc-user/osm/docker-compose.yml << 'COMPOSE'
-          version: "3.8"
-          services:
-            tileserver:
-              image: maptiler/tileserver-gl:latest
-              container_name: baltcircle-tileserver
-              restart: unless-stopped
-              ports:
-                - "8080:8080"
-              volumes:
-                - /home/yc-user/osm:/data
-              command: --config /data/config/tileserver-config.json --port 8080
-          COMPOSE
-          echo "docker-compose.yml created"
+version: "3.8"
+services:
+  tileserver:
+    image: maptiler/tileserver-gl:latest
+    container_name: baltcircle-tileserver
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /home/yc-user/osm:/data
+    command: --config /data/config/tileserver-config.json --port 8080
+COMPOSE
+          echo "docker-compose written"
 
       - name: Start tileserver-gl
         run: |
           cd /home/yc-user/osm
+          docker compose pull
           docker compose up -d
-          echo "Waiting for tileserver to start..."
-          sleep 15
+          echo "Tileserver started, waiting 20s..."
+          sleep 20
 
-      - name: Smoke test tileserver
+      - name: Smoke test
         run: |
-          echo "Testing tileserver health..."
+          echo "=== Health check ==="
           for i in $(seq 1 12); do
-            if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
-              echo "✅ Tileserver is UP"
-              curl -s http://localhost:8080/ | head -5
+            if curl -sf http://localhost:8080/ >/dev/null 2>&1; then
+              echo "✅ Tileserver responding"
               break
             fi
-            echo "Attempt $i/12 — waiting..."
+            echo "Attempt $i/12..."
             sleep 10
           done
-          # Test tile endpoint
           echo ""
-          echo "Testing tile endpoint..."
-          curl -sf "http://localhost:8080/data/kaliningrad/14/4891/2552.pbf" -o /dev/null \
-            && echo "✅ Tiles are being served" \
-            || echo "⚠️  Tile test failed — check tileserver logs"
-          docker logs baltcircle-tileserver --tail 20
+          echo "=== Available data ==="
+          curl -s http://localhost:8080/data/kaliningrad.json | python3 -c "import sys,json; d=json.load(sys.stdin); print('Name:', d.get('name','?')); print('Bounds:', d.get('bounds','?'))" 2>/dev/null || echo "Could not parse response"
+          echo ""
+          echo "=== Docker logs ==="
+          docker logs baltcircle-tileserver --tail 15
