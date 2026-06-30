@@ -180,6 +180,10 @@ export function MapLibreMap({
           const minzoom = j.minzoom ?? 0;
           const maxzoom = j.maxzoom ?? 14;
           log(`tj ok minz=${minzoom} maxz=${maxzoom}`);
+          // Test actual tile fetch at z=11 center of Kaliningrad (lng=20.275, lat=54.945)
+          // z=11: x=1193, y=630
+          const testUrl = tileUrl.replace("{z}","11").replace("{x}","1193").replace("{y}","630");
+          fetch(testUrl).then(r => log(`tile11 http=${r.status} sz=${r.headers.get("content-length")??"?"}`)).catch(e => log("tile11 ERR:"+(e?.message??e)));
           initMap(tileUrl, minzoom, maxzoom);
         })
         .catch((e: any) => {
