@@ -1,12 +1,8 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 import type { MapObject, Parking, Ride } from "@shared/schema";
 import { REAL_CENTER } from "@shared/geo";
-
-declare global {
-  interface Window {
-    maplibregl: any;
-  }
-}
 
 interface MapLibreMapProps {
   parkings?: Parking[];
@@ -18,17 +14,13 @@ interface MapLibreMapProps {
   className?: string;
 }
 
-// Tiles are proxied through our own Express server at /tiles/*
-// so the browser doesn't need direct access to localhost:8080
-const TILEJSON_URL = "/tiles/data/kaliningrad.json";
-
-// MapLibre style using our local vector tiles via server proxy
-const buildStyle = () => ({
+// MapLibre GL style — vector tiles proxied through our Express /tiles/* route
+const buildStyle = (): maplibregl.StyleSpecification => ({
   version: 8,
   sources: {
-    "kaliningrad": {
+    kaliningrad: {
       type: "vector",
-      url: TILEJSON_URL,
+      url: "/tiles/data/kaliningrad.json",
     },
   },
   layers: [
@@ -60,12 +52,12 @@ const buildStyle = () => ({
         "fill-color": [
           "match",
           ["get", "class"],
-          "park", "#c8e6c9",
-          "wood", "#b5d5a0",
-          "grass", "#d4edda",
+          "park",        "#c8e6c9",
+          "wood",        "#b5d5a0",
+          "grass",       "#d4edda",
           "residential", "#f5f0eb",
           "#ede8e0",
-        ],
+        ] as any,
       },
     },
     {
@@ -73,15 +65,14 @@ const buildStyle = () => ({
       type: "line",
       source: "kaliningrad",
       "source-layer": "transportation",
-      filter: ["in", ["get", "class"], ["literal", ["motorway", "trunk", "primary", "secondary", "tertiary", "minor", "service"]]],
+      filter: ["match", ["get", "class"],
+        ["motorway","trunk","primary","secondary","tertiary","minor","service"], true, false] as any,
       paint: {
         "line-color": "#ffffff",
         "line-width": [
           "interpolate", ["linear"], ["zoom"],
-          10, 1,
-          14, 4,
-          17, 10,
-        ],
+          10, 1, 14, 4, 17, 10,
+        ] as any,
       },
     },
     {
@@ -89,16 +80,14 @@ const buildStyle = () => ({
       type: "line",
       source: "kaliningrad",
       "source-layer": "transportation",
-      filter: ["in", ["get", "class"], ["literal", ["motorway", "trunk", "primary", "secondary"]]],
+      filter: ["match", ["get", "class"],
+        ["motorway","trunk","primary","secondary"], true, false] as any,
       paint: {
         "line-color": "#d4c9bb",
         "line-width": [
           "interpolate", ["linear"], ["zoom"],
-          10, 2,
-          14, 6,
-          17, 14,
-        ],
-        "line-gap-width": 0,
+          10, 2, 14, 6, 17, 14,
+        ] as any,
       },
     },
     {
@@ -126,72 +115,66 @@ export function MapLibreMap({
   className,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<any>(null);
-  const initialCenter: [number, number] = center ?? [REAL_CENTER[1], REAL_CENTER[0]];
+  const mapRef = useRef<maplibregl.Map | null>(null);
 
-  const initMap = useCallback(() => {
+  // Default center: Kaliningrad [lng, lat]
+  const defaultCenter: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
+
+  // Init map once container is mounted
+  useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
-    const ml = window.maplibregl;
-    if (!ml) return;
 
-    const map = new ml.Map({
+    const map = new maplibregl.Map({
       container: containerRef.current,
       style: buildStyle(),
-      center: initialCenter,
+      center: defaultCenter,
       zoom: 11,
       attributionControl: false,
     });
 
-    map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
+
+    // Ensure map fills container after first render (important when parent
+    // starts hidden via display:none / display:contents toggle)
+    map.once("load", () => {
+      map.resize();
+    });
 
     mapRef.current = map;
+
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load MapLibre from CDN if not already loaded, then init
-  useEffect(() => {
-    if (window.maplibregl) {
-      initMap();
-      return;
-    }
-
-    const existingScript = document.getElementById("maplibre-js");
-    if (existingScript) {
-      existingScript.addEventListener("load", initMap);
-      return () => existingScript.removeEventListener("load", initMap);
-    }
-
-    const script = document.createElement("script");
-    script.id = "maplibre-js";
-    script.src = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js";
-    script.onload = initMap;
-    document.head.appendChild(script);
-
-    return () => {
-      script.removeEventListener("load", initMap);
-    };
-  }, [initMap]);
-
-  // Update center when prop changes
+  // Fly to user position when center prop changes
   useEffect(() => {
     if (!mapRef.current || !center) return;
-    mapRef.current.flyTo({ center: [center[1], center[0]], zoom: 14, duration: 1000 });
+    mapRef.current.flyTo({
+      center: [center[1], center[0]],
+      zoom: 14,
+      duration: 1000,
+    });
   }, [center]);
 
-  // Cleanup on unmount
+  // Resize map when container visibility changes (overlay show/hide)
   useEffect(() => {
-    return () => {
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
-    };
+    if (!mapRef.current) return;
+    const observer = new ResizeObserver(() => {
+      mapRef.current?.resize();
+    });
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
+    }
+    return () => observer.disconnect();
   }, []);
 
   return (
     <div
       ref={containerRef}
       className={className}
-      style={{ height }}
+      style={{ height, width: "100%" }}
     />
   );
 }
