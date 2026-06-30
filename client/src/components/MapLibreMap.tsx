@@ -43,11 +43,10 @@ const buildStyle = () => ({
 });
 
 const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
-
-const CDN_BASE       = "https://unpkg.com/maplibre-gl@4.7.1/dist";
-const CDN_CSP_JS     = `${CDN_BASE}/maplibre-gl-csp.js`;
-const CDN_WORKER_JS  = `${CDN_BASE}/maplibre-gl-csp-worker.js`;
-const CDN_CSS        = `${CDN_BASE}/maplibre-gl.css`;
+const CDN_BASE      = "https://unpkg.com/maplibre-gl@4.7.1/dist";
+const CDN_CSP_JS    = `${CDN_BASE}/maplibre-gl-csp.js`;
+const CDN_WORKER_JS = `${CDN_BASE}/maplibre-gl-csp-worker.js`;
+const CDN_CSS       = `${CDN_BASE}/maplibre-gl.css`;
 
 function ensureCSS() {
   if (document.getElementById("maplibre-css")) return;
@@ -58,29 +57,20 @@ function ensureCSS() {
 
 function loadMaplibre(): Promise<string | undefined> {
   return new Promise((resolve) => {
-    // Already loaded and Map constructor present
     if (window.maplibregl?.Map) { resolve(undefined); return; }
-
     const existing = document.getElementById("maplibre-js") as HTMLScriptElement | null;
     if (existing) {
       existing.addEventListener("load", () => resolve(undefined));
       existing.addEventListener("error", () => resolve("script onerror"));
       return;
     }
-
     const script = document.createElement("script");
-    script.id = "maplibre-js";
-    script.src = CDN_CSP_JS;
+    script.id = "maplibre-js"; script.src = CDN_CSP_JS;
     script.onload = () => {
-      try {
-        // CSP variant has no embedded worker blob — point it at the standalone worker file
-        window.maplibregl.setWorkerUrl(CDN_WORKER_JS);
-        resolve(undefined);
-      } catch (e: any) {
-        resolve("setWorkerUrl threw: " + (e?.message ?? String(e)));
-      }
+      try { window.maplibregl.setWorkerUrl(CDN_WORKER_JS); resolve(undefined); }
+      catch (e: any) { resolve("setWorkerUrl: " + e?.message); }
     };
-    script.onerror = () => resolve("CDN load failed");
+    script.onerror = () => resolve("CDN failed");
     document.head.appendChild(script);
   });
 }
@@ -91,36 +81,41 @@ export function MapLibreMap({
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef       = useRef<any>(null);
-  const diagRef      = useRef<string[]>(["⏳ loading..."]);
-  const [diagLines, setDiagLines] = useState<string[]>(["⏳ loading..."]);
+  const diagRef      = useRef<string[]>(["⏳ init"]);
+  const [diagLines, setDiagLines] = useState<string[]>(["⏳ init"]);
 
   const log = (msg: string) => {
     console.log("[Map]", msg);
-    diagRef.current = [...diagRef.current.slice(-10), msg];
+    diagRef.current = [...diagRef.current.slice(-12), msg];
     setDiagLines([...diagRef.current]);
   };
 
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) { log("❌ no container"); return; }
-
+    if (!el) return;
     ensureCSS();
+
+    // Immediately fetch TileJSON to check if it's reachable from browser
+    fetch("/tiles/data/kaliningrad.json")
+      .then(r => {
+        if (!r.ok) { log(`❌ tilejson HTTP ${r.status}`); return; }
+        return r.json().then((j: any) => {
+          const tilesUrl = j?.tiles?.[0] ?? "no tiles key";
+          log(`tilejson ok, tiles: ${tilesUrl}`);
+        });
+      })
+      .catch((e: any) => log("❌ tilejson fetch: " + e?.message));
 
     let cancelled = false;
 
     const tryInit = () => {
       if (cancelled || mapRef.current) return;
-
       const ml = window.maplibregl;
-      if (!ml?.Map) { log("⏳ ml not ready"); return; }
-
+      if (!ml?.Map) return;
       const rect = el.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) {
-        log(`⏳ 0×0 (${Math.round(rect.width)}×${Math.round(rect.height)})`);
-        return;
-      }
+      if (rect.width === 0 || rect.height === 0) return;
 
-      log(`rect ok ${Math.round(rect.width)}×${Math.round(rect.height)} — new Map()...`);
+      log(`new Map() ${Math.round(rect.width)}×${Math.round(rect.height)}`);
       try {
         const map = new ml.Map({
           container: el,
@@ -132,8 +127,33 @@ export function MapLibreMap({
         });
 
         map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
-        map.on("error", (e: any) => log("❌ " + (e?.error?.message ?? JSON.stringify(e)).slice(0, 80)));
-        map.once("load", () => { map.resize(); log("✅ map loaded!"); });
+
+        map.on("error", (e: any) => {
+          log("❌ map.error: " + (e?.error?.message ?? JSON.stringify(e)).slice(0, 80));
+        });
+
+        // Log when style finishes loading
+        map.on("style.load", () => log("style.load ✓"));
+
+        // Log source data events — tells us when tile source is ready
+        map.on("sourcedata", (e: any) => {
+          if (e.sourceId === "kaliningrad" && e.isSourceLoaded) {
+            log("source loaded ✓");
+          }
+        });
+
+        map.once("load", () => {
+          map.resize();
+          log("✅ LOADED!");
+        });
+
+        // Timeout: if load hasn't fired in 10s, something is stalled
+        setTimeout(() => {
+          if (!mapRef.current || mapRef.current !== map) return;
+          const loaded = map.loaded();
+          const styleLoaded = map.isStyleLoaded();
+          log(`10s timeout: loaded=${loaded} style=${styleLoaded}`);
+        }, 10000);
 
         mapRef.current = map;
         log("Map() created ✓");
@@ -142,26 +162,20 @@ export function MapLibreMap({
       }
     };
 
-    // ResizeObserver: init on first non-zero size, then keep canvas in sync
     const ro = new ResizeObserver(() => {
       if (!mapRef.current) tryInit();
       else mapRef.current.resize();
     });
     ro.observe(el);
 
-    // Load CSP maplibre (no Blob worker), then attempt init
     loadMaplibre().then((err) => {
       if (cancelled) return;
-      if (err) { log("❌ load: " + err); return; }
+      if (err) { log("❌ CDN: " + err); return; }
       log("CDN ok v" + (window.maplibregl?.version ?? "?"));
       tryInit();
     });
 
-    return () => {
-      cancelled = true;
-      ro.disconnect();
-      // No map.remove() — MapPage is always-mounted overlay
-    };
+    return () => { cancelled = true; ro.disconnect(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -171,11 +185,10 @@ export function MapLibreMap({
 
   return (
     <div ref={containerRef} className={className} style={{ height }}>
-      {/* DIAGNOSTIC OVERLAY — remove once map is confirmed working */}
       <div style={{
         position: "absolute", top: 8, left: 8, zIndex: 9999,
-        background: "rgba(0,0,0,0.82)", color: "#0f0", fontFamily: "monospace",
-        fontSize: 11, padding: "6px 10px", borderRadius: 6, maxWidth: 320,
+        background: "rgba(0,0,0,0.85)", color: "#0f0", fontFamily: "monospace",
+        fontSize: 11, padding: "6px 10px", borderRadius: 6, maxWidth: 340,
         pointerEvents: "none", lineHeight: 1.6, whiteSpace: "pre",
       }}>
         {diagLines.join("\n")}
