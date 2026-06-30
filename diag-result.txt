@@ -1,8 +1,3 @@
-netmode=baltcicl_default
-host.docker.internal=OCI runtime exec failed: exec failed: unable to start container process: exec: "curl": executable file not found in $PATH
-ERR
-localhost_from_container=OCI runtime exec failed: exec failed: unable to start container process: exec: "curl": executable file not found in $PATH
-ERR
-host_ip=
-host_ip_ts=OCI runtime exec failed: exec failed: unable to start container process: exec: "curl": executable file not found in $PATH
-ERR
+proxy_json=200
+proxy_tile=204
+tiles_url="tiles":["http://host.docker.internal:8080/data/kaliningrad/{z}/{x}/{y}.pbf"
