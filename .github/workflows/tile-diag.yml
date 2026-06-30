@@ -6,32 +6,26 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: write result
+      - name: check dist and container
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          R1=$(curl -so /dev/null -w '%{http_code}' http://localhost:8080/data/kaliningrad.json)
-          R2=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/data/kaliningrad/11/1140/650.pbf')
+          # Check if tile proxy is in built dist
+          D1=$(docker exec baltcircle-mvp grep -c "tile-proxy" /app/dist/index.cjs 2>/dev/null || echo "ERR")
+          D2=$(docker exec baltcircle-mvp grep -c "app.use.*tiles" /app/dist/index.cjs 2>/dev/null || echo "ERR")
+          D3=$(docker exec baltcircle-mvp node -e "const h=require('http'); const req=h.request({hostname:'host.docker.internal',port:8080,path:'/data/kaliningrad.json'},r=>{console.log('host.docker.internal:'+r.statusCode);r.destroy()});req.on('error',e=>console.log('err:'+e.code));req.end()" 2>/dev/null || echo "node_err")
+          D4=$(docker inspect baltcircle-mvp --format '{{.HostConfig.NetworkMode}} {{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null || echo "inspect_err")
           R3=$(curl -so /dev/null -w '%{http_code}' http://localhost:5000/tiles/data/kaliningrad.json)
-          R4=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:5000/tiles/data/kaliningrad/11/1140/650.pbf')
-          NX=$(grep -rh 'server_name\|proxy_pass\|listen' /etc/nginx/sites-enabled/ 2>/dev/null | tr '\n' '|')
-          TU=$(curl -s http://localhost:5000/tiles/data/kaliningrad.json 2>/dev/null | grep -o '"tiles":\["[^"]*"' | head -1)
           
-          printf "ts_json=%s\nts_tile=%s\nproxy_json=%s\nproxy_tile=%s\nnginx=%s\ntiles_url=%s\n" \
-            "$R1" "$R2" "$R3" "$R4" "$NX" "$TU" > /tmp/r.txt
+          printf "dist_tile_proxy=%s\ndist_app_use=%s\ndocker_net=%s\nnetwork=%s\nproxy_http=%s\n" \
+            "$D1" "$D2" "$D3" "$D4" "$R3" > /tmp/r.txt
           
           ENC=$(base64 -w0 /tmp/r.txt)
           SHA=$(curl -sf -H "Authorization: token $TOKEN" \
             https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt \
             | grep -o '"sha":"[^"]*"' | head -1 | cut -d'"' -f4)
           
-          if [ -n "$SHA" ]; then
-            curl -sf -X PUT -H "Authorization: token $TOKEN" \
-              -d "{\"message\":\"ci: diag [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" \
-              https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt
-          else
-            curl -sf -X PUT -H "Authorization: token $TOKEN" \
-              -d "{\"message\":\"ci: diag [skip ci]\",\"content\":\"$ENC\"}" \
-              https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt
-          fi
+          curl -sf -X PUT -H "Authorization: token $TOKEN" \
+            -d "{\"message\":\"ci: diag dist [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" \
+            https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt || true
