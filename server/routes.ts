@@ -1189,17 +1189,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
 
   // ── OSM Tile Proxy ────────────────────────────────────────────────────────
-  // Proxies requests to the local tileserver-gl container (port 8080) so
-  // that browsers can reach tiles via a same-origin /tiles/* path instead
-  // of a raw localhost URL (which is unreachable from outside the server).
-  app.get("/tiles/*path", (req: Request, res: Response) => {
-    const tilePath = (req.params as any).path ?? "";
-    const upstreamUrl = `http://localhost:8080/${tilePath}`;
-    const http = require("http");
+  // Proxies /tiles/* to local tileserver-gl (port 8080).
+  // Uses app.use() for Express 5 wildcard compatibility.
+  app.use("/tiles", (req: Request, res: Response) => {
+    const tilePath = req.path; // e.g. "/data/kaliningrad.json"
+    const upstreamUrl = `http://localhost:8080${tilePath}`;
+    const http = require("http") as typeof import("http");
     const upstream = new URL(upstreamUrl);
     const proxyReq = http.request(
-      { hostname: upstream.hostname, port: upstream.port, path: upstream.pathname + upstream.search, method: "GET" },
-      (proxyRes: any) => {
+      {
+        hostname: upstream.hostname,
+        port: Number(upstream.port) || 8080,
+        path: upstream.pathname + upstream.search,
+        method: "GET",
+      },
+      (proxyRes) => {
         const ct = proxyRes.headers["content-type"] ?? "application/octet-stream";
         const ce = proxyRes.headers["content-encoding"];
         res.setHeader("Content-Type", ct);
@@ -1210,9 +1214,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         proxyRes.pipe(res);
       }
     );
-    proxyReq.on("error", (err: any) => {
+    proxyReq.on("error", (err: unknown) => {
       console.error("[tile-proxy] error:", err);
-      res.status(502).end();
+      if (!res.headersSent) res.status(502).end();
     });
     proxyReq.end();
   });
