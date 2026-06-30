@@ -16,12 +16,43 @@ interface MapLibreMapProps {
   className?: string;
 }
 
+// Kaliningrad oblast approximate boundary polygon (GeoJSON coordinates)
+// bbox: ~lng 19.5–22.9, lat 54.2–55.35
+const KALININGRAD_BOUNDARY = {
+  type: "FeatureCollection" as const,
+  features: [
+    {
+      type: "Feature" as const,
+      geometry: {
+        type: "Polygon" as const,
+        coordinates: [[
+          [19.5, 54.2],
+          [22.9, 54.2],
+          [22.9, 55.35],
+          [19.5, 55.35],
+          [19.5, 54.2],
+        ]],
+      },
+      properties: {},
+    },
+  ],
+};
+
+// maxBounds: slightly larger than oblast bbox so user can't scroll far outside
+// Format: [west, south, east, north]
+const MAX_BOUNDS: [number, number, number, number] = [18.8, 53.8, 23.6, 55.8];
+
 const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object => ({
   version: 8,
   // Glyphs proxied via same-origin /glyphs/ → protomaps CDN, avoids iOS WKWebView CORS issues
   glyphs: "/glyphs/{fontstack}/{range}.pbf",
   sources: {
     kaliningrad: { type: "vector", tiles: [tileUrl], minzoom, maxzoom },
+    // GeoJSON boundary outline of Kaliningrad oblast
+    "kaliningrad-boundary": {
+      type: "geojson",
+      data: KALININGRAD_BOUNDARY,
+    },
   },
   layers: [
     { id: "background", type: "background", paint: { "background-color": "#e8f0f7" } },
@@ -59,12 +90,12 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
       minzoom: 14,
       paint: { "fill-color": "#ddd6cc", "fill-outline-color": "#c9c0b5" },
     },
-    // City / town / village names — Russian label preferred
+    // City / town / village names — name:latin (only field available in tilemaker data)
     {
       id: "place-labels", type: "symbol", source: "kaliningrad", "source-layer": "place",
       filter: ["in", ["get", "class"], ["literal", ["city", "town", "village", "suburb", "hamlet"]]],
       layout: {
-        "text-field": ["coalesce", ["get", "name:ru"], ["get", "name"]],
+        "text-field": ["get", "name:latin"],
         "text-font": ["Noto Sans Regular"],
         "text-size": ["interpolate", ["linear"], ["zoom"],
           7, ["match", ["get", "class"], ["city"], 14, ["town"], 12, 10],
@@ -81,10 +112,10 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
         "text-halo-width": 1.5,
       },
     },
-    // House numbers — only visible at very close zoom
+    // House numbers — visible from zoom 14 (max tile zoom)
     {
       id: "housenumber-labels", type: "symbol", source: "kaliningrad", "source-layer": "housenumber",
-      minzoom: 17,
+      minzoom: 14,
       layout: {
         "text-field": ["get", "housenumber"],
         "text-font": ["Noto Sans Regular"],
@@ -95,6 +126,18 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
         "text-color": "#7a6a55",
         "text-halo-color": "rgba(255,255,255,0.8)",
         "text-halo-width": 1,
+      },
+    },
+    // Kaliningrad oblast boundary outline — dashed blue-grey line
+    {
+      id: "oblast-boundary",
+      type: "line",
+      source: "kaliningrad-boundary",
+      paint: {
+        "line-color": "#6a8caf",
+        "line-width": 2,
+        "line-dasharray": [4, 3],
+        "line-opacity": 0.8,
       },
     },
   ],
@@ -174,6 +217,8 @@ export function MapLibreMap({
         const map = new ml.Map({
           container: el, style: buildStyle(tileUrl, minzoom, maxzoom),
           center: DEFAULT_CENTER, zoom: 10,
+          // Restrict panning: user can't scroll far outside Kaliningrad oblast
+          maxBounds: MAX_BOUNDS,
           attributionControl: false, trackResize: true,
         });
         map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
