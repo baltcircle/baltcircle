@@ -1,0 +1,6 @@
+ts_json=200
+ts_tile=204
+proxy_json=502
+proxy_tile=502
+nginx=
+tiles_url=
