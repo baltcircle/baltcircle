@@ -1,4 +1,6 @@
 mbt_size=24K
-mbt_tiles=sqlite3_error
-ts_container=running volumes:/home/yc-user/osm:/data,
-mbt_meta=meta_error
+mbt_bytes=24576
+mbt_tiles=err
+ts_z10=204
+ts_z10_size=0
+proxy_z10=204
