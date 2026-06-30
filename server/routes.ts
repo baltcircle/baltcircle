@@ -1224,7 +1224,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             try {
               const body = Buffer.concat(chunks).toString("utf8");
               const json = JSON.parse(body);
-              const origin = `${req.protocol}://${req.get("host")}`;
+              // Resolve public origin robustly behind reverse proxy:
+              // x-forwarded-host/proto set by nginx, fallback to HOST env var, then takeride.ru
+              const fwdProto = (req.headers["x-forwarded-proto"] as string | undefined)?.split(",")[0]?.trim();
+              const fwdHost  = (req.headers["x-forwarded-host"]  as string | undefined)?.split(",")[0]?.trim();
+              const proto  = fwdProto || req.protocol || "https";
+              const host   = fwdHost  || req.get("host") || process.env.PUBLIC_HOST || "takeride.ru";
+              const origin = `${proto}://${host}`;
               const rewrite = (url: string) => `${origin}${url.replace(/^https?:\/\/[^/]+/, "/tiles")}`;
               if (Array.isArray(json.tiles)) json.tiles = (json.tiles as string[]).map(rewrite);
               if (Array.isArray(json.grids)) json.grids = (json.grids as string[]).map(rewrite);
