@@ -1464,3 +1464,5 @@ function maskPan(pan: string): string {
   const last4 = digits.slice(-4);
   return last4 ? `•••• ${last4}` : "Карта";
 }
+
+// cache-bust: 1782835820
