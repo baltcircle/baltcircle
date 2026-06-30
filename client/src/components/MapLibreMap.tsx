@@ -25,7 +25,7 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
     kaliningrad: { type: "vector", tiles: [tileUrl], minzoom, maxzoom },
   },
   layers: [
-    { id: "background", type: "background", paint: { "background-color": "#e8f0f7" } },
+    { id: "background", type: "background", paint: { "background-color": "#ff0000" } },
     {
       id: "water", type: "fill", source: "kaliningrad", "source-layer": "water",
       paint: { "fill-color": "#a8d5e8" },
