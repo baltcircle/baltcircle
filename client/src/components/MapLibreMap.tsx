@@ -18,10 +18,11 @@ interface MapLibreMapProps {
   className?: string;
 }
 
-const TILE_URL = "http://localhost:8080/data/kaliningrad/{z}/{x}/{y}.pbf";
-const TILEJSON_URL = "http://localhost:8080/data/kaliningrad.json";
+// Tiles are proxied through our own Express server at /tiles/*
+// so the browser doesn't need direct access to localhost:8080
+const TILEJSON_URL = "/tiles/data/kaliningrad.json";
 
-// MapLibre style using our local vector tiles
+// MapLibre style using our local vector tiles via server proxy
 const buildStyle = () => ({
   version: 8,
   sources: {
