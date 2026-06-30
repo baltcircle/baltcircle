@@ -3,9 +3,7 @@ import type { MapObject, Parking, Ride } from "@shared/schema";
 import { REAL_CENTER } from "@shared/geo";
 
 declare global {
-  interface Window {
-    maplibregl: any;
-  }
+  interface Window { maplibregl: any; }
 }
 
 interface MapLibreMapProps {
@@ -20,12 +18,7 @@ interface MapLibreMapProps {
 
 const buildStyle = () => ({
   version: 8,
-  sources: {
-    kaliningrad: {
-      type: "vector",
-      url: "/tiles/data/kaliningrad.json",
-    },
-  },
+  sources: { kaliningrad: { type: "vector", url: "/tiles/data/kaliningrad.json" } },
   layers: [
     { id: "background", type: "background", paint: { "background-color": "#e8f0f7" } },
     { id: "water", type: "fill", source: "kaliningrad", "source-layer": "water", paint: { "fill-color": "#a8d5e8" } },
@@ -54,8 +47,7 @@ const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
 function ensureMaplibreCSS() {
   if (document.getElementById("maplibre-css")) return;
   const link = document.createElement("link");
-  link.id = "maplibre-css";
-  link.rel = "stylesheet";
+  link.id = "maplibre-css"; link.rel = "stylesheet";
   link.href = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css";
   document.head.appendChild(link);
 }
@@ -65,59 +57,62 @@ function loadMaplibre(cb: (err?: string) => void) {
   const existing = document.getElementById("maplibre-js") as HTMLScriptElement | null;
   if (existing) {
     existing.addEventListener("load", () => cb());
-    existing.addEventListener("error", () => cb("CDN script load error"));
+    existing.addEventListener("error", () => cb("script onerror"));
     return;
   }
   const script = document.createElement("script");
   script.id = "maplibre-js";
   script.src = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js";
   script.onload = () => cb();
-  script.onerror = () => cb("CDN script load error (unpkg.com blocked?)");
+  script.onerror = () => cb("CDN blocked/failed");
   document.head.appendChild(script);
 }
 
 export function MapLibreMap({
-  parkings = [],
-  mapObjects = [],
-  ride,
-  height = "100%",
-  showLabels = false,
-  center,
-  className,
+  parkings = [], mapObjects = [], ride, height = "100%",
+  showLabels = false, center, className,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
+  const diagRef = useRef<string[]>(["⏳ start"]);
+  const [diagLines, setDiagLines] = useState<string[]>(["⏳ start"]);
 
-  // Diagnostic state — visible overlay in top-left corner
-  const [diag, setDiag] = useState<string[]>(["⏳ init..."]);
-  const addDiag = (msg: string) => setDiag(prev => [...prev.slice(-8), msg]);
+  const log = (msg: string) => {
+    console.log("[MapDiag]", msg);
+    diagRef.current = [...diagRef.current.slice(-12), msg];
+    setDiagLines([...diagRef.current]);
+  };
 
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) { addDiag("❌ containerRef null"); return; }
+    if (!el) { log("❌ no el"); return; }
 
     ensureMaplibreCSS();
-    addDiag("📦 CSS injected");
+    log("1 CSS ok");
 
     const initMap = (cdnErr?: string) => {
-      if (cdnErr) { addDiag("❌ " + cdnErr); return; }
-      if (mapRef.current) { addDiag("ℹ️ already init"); return; }
+      if (cdnErr) { log("❌ CDN: " + cdnErr); return; }
+      if (mapRef.current) { log("skip:already"); return; }
 
-      addDiag("✅ CDN loaded");
+      log("2 CDN ready");
 
       const ml = window.maplibregl;
-      if (!ml) { addDiag("❌ window.maplibregl undefined"); return; }
+      if (!ml) { log("❌ ml undef"); return; }
+      log("3 ml ok v:" + (ml.version ?? "?"));
 
       const rect = el.getBoundingClientRect();
-      addDiag(`📐 ${Math.round(rect.width)}×${Math.round(rect.height)}`);
+      log("4 rect " + Math.round(rect.width) + "×" + Math.round(rect.height));
 
       if (rect.width === 0 || rect.height === 0) {
-        addDiag("⏳ 0×0, waiting ResizeObserver...");
+        log("⏳ 0×0 wait RO");
         return;
       }
 
-      if (!ml.supported()) { addDiag("❌ WebGL not supported"); return; }
+      const sup = ml.supported();
+      log("5 supported:" + sup);
+      if (!sup) { log("❌ no WebGL"); return; }
 
+      log("6 new Map...");
       try {
         const map = new ml.Map({
           container: el,
@@ -127,29 +122,27 @@ export function MapLibreMap({
           attributionControl: false,
           trackResize: true,
         });
+        log("7 Map()ok");
 
         map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
 
         map.on("error", (e: any) => {
-          addDiag("❌ map error: " + (e?.error?.message ?? JSON.stringify(e)));
+          const msg = e?.error?.message ?? e?.type ?? JSON.stringify(e).slice(0, 80);
+          log("❌ mapevent: " + msg);
         });
 
-        map.once("load", () => {
-          map.resize();
-          addDiag("✅ map loaded!");
-        });
+        map.once("load", () => { map.resize(); log("✅ LOADED!"); });
 
         mapRef.current = map;
-        addDiag("🗺️ Map() created");
       } catch (e: any) {
-        addDiag("❌ Map() threw: " + e?.message);
+        log("❌ throw: " + (e?.message ?? String(e)).slice(0, 80));
       }
     };
 
     const ro = new ResizeObserver(() => {
-      const rect = el.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
       if (!mapRef.current) {
-        addDiag(`🔄 RO: ${Math.round(rect.width)}×${Math.round(rect.height)}`);
+        log("RO " + Math.round(r.width) + "×" + Math.round(r.height));
         if (window.maplibregl) initMap();
       } else {
         mapRef.current.resize();
@@ -169,14 +162,13 @@ export function MapLibreMap({
 
   return (
     <div ref={containerRef} className={className} style={{ height }}>
-      {/* DIAGNOSTIC OVERLAY — remove after fixing */}
       <div style={{
         position: "absolute", top: 8, left: 8, zIndex: 9999,
-        background: "rgba(0,0,0,0.75)", color: "#0f0", fontFamily: "monospace",
-        fontSize: 11, padding: "6px 10px", borderRadius: 6, maxWidth: 280,
-        pointerEvents: "none", lineHeight: 1.5,
+        background: "rgba(0,0,0,0.82)", color: "#0f0", fontFamily: "monospace",
+        fontSize: 11, padding: "6px 10px", borderRadius: 6, maxWidth: 300,
+        pointerEvents: "none", lineHeight: 1.6, whiteSpace: "pre",
       }}>
-        {diag.map((d, i) => <div key={i}>{d}</div>)}
+        {diagLines.join("\n")}
       </div>
     </div>
   );
