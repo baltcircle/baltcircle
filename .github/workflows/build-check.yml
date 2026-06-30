@@ -1,0 +1,28 @@
+name: Build Check
+on: [workflow_dispatch]
+jobs:
+  build:
+    runs-on: [self-hosted, baltcircle-prod]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and capture error
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          docker build --no-cache -t bc-test . > /tmp/build.log 2>&1
+          EXIT=$?
+          echo "Exit: $EXIT"
+          # Get last 50 lines of build log
+          tail -50 /tmp/build.log > /tmp/r.txt
+          cat /tmp/r.txt
+          ENC=$(base64 -w0 /tmp/r.txt)
+          SHA=$(curl -sf -H "Authorization: token $TOKEN" \
+            "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
+          curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
+            -d "{\"message\":\"ci: build log [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo OK
+          exit $EXIT
