@@ -123,10 +123,13 @@ export function MapLibreMap({
       log(`Map() ${Math.round(width)}×${Math.round(h)}`);
       log("tile:" + tileUrl.slice(0, 70));
       try {
+        // workerCount:0 — decode tiles on main thread, avoids Web Worker issues on iOS WKWebView
+        log(`wUrl:${(ml.workerUrl??"").slice(0,40)||"none"}`);
         const map = new ml.Map({
           container: el, style: buildStyle(tileUrl, minzoom, maxzoom),
           center: DEFAULT_CENTER, zoom: 10,
           attributionControl: false, trackResize: true,
+          workerCount: 0,
         });
         map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
 
