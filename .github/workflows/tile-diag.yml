@@ -6,26 +6,30 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: check mbtiles and tiles
+      - name: full check
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          MBT_SIZE=$(ls -lh /home/yc-user/osm/kaliningrad.mbtiles 2>/dev/null | awk '{print $5}')
-          MBT_BYTES=$(stat -c%s /home/yc-user/osm/kaliningrad.mbtiles 2>/dev/null || echo 0)
-          MBT_TILES=$(sqlite3 /home/yc-user/osm/kaliningrad.mbtiles "SELECT count(*) FROM tiles" 2>/dev/null || echo "err")
-          T10=$(curl -so /dev/null -w '%{http_code}' "http://localhost:8080/data/kaliningrad/10/570/325.pbf")
-          S10=$(curl -s "http://localhost:8080/data/kaliningrad/10/570/325.pbf" | wc -c)
-          P10=$(curl -so /dev/null -w '%{http_code}' "http://localhost:5000/tiles/data/kaliningrad/10/570/325.pbf")
-          
-          printf "mbt_size=%s\nmbt_bytes=%s\nmbt_tiles=%s\nts_z10=%s\nts_z10_size=%s\nproxy_z10=%s\n" \
-            "$MBT_SIZE" "$MBT_BYTES" "$MBT_TILES" "$T10" "$S10" "$P10" > /tmp/r.txt
+          # tileserver
+          TS=$(curl -so /dev/null -w '%{http_code}' http://localhost:8080/data/kaliningrad.json)
+          TS10=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/data/kaliningrad/10/570/325.pbf')
+          TS10S=$(curl -s 'http://localhost:8080/data/kaliningrad/10/570/325.pbf' | wc -c)
+          # proxy
+          P=$(curl -so /dev/null -w '%{http_code}' http://localhost:5000/tiles/data/kaliningrad.json)
+          P10=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:5000/tiles/data/kaliningrad/10/570/325.pbf')
+          P10S=$(curl -s 'http://localhost:5000/tiles/data/kaliningrad/10/570/325.pbf' | wc -c)
+          # tiles url rewrite
+          TU=$(curl -s http://localhost:5000/tiles/data/kaliningrad.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('tiles',['NONE'])[0])" 2>/dev/null)
+          # maplibre css in html
+          HTML=$(curl -s http://localhost:5000/ | grep -c 'maplibre')
+          printf "ts_json=%s\nts_tile_z10=%s\nts_tile_bytes=%s\nproxy_json=%s\nproxy_tile=%s\nproxy_bytes=%s\ntiles_url=%s\nmaplibre_in_html=%s\n" \
+            "$TS" "$TS10" "$TS10S" "$P" "$P10" "$P10S" "$TU" "$HTML" > /tmp/r.txt
           cat /tmp/r.txt
-          
           ENC=$(base64 -w0 /tmp/r.txt)
           SHA=$(curl -sf -H "Authorization: token $TOKEN" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
             | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
           curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: diag post-osm [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo OK
+            -d "{\"message\":\"ci: check [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo OK
