@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - osm-setup
+  workflow_dispatch:
 
 jobs:
   setup:
@@ -19,6 +20,11 @@ jobs:
       - name: Download Kaliningrad OSM data
         run: |
           cd /home/yc-user/osm
+          # Remove if < 1MB (failed download)
+          if [ -f kaliningrad.osm.pbf ] && [ $(stat -c%s kaliningrad.osm.pbf) -lt 1048576 ]; then
+            echo "PBF too small, re-downloading..."
+            rm kaliningrad.osm.pbf
+          fi
           if [ -f kaliningrad.osm.pbf ]; then
             echo "Already exists: $(du -sh kaliningrad.osm.pbf)"
           else
@@ -54,6 +60,11 @@ jobs:
       - name: Build MBTiles
         run: |
           cd /home/yc-user/osm
+          # Remove broken file if < 1MB
+          if [ -f kaliningrad.mbtiles ] && [ $(stat -c%s kaliningrad.mbtiles) -lt 1048576 ]; then
+            echo "File too small ($(du -sh kaliningrad.mbtiles)), removing and rebuilding..."
+            rm kaliningrad.mbtiles
+          fi
           if [ -f kaliningrad.mbtiles ]; then
             echo "Already built: $(du -sh kaliningrad.mbtiles)"
           else
