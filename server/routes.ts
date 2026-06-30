@@ -1187,6 +1187,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(storage.adminAnalytics({ from, to }));
   });
 
+
+  // ── OSM Tile Proxy ────────────────────────────────────────────────────────
+  // Proxies requests to the local tileserver-gl container (port 8080) so
+  // that browsers can reach tiles via a same-origin /tiles/* path instead
+  // of a raw localhost URL (which is unreachable from outside the server).
+  app.get("/tiles/*path", (req: Request, res: Response) => {
+    const tilePath = (req.params as any).path ?? "";
+    const upstreamUrl = `http://localhost:8080/${tilePath}`;
+    const http = require("http");
+    const upstream = new URL(upstreamUrl);
+    const proxyReq = http.request(
+      { hostname: upstream.hostname, port: upstream.port, path: upstream.pathname + upstream.search, method: "GET" },
+      (proxyRes: any) => {
+        const ct = proxyRes.headers["content-type"] ?? "application/octet-stream";
+        const ce = proxyRes.headers["content-encoding"];
+        res.setHeader("Content-Type", ct);
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        if (ce) res.setHeader("Content-Encoding", ce);
+        res.status(proxyRes.statusCode ?? 200);
+        proxyRes.pipe(res);
+      }
+    );
+    proxyReq.on("error", (err: any) => {
+      console.error("[tile-proxy] error:", err);
+      res.status(502).end();
+    });
+    proxyReq.end();
+  });
+
   return httpServer;
 }
 
