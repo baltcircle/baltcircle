@@ -1,50 +1,5 @@
-ts_json=200
-ts_tile_z11=204 bytes=0
-ts_tile_z10=200 bytes=40565
-proxy_z11=204 bytes=0
-proxy_z11_headers=HTTP/1.1 204 No Content
-X-Powered-By: Express
-Access-Control-Allow-Origin: *
-Cache-Control: public, max-age=86400
-Content-Type: application/octet-stream
-tiles_url=http://localhost:5000/tiles/data/kaliningrad/{z}/{x}/{y}.pbf
-nginx_conf=
-server {
-    server_name takeride.ru www.takeride.ru baltcircle.ru www.baltcircle.ru _;
-
-    location / {
-        proxy_pass http://127.0.0.1:5000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    listen 443 ssl; # managed by Certbot
-    ssl_certificate /etc/letsencrypt/live/takeride.ru/fullchain.pem; # managed by Certbot
-    ssl_certificate_key /etc/letsencrypt/live/takeride.ru/privkey.pem; # managed by Certbot
-    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
-    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
-
-
-}
-server {
-    if ($host = www.takeride.ru) {
-        return 301 https://$host$request_uri;
-    } # managed by Certbot
-
-
-    if ($host = takeride.ru) {
-        return 301 https://$host$request_uri;
-    } # managed by Certbot
-
-
-    listen 80;
-    server_name takeride.ru www.takeride.ru baltcircle.ru www.baltcircle.ru _;
-    return 404; # managed by Certbot
-
-
-
-
-}
+font_list_http=200
+noto_http=400 noto_bytes=18
+open_sans_http=400
+fonts_json=[]
+catalog_fonts=no catalog
