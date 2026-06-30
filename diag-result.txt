@@ -1,6 +1,4 @@
-mbt_size=24K
-mbt_bytes=24576
-mbt_tiles=err
+mbt=24K
+pbf=9.4K
 ts_z10=204
 ts_z10_size=0
-proxy_z10=204
