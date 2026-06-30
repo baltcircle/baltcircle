@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MapObject, Parking, Ride } from "@shared/schema";
 import { REAL_CENTER } from "@shared/geo";
 
@@ -18,9 +18,7 @@ interface MapLibreMapProps {
 
 const buildStyle = (): object => ({
   version: 8,
-  // No glyphs URL — we have zero symbol/text layers so fonts are never needed.
-  // Including a glyphs URL (e.g. demotiles.maplibre.org) causes map.loaded()
-  // to stay false indefinitely when that host is unreachable from the device.
+  // No glyphs — no symbol layers, fonts not needed
   sources: {
     kaliningrad: { type: "vector", url: "/tiles/data/kaliningrad.json" },
   },
@@ -38,31 +36,22 @@ const buildStyle = (): object => ({
       id: "landuse", type: "fill", source: "kaliningrad", "source-layer": "landuse",
       paint: {
         "fill-color": ["match", ["get", "class"],
-          "park",        "#c8e6c9",
-          "wood",        "#b5d5a0",
-          "grass",       "#d4edda",
-          "residential", "#f5f0eb",
-          "#ede8e0",
-        ],
+          "park", "#c8e6c9", "wood", "#b5d5a0",
+          "grass", "#d4edda", "residential", "#f5f0eb", "#ede8e0"],
       },
     },
     {
       id: "road-fill", type: "line", source: "kaliningrad", "source-layer": "transportation",
       filter: ["in", ["get", "class"], ["literal",
         ["motorway","trunk","primary","secondary","tertiary","minor","service"]]],
-      paint: {
-        "line-color": "#ffffff",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1, 14, 4, 17, 10],
-      },
+      paint: { "line-color": "#ffffff",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1, 14, 4, 17, 10] },
     },
     {
       id: "road-case", type: "line", source: "kaliningrad", "source-layer": "transportation",
-      filter: ["in", ["get", "class"], ["literal",
-        ["motorway","trunk","primary","secondary"]]],
-      paint: {
-        "line-color": "#d4c9bb",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 14, 6, 17, 14],
-      },
+      filter: ["in", ["get", "class"], ["literal", ["motorway","trunk","primary","secondary"]]],
+      paint: { "line-color": "#d4c9bb",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 14, 6, 17, 14] },
     },
     {
       id: "building", type: "fill", source: "kaliningrad", "source-layer": "building",
@@ -72,9 +61,7 @@ const buildStyle = (): object => ({
   ],
 });
 
-// MapLibre uses [lng, lat]; REAL_CENTER is [lat, lng]
 const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
-
 const CDN_BASE      = "https://unpkg.com/maplibre-gl@4.7.1/dist";
 const CDN_CSP_JS    = `${CDN_BASE}/maplibre-gl-csp.js`;
 const CDN_WORKER_JS = `${CDN_BASE}/maplibre-gl-csp-worker.js`;
@@ -93,17 +80,14 @@ function loadMaplibre(): Promise<void> {
     const existing = document.getElementById("maplibre-js") as HTMLScriptElement | null;
     if (existing) {
       existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () => reject(new Error("CDN script failed")));
+      existing.addEventListener("error", () => reject(new Error("script failed")));
       return;
     }
-    const script = document.createElement("script");
-    script.id = "maplibre-js"; script.src = CDN_CSP_JS;
-    script.onload = () => {
-      try { window.maplibregl.setWorkerUrl(CDN_WORKER_JS); resolve(); }
-      catch (e) { reject(e); }
-    };
-    script.onerror = () => reject(new Error("CDN load failed"));
-    document.head.appendChild(script);
+    const s = document.createElement("script");
+    s.id = "maplibre-js"; s.src = CDN_CSP_JS;
+    s.onload = () => { try { window.maplibregl.setWorkerUrl(CDN_WORKER_JS); resolve(); } catch(e){reject(e);} };
+    s.onerror = () => reject(new Error("CDN failed"));
+    document.head.appendChild(s);
   });
 }
 
@@ -113,11 +97,18 @@ export function MapLibreMap({
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef       = useRef<any>(null);
+  const diagRef      = useRef<string[]>(["init"]);
+  const [diag, setDiag] = useState<string[]>(["init"]);
+
+  const log = (m: string) => {
+    console.log("[Map]", m);
+    diagRef.current = [...diagRef.current.slice(-10), m];
+    setDiag([...diagRef.current]);
+  };
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-
     ensureCSS();
     let cancelled = false;
 
@@ -126,34 +117,54 @@ export function MapLibreMap({
       const ml = window.maplibregl;
       if (!ml?.Map) return;
       const { width, height: h } = el.getBoundingClientRect();
-      if (width === 0 || h === 0) return;
+      if (width === 0 || h === 0) { log(`0×0`); return; }
 
+      log(`Map() ${Math.round(width)}×${Math.round(h)}`);
       try {
         const map = new ml.Map({
-          container: el,
-          style: buildStyle(),
-          center: DEFAULT_CENTER,
-          zoom: 11,
-          attributionControl: false,
-          trackResize: true,
+          container: el, style: buildStyle(),
+          center: DEFAULT_CENTER, zoom: 11,
+          attributionControl: false, trackResize: true,
         });
         map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
-        map.once("load", () => map.resize());
+
+        map.on("error", (e: any) => {
+          log("ERR:" + (e?.error?.message ?? JSON.stringify(e)).slice(0, 70));
+        });
+
+        map.on("sourcedata", (e: any) => {
+          if (e.sourceId === "kaliningrad") {
+            log(`src ${e.isSourceLoaded ? "loaded" : "loading"} tile=${!!e.tile}`);
+          }
+        });
+
+        map.once("load", () => {
+          map.resize();
+          const sz = el.getBoundingClientRect();
+          log(`LOADED! canvas=${map.getCanvas().width}×${map.getCanvas().height} el=${Math.round(sz.width)}×${Math.round(sz.height)}`);
+        });
+
+        // 8s timeout
+        setTimeout(() => {
+          if (mapRef.current !== map) return;
+          log(`8s: loaded=${map.loaded()} style=${map.isStyleLoaded()}`);
+        }, 8000);
+
         mapRef.current = map;
-      } catch (e) {
-        console.error("[MapLibreMap] init failed:", e);
+        log("created ✓");
+      } catch (e: any) {
+        log("THROW:" + (e?.message ?? e).slice(0, 70));
       }
     };
 
     const ro = new ResizeObserver(() => {
-      if (!mapRef.current) tryInit();
-      else mapRef.current.resize();
+      if (!mapRef.current) tryInit(); else mapRef.current.resize();
     });
     ro.observe(el);
 
     loadMaplibre()
-      .then(() => { if (!cancelled) tryInit(); })
-      .catch((e) => console.error("[MapLibreMap] CDN load failed:", e));
+      .then(() => { if (!cancelled) { log("CDN ok"); tryInit(); } })
+      .catch((e: any) => log("CDN ERR:" + e?.message));
 
     return () => { cancelled = true; ro.disconnect(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -164,6 +175,15 @@ export function MapLibreMap({
   }, [center]);
 
   return (
-    <div ref={containerRef} className={className} style={{ height }} />
+    <div ref={containerRef} className={className} style={{ height }}>
+      <div style={{
+        position:"absolute", top:8, left:8, zIndex:9999,
+        background:"rgba(0,0,0,0.85)", color:"#0f0", fontFamily:"monospace",
+        fontSize:11, padding:"6px 10px", borderRadius:6, maxWidth:340,
+        pointerEvents:"none", lineHeight:1.6, whiteSpace:"pre",
+      }}>
+        {diag.join("\n")}
+      </div>
+    </div>
   );
 }
