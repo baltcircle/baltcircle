@@ -6,30 +6,26 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: network check
+      - name: final proxy check
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          NETMODE=$(docker inspect baltcircle-mvp --format '{{.HostConfig.NetworkMode}}' 2>/dev/null)
-          HDE=$(docker exec baltcircle-mvp curl -so /dev/null -w '%{http_code}' --connect-timeout 3 http://host.docker.internal:8080/data/kaliningrad.json 2>/dev/null || echo ERR)
-          TS_DIRECT=$(docker exec baltcircle-mvp curl -so /dev/null -w '%{http_code}' --connect-timeout 3 http://localhost:8080/data/kaliningrad.json 2>/dev/null || echo ERR)
-          HOST_IP=$(docker exec baltcircle-mvp ip route 2>/dev/null | grep default | awk '{print $3}' | head -1)
-          HOST_IP_TS=$(docker exec baltcircle-mvp curl -so /dev/null -w '%{http_code}' --connect-timeout 3 "http://${HOST_IP}:8080/data/kaliningrad.json" 2>/dev/null || echo ERR)
+          R1=$(curl -so /dev/null -w '%{http_code}' http://localhost:5000/tiles/data/kaliningrad.json)
+          R2=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:5000/tiles/data/kaliningrad/11/1140/650.pbf')
+          R3=$(curl -s http://localhost:5000/tiles/data/kaliningrad.json 2>/dev/null | grep -o '"tiles":\["[^"]*"' | head -1)
           
-          echo "netmode=$NETMODE" > /tmp/r.txt
-          echo "host.docker.internal=$HDE" >> /tmp/r.txt
-          echo "localhost_from_container=$TS_DIRECT" >> /tmp/r.txt
-          echo "host_ip=$HOST_IP" >> /tmp/r.txt
-          echo "host_ip_ts=$HOST_IP_TS" >> /tmp/r.txt
+          echo "proxy_json=$R1" > /tmp/r.txt
+          echo "proxy_tile=$R2" >> /tmp/r.txt
+          echo "tiles_url=$R3" >> /tmp/r.txt
           cat /tmp/r.txt
           
           ENC=$(base64 -w0 /tmp/r.txt)
           SHA=$(curl -sf -H "Authorization: token $TOKEN" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['sha'])" 2>/dev/null || echo "")
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
           
           curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: diag net [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" \
+            -d "{\"message\":\"ci: final check [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" \
             && echo "PUSHED" || echo "FAILED"
