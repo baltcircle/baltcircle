@@ -155,19 +155,15 @@ export function MapLibreMap({
         // 5s snapshot
         setTimeout(() => {
           if (mapRef.current !== map) return;
-          log(`5s: loaded=${map.loaded()} style=${map.isStyleLoaded()} renders=${renderCount}`);
-          // Inspect source state directly
-          try {
-            const src = (map as any).getSource("kaliningrad");
-            log(`src_state: ${src ? JSON.stringify({loaded: src.loaded?.(), type: src.type}) : "null"}`);
-          } catch(e:any){ log("src_state ERR:"+e?.message); }
+          const canvas = map.getCanvas();
+          const cw = canvas.width, ch = canvas.height;
+          const cs = window.getComputedStyle(canvas);
+          log(`5s: renders=${renderCount} canvas=${cw}×${ch} display=${cs.display} vis=${cs.visibility}`);
+          log(`5s: canvasEl w=${cs.width} h=${cs.height} pos=${cs.position}`);
+          // Check container
+          const elRect = el.getBoundingClientRect();
+          log(`5s: container ${Math.round(elRect.width)}×${Math.round(elRect.height)} top=${Math.round(elRect.top)}`);
         }, 5000);
-
-        // 10s timeout
-        setTimeout(() => {
-          if (mapRef.current !== map) return;
-          log(`10s: loaded=${map.loaded()} style=${map.isStyleLoaded()} renders=${renderCount}`);
-        }, 10000);
 
         mapRef.current = map;
         log("created ✓");
