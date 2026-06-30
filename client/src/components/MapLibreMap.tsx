@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import type { MapObject, Parking, Ride } from "@shared/schema";
 import { REAL_CENTER } from "@shared/geo";
 
@@ -8,7 +8,7 @@ declare global {
 
 interface MapLibreMapProps {
   parkings?: Parking[];
-  mapObjects?: MapObject[];
+  mapObjects?: MapObject[]
   ride?: Ride | null;
   height?: string;
   showLabels?: boolean;
@@ -16,11 +16,9 @@ interface MapLibreMapProps {
   className?: string;
 }
 
-// Build style with an inline vector source (tiles[] already absolute — no url: indirection).
-// This bypasses any server-side TileJSON rewrite issues entirely.
 const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object => ({
   version: 8,
-  // No glyphs — no symbol layers, fonts not needed
+  // No glyphs — no symbol layers, demotiles.maplibre.org is unreachable and blocks map.loaded()
   sources: {
     kaliningrad: { type: "vector", tiles: [tileUrl], minzoom, maxzoom },
   },
@@ -63,7 +61,7 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
   ],
 });
 
-const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
+const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]]; // [lng, lat]
 const CDN_BASE      = "https://unpkg.com/maplibre-gl@4.7.1/dist";
 const CDN_CSP_JS    = `${CDN_BASE}/maplibre-gl-csp.js`;
 const CDN_WORKER_JS = `${CDN_BASE}/maplibre-gl-csp-worker.js`;
@@ -77,7 +75,7 @@ function ensureCSS() {
 }
 
 // Fetch worker JS and create a same-origin blob URL.
-// iOS WKWebView blocks Workers created from cross-origin URLs (CDN),
+// iOS WKWebView blocks Workers from cross-origin URLs (CDN),
 // but allows blob: URLs created from fetched content.
 async function makeWorkerBlobUrl(): Promise<string | null> {
   try {
@@ -102,7 +100,6 @@ function loadMaplibre(): Promise<void> {
     const s = document.createElement("script");
     s.id = "maplibre-js"; s.src = CDN_CSP_JS;
     s.onload = () => {
-      // Fetch worker and create blob URL so iOS WKWebView can load it
       makeWorkerBlobUrl().then(blobUrl => {
         try {
           window.maplibregl.setWorkerUrl(blobUrl ?? CDN_WORKER_JS);
@@ -121,14 +118,6 @@ export function MapLibreMap({
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef       = useRef<any>(null);
-  const diagRef      = useRef<string[]>(["init"]);
-  const [diag, setDiag] = useState<string[]>(["init"]);
-
-  const log = (m: string) => {
-    console.log("[Map]", m);
-    diagRef.current = [...diagRef.current.slice(-10), m];
-    setDiag([...diagRef.current]);
-  };
 
   useEffect(() => {
     const el = containerRef.current;
@@ -140,99 +129,43 @@ export function MapLibreMap({
       if (cancelled || mapRef.current) return;
       const ml = window.maplibregl;
       const { width, height: h } = el.getBoundingClientRect();
-      if (width === 0 || h === 0) { log(`0×0`); return; }
+      if (width === 0 || h === 0) return;
 
-      log(`Map() ${Math.round(width)}×${Math.round(h)}`);
-      log("tile:" + tileUrl.slice(0, 70));
       try {
-        log(`wUrl:${(ml.workerUrl??"").slice(0,30)||"none"}`);
-        let tileReqCount = 0;
         const map = new ml.Map({
           container: el, style: buildStyle(tileUrl, minzoom, maxzoom),
           center: DEFAULT_CENTER, zoom: 10,
           attributionControl: false, trackResize: true,
-          transformRequest: (url: string) => {
-            if (url.includes("/tiles/data/kaliningrad/")) {
-              tileReqCount++;
-              if (tileReqCount <= 2) log(`req#${tileReqCount}:${url.slice(-30)}`);
-            }
-            return { url };
-          },
         });
         map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
-
-        map.on("error", (e: any) => {
-          log("ERR:" + (e?.error?.message ?? JSON.stringify(e)).slice(0, 70));
-        });
-
-        map.on("sourcedata", (e: any) => {
-          if (e.sourceId === "kaliningrad") {
-            log(`src ${e.isSourceLoaded ? "loaded" : "loading"} tile=${!!e.tile}`);
-          }
-        });
-
-        // Count render frames to detect if WebGL is working at all
-        let renderCount = 0;
-        map.on("render", () => { renderCount++; });
-
-        map.once("styledata", () => log("styledata ✓"));
-        map.once("idle",      () => log("idle ✓"));
-
-        map.once("load", () => {
-          map.resize();
-          log(`LOADED! ${map.getCanvas().width}×${map.getCanvas().height}`);
-        });
-
-        // 5s snapshot
-        setTimeout(() => {
-          if (mapRef.current !== map) return;
-          log(`5s: renders=${renderCount} tileReqs=${tileReqCount} loaded=${map.loaded()}`);
-        }, 5000);
-
+        map.once("load", () => map.resize());
         mapRef.current = map;
-        log("created ✓");
-      } catch (e: any) {
-        log("THROW:" + (e?.message ?? e).slice(0, 70));
+      } catch {
+        // WebGL unavailable — map stays blank
       }
     };
 
-    // Fetch TileJSON ourselves and patch tiles[] to absolute URLs on the client.
-    // This completely bypasses server-side rewrite and is reliable regardless of proxy.
+    // Fetch TileJSON client-side and patch tiles[] to absolute URLs.
+    // Bypasses server-side rewrite unreliability behind nginx proxy.
     const tryInit = () => {
       if (cancelled || mapRef.current) return;
       const ml = window.maplibregl;
       if (!ml?.Map) return;
 
       const origin = window.location.origin;
-      log("fetch tj...");
       fetch(`${origin}/tiles/data/kaliningrad.json`)
         .then(r => r.json())
         .then((j: any) => {
           if (cancelled) return;
-          // Patch tiles[] to absolute URLs using client-side origin
           const rawTiles: string[] = Array.isArray(j.tiles) ? j.tiles : [];
           const tileUrl = rawTiles.map((u: string) =>
             u.startsWith("http") ? u : `${origin}${u.startsWith("/") ? "" : "/"}${u}`
           )[0] ?? `${origin}/tiles/data/kaliningrad/{z}/{x}/{y}.pbf`;
-          const minzoom = j.minzoom ?? 0;
-          const maxzoom = j.maxzoom ?? 14;
-          log(`tj ok minz=${minzoom} maxz=${maxzoom}`);
-          // Test actual tile fetch at z=11 center of Kaliningrad (lng=20.275, lat=54.945)
-          // z=11: x=1193, y=630
-          // Test z=10 (confirmed working) and z=11 (correct coords for Kaliningrad center)
-          const t10 = tileUrl.replace("{z}","10").replace("{x}","569").replace("{y}","324");
-          const t11 = tileUrl.replace("{z}","11").replace("{x}","1139").replace("{y}","648");
-          Promise.all([
-            fetch(t10,{cache:"no-store"}).then(async r=>({z:10,s:r.status,b:(await r.arrayBuffer()).byteLength})),
-            fetch(t11,{cache:"no-store"}).then(async r=>({z:11,s:r.status,b:(await r.arrayBuffer()).byteLength})),
-          ]).then(rs => rs.forEach(r => log(`t${r.z} http=${r.s} bytes=${r.b}`))).catch(e=>log("tERR:"+(e?.message??e)));
-          initMap(tileUrl, minzoom, maxzoom);
+          initMap(tileUrl, j.minzoom ?? 0, j.maxzoom ?? 14);
         })
-        .catch((e: any) => {
-          if (cancelled) return;
-          log("tj ERR:" + (e?.message ?? e));
-          // Fallback: use hardcoded tile URL
-          initMap(`${origin}/tiles/data/kaliningrad/{z}/{x}/{y}.pbf`, 0, 14);
+        .catch(() => {
+          if (!cancelled)
+            initMap(`${origin}/tiles/data/kaliningrad/{z}/{x}/{y}.pbf`, 0, 14);
         });
     };
 
@@ -242,8 +175,8 @@ export function MapLibreMap({
     ro.observe(el);
 
     loadMaplibre()
-      .then(() => { if (!cancelled) { log("CDN ok"); tryInit(); } })
-      .catch((e: any) => log("CDN ERR:" + e?.message));
+      .then(() => { if (!cancelled) tryInit(); })
+      .catch(() => { /* CDN unavailable */ });
 
     return () => { cancelled = true; ro.disconnect(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -254,15 +187,6 @@ export function MapLibreMap({
   }, [center]);
 
   return (
-    <div ref={containerRef} className={className} style={{ height }}>
-      <div style={{
-        position:"absolute", top:8, left:8, zIndex:9999,
-        background:"rgba(0,0,0,0.85)", color:"#0f0", fontFamily:"monospace",
-        fontSize:11, padding:"6px 10px", borderRadius:6, maxWidth:340,
-        pointerEvents:"none", lineHeight:1.6, whiteSpace:"pre",
-      }}>
-        {diag.join("\n")}
-      </div>
-    </div>
+    <div ref={containerRef} className={className} style={{ height }} />
   );
 }
