@@ -44,28 +44,49 @@ const buildStyle = () => ({
 
 const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
 
-function ensureMaplibreCSS() {
+const CDN_BASE = "https://unpkg.com/maplibre-gl@4.7.1/dist";
+// CSP variant: main lib WITHOUT embedded worker blob.
+// Worker is loaded as a separate script — no createObjectURL needed.
+const CDN_CSP_JS     = `${CDN_BASE}/maplibre-gl-csp.js`;
+const CDN_WORKER_JS  = `${CDN_BASE}/maplibre-gl-csp-worker.js`;
+const CDN_CSS        = `${CDN_BASE}/maplibre-gl.css`;
+
+function ensureCSS() {
   if (document.getElementById("maplibre-css")) return;
   const link = document.createElement("link");
-  link.id = "maplibre-css"; link.rel = "stylesheet";
-  link.href = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css";
+  link.id = "maplibre-css"; link.rel = "stylesheet"; link.href = CDN_CSS;
   document.head.appendChild(link);
 }
 
-function loadMaplibre(cb: (err?: string) => void) {
-  if (window.maplibregl) { cb(); return; }
-  const existing = document.getElementById("maplibre-js") as HTMLScriptElement | null;
-  if (existing) {
-    existing.addEventListener("load", () => cb());
-    existing.addEventListener("error", () => cb("script onerror"));
-    return;
-  }
-  const script = document.createElement("script");
-  script.id = "maplibre-js";
-  script.src = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js";
-  script.onload = () => cb();
-  script.onerror = () => cb("CDN blocked/failed");
-  document.head.appendChild(script);
+// Load the CSP main script then set the worker URL.
+// Resolves with undefined on success, string on error.
+function loadMaplibre(): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    if (window.maplibregl?.Map) { resolve(undefined); return; }
+
+    const existing = document.getElementById("maplibre-js") as HTMLScriptElement | null;
+    if (existing) {
+      if (window.maplibregl?.Map) { resolve(undefined); return; }
+      existing.addEventListener("load", () => resolve(undefined));
+      existing.addEventListener("error", () => resolve("script onerror"));
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.id = "maplibre-js";
+    script.src = CDN_CSP_JS;
+    script.onload = () => {
+      try {
+        // Point maplibre at the separate worker file instead of a Blob URL.
+        window.maplibregl.setWorkerUrl(CDN_WORKER_JS);
+        resolve(undefined);
+      } catch (e: any) {
+        resolve("setWorkerUrl threw: " + e?.message);
+      }
+    };
+    script.onerror = () => resolve("CDN load failed");
+    document.head.appendChild(script);
+  });
 }
 
 export function MapLibreMap({
@@ -78,41 +99,35 @@ export function MapLibreMap({
   const [diagLines, setDiagLines] = useState<string[]>(["⏳ start"]);
 
   const log = (msg: string) => {
-    console.log("[MapDiag]", msg);
-    diagRef.current = [...diagRef.current.slice(-12), msg];
+    console.log("[Map]", msg);
+    diagRef.current = [...diagRef.current.slice(-10), msg];
     setDiagLines([...diagRef.current]);
   };
 
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) { log("❌ no el"); return; }
+    if (!el) { log("❌ no container"); return; }
 
-    ensureMaplibreCSS();
+    ensureCSS();
     log("1 CSS ok");
 
-    const initMap = (cdnErr?: string) => {
-      if (cdnErr) { log("❌ CDN: " + cdnErr); return; }
-      if (mapRef.current) { log("skip:already"); return; }
+    let cancelled = false;
 
-      log("2 CDN ready");
-
+    const tryInit = () => {
+      if (cancelled || mapRef.current) return;
       const ml = window.maplibregl;
-      if (!ml) { log("❌ ml undef"); return; }
-      log("3 ml ok v:" + (ml.version ?? "?"));
+      if (!ml?.Map) { log("⏳ ml not ready"); return; }
 
       const rect = el.getBoundingClientRect();
-      log("4 rect " + Math.round(rect.width) + "×" + Math.round(rect.height));
+      log(`2 rect ${Math.round(rect.width)}×${Math.round(rect.height)}`);
+      if (rect.width === 0 || rect.height === 0) { log("⏳ 0×0 wait"); return; }
 
-      if (rect.width === 0 || rect.height === 0) {
-        log("⏳ 0×0 wait RO");
-        return;
-      }
+      let sup: boolean;
+      try { sup = ml.supported(); } catch (e: any) { log("❌ supported() threw: " + e?.message); return; }
+      log("3 supported:" + sup);
+      if (!sup) { log("❌ WebGL not supported"); return; }
 
-      const sup = ml.supported();
-      log("5 supported:" + sup);
-      if (!sup) { log("❌ no WebGL"); return; }
-
-      log("6 new Map...");
+      log("4 new Map...");
       try {
         const map = new ml.Map({
           container: el,
@@ -122,37 +137,41 @@ export function MapLibreMap({
           attributionControl: false,
           trackResize: true,
         });
-        log("7 Map()ok");
+        log("5 Map() ok");
 
         map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
-
-        map.on("error", (e: any) => {
-          const msg = e?.error?.message ?? e?.type ?? JSON.stringify(e).slice(0, 80);
-          log("❌ mapevent: " + msg);
-        });
-
+        map.on("error", (e: any) => log("❌ " + (e?.error?.message ?? JSON.stringify(e)).slice(0, 60)));
         map.once("load", () => { map.resize(); log("✅ LOADED!"); });
 
         mapRef.current = map;
       } catch (e: any) {
-        log("❌ throw: " + (e?.message ?? String(e)).slice(0, 80));
+        log("❌ Map() threw: " + (e?.message ?? String(e)).slice(0, 80));
       }
     };
 
     const ro = new ResizeObserver(() => {
       const r = el.getBoundingClientRect();
       if (!mapRef.current) {
-        log("RO " + Math.round(r.width) + "×" + Math.round(r.height));
-        if (window.maplibregl) initMap();
+        log(`RO ${Math.round(r.width)}×${Math.round(r.height)}`);
+        tryInit();
       } else {
         mapRef.current.resize();
       }
     });
     ro.observe(el);
 
-    loadMaplibre(initMap);
+    // Load CSP variant (no Blob worker), then try init
+    loadMaplibre().then((err) => {
+      if (err) { log("❌ load: " + err); return; }
+      log("CDN csp ok v:" + (window.maplibregl?.version ?? "?"));
+      tryInit();
+    });
 
-    return () => { ro.disconnect(); };
+    return () => {
+      cancelled = true;
+      ro.disconnect();
+      // No map.remove() — MapPage is always mounted
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -162,6 +181,7 @@ export function MapLibreMap({
 
   return (
     <div ref={containerRef} className={className} style={{ height }}>
+      {/* DIAGNOSTIC OVERLAY — remove after map works */}
       <div style={{
         position: "absolute", top: 8, left: 8, zIndex: 9999,
         background: "rgba(0,0,0,0.82)", color: "#0f0", fontFamily: "monospace",
