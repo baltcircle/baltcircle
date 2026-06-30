@@ -1,8 +1,12 @@
 import { useEffect, useRef } from "react";
-import maplibregl from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
 import type { MapObject, Parking, Ride } from "@shared/schema";
 import { REAL_CENTER } from "@shared/geo";
+
+declare global {
+  interface Window {
+    maplibregl: any;
+  }
+}
 
 interface MapLibreMapProps {
   parkings?: Parking[];
@@ -14,7 +18,7 @@ interface MapLibreMapProps {
   className?: string;
 }
 
-const buildStyle = (): maplibregl.StyleSpecification => ({
+const buildStyle = () => ({
   version: 8,
   sources: {
     kaliningrad: {
@@ -55,7 +59,7 @@ const buildStyle = (): maplibregl.StyleSpecification => ({
           "grass",       "#d4edda",
           "residential", "#f5f0eb",
           "#ede8e0",
-        ] as any,
+        ],
       },
     },
     {
@@ -63,12 +67,12 @@ const buildStyle = (): maplibregl.StyleSpecification => ({
       type: "line",
       source: "kaliningrad",
       "source-layer": "transportation",
-      filter: ["match", ["get", "class"],
-        ["motorway","trunk","primary","secondary","tertiary","minor","service"], true, false] as any,
+      filter: ["in", ["get", "class"], ["literal",
+        ["motorway","trunk","primary","secondary","tertiary","minor","service"]]],
       paint: {
         "line-color": "#ffffff",
         "line-width": ["interpolate", ["linear"], ["zoom"],
-          10, 1, 14, 4, 17, 10] as any,
+          10, 1, 14, 4, 17, 10],
       },
     },
     {
@@ -76,12 +80,12 @@ const buildStyle = (): maplibregl.StyleSpecification => ({
       type: "line",
       source: "kaliningrad",
       "source-layer": "transportation",
-      filter: ["match", ["get", "class"],
-        ["motorway","trunk","primary","secondary"], true, false] as any,
+      filter: ["in", ["get", "class"], ["literal",
+        ["motorway","trunk","primary","secondary"]]],
       paint: {
         "line-color": "#d4c9bb",
         "line-width": ["interpolate", ["linear"], ["zoom"],
-          10, 2, 14, 6, 17, 14] as any,
+          10, 2, 14, 6, 17, 14],
       },
     },
     {
@@ -96,8 +100,30 @@ const buildStyle = (): maplibregl.StyleSpecification => ({
   glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
 });
 
-// Default center: Kaliningrad. MapLibre uses [lng, lat] order.
+// Default center: Kaliningrad [lng, lat]
 const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
+
+// Inject MapLibre CSS from CDN once, without polluting the Vite bundle
+function ensureMaplibreCSS() {
+  if (document.getElementById("maplibre-css")) return;
+  const link = document.createElement("link");
+  link.id = "maplibre-css";
+  link.rel = "stylesheet";
+  link.href = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css";
+  document.head.appendChild(link);
+}
+
+// Load MapLibre JS from CDN, call cb when ready
+function loadMaplibre(cb: () => void) {
+  if (window.maplibregl) { cb(); return; }
+  const existing = document.getElementById("maplibre-js");
+  if (existing) { existing.addEventListener("load", cb); return; }
+  const script = document.createElement("script");
+  script.id = "maplibre-js";
+  script.src = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js";
+  script.onload = cb;
+  document.head.appendChild(script);
+}
 
 export function MapLibreMap({
   parkings = [],
@@ -109,33 +135,24 @@ export function MapLibreMap({
   className,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
+  const mapRef = useRef<any>(null);
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
-    // ── Init map ────────────────────────────────────────────────────────────
-    // WHY ResizeObserver as trigger (not plain useEffect):
-    //   App.tsx wraps MapPage in <div style="display:contents"> which removes
-    //   the box from layout. At the time React runs this useEffect, the container
-    //   may still be 0×0. MapLibre creates a WebGL canvas sized to the container
-    //   at init time — a 0×0 canvas cannot be "resized" later by map.resize().
-    //   Solution: observe the container and init the map on the FIRST tick where
-    //   the container has real pixel dimensions.
+    ensureMaplibreCSS();
 
+    // Init map — called once MapLibre is loaded AND container has real size
     const initMap = () => {
       if (mapRef.current) return; // already initialised
-
-      if (!maplibregl.supported()) {
-        el.textContent = "WebGL не поддерживается браузером";
-        return;
-      }
+      const ml = window.maplibregl;
+      if (!ml) return;
 
       const { width, height: h } = el.getBoundingClientRect();
-      if (width === 0 || h === 0) return; // wait for next ResizeObserver tick
+      if (width === 0 || h === 0) return; // wait for ResizeObserver
 
-      const map = new maplibregl.Map({
+      const map = new ml.Map({
         container: el,
         style: buildStyle(),
         center: DEFAULT_CENTER,
@@ -144,18 +161,13 @@ export function MapLibreMap({
         trackResize: true,
       });
 
-      map.addControl(
-        new maplibregl.AttributionControl({ compact: true }),
-        "bottom-right",
-      );
-
+      map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
       map.once("load", () => map.resize());
 
       mapRef.current = map;
     };
 
-    // Observe container size. Fires immediately with current size on attach,
-    // and again whenever the container is resized or made visible.
+    // ResizeObserver fires when container gets real dimensions
     const ro = new ResizeObserver(() => {
       if (!mapRef.current) {
         initMap();
@@ -165,18 +177,16 @@ export function MapLibreMap({
     });
     ro.observe(el);
 
-    // Also try immediately (in case el already has size before observer fires)
-    initMap();
+    // Load CDN script, then try to init
+    loadMaplibre(initMap);
 
     return () => {
       ro.disconnect();
-      // !! Do NOT call map.remove() here !!
-      // MapPage is always mounted (display:contents / display:none overlay).
-      // Destroying the map would break navigation back to the home screen.
+      // Do NOT call map.remove() — MapPage is always mounted as overlay
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Fly to user geolocation ───────────────────────────────────────────────
+  // Fly to user geolocation
   useEffect(() => {
     if (!mapRef.current || !center) return;
     mapRef.current.flyTo({
@@ -190,7 +200,7 @@ export function MapLibreMap({
     <div
       ref={containerRef}
       className={className}
-      style={{ height, width: "100%" }}
+      style={{ height }}
     />
   );
 }
