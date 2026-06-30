@@ -44,9 +44,7 @@ const buildStyle = () => ({
 
 const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
 
-const CDN_BASE = "https://unpkg.com/maplibre-gl@4.7.1/dist";
-// CSP variant: main lib WITHOUT embedded worker blob.
-// Worker is loaded as a separate script — no createObjectURL needed.
+const CDN_BASE       = "https://unpkg.com/maplibre-gl@4.7.1/dist";
 const CDN_CSP_JS     = `${CDN_BASE}/maplibre-gl-csp.js`;
 const CDN_WORKER_JS  = `${CDN_BASE}/maplibre-gl-csp-worker.js`;
 const CDN_CSS        = `${CDN_BASE}/maplibre-gl.css`;
@@ -58,15 +56,13 @@ function ensureCSS() {
   document.head.appendChild(link);
 }
 
-// Load the CSP main script then set the worker URL.
-// Resolves with undefined on success, string on error.
 function loadMaplibre(): Promise<string | undefined> {
   return new Promise((resolve) => {
+    // Already loaded and Map constructor present
     if (window.maplibregl?.Map) { resolve(undefined); return; }
 
     const existing = document.getElementById("maplibre-js") as HTMLScriptElement | null;
     if (existing) {
-      if (window.maplibregl?.Map) { resolve(undefined); return; }
       existing.addEventListener("load", () => resolve(undefined));
       existing.addEventListener("error", () => resolve("script onerror"));
       return;
@@ -77,11 +73,11 @@ function loadMaplibre(): Promise<string | undefined> {
     script.src = CDN_CSP_JS;
     script.onload = () => {
       try {
-        // Point maplibre at the separate worker file instead of a Blob URL.
+        // CSP variant has no embedded worker blob — point it at the standalone worker file
         window.maplibregl.setWorkerUrl(CDN_WORKER_JS);
         resolve(undefined);
       } catch (e: any) {
-        resolve("setWorkerUrl threw: " + e?.message);
+        resolve("setWorkerUrl threw: " + (e?.message ?? String(e)));
       }
     };
     script.onerror = () => resolve("CDN load failed");
@@ -94,9 +90,9 @@ export function MapLibreMap({
   showLabels = false, center, className,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<any>(null);
-  const diagRef = useRef<string[]>(["⏳ start"]);
-  const [diagLines, setDiagLines] = useState<string[]>(["⏳ start"]);
+  const mapRef       = useRef<any>(null);
+  const diagRef      = useRef<string[]>(["⏳ loading..."]);
+  const [diagLines, setDiagLines] = useState<string[]>(["⏳ loading..."]);
 
   const log = (msg: string) => {
     console.log("[Map]", msg);
@@ -109,25 +105,22 @@ export function MapLibreMap({
     if (!el) { log("❌ no container"); return; }
 
     ensureCSS();
-    log("1 CSS ok");
 
     let cancelled = false;
 
     const tryInit = () => {
       if (cancelled || mapRef.current) return;
+
       const ml = window.maplibregl;
       if (!ml?.Map) { log("⏳ ml not ready"); return; }
 
       const rect = el.getBoundingClientRect();
-      log(`2 rect ${Math.round(rect.width)}×${Math.round(rect.height)}`);
-      if (rect.width === 0 || rect.height === 0) { log("⏳ 0×0 wait"); return; }
+      if (rect.width === 0 || rect.height === 0) {
+        log(`⏳ 0×0 (${Math.round(rect.width)}×${Math.round(rect.height)})`);
+        return;
+      }
 
-      let sup: boolean;
-      try { sup = ml.supported(); } catch (e: any) { log("❌ supported() threw: " + e?.message); return; }
-      log("3 supported:" + sup);
-      if (!sup) { log("❌ WebGL not supported"); return; }
-
-      log("4 new Map...");
+      log(`rect ok ${Math.round(rect.width)}×${Math.round(rect.height)} — new Map()...`);
       try {
         const map = new ml.Map({
           container: el,
@@ -137,40 +130,37 @@ export function MapLibreMap({
           attributionControl: false,
           trackResize: true,
         });
-        log("5 Map() ok");
 
         map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
-        map.on("error", (e: any) => log("❌ " + (e?.error?.message ?? JSON.stringify(e)).slice(0, 60)));
-        map.once("load", () => { map.resize(); log("✅ LOADED!"); });
+        map.on("error", (e: any) => log("❌ " + (e?.error?.message ?? JSON.stringify(e)).slice(0, 80)));
+        map.once("load", () => { map.resize(); log("✅ map loaded!"); });
 
         mapRef.current = map;
+        log("Map() created ✓");
       } catch (e: any) {
         log("❌ Map() threw: " + (e?.message ?? String(e)).slice(0, 80));
       }
     };
 
+    // ResizeObserver: init on first non-zero size, then keep canvas in sync
     const ro = new ResizeObserver(() => {
-      const r = el.getBoundingClientRect();
-      if (!mapRef.current) {
-        log(`RO ${Math.round(r.width)}×${Math.round(r.height)}`);
-        tryInit();
-      } else {
-        mapRef.current.resize();
-      }
+      if (!mapRef.current) tryInit();
+      else mapRef.current.resize();
     });
     ro.observe(el);
 
-    // Load CSP variant (no Blob worker), then try init
+    // Load CSP maplibre (no Blob worker), then attempt init
     loadMaplibre().then((err) => {
+      if (cancelled) return;
       if (err) { log("❌ load: " + err); return; }
-      log("CDN csp ok v:" + (window.maplibregl?.version ?? "?"));
+      log("CDN ok v" + (window.maplibregl?.version ?? "?"));
       tryInit();
     });
 
     return () => {
       cancelled = true;
       ro.disconnect();
-      // No map.remove() — MapPage is always mounted
+      // No map.remove() — MapPage is always-mounted overlay
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -181,11 +171,11 @@ export function MapLibreMap({
 
   return (
     <div ref={containerRef} className={className} style={{ height }}>
-      {/* DIAGNOSTIC OVERLAY — remove after map works */}
+      {/* DIAGNOSTIC OVERLAY — remove once map is confirmed working */}
       <div style={{
         position: "absolute", top: 8, left: 8, zIndex: 9999,
         background: "rgba(0,0,0,0.82)", color: "#0f0", fontFamily: "monospace",
-        fontSize: 11, padding: "6px 10px", borderRadius: 6, maxWidth: 300,
+        fontSize: 11, padding: "6px 10px", borderRadius: 6, maxWidth: 320,
         pointerEvents: "none", lineHeight: 1.6, whiteSpace: "pre",
       }}>
         {diagLines.join("\n")}
