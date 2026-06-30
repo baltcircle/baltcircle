@@ -1190,15 +1190,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ── OSM Tile Proxy ────────────────────────────────────────────────────────
   // Proxies /tiles/* to local tileserver-gl (port 8080).
-  // Uses app.use() for Express 5 wildcard compatibility.
+  // In Docker, the app cannot reach localhost:8080 — uses host.docker.internal
+  // (mapped to host gateway via extra_hosts in docker-compose.yml).
+  // For TileJSON responses, rewrites internal tile URLs to same-origin /tiles/...
   app.use("/tiles", (req: Request, res: Response) => {
     const tilePath = req.path; // e.g. "/data/kaliningrad.json"
-    // In production the app runs in Docker; tileserver-gl is on the host.
-    // host.docker.internal resolves to the host gateway via extra_hosts.
-    const tileHost = process.env.NODE_ENV === 'production' ? 'host.docker.internal' : 'localhost';
+    const tileHost = process.env.NODE_ENV === "production" ? "host.docker.internal" : "localhost";
     const upstreamUrl = `http://${tileHost}:8080${tilePath}`;
     const http = require("http") as typeof import("http");
     const upstream = new URL(upstreamUrl);
+    const isTileJson = tilePath.endsWith(".json");
+
     const proxyReq = http.request(
       {
         hostname: upstream.hostname,
@@ -1209,12 +1211,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       (proxyRes) => {
         const ct = proxyRes.headers["content-type"] ?? "application/octet-stream";
         const ce = proxyRes.headers["content-encoding"];
-        res.setHeader("Content-Type", ct);
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.setHeader("Cache-Control", "public, max-age=86400");
-        if (ce) res.setHeader("Content-Encoding", ce);
-        res.status(proxyRes.statusCode ?? 200);
-        proxyRes.pipe(res);
+
+        if (isTileJson && !ce) {
+          // Buffer TileJSON and rewrite internal tile/grid URLs to /tiles/...
+          const chunks: Buffer[] = [];
+          proxyRes.on("data", (chunk: Buffer) => chunks.push(chunk));
+          proxyRes.on("end", () => {
+            try {
+              const body = Buffer.concat(chunks).toString("utf8");
+              const json = JSON.parse(body);
+              const rewrite = (url: string) => url.replace(/^https?:\/\/[^/]+/, "/tiles");
+              if (Array.isArray(json.tiles)) json.tiles = (json.tiles as string[]).map(rewrite);
+              if (Array.isArray(json.grids)) json.grids = (json.grids as string[]).map(rewrite);
+              res.setHeader("Content-Type", "application/json");
+              res.status(proxyRes.statusCode ?? 200).end(JSON.stringify(json));
+            } catch {
+              res.setHeader("Content-Type", ct);
+              res.status(proxyRes.statusCode ?? 200).end(Buffer.concat(chunks));
+            }
+          });
+        } else {
+          if (ce) res.setHeader("Content-Encoding", ce);
+          res.setHeader("Content-Type", ct);
+          res.status(proxyRes.statusCode ?? 200);
+          proxyRes.pipe(res);
+        }
       }
     );
     proxyReq.on("error", (err: unknown) => {
