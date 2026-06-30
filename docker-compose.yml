@@ -59,6 +59,8 @@ services:
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
     ports:
       - "5000:5000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - baltcircle_data:/app/data
 
