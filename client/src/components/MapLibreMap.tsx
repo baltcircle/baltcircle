@@ -140,17 +140,34 @@ export function MapLibreMap({
           }
         });
 
+        // Count render frames to detect if WebGL is working at all
+        let renderCount = 0;
+        map.on("render", () => { renderCount++; });
+
+        map.once("styledata", () => log("styledata ✓"));
+        map.once("idle",      () => log("idle ✓"));
+
         map.once("load", () => {
           map.resize();
-          const sz = el.getBoundingClientRect();
           log(`LOADED! ${map.getCanvas().width}×${map.getCanvas().height}`);
         });
 
-        // 8s timeout
+        // 5s snapshot
         setTimeout(() => {
           if (mapRef.current !== map) return;
-          log(`8s: loaded=${map.loaded()} style=${map.isStyleLoaded()}`);
-        }, 8000);
+          log(`5s: loaded=${map.loaded()} style=${map.isStyleLoaded()} renders=${renderCount}`);
+          // Inspect source state directly
+          try {
+            const src = (map as any).getSource("kaliningrad");
+            log(`src_state: ${src ? JSON.stringify({loaded: src.loaded?.(), type: src.type}) : "null"}`);
+          } catch(e:any){ log("src_state ERR:"+e?.message); }
+        }, 5000);
+
+        // 10s timeout
+        setTimeout(() => {
+          if (mapRef.current !== map) return;
+          log(`10s: loaded=${map.loaded()} style=${map.isStyleLoaded()} renders=${renderCount}`);
+        }, 10000);
 
         mapRef.current = map;
         log("created ✓");
