@@ -6,17 +6,16 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: check external fonts
+      - name: check glyphs proxy
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          # Test protomaps GitHub Pages fonts
-          P1=$(curl -so /dev/null -w '%{http_code}' --max-time 5 'https://protomaps.github.io/basemaps-assets/fonts/Noto%20Sans%20Regular/0-255.pbf')
-          P1S=$(curl -s --max-time 5 'https://protomaps.github.io/basemaps-assets/fonts/Noto%20Sans%20Regular/0-255.pbf' | wc -c)
-          # Test orangemug
-          O1=$(curl -so /dev/null -w '%{http_code}' --max-time 5 'https://orangemug.github.io/font-glyphs/glyphs/Open%20Sans%20Regular/0-255.pbf')
-          printf "protomaps=%s bytes=%s\norangemug=%s\n" "$P1" "$P1S" "$O1" > /tmp/r.txt
+          G1=$(curl -so /dev/null -w '%{http_code}' --max-time 8 'http://localhost:5000/glyphs/Noto%20Sans%20Regular/0-255.pbf')
+          G1S=$(curl -s --max-time 8 'http://localhost:5000/glyphs/Noto%20Sans%20Regular/0-255.pbf' | wc -c)
+          # Check what place layer returns
+          PLACE=$(curl -s 'http://localhost:8080/data/kaliningrad.json' | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('vector_layers','?'))" 2>/dev/null | head -c 300)
+          printf "glyphs_http=%s bytes=%s\nvector_layers=%s\n" "$G1" "$G1S" "$PLACE" > /tmp/r.txt
           cat /tmp/r.txt
           ENC=$(base64 -w0 /tmp/r.txt)
           SHA_FILE=$(curl -sf -H "Authorization: token $TOKEN" \
