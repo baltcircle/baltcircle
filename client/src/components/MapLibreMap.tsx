@@ -105,6 +105,9 @@ const buildStyle = (): maplibregl.StyleSpecification => ({
   glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
 });
 
+// Default center: Kaliningrad [lng, lat] as MapLibre expects
+const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
+
 export function MapLibreMap({
   parkings = [],
   mapObjects = [],
@@ -116,39 +119,100 @@ export function MapLibreMap({
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  // Track whether we already attempted init (prevents double-init on ResizeObserver fire)
+  const initStartedRef = useRef(false);
 
-  // Default center: Kaliningrad [lng, lat]
-  const defaultCenter: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
-
-  // Init map once container is mounted
+  // ── Init map ──────────────────────────────────────────────────────────────
+  // Problem with the old approach:
+  //   • Map was initialized unconditionally in useEffect, regardless of whether
+  //     the container had real pixel dimensions. When the wrapper has
+  //     display:contents, the container is adopted by a grandparent and may
+  //     report 0×0 at the time React first runs the effect.
+  //   • map.resize() on "load" does NOT fix a 0×0 WebGL canvas — the canvas
+  //     was already created at 0×0 size and MapLibre doesn't recreate it.
+  //
+  // Fix:
+  //   1. Attach a ResizeObserver immediately on mount.
+  //   2. When the observer fires with a non-zero size, initialize the map.
+  //   3. After that, keep the observer alive so map.resize() stays in sync.
+  //   4. No cleanup (map.remove()) — MapPage is always mounted as an overlay.
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+    const el = containerRef.current;
+    if (!el) return;
 
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: buildStyle(),
-      center: defaultCenter,
-      zoom: 11,
-      attributionControl: false,
+    const tryInit = () => {
+      // Already initialised — nothing to do
+      if (mapRef.current) return;
+      // Guard against double-init race from observer firing multiple times
+      if (initStartedRef.current) return;
+
+      // Check WebGL support first
+      if (!maplibregl.supported()) {
+        el.innerHTML =
+          '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#666;font-family:sans-serif">WebGL не поддерживается браузером</div>';
+        return;
+      }
+
+      // Container must have real dimensions — if still 0×0, wait for next observer tick
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+
+      initStartedRef.current = true;
+
+      const map = new maplibregl.Map({
+        container: el,
+        style: buildStyle(),
+        center: DEFAULT_CENTER,
+        zoom: 11,
+        attributionControl: false,
+        // Prevent MapLibre from clamping canvas to an artificially small size
+        // when the container reports zero during init
+        trackResize: true,
+      });
+
+      map.addControl(
+        new maplibregl.AttributionControl({ compact: true }),
+        "bottom-right"
+      );
+
+      // After tiles + style finish loading, force a resize to ensure the
+      // WebGL viewport is flush with the container's current pixel size.
+      map.once("load", () => {
+        map.resize();
+      });
+
+      mapRef.current = map;
+    };
+
+    // Use ResizeObserver as the primary init trigger: it fires once the
+    // container gets its first non-zero layout, which is exactly when we
+    // want to create the map.
+    const observer = new ResizeObserver(() => {
+      if (!mapRef.current) {
+        // Not yet initialised — try now
+        tryInit();
+      } else {
+        // Already initialised — keep the canvas in sync
+        mapRef.current.resize();
+      }
     });
 
-    map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
+    observer.observe(el);
 
-    // Ensure map fills container after first render (important when parent
-    // starts hidden via display:none / display:contents toggle)
-    map.once("load", () => {
-      map.resize();
-    });
+    // Also attempt an immediate init in case the container already has size
+    // (e.g., on subsequent renders when the effect re-runs)
+    tryInit();
 
-    mapRef.current = map;
-
+    // Do NOT return a cleanup that calls map.remove():
+    // MapPage is always mounted (display:contents / display:none overlay arch).
+    // Destroying the map here would break every navigation away-and-back.
     return () => {
-      map.remove();
-      mapRef.current = null;
+      observer.disconnect();
+      // Map instance is intentionally kept alive.
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fly to user position when center prop changes
+  // ── Fly to user position ──────────────────────────────────────────────────
   useEffect(() => {
     if (!mapRef.current || !center) return;
     mapRef.current.flyTo({
@@ -157,18 +221,6 @@ export function MapLibreMap({
       duration: 1000,
     });
   }, [center]);
-
-  // Resize map when container visibility changes (overlay show/hide)
-  useEffect(() => {
-    if (!mapRef.current) return;
-    const observer = new ResizeObserver(() => {
-      mapRef.current?.resize();
-    });
-    if (containerRef.current) {
-      observer.observe(containerRef.current);
-    }
-    return () => observer.disconnect();
-  }, []);
 
   return (
     <div
