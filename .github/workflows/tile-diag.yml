@@ -6,18 +6,20 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: check mbtiles
+      - name: check mbtiles and tiles
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
           MBT_SIZE=$(ls -lh /home/yc-user/osm/kaliningrad.mbtiles 2>/dev/null | awk '{print $5}')
-          MBT_TILES=$(sqlite3 /home/yc-user/osm/kaliningrad.mbtiles "SELECT count(*) FROM tiles" 2>/dev/null || echo "sqlite3_error")
-          MBT_META=$(sqlite3 /home/yc-user/osm/kaliningrad.mbtiles "SELECT name, value FROM metadata LIMIT 10" 2>/dev/null || echo "meta_error")
-          TS_CONTAINER=$(docker inspect baltcircle-tileserver --format '{{.State.Status}} volumes:{{range .Mounts}}{{.Source}}:{{.Destination}},{{end}}' 2>/dev/null || echo "no_container")
+          MBT_BYTES=$(stat -c%s /home/yc-user/osm/kaliningrad.mbtiles 2>/dev/null || echo 0)
+          MBT_TILES=$(sqlite3 /home/yc-user/osm/kaliningrad.mbtiles "SELECT count(*) FROM tiles" 2>/dev/null || echo "err")
+          T10=$(curl -so /dev/null -w '%{http_code}' "http://localhost:8080/data/kaliningrad/10/570/325.pbf")
+          S10=$(curl -s "http://localhost:8080/data/kaliningrad/10/570/325.pbf" | wc -c)
+          P10=$(curl -so /dev/null -w '%{http_code}' "http://localhost:5000/tiles/data/kaliningrad/10/570/325.pbf")
           
-          printf "mbt_size=%s\nmbt_tiles=%s\nts_container=%s\nmbt_meta=%s\n" \
-            "$MBT_SIZE" "$MBT_TILES" "$TS_CONTAINER" "$MBT_META" > /tmp/r.txt
+          printf "mbt_size=%s\nmbt_bytes=%s\nmbt_tiles=%s\nts_z10=%s\nts_z10_size=%s\nproxy_z10=%s\n" \
+            "$MBT_SIZE" "$MBT_BYTES" "$MBT_TILES" "$T10" "$S10" "$P10" > /tmp/r.txt
           cat /tmp/r.txt
           
           ENC=$(base64 -w0 /tmp/r.txt)
@@ -26,4 +28,4 @@ jobs:
             | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
           curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: diag mbtiles [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo OK
+            -d "{\"message\":\"ci: diag post-osm [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo OK
