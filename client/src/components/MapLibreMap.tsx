@@ -132,6 +132,15 @@ export function MapLibreMap({
           log("ERR:" + (e?.error?.message ?? JSON.stringify(e)).slice(0, 70));
         });
 
+        // Fetch TileJSON directly to verify absolute URL rewrite
+        fetch("/tiles/data/kaliningrad.json")
+          .then(r => r.json())
+          .then((j: any) => {
+            const t0 = (j.tiles ?? [])[0] ?? "none";
+            log("tj:" + t0.slice(0, 60));
+          })
+          .catch((e: any) => log("tj ERR:" + e?.message));
+
         map.on("sourcedata", (e: any) => {
           if (e.sourceId === "kaliningrad") {
             log(`src ${e.isSourceLoaded ? "loaded" : "loading"} tile=${!!e.tile}`);
