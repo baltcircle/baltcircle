@@ -1,3 +1,3 @@
 proxy_json=200
 proxy_tile=204
-tiles_url="tiles":["http://host.docker.internal:8080/data/kaliningrad/{z}/{x}/{y}.pbf"
+tiles_url="tiles":["/tiles/data/kaliningrad/{z}/{x}/{y}.pbf"
