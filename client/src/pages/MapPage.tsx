@@ -2,7 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import type { Bike, MapObject, Parking, Ride } from "@shared/schema";
-import { YandexMap } from "@/components/YandexMap";
+import { MapLibreMap } from "@/components/MapLibreMap";
 import { RentalStartModal } from "@/components/RentalStartModal";
 import { RegistrationModal } from "@/components/RegistrationModal";
 import { QrScanModal } from "@/components/QrScanModal";
@@ -153,7 +153,7 @@ export function MapPage() {
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
       {/* Map — fills the entire screen */}
-      <YandexMap
+      <MapLibreMap
         parkings={parkingsQ.data ?? []}
         mapObjects={mapObjectsQ.data ?? []}
         ride={activeRide}
