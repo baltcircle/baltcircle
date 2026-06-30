@@ -6,30 +6,24 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: check tiles
+      - name: check mbtiles
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          T8=$(curl -so /dev/null -w '%{http_code}' "http://localhost:8080/data/kaliningrad/8/142/81.pbf")
-          T9=$(curl -so /dev/null -w '%{http_code}' "http://localhost:8080/data/kaliningrad/9/285/162.pbf")
-          T10=$(curl -so /dev/null -w '%{http_code}' "http://localhost:8080/data/kaliningrad/10/570/325.pbf")
-          T11=$(curl -so /dev/null -w '%{http_code}' "http://localhost:8080/data/kaliningrad/11/1140/650.pbf")
-          T12=$(curl -so /dev/null -w '%{http_code}' "http://localhost:8080/data/kaliningrad/12/2281/1301.pbf")
-          # Via proxy
-          P10=$(curl -so /dev/null -w '%{http_code}' "http://localhost:5000/tiles/data/kaliningrad/10/570/325.pbf")
-          P11=$(curl -so /dev/null -w '%{http_code}' "http://localhost:5000/tiles/data/kaliningrad/11/1140/650.pbf")
-          # Sizes
-          S10=$(curl -s "http://localhost:8080/data/kaliningrad/10/570/325.pbf" | wc -c)
-          S11=$(curl -s "http://localhost:8080/data/kaliningrad/11/1140/650.pbf" | wc -c)
+          MBT_SIZE=$(ls -lh /home/yc-user/osm/kaliningrad.mbtiles 2>/dev/null | awk '{print $5}')
+          MBT_TILES=$(sqlite3 /home/yc-user/osm/kaliningrad.mbtiles "SELECT count(*) FROM tiles" 2>/dev/null || echo "sqlite3_error")
+          MBT_META=$(sqlite3 /home/yc-user/osm/kaliningrad.mbtiles "SELECT name, value FROM metadata LIMIT 10" 2>/dev/null || echo "meta_error")
+          TS_CONTAINER=$(docker inspect baltcircle-tileserver --format '{{.State.Status}} volumes:{{range .Mounts}}{{.Source}}:{{.Destination}},{{end}}' 2>/dev/null || echo "no_container")
           
-          printf "ts_z8=%s\nts_z9=%s\nts_z10=%s\nts_z11=%s\nts_z12=%s\nproxy_z10=%s\nproxy_z11=%s\nsize_z10=%s\nsize_z11=%s\n" \
-            "$T8" "$T9" "$T10" "$T11" "$T12" "$P10" "$P11" "$S10" "$S11" > /tmp/r.txt
+          printf "mbt_size=%s\nmbt_tiles=%s\nts_container=%s\nmbt_meta=%s\n" \
+            "$MBT_SIZE" "$MBT_TILES" "$TS_CONTAINER" "$MBT_META" > /tmp/r.txt
           cat /tmp/r.txt
+          
           ENC=$(base64 -w0 /tmp/r.txt)
           SHA=$(curl -sf -H "Authorization: token $TOKEN" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
             | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
           curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: diag tiles [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo OK
+            -d "{\"message\":\"ci: diag mbtiles [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo OK
