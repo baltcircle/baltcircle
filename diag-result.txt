@@ -1,3 +1,8 @@
-proxy_in_dist=1
-tiles_in_dist=1
-proxy_http=502
+netmode=baltcicl_default
+host.docker.internal=OCI runtime exec failed: exec failed: unable to start container process: exec: "curl": executable file not found in $PATH
+ERR
+localhost_from_container=OCI runtime exec failed: exec failed: unable to start container process: exec: "curl": executable file not found in $PATH
+ERR
+host_ip=
+host_ip_ts=OCI runtime exec failed: exec failed: unable to start container process: exec: "curl": executable file not found in $PATH
+ERR
