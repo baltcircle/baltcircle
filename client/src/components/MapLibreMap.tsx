@@ -25,7 +25,7 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
     kaliningrad: { type: "vector", tiles: [tileUrl], minzoom, maxzoom },
   },
   layers: [
-    { id: "background", type: "background", paint: { "background-color": "#ff0000" } },
+    { id: "background", type: "background", paint: { "background-color": "#e8f0f7" } },
     {
       id: "water", type: "fill", source: "kaliningrad", "source-layer": "water",
       paint: { "fill-color": "#a8d5e8" },
@@ -76,6 +76,20 @@ function ensureCSS() {
   document.head.appendChild(link);
 }
 
+// Fetch worker JS and create a same-origin blob URL.
+// iOS WKWebView blocks Workers created from cross-origin URLs (CDN),
+// but allows blob: URLs created from fetched content.
+async function makeWorkerBlobUrl(): Promise<string | null> {
+  try {
+    const resp = await fetch(CDN_WORKER_JS);
+    const text = await resp.text();
+    const blob = new Blob([text], { type: "application/javascript" });
+    return URL.createObjectURL(blob);
+  } catch {
+    return null;
+  }
+}
+
 function loadMaplibre(): Promise<void> {
   return new Promise((resolve, reject) => {
     if (window.maplibregl?.Map) { resolve(); return; }
@@ -87,7 +101,15 @@ function loadMaplibre(): Promise<void> {
     }
     const s = document.createElement("script");
     s.id = "maplibre-js"; s.src = CDN_CSP_JS;
-    s.onload = () => { try { window.maplibregl.setWorkerUrl(CDN_WORKER_JS); resolve(); } catch(e){reject(e);} };
+    s.onload = () => {
+      // Fetch worker and create blob URL so iOS WKWebView can load it
+      makeWorkerBlobUrl().then(blobUrl => {
+        try {
+          window.maplibregl.setWorkerUrl(blobUrl ?? CDN_WORKER_JS);
+          resolve();
+        } catch(e) { reject(e); }
+      });
+    };
     s.onerror = () => reject(new Error("CDN failed"));
     document.head.appendChild(s);
   });
@@ -123,12 +145,12 @@ export function MapLibreMap({
       log(`Map() ${Math.round(width)}×${Math.round(h)}`);
       log("tile:" + tileUrl.slice(0, 70));
       try {
+        log(`wUrl:${(ml.workerUrl??"").slice(0,30)||"none"}`);
         let tileReqCount = 0;
         const map = new ml.Map({
           container: el, style: buildStyle(tileUrl, minzoom, maxzoom),
           center: DEFAULT_CENTER, zoom: 10,
           attributionControl: false, trackResize: true,
-          workerCount: 0,
           transformRequest: (url: string) => {
             if (url.includes("/tiles/data/kaliningrad/")) {
               tileReqCount++;
