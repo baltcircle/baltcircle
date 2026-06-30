@@ -1,5 +1,2 @@
-font_list_http=200
-noto_http=400 noto_bytes=18
-open_sans_http=400
-fonts_json=[]
-catalog_fonts=no catalog
+protomaps=200 bytes=76044
+orangemug=200
