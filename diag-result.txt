@@ -4,5 +4,5 @@ ts_tile_bytes=40565
 proxy_json=200
 proxy_tile=200
 proxy_bytes=40565
-tiles_url=/tiles/data/kaliningrad/{z}/{x}/{y}.pbf
+tiles_url=http://localhost:5000/tiles/data/kaliningrad/{z}/{x}/{y}.pbf
 maplibre_in_html=0
