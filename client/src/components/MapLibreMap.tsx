@@ -123,13 +123,19 @@ export function MapLibreMap({
       log(`Map() ${Math.round(width)}×${Math.round(h)}`);
       log("tile:" + tileUrl.slice(0, 70));
       try {
-        // workerCount:0 — decode tiles on main thread, avoids Web Worker issues on iOS WKWebView
-        log(`wUrl:${(ml.workerUrl??"").slice(0,40)||"none"}`);
+        let tileReqCount = 0;
         const map = new ml.Map({
           container: el, style: buildStyle(tileUrl, minzoom, maxzoom),
           center: DEFAULT_CENTER, zoom: 10,
           attributionControl: false, trackResize: true,
           workerCount: 0,
+          transformRequest: (url: string) => {
+            if (url.includes("/tiles/data/kaliningrad/")) {
+              tileReqCount++;
+              if (tileReqCount <= 2) log(`req#${tileReqCount}:${url.slice(-30)}`);
+            }
+            return { url };
+          },
         });
         map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
 
@@ -158,14 +164,7 @@ export function MapLibreMap({
         // 5s snapshot
         setTimeout(() => {
           if (mapRef.current !== map) return;
-          const canvas = map.getCanvas();
-          const cw = canvas.width, ch = canvas.height;
-          const cs = window.getComputedStyle(canvas);
-          log(`5s: renders=${renderCount} canvas=${cw}×${ch} display=${cs.display} vis=${cs.visibility}`);
-          log(`5s: canvasEl w=${cs.width} h=${cs.height} pos=${cs.position}`);
-          // Check container
-          const elRect = el.getBoundingClientRect();
-          log(`5s: container ${Math.round(elRect.width)}×${Math.round(elRect.height)} top=${Math.round(elRect.top)}`);
+          log(`5s: renders=${renderCount} tileReqs=${tileReqCount} loaded=${map.loaded()}`);
         }, 5000);
 
         mapRef.current = map;
@@ -233,7 +232,7 @@ export function MapLibreMap({
   }, [center]);
 
   return (
-    <div ref={containerRef} className={className} style={{ height, position: "relative", overflow: "hidden" }}>
+    <div ref={containerRef} className={className} style={{ height }}>
       <div style={{
         position:"absolute", top:8, left:8, zIndex:9999,
         background:"rgba(0,0,0,0.85)", color:"#0f0", fontFamily:"monospace",
