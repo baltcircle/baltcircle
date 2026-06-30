@@ -6,7 +6,24 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Run tilemaker and capture output
+      - name: Check tilemaker version and get right config
+        run: |
+          tilemaker --version 2>&1 || true
+          echo "=== tilemaker zip contents ==="
+          ls /tmp/build/ 2>/dev/null || ls /tmp/tilemaker* 2>/dev/null || echo "no zip found"
+          
+      - name: Get compatible process.lua for tilemaker v2.4.0
+        run: |
+          cd /home/yc-user/osm
+          # Use the resources from the exact same release
+          curl -fL -o process.lua \
+            "https://raw.githubusercontent.com/systemed/tilemaker/v2.4.0/resources/process-openmaptiles.lua"
+          curl -fL -o config.json \
+            "https://raw.githubusercontent.com/systemed/tilemaker/v2.4.0/resources/config-openmaptiles.json"
+          head -5 process.lua
+          echo "Config OK"
+
+      - name: Build MBTiles
         run: |
           cd /home/yc-user/osm
           tilemaker \
@@ -15,25 +32,38 @@ jobs:
             --config config.json \
             --process process.lua \
             --bbox 19.0,54.0,23.0,56.0 \
-            --threads 2 > /tmp/tilemaker.log 2>&1 || true
-          tail -30 /tmp/tilemaker.log
+            --threads 2 > /tmp/tilemaker.log 2>&1
+          echo "Exit: $?"
+          echo "Result: $(ls -lh kaliningrad.mbtiles 2>/dev/null)"
+          tail -20 /tmp/tilemaker.log
 
-      - name: Write tilemaker log to repo
+      - name: Restart tileserver
+        run: |
+          cd /home/yc-user/osm
+          docker compose restart tileserver
+          sleep 8
+          echo "Tile z10: $(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/data/kaliningrad/10/570/325.pbf')"
+          echo "Size: $(curl -s 'http://localhost:8080/data/kaliningrad/10/570/325.pbf' | wc -c) bytes"
+
+      - name: Write result
         if: always()
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          ENC=$(base64 -w0 /tmp/tilemaker.log)
+          MBT=$(ls -lh /home/yc-user/osm/kaliningrad.mbtiles 2>/dev/null | awk '{print $5}' || echo "none")
+          T10=$(curl -so /dev/null -w '%{http_code}' "http://localhost:8080/data/kaliningrad/10/570/325.pbf")
+          S10=$(curl -s "http://localhost:8080/data/kaliningrad/10/570/325.pbf" | wc -c)
+          PROXY=$(curl -so /dev/null -w '%{http_code}' "http://localhost:5000/tiles/data/kaliningrad/10/570/325.pbf")
+          PS10=$(curl -s "http://localhost:5000/tiles/data/kaliningrad/10/570/325.pbf" | wc -c)
+          LOG=$(tail -5 /tmp/tilemaker.log 2>/dev/null | tr '\n' '|')
+          printf "mbt=%s\nts_z10=%s\nts_z10_size=%s\nproxy_z10=%s\nproxy_z10_size=%s\nlog=%s\n" \
+            "$MBT" "$T10" "$S10" "$PROXY" "$PS10" "$LOG" > /tmp/r.txt
+          cat /tmp/r.txt
+          ENC=$(base64 -w0 /tmp/r.txt)
           SHA=$(curl -sf -H "Authorization: token $TOKEN" \
-            "https://api.github.com/repos/baltcircle/baltcircle/contents/tilemaker.log" \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null || echo "")
-          if [ -n "$SHA" ]; then
-            curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
-              "https://api.github.com/repos/baltcircle/baltcircle/contents/tilemaker.log" \
-              -d "{\"message\":\"ci: tilemaker log [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo "Updated"
-          else
-            curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
-              "https://api.github.com/repos/baltcircle/baltcircle/contents/tilemaker.log" \
-              -d "{\"message\":\"ci: tilemaker log [skip ci]\",\"content\":\"$ENC\"}" && echo "Created"
-          fi
+            "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
+          curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
+            -d "{\"message\":\"ci: osm fix result [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo "Written"
