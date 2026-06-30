@@ -16,11 +16,13 @@ interface MapLibreMapProps {
   className?: string;
 }
 
-const buildStyle = (origin: string): object => ({
+// Build style with an inline vector source (tiles[] already absolute — no url: indirection).
+// This bypasses any server-side TileJSON rewrite issues entirely.
+const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object => ({
   version: 8,
   // No glyphs — no symbol layers, fonts not needed
   sources: {
-    kaliningrad: { type: "vector", url: `${origin}/tiles/data/kaliningrad.json` },
+    kaliningrad: { type: "vector", tiles: [tileUrl], minzoom, maxzoom },
   },
   layers: [
     { id: "background", type: "background", paint: { "background-color": "#e8f0f7" } },
@@ -112,19 +114,17 @@ export function MapLibreMap({
     ensureCSS();
     let cancelled = false;
 
-    const tryInit = () => {
+    const initMap = (tileUrl: string, minzoom: number, maxzoom: number) => {
       if (cancelled || mapRef.current) return;
       const ml = window.maplibregl;
-      if (!ml?.Map) return;
       const { width, height: h } = el.getBoundingClientRect();
       if (width === 0 || h === 0) { log(`0×0`); return; }
 
       log(`Map() ${Math.round(width)}×${Math.round(h)}`);
+      log("tile:" + tileUrl.slice(0, 70));
       try {
-        const origin = window.location.origin;
-        log("origin:" + origin);
         const map = new ml.Map({
-          container: el, style: buildStyle(origin),
+          container: el, style: buildStyle(tileUrl, minzoom, maxzoom),
           center: DEFAULT_CENTER, zoom: 11,
           attributionControl: false, trackResize: true,
         });
@@ -133,15 +133,6 @@ export function MapLibreMap({
         map.on("error", (e: any) => {
           log("ERR:" + (e?.error?.message ?? JSON.stringify(e)).slice(0, 70));
         });
-
-        // Fetch TileJSON directly to verify absolute URL rewrite
-        fetch(`${origin}/tiles/data/kaliningrad.json`)
-          .then(r => r.json())
-          .then((j: any) => {
-            const t0 = (j.tiles ?? [])[0] ?? "none";
-            log("tj:" + t0.slice(0, 60));
-          })
-          .catch((e: any) => log("tj ERR:" + e?.message));
 
         map.on("sourcedata", (e: any) => {
           if (e.sourceId === "kaliningrad") {
@@ -152,7 +143,7 @@ export function MapLibreMap({
         map.once("load", () => {
           map.resize();
           const sz = el.getBoundingClientRect();
-          log(`LOADED! canvas=${map.getCanvas().width}×${map.getCanvas().height} el=${Math.round(sz.width)}×${Math.round(sz.height)}`);
+          log(`LOADED! ${map.getCanvas().width}×${map.getCanvas().height}`);
         });
 
         // 8s timeout
@@ -166,6 +157,37 @@ export function MapLibreMap({
       } catch (e: any) {
         log("THROW:" + (e?.message ?? e).slice(0, 70));
       }
+    };
+
+    // Fetch TileJSON ourselves and patch tiles[] to absolute URLs on the client.
+    // This completely bypasses server-side rewrite and is reliable regardless of proxy.
+    const tryInit = () => {
+      if (cancelled || mapRef.current) return;
+      const ml = window.maplibregl;
+      if (!ml?.Map) return;
+
+      const origin = window.location.origin;
+      log("fetch tj...");
+      fetch(`${origin}/tiles/data/kaliningrad.json`)
+        .then(r => r.json())
+        .then((j: any) => {
+          if (cancelled) return;
+          // Patch tiles[] to absolute URLs using client-side origin
+          const rawTiles: string[] = Array.isArray(j.tiles) ? j.tiles : [];
+          const tileUrl = rawTiles.map((u: string) =>
+            u.startsWith("http") ? u : `${origin}${u.startsWith("/") ? "" : "/"}${u}`
+          )[0] ?? `${origin}/tiles/data/kaliningrad/{z}/{x}/{y}.pbf`;
+          const minzoom = j.minzoom ?? 0;
+          const maxzoom = j.maxzoom ?? 14;
+          log(`tj ok minz=${minzoom} maxz=${maxzoom}`);
+          initMap(tileUrl, minzoom, maxzoom);
+        })
+        .catch((e: any) => {
+          if (cancelled) return;
+          log("tj ERR:" + (e?.message ?? e));
+          // Fallback: use hardcoded tile URL
+          initMap(`${origin}/tiles/data/kaliningrad/{z}/{x}/{y}.pbf`, 0, 14);
+        });
     };
 
     const ro = new ResizeObserver(() => {
