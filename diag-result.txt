@@ -1,4 +1,3 @@
-mbt=24K
-pbf=9.4K
+mbt=
 ts_z10=204
 ts_z10_size=0
