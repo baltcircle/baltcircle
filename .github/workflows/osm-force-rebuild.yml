@@ -6,18 +6,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Check tilemaker and configs
-        run: |
-          echo "=== tilemaker ==="
-          which tilemaker && tilemaker --version 2>&1 || echo "not found"
-          echo "=== config.json ==="
-          cat /home/yc-user/osm/config.json | head -20
-          echo "=== process.lua ==="
-          head -5 /home/yc-user/osm/process.lua
-          echo "=== pbf ==="
-          ls -lh /home/yc-user/osm/kaliningrad.osm.pbf
-
-      - name: Build MBTiles with stderr
+      - name: Run tilemaker and capture output
         run: |
           cd /home/yc-user/osm
           tilemaker \
@@ -26,25 +15,25 @@ jobs:
             --config config.json \
             --process process.lua \
             --bbox 19.0,54.0,23.0,56.0 \
-            --threads 2 2>&1
-          echo "Exit: $?"
-          echo "Result: $(ls -lh kaliningrad.mbtiles 2>/dev/null || echo 'no file')"
+            --threads 2 > /tmp/tilemaker.log 2>&1 || true
+          tail -30 /tmp/tilemaker.log
 
-      - name: Write result
+      - name: Write tilemaker log to repo
         if: always()
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          MBT=$(ls -lh /home/yc-user/osm/kaliningrad.mbtiles 2>/dev/null | awk '{print $5}' || echo "none")
-          T10=$(curl -so /dev/null -w '%{http_code}' "http://localhost:8080/data/kaliningrad/10/570/325.pbf")
-          S10=$(curl -s "http://localhost:8080/data/kaliningrad/10/570/325.pbf" | wc -c)
-          printf "mbt=%s\nts_z10=%s\nts_z10_size=%s\n" "$MBT" "$T10" "$S10" > /tmp/r.txt
-          cat /tmp/r.txt
-          ENC=$(base64 -w0 /tmp/r.txt)
+          ENC=$(base64 -w0 /tmp/tilemaker.log)
           SHA=$(curl -sf -H "Authorization: token $TOKEN" \
-            "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
-          curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
-            "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: osm rebuild3 result [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo "Written"
+            "https://api.github.com/repos/baltcircle/baltcircle/contents/tilemaker.log" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null || echo "")
+          if [ -n "$SHA" ]; then
+            curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+              "https://api.github.com/repos/baltcircle/baltcircle/contents/tilemaker.log" \
+              -d "{\"message\":\"ci: tilemaker log [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo "Updated"
+          else
+            curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+              "https://api.github.com/repos/baltcircle/baltcircle/contents/tilemaker.log" \
+              -d "{\"message\":\"ci: tilemaker log [skip ci]\",\"content\":\"$ENC\"}" && echo "Created"
+          fi
