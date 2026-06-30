@@ -62,10 +62,6 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
       type: "geojson",
       data: KALININGRAD_BOUNDARY,
     },
-    "oblast-mask": {
-      type: "geojson",
-      data: OBLAST_MASK,
-    },
   },
   layers: [
     { id: "background", type: "background", paint: { "background-color": "#e8f0f7" } },
@@ -155,16 +151,6 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
         "text-color": "#7a6a55",
         "text-halo-color": "rgba(255,255,255,0.8)",
         "text-halo-width": 1,
-      },
-    },
-    // Outside-oblast mask — dims area beyond Kaliningrad boundary
-    {
-      id: "oblast-outside-mask",
-      type: "fill",
-      source: "oblast-mask",
-      paint: {
-        "fill-color": "#c8d8e8",
-        "fill-opacity": 0.55,
       },
     },
     // Oblast boundary line — solid, drawn on top of mask
@@ -260,7 +246,28 @@ export function MapLibreMap({
           attributionControl: false, trackResize: true,
         });
         map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
-        map.once("load", () => map.resize());
+        map.once("load", () => {
+          map.resize();
+          // Add outside-oblast mask dynamically after load
+          // (geojson-vt handles inverted polygons better when added post-load)
+          try {
+            map.addSource("oblast-mask", {
+              type: "geojson",
+              data: OBLAST_MASK,
+            });
+            map.addLayer({
+              id: "oblast-outside-mask",
+              type: "fill",
+              source: "oblast-mask",
+              paint: {
+                "fill-color": "#b8ccd8",
+                "fill-opacity": 0.5,
+              },
+            }, "oblast-boundary"); // insert before boundary line
+          } catch(e) {
+            // layer may already exist on hot-reload
+          }
+        });
         mapRef.current = map;
       } catch {
         // WebGL unavailable — map stays blank
