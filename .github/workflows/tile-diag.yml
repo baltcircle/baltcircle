@@ -6,32 +6,28 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: full check
+      - name: check fonts
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          # tileserver direct
-          TS=$(curl -so /dev/null -w '%{http_code}' http://localhost:8080/data/kaliningrad.json)
-          TS11=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/data/kaliningrad/11/1193/630.pbf')
-          TS11S=$(curl -s 'http://localhost:8080/data/kaliningrad/11/1193/630.pbf' | wc -c)
-          TS10=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/data/kaliningrad/10/570/325.pbf')
-          TS10S=$(curl -s 'http://localhost:8080/data/kaliningrad/10/570/325.pbf' | wc -c)
-          # proxy
-          P11=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:5000/tiles/data/kaliningrad/11/1193/630.pbf')
-          P11S=$(curl -s 'http://localhost:5000/tiles/data/kaliningrad/11/1193/630.pbf' | wc -c)
-          P11H=$(curl -sI 'http://localhost:5000/tiles/data/kaliningrad/11/1193/630.pbf' 2>&1 | head -5)
-          # nginx current config (HTTPS block)
-          NGINX=$(sudo cat /etc/nginx/sites-enabled/baltcircle 2>/dev/null || sudo cat /etc/nginx/sites-available/baltcircle 2>/dev/null | head -60)
-          # tiles url rewrite check
-          TU=$(curl -s http://localhost:5000/tiles/data/kaliningrad.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('tiles',['NONE'])[0])" 2>/dev/null)
-          printf "ts_json=%s\nts_tile_z11=%s bytes=%s\nts_tile_z10=%s bytes=%s\nproxy_z11=%s bytes=%s\nproxy_z11_headers=%s\ntiles_url=%s\nnginx_conf=\n%s\n" \
-            "$TS" "$TS11" "$TS11S" "$TS10" "$TS10S" "$P11" "$P11S" "$P11H" "$TU" "$NGINX" > /tmp/r.txt
+          # Check tileserver fonts endpoint
+          FONTS=$(curl -s http://localhost:8080/fonts.json 2>/dev/null | head -c 500)
+          FONT_LIST=$(curl -so /dev/null -w '%{http_code}' http://localhost:8080/fonts.json)
+          # Try Noto Sans Regular glyph range
+          NOTO=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/fonts/Noto%20Sans%20Regular/0-255.pbf')
+          NOTO_SZ=$(curl -s 'http://localhost:8080/fonts/Noto%20Sans%20Regular/0-255.pbf' | wc -c)
+          # Try Open Sans
+          OPEN=$(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/fonts/Open%20Sans%20Regular/0-255.pbf')
+          # tileserver catalog
+          CAT=$(curl -s http://localhost:8080/ | python3 -c "import json,sys; d=json.load(sys.stdin); print(list(d.get('fonts',{}).keys())[:5])" 2>/dev/null || echo "no catalog")
+          printf "font_list_http=%s\nnoto_http=%s noto_bytes=%s\nopen_sans_http=%s\nfonts_json=%s\ncatalog_fonts=%s\n" \
+            "$FONT_LIST" "$NOTO" "$NOTO_SZ" "$OPEN" "$FONTS" "$CAT" > /tmp/r.txt
           cat /tmp/r.txt
           ENC=$(base64 -w0 /tmp/r.txt)
-          SHA=$(curl -sf -H "Authorization: token $TOKEN" \
+          SHA_FILE=$(curl -sf -H "Authorization: token $TOKEN" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
             | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
           curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: check [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo OK
+            -d "{\"message\":\"ci: check [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}" && echo OK
