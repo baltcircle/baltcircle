@@ -6,28 +6,21 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: check tilemaker setup
+      - name: check data files
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          echo "=== TILEMAKER DOCKER IMAGE ===" > /tmp/sdiag.txt
-          docker images | grep -i tilemaker >> /tmp/sdiag.txt
-          echo "=== TILEMAKER BINARY ===" >> /tmp/sdiag.txt
-          find /home /opt /usr /root -name "tilemaker" 2>/dev/null >> /tmp/sdiag.txt
-          echo "=== OSM DIR CONTENTS ===" >> /tmp/sdiag.txt
-          ls -lh /home/yc-user/osm/ >> /tmp/sdiag.txt
-          echo "=== PROCESS.LUA FIRST 30 LINES ===" >> /tmp/sdiag.txt
-          head -30 /home/yc-user/osm/process.lua >> /tmp/sdiag.txt 2>/dev/null || \
-            docker exec baltcircle-tileserver head -30 /data/process.lua >> /tmp/sdiag.txt 2>/dev/null
-          echo "=== CONFIG.JSON ===" >> /tmp/sdiag.txt
-          cat /home/yc-user/osm/config.json >> /tmp/sdiag.txt 2>/dev/null || \
-            docker exec baltcircle-tileserver cat /data/config.json >> /tmp/sdiag.txt 2>/dev/null
-          echo "=== DOCKER COMPOSE FOR TILESERVER ===" >> /tmp/sdiag.txt
-          find /home /opt -name "docker-compose*.yml" 2>/dev/null | xargs grep -l tileserver 2>/dev/null | head -3 >> /tmp/sdiag.txt
-          cat /home/yc-user/osm/docker-compose.yml >> /tmp/sdiag.txt 2>/dev/null
-          echo "=== BASH HISTORY TILEMAKER ===" >> /tmp/sdiag.txt
-          grep -i tilemaker /home/yc-user/.bash_history 2>/dev/null | tail -10 >> /tmp/sdiag.txt
+          echo "=== OSM DIR FULL TREE ===" > /tmp/sdiag.txt
+          find /home/yc-user/osm -type f | sort >> /tmp/sdiag.txt
+          echo "=== COASTLINE ===" >> /tmp/sdiag.txt
+          find / -name "water_polygons.shp" 2>/dev/null | grep -v proc >> /tmp/sdiag.txt
+          echo "=== TILEMAKER VERSION ===" >> /tmp/sdiag.txt
+          tilemaker --version >> /tmp/sdiag.txt 2>&1
+          echo "=== OSMIUM INSTALLED ===" >> /tmp/sdiag.txt
+          which osmium && osmium --version 2>&1 | head -2 >> /tmp/sdiag.txt || echo "not found" >> /tmp/sdiag.txt
+          echo "=== DISK ===" >> /tmp/sdiag.txt
+          df -h / >> /tmp/sdiag.txt
           cat /tmp/sdiag.txt
           ENC=$(base64 -w0 /tmp/sdiag.txt)
           SHA_FILE=$(curl -sf -H "Authorization: token $TOKEN" \
@@ -35,4 +28,4 @@ jobs:
             | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
           curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: tilemaker diag [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}" && echo OK
+            -d "{\"message\":\"ci: data diag [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}" && echo OK
