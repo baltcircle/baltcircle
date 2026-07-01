@@ -1,10 +1,137 @@
 name: Generate PMTiles
 on:
   workflow_dispatch:
+
 jobs:
   generate:
     runs-on: [self-hosted, baltcircle-prod]
-    timeout-minutes: 5
+    timeout-minutes: 180
+    permissions:
+      contents: write
+
     steps:
-      - name: Test
-        run: echo "test"
+      - name: Generate PMTiles and upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          cd /home/yc-user/osm
+          echo "=== Start ===" && free -h && df -h /
+
+          # Swap
+          if [ "$(swapon --show | wc -l)" -eq 0 ]; then sudo swapon /swapfile || true; fi
+          echo "swap: $(free -h | grep Swap)"
+
+          # tilemaker v3
+          TM_VER=$(tilemaker --version 2>&1 | head -1 || echo "old")
+          echo "tilemaker now: $TM_VER"
+          if ! echo "$TM_VER" | grep -qE "3\.[0-9]"; then
+            curl -L "https://github.com/systemed/tilemaker/releases/download/v3.0.0/tilemaker-ubuntu-22.04.gz" -o /tmp/tm.gz
+            gunzip -f /tmp/tm.gz && chmod +x /tmp/tilemaker
+            sudo mv /tmp/tilemaker /usr/local/bin/tilemaker
+            echo "upgraded: $(tilemaker --version 2>&1 | head -1)"
+          fi
+
+          # Coastline
+          if [ ! -f "coastline/simplified_water_polygons.shp" ]; then
+            curl -L -A "Mozilla/5.0" --max-redirs 5 \
+              "https://osmdata.openstreetmap.de/download/simplified-water-polygons-split-3857.zip" -o coastline.zip
+            mkdir -p coastline && unzip -o coastline.zip -d coastline_tmp
+            find coastline_tmp -name "*.sh?" -exec cp {} coastline/ \;
+            find coastline_tmp -name "*.prj" -exec cp {} coastline/ \;
+            find coastline_tmp -name "*.dbf" -exec cp {} coastline/ \;
+            rm -rf coastline_tmp coastline.zip
+            echo "coastline ready"
+          fi
+
+          rm -f lithuania-clipped.osm.pbf warminsko-clipped.osm.pbf pomorskie-clipped.osm.pbf
+
+          clip() {
+            local URL="$1" RAW="$2" OUT="$3" BBOX="$4" MIN="$5"
+            FU=$(curl -sIL -A "Mozilla/5.0" --max-redirs 5 "$URL" -o /dev/null -w "%{url_effective}")
+            curl -L -A "Mozilla/5.0" --max-redirs 5 --max-time 600 -o "$RAW" "$FU"
+            SZ=$(du -sm "$RAW" | cut -f1)
+            [ "$SZ" -ge "$MIN" ] || { echo "ERROR: $RAW only ${SZ}MB"; exit 1; }
+            osmium extract --bbox "$BBOX" "$RAW" -o "$OUT" --overwrite --strategy=simple
+            rm -f "$RAW"
+            echo "$OUT: $(du -sh $OUT)"
+          }
+
+          clip "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf" "lithuania-full.osm.pbf" "lithuania-clipped.osm.pbf" "20.8,54.2,22.9,55.2" 50
+          clip "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf" "warminsko-full.osm.pbf" "warminsko-clipped.osm.pbf" "19.5,53.3,22.9,54.0" 20
+          clip "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf" "pomorskie-full.osm.pbf" "pomorskie-clipped.osm.pbf" "18.3,53.3,20.5,54.4" 20
+
+          osmium merge kaliningrad.osm.pbf lithuania-clipped.osm.pbf warminsko-clipped.osm.pbf pomorskie-clipped.osm.pbf -o merged.osm.pbf --overwrite
+          echo "merged: $(du -sh merged.osm.pbf)"
+          rm -f lithuania-clipped.osm.pbf warminsko-clipped.osm.pbf pomorskie-clipped.osm.pbf
+          free -h
+
+          python3 -c "
+import json, os
+cfg = json.load(open('config.json'))
+cfg['layers']['ocean']['source'] = 'coastline/simplified_water_polygons.shp'
+bad = [n for n, l in cfg.get('layers', {}).items() if l.get('source','') and not l['source'].startswith('coastline') and not os.path.exists(l['source'])]
+for n in bad:
+    print('skip:', n)
+    del cfg['layers'][n]
+open('config.json', 'w').write(json.dumps(cfg, indent=2))
+print('layers ok:', list(cfg['layers'].keys()))
+"
+
+          echo "=== tilemaker ==="
+          tilemaker --input merged.osm.pbf --output kaliningrad.pmtiles \
+            --bbox 18.3,53.3,24.9,57.3 --config config.json --process process.lua
+          echo "pmtiles: $(du -sh kaliningrad.pmtiles)"
+          rm -f merged.osm.pbf
+
+          echo "=== Uploading to GitHub Release ==="
+          TAG="pmtiles-latest"
+          EXIST=$(curl -sf -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/releases/tags/$TAG" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+          if [ -n "$EXIST" ] && [ "$EXIST" != "None" ] && [ "$EXIST" != "" ]; then
+            curl -sf -X DELETE -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/$REPO/releases/$EXIST"
+          fi
+          curl -sf -X DELETE -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/git/refs/tags/$TAG" || true
+
+          SZ=$(du -sh kaliningrad.pmtiles | cut -f1)
+          REL=$(curl -sf -X POST -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+            "https://api.github.com/repos/$REPO/releases" \
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"PMTiles Map Data\",\"body\":\"Region: Kaliningrad + border zone. Size: $SZ\",\"draft\":false,\"prerelease\":false}")
+          UPL=$(echo "$REL" | python3 -c "import json,sys; u=json.load(sys.stdin)['upload_url']; print(u.split('{')[0])")
+
+          ASSET=$(curl -sf -X POST -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/octet-stream" \
+            "${UPL}?name=kaliningrad.pmtiles" --data-binary "@kaliningrad.pmtiles")
+          ASSET_URL=$(echo "$ASSET" | python3 -c "import json,sys; print(json.load(sys.stdin)['browser_download_url'])")
+
+          echo "$ASSET_URL" > /home/yc-user/osm/pmtiles_url.txt
+          echo "=== SUCCESS ==="
+          echo "URL: $ASSET_URL"
+          echo "Size: $SZ"
+          df -h /
+
+      - name: Write PMTiles URL to repo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          URL=$(cat /home/yc-user/osm/pmtiles_url.txt)
+          echo "PMTiles URL: $URL"
+          SHA=$(curl -sf -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/contents/pmtiles_url.txt" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin).get('sha',''))" 2>/dev/null || echo "")
+          ENC=$(printf '%s' "$URL" | base64 -w0)
+          if [ -n "$SHA" ] && [ "$SHA" != "None" ]; then
+            curl -sf -X PUT -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+              "https://api.github.com/repos/$REPO/contents/pmtiles_url.txt" \
+              -d "{\"message\":\"ci: pmtiles url updated\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}"
+          else
+            curl -sf -X PUT -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+              "https://api.github.com/repos/$REPO/contents/pmtiles_url.txt" \
+              -d "{\"message\":\"ci: pmtiles url updated\",\"content\":\"$ENC\"}"
+          fi
+          echo "Done"
