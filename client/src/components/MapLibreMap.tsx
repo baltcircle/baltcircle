@@ -27,7 +27,7 @@ const KALININGRAD_BOUNDARY = {
   features: [{ type: "Feature" as const, geometry: { type: "Polygon" as const, coordinates: [OBLAST_RING] }, properties: {} }],
 };
 
-const MAX_BOUNDS: [number, number, number, number] = [18.3, 53.2, 24.9, 57.3];
+const MAX_BOUNDS: [number, number, number, number] = [18.3, 53.2, 26.8, 57.3];
 
 // PMTiles URL — loaded from /pmtiles_url.txt (written by CI after generation)
 // Fallback to old /tiles proxy if PMTiles not yet available
