@@ -1,0 +1,10 @@
+name: Generate PMTiles
+on:
+  workflow_dispatch:
+jobs:
+  generate:
+    runs-on: [self-hosted, baltcircle-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Test
+        run: echo "test"
