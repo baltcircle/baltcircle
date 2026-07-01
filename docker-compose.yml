@@ -63,6 +63,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - baltcircle_data:/app/data
+      - /home/yc-user/osm:/app/osm:ro
 
 volumes:
   baltcircle_data:
