@@ -67,7 +67,7 @@ jobs:
             curl -L -A "Mozilla/5.0" --max-redirs 5 --max-time 600 -o "$RAW" "$FU"
             SZ=$(du -sm "$RAW" | cut -f1)
             test "$SZ" -ge "$MIN" || { echo "ERROR: $RAW only ${SZ}MB"; exit 1; }
-            osmium extract --bbox "$BBOX" "$RAW" -o "$OUT" --overwrite --strategy=simple
+            osmium extract --bbox "$BBOX" "$RAW" -o "$OUT" --overwrite --strategy=smart
             rm -f "$RAW"
             echo "$OUT: $(du -sh $OUT)"
           }
