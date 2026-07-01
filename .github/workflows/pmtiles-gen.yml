@@ -34,8 +34,20 @@ jobs:
             unzip -o /tmp/tilemaker.zip -d /tmp/tilemaker-bin/
             chmod +x /tmp/tilemaker-bin/build/tilemaker
             sudo mv /tmp/tilemaker-bin/build/tilemaker /usr/local/bin/tilemaker
+            # Copy v3 compatible process and config files
+            cp /tmp/tilemaker-bin/resources/process-openmaptiles.lua /home/yc-user/osm/process-openmaptiles.lua
+            cp /tmp/tilemaker-bin/resources/config-openmaptiles.json /home/yc-user/osm/config-openmaptiles.json
             rm -rf /tmp/tilemaker.zip /tmp/tilemaker-bin
             echo "upgraded: $(tilemaker --version 2>&1 | head -1)"
+          else
+            # Already v3 — ensure we have the process files
+            if [ ! -f "/home/yc-user/osm/process-openmaptiles.lua" ]; then
+              curl -L "https://github.com/systemed/tilemaker/releases/download/v3.0.0/tilemaker-ubuntu-22.04.zip" -o /tmp/tilemaker.zip
+              unzip -o /tmp/tilemaker.zip -d /tmp/tilemaker-bin/
+              cp /tmp/tilemaker-bin/resources/process-openmaptiles.lua /home/yc-user/osm/process-openmaptiles.lua
+              cp /tmp/tilemaker-bin/resources/config-openmaptiles.json /home/yc-user/osm/config-openmaptiles.json
+              rm -rf /tmp/tilemaker.zip /tmp/tilemaker-bin
+            fi
           fi
 
           if [ ! -f "coastline/simplified_water_polygons.shp" ]; then
@@ -69,10 +81,14 @@ jobs:
           rm -f lithuania-clipped.osm.pbf warminsko-clipped.osm.pbf pomorskie-clipped.osm.pbf
           free -h
 
-          python3 -c "import json,os; cfg=json.load(open('config.json')); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; bad=[n for n,l in cfg.get('layers',{}).items() if l.get('source','') and not l['source'].startswith('coastline') and not os.path.exists(l['source'])]; [cfg['layers'].pop(n) for n in bad]; print('skip:',bad); print('layers:',list(cfg['layers'].keys())); open('config.json','w').write(json.dumps(cfg,indent=2))"
+          # Patch config-openmaptiles.json to use local coastline
+          python3 -c "import json,os; cfg=json.load(open('config-openmaptiles.json')); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; bad=[n for n,l in cfg.get('layers',{}).items() if l.get('source','') and not l['source'].startswith('coastline') and not os.path.exists(l['source'])]; [cfg['layers'].pop(n) for n in bad]; print('skip:',bad); print('layers:',list(cfg['layers'].keys())); open('config-openmaptiles.json','w').write(json.dumps(cfg,indent=2))"
 
           echo "=== tilemaker ==="
-          tilemaker --input merged.osm.pbf --output kaliningrad.pmtiles --bbox 18.3,53.3,24.9,57.3 --config config.json --process process.lua
+          tilemaker --input merged.osm.pbf --output kaliningrad.pmtiles \
+            --bbox 18.3,53.3,24.9,57.3 \
+            --config config-openmaptiles.json \
+            --process process-openmaptiles.lua
           echo "pmtiles: $(du -sh kaliningrad.pmtiles)"
           rm -f merged.osm.pbf
 
