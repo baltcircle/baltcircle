@@ -27,7 +27,8 @@ jobs:
 
           echo "[2/6] Coastline..."
           if [ ! -f "coastline/simplified_water_polygons.shp" ]; then
-            curl -L -A "Mozilla/5.0" --progress-bar -o coastline.zip "https://osmdata.openstreetmap.de/download/simplified-water-polygons-split-3857.zip"
+            FINAL_URL=$(curl -sIL -A "Mozilla/5.0" --max-redirs 5 "https://osmdata.openstreetmap.de/download/simplified-water-polygons-split-3857.zip" -o /dev/null -w "%{url_effective}")
+            curl -L -A "Mozilla/5.0" --max-redirs 5 --progress-bar -o coastline.zip "$FINAL_URL"
             mkdir -p coastline && unzip -o coastline.zip -d coastline_tmp
             find coastline_tmp -name "*.shp" -exec cp {} coastline/ \;
             find coastline_tmp -name "*.dbf" -exec cp {} coastline/ \;
@@ -38,7 +39,6 @@ jobs:
           echo "Coastline: $(ls coastline/*.shp)"
 
           BBOX="18.5,53.3,24.8,57.2"
-          GEOFABRIK_UA="Mozilla/5.0 (compatible; OSMDownloader/1.0)"
 
           download_and_clip() {
             local URL="$1" RAW="$2" CLIPPED="$3" MIN_MB="$4"
@@ -46,16 +46,19 @@ jobs:
               echo "  $CLIPPED cached: $(du -sh $CLIPPED)"
               return 0
             fi
-            echo "  Downloading from $URL..."
-            curl -L -A "$GEOFABRIK_UA" --progress-bar --max-time 600 -o "$RAW" "$URL"
+            echo "  Resolving final URL for $URL..."
+            FINAL_URL=$(curl -sIL -A "Mozilla/5.0" --max-redirs 5 "$URL" -o /dev/null -w "%{url_effective}")
+            echo "  Final URL: $FINAL_URL"
+            echo "  Downloading..."
+            curl -L -A "Mozilla/5.0" --max-redirs 5 --progress-bar --max-time 600 -o "$RAW" "$FINAL_URL"
             SIZE_MB=$(du -sm "$RAW" | cut -f1)
             echo "  Downloaded: $(du -sh $RAW) (${SIZE_MB}MB)"
             if [ "$SIZE_MB" -lt "$MIN_MB" ]; then
-              echo "ERROR: $RAW too small (${SIZE_MB}MB < ${MIN_MB}MB expected). Check URL."
-              head -c 200 "$RAW"
+              echo "ERROR: $RAW is ${SIZE_MB}MB, expected >=${MIN_MB}MB"
+              head -c 300 "$RAW"
               exit 1
             fi
-            echo "  Clipping to bbox $BBOX with strategy=simple..."
+            echo "  Clipping to bbox $BBOX..."
             osmium extract --bbox "$BBOX" "$RAW" -o "$CLIPPED" --overwrite --strategy=simple
             echo "  Clipped: $(du -sh $CLIPPED)"
             rm -f "$RAW"
@@ -76,10 +79,9 @@ jobs:
             "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf" \
             "pomorskie-full.osm.pbf" "pomorskie-clipped.osm.pbf" 20
 
-          echo "=== All clipped files ===" && ls -lh *-clipped.osm.pbf
-          free -h
+          echo "=== Clipped files ===" && ls -lh *-clipped.osm.pbf && free -h
 
-          echo "[6/6] Updating config and tilemaker..."
+          echo "[6/6] Config + tilemaker..."
           python3 -c "import json; f=open('config.json'); cfg=json.load(f); f.close(); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; open('config.json','w').write(json.dumps(cfg,indent=2)); print('ocean source updated')"
 
           tilemaker \
