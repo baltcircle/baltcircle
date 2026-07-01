@@ -35,8 +35,7 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
     "kaliningrad-boundary": { type: "geojson", data: KALININGRAD_BOUNDARY },
   },
   layers: [
-    // Background = water color — empty sea tiles (outside OSM bbox) blend with ocean
-    { id: "background", type: "background", paint: { "background-color": "#a8d5e8" } },
+    { id: "background", type: "background", paint: { "background-color": "#e8f0f7" } },
 
     // ── LANDCOVER ────────────────────────────────────────────────────────────
     {
