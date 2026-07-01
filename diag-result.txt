@@ -1,14 +1,3 @@
-=== SUDO TEST ===
-sudo works
-=== APT OSMIUM ===
-No user sessions are running outdated binaries.
-
-No VM guests are running outdated hypervisor (qemu) binaries on this host.
-=== OSMIUM WHICH ===
-/usr/bin/osmium
-=== WHOAMI ===
-yc-user
-uid=1000(yc-user) gid=1000(yc-user) groups=1000(yc-user),988(docker),1001(google-sudoers)
-=== DISK ===
-Filesystem      Size  Used Avail Use% Mounted on
-/dev/vda1        39G   31G  7.8G  80% /
+mbtiles: 35M	kaliningrad.mbtiles
+disk: /dev/vda1        39G   31G  7.4G  81% /
+bounds: [19, 54, 23, 56]
