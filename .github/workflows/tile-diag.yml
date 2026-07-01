@@ -6,28 +6,93 @@ on:
 jobs:
   regen:
     runs-on: [self-hosted, baltcircle-prod]
-    timeout-minutes: 60
+    timeout-minutes: 180
     permissions:
       contents: write
     steps:
-      - name: Diagnose tilemaker multi-input
+      - name: Generate extended tiles
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           cd /home/yc-user/osm
-          echo "=== tilemaker version ==="
-          tilemaker --version 2>&1 || true
-          /usr/local/bin/tilemaker --version 2>&1 || true
-          echo "=== file sizes ==="
-          ls -lh *-clipped.osm.pbf kaliningrad.osm.pbf 2>/dev/null || echo "no clipped files"
-          echo "=== test: tilemaker with SINGLE extra input ==="
+          free -h && df -h /
+
+          echo "[1/7] Swap..."
+          if [ "$(swapon --show | wc -l)" -eq 0 ]; then
+            sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+            grep -q swapfile /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+          fi
+
+          echo "[2/7] Coastline..."
+          if [ ! -f "coastline/simplified_water_polygons.shp" ]; then
+            curl -L -A "Mozilla/5.0" --max-redirs 5 --progress-bar -o coastline.zip \
+              "https://osmdata.openstreetmap.de/download/simplified-water-polygons-split-3857.zip"
+            mkdir -p coastline && unzip -o coastline.zip -d coastline_tmp
+            find coastline_tmp -name "*.sh?" -exec cp {} coastline/ \;
+            find coastline_tmp -name "*.prj" -exec cp {} coastline/ \;
+            find coastline_tmp -name "*.dbf" -exec cp {} coastline/ \;
+            rm -rf coastline_tmp coastline.zip
+          fi
+
+          rm -f lithuania-clipped.osm.pbf warminsko-clipped.osm.pbf pomorskie-clipped.osm.pbf merged-border.osm.pbf
+
+          download_and_clip() {
+            local URL="$1" RAW="$2" CLIPPED="$3" BBOX="$4" MIN_MB="$5"
+            FINAL_URL=$(curl -sIL -A "Mozilla/5.0" --max-redirs 5 "$URL" -o /dev/null -w "%{url_effective}")
+            curl -L -A "Mozilla/5.0" --max-redirs 5 --progress-bar --max-time 600 -o "$RAW" "$FINAL_URL"
+            SIZE_MB=$(du -sm "$RAW" | cut -f1)
+            [ "$SIZE_MB" -ge "$MIN_MB" ] || { echo "ERROR: ${SIZE_MB}MB too small"; exit 1; }
+            osmium extract --bbox "$BBOX" "$RAW" -o "$CLIPPED" --overwrite --strategy=simple
+            rm -f "$RAW"
+            echo "  $(du -sh $CLIPPED)"
+          }
+
+          echo "[3/7] Lithuania south strip..."
+          download_and_clip \
+            "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf" \
+            "lithuania-full.osm.pbf" "lithuania-clipped.osm.pbf" \
+            "20.8,54.2,22.9,55.2" 50
+
+          echo "[4/7] Warminsko north strip..."
+          download_and_clip \
+            "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf" \
+            "warminsko-full.osm.pbf" "warminsko-clipped.osm.pbf" \
+            "19.5,53.3,22.9,54.0" 20
+
+          echo "[5/7] Pomorskie east strip..."
+          download_and_clip \
+            "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf" \
+            "pomorskie-full.osm.pbf" "pomorskie-clipped.osm.pbf" \
+            "18.3,53.3,20.5,54.4" 20
+
+          echo "[6/7] Merging kaliningrad + all clipped into one pbf..."
+          ls -lh *-clipped.osm.pbf kaliningrad.osm.pbf
+          osmium merge \
+            kaliningrad.osm.pbf \
+            lithuania-clipped.osm.pbf \
+            warminsko-clipped.osm.pbf \
+            pomorskie-clipped.osm.pbf \
+            -o merged-border.osm.pbf --overwrite
+          echo "Merged: $(du -sh merged-border.osm.pbf)"
+          rm -f lithuania-clipped.osm.pbf warminsko-clipped.osm.pbf pomorskie-clipped.osm.pbf
+          free -h
+
+          echo "[7/7] Config + tilemaker (single input)..."
+          python3 -c "import json; f=open('config.json'); cfg=json.load(f); f.close(); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; open('config.json','w').write(json.dumps(cfg,indent=2)); print('ocean updated')"
+
           tilemaker \
-            --input kaliningrad.osm.pbf \
-            --input lithuania-clipped.osm.pbf \
-            --output test-2files.mbtiles \
+            --input merged-border.osm.pbf \
+            --output extended.mbtiles \
             --config config.json \
             --process process.lua
-          echo "2-file result: $(du -sh test-2files.mbtiles)"
-          rm -f test-2files.mbtiles
+
+          echo "Result: $(du -sh extended.mbtiles)"
+          cp extended.mbtiles kaliningrad.mbtiles
+          rm -f merged-border.osm.pbf
+          docker restart baltcircle-tileserver && sleep 8
+          curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "import json,sys; d=json.load(sys.stdin); print('bounds:', d.get('bounds'))"
+          echo "ALL DONE"
 
       - name: Report result
         if: always()
@@ -35,8 +100,8 @@ jobs:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd /home/yc-user/osm
-          { echo "tilemaker: $(tilemaker --version 2>&1 | head -1)"; echo "disk: $(df -h / | tail -1)"; free -h; } > /tmp/r.txt
+          { echo "mbtiles: $(du -sh kaliningrad.mbtiles 2>/dev/null)"; echo "disk: $(df -h / | tail -1)"; curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "import json,sys; d=json.load(sys.stdin); print('bounds:', d.get('bounds'))" 2>/dev/null || echo "tileserver not responding"; } > /tmp/r.txt
           cat /tmp/r.txt
           ENC=$(base64 -w0 /tmp/r.txt)
           SHA_FILE=$(curl -sf -H "Authorization: token $TOKEN" "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
-          curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" -d "{\"message\":\"ci: diag\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}"
+          curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" -d "{\"message\":\"ci: regen result\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}"
