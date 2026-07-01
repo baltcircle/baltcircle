@@ -1,15 +1,14 @@
-=== OSM DIR FULL TREE ===
-/home/yc-user/osm/config.json
-/home/yc-user/osm/config/tileserver-config.json
-/home/yc-user/osm/docker-compose.yml
-/home/yc-user/osm/kaliningrad.mbtiles
-/home/yc-user/osm/kaliningrad.osm.pbf
-/home/yc-user/osm/process.lua
-=== COASTLINE ===
-=== TILEMAKER VERSION ===
-Unknown option: --version
-=== OSMIUM INSTALLED ===
-not found
+=== SUDO TEST ===
+sudo works
+=== APT OSMIUM ===
+No user sessions are running outdated binaries.
+
+No VM guests are running outdated hypervisor (qemu) binaries on this host.
+=== OSMIUM WHICH ===
+/usr/bin/osmium
+=== WHOAMI ===
+yc-user
+uid=1000(yc-user) gid=1000(yc-user) groups=1000(yc-user),988(docker),1001(google-sudoers)
 === DISK ===
 Filesystem      Size  Used Avail Use% Mounted on
 /dev/vda1        39G   31G  7.8G  80% /
