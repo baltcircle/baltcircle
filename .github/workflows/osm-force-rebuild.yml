@@ -1,69 +1,163 @@
-name: OSM Force Rebuild
+name: Regen Tiles Extended
 on: [workflow_dispatch]
 jobs:
-  rebuild:
+  regen:
     runs-on: [self-hosted, baltcircle-prod]
+    timeout-minutes: 180
     permissions:
       contents: write
     steps:
-      - name: Check tilemaker version and get right config
+      - name: Download data and generate extended tiles
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tilemaker --version 2>&1 || true
-          echo "=== tilemaker zip contents ==="
-          ls /tmp/build/ 2>/dev/null || ls /tmp/tilemaker* 2>/dev/null || echo "no zip found"
-          
-      - name: Get compatible process.lua for tilemaker v2.4.0
-        run: |
+          set -e
           cd /home/yc-user/osm
-          # Use the resources from the exact same release
-          curl -fL -o process.lua \
-            "https://raw.githubusercontent.com/systemed/tilemaker/v2.4.0/resources/process-openmaptiles.lua"
-          curl -fL -o config.json \
-            "https://raw.githubusercontent.com/systemed/tilemaker/v2.4.0/resources/config-openmaptiles.json"
-          head -5 process.lua
-          echo "Config OK"
+          echo "=== Disk before ==="
+          df -h /
 
-      - name: Build MBTiles
-        run: |
-          cd /home/yc-user/osm
+          # ── 1. Install osmium ────────────────────────────────────────────────
+          echo "[1/7] Installing osmium-tool..."
+          sudo apt-get install -y osmium-tool 2>&1 | tail -5
+
+          # ── 2. Coastline shapefile ───────────────────────────────────────────
+          echo "[2/7] Downloading simplified coastline (22 MB)..."
+          if [ ! -f "coastline/simplified_water_polygons.shp" ]; then
+            curl -L --progress-bar -o coastline.zip \
+              "https://osmdata.openstreetmap.de/download/simplified-water-polygons-split-3857.zip"
+            mkdir -p coastline
+            unzip -o coastline.zip -d coastline_tmp
+            # Move shp files to coastline/
+            find coastline_tmp -name "*.shp" -exec cp {} coastline/ \;
+            find coastline_tmp -name "*.dbf" -exec cp {} coastline/ \;
+            find coastline_tmp -name "*.shx" -exec cp {} coastline/ \;
+            find coastline_tmp -name "*.prj" -exec cp {} coastline/ \;
+            rm -rf coastline_tmp coastline.zip
+            echo "Coastline files:"
+            ls -lh coastline/
+          else
+            echo "Coastline already present"
+          fi
+
+          # ── 3. Download Lithuania ────────────────────────────────────────────
+          echo "[3/7] Downloading Lithuania (211 MB)..."
+          if [ ! -f "lithuania.osm.pbf" ]; then
+            curl -L --progress-bar -o lithuania.osm.pbf \
+              "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf"
+          else
+            echo "Lithuania cached: $(du -sh lithuania.osm.pbf)"
+          fi
+
+          # ── 4. Download Latvia ───────────────────────────────────────────────
+          echo "[4/7] Downloading Latvia (132 MB)..."
+          if [ ! -f "latvia.osm.pbf" ]; then
+            curl -L --progress-bar -o latvia.osm.pbf \
+              "https://download.geofabrik.de/europe/latvia-latest.osm.pbf"
+          else
+            echo "Latvia cached: $(du -sh latvia.osm.pbf)"
+          fi
+
+          # ── 5. Download Poland sub-regions near Kaliningrad ─────────────────
+          echo "[5/7] Downloading Poland subregions (Warminsko-Mazurskie + Pomorskie)..."
+          if [ ! -f "warminsko.osm.pbf" ]; then
+            curl -L --progress-bar -o warminsko.osm.pbf \
+              "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf"
+          fi
+          if [ ! -f "pomorskie.osm.pbf" ]; then
+            curl -L --progress-bar -o pomorskie.osm.pbf \
+              "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf"
+          fi
+
+          echo "=== Disk after downloads ==="
+          df -h /
+
+          # ── 6. Merge and clip to extended bbox ──────────────────────────────
+          echo "[6/7] Merging and clipping to bbox [17.5,52.0,27.0,58.0]..."
+          # Build list of existing files
+          FILES="kaliningrad.osm.pbf"
+          [ -f "lithuania.osm.pbf" ] && FILES="$FILES lithuania.osm.pbf"
+          [ -f "latvia.osm.pbf" ]    && FILES="$FILES latvia.osm.pbf"
+          [ -f "warminsko.osm.pbf" ] && FILES="$FILES warminsko.osm.pbf"
+          [ -f "pomorskie.osm.pbf" ] && FILES="$FILES pomorskie.osm.pbf"
+          echo "Merging: $FILES"
+
+          osmium merge $FILES -o merged-tmp.osm.pbf --overwrite
+          echo "Merged: $(du -sh merged-tmp.osm.pbf)"
+
+          osmium extract \
+            --bbox 17.5,52.0,27.0,58.0 \
+            merged-tmp.osm.pbf \
+            -o extended.osm.pbf --overwrite
+          rm -f merged-tmp.osm.pbf
+          echo "Extended PBF: $(du -sh extended.osm.pbf)"
+          df -h /
+
+          # ── 7. Update config and run tilemaker ──────────────────────────────
+          echo "[7/7] Generating tiles with tilemaker..."
+
+          # Update config.json: fix coastline path and add extended bounds
+          python3 -c "
+import json
+with open('config.json') as f:
+    cfg = json.load(f)
+
+# Fix coastline source path to match our downloaded file
+cfg['layers']['ocean']['source'] = 'coastline/simplified_water_polygons.shp'
+
+# Keep maxzoom=14 for full detail everywhere
+cfg['settings']['minzoom'] = 0
+cfg['settings']['maxzoom'] = 14
+
+with open('config.json', 'w') as f:
+    json.dump(cfg, f, indent=2)
+print('config.json updated: coastline path fixed')
+"
+
           tilemaker \
-            --input kaliningrad.osm.pbf \
-            --output kaliningrad.mbtiles \
+            --input extended.osm.pbf \
+            --output extended.mbtiles \
             --config config.json \
-            --process process.lua \
-            --bbox 19.0,54.0,23.0,56.0 \
-            --threads 2 > /tmp/tilemaker.log 2>&1
-          echo "Exit: $?"
-          echo "Result: $(ls -lh kaliningrad.mbtiles 2>/dev/null)"
-          tail -20 /tmp/tilemaker.log
+            --process process.lua 2>&1
 
-      - name: Restart tileserver
-        run: |
-          cd /home/yc-user/osm
-          docker compose restart tileserver
+          echo "Extended mbtiles: $(du -sh extended.mbtiles)"
+          df -h /
+
+          # ── Swap and restart ─────────────────────────────────────────────────
+          cp extended.mbtiles kaliningrad.mbtiles
+          echo "Swapped mbtiles. Restarting tileserver..."
+          docker restart baltcircle-tileserver
           sleep 8
-          echo "Tile z10: $(curl -so /dev/null -w '%{http_code}' 'http://localhost:8080/data/kaliningrad/10/570/325.pbf')"
-          echo "Size: $(curl -s 'http://localhost:8080/data/kaliningrad/10/570/325.pbf' | wc -c) bytes"
+          docker ps | grep tileserver
+          
+          # Quick smoke test
+          BOUNDS=$(curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "import json,sys; d=json.load(sys.stdin); print('bounds:', d.get('bounds'))")
+          echo "Tileserver: $BOUNDS"
+          echo "DONE"
 
-      - name: Write result
+      - name: Report result
         if: always()
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set +e
-          MBT=$(ls -lh /home/yc-user/osm/kaliningrad.mbtiles 2>/dev/null | awk '{print $5}' || echo "none")
-          T10=$(curl -so /dev/null -w '%{http_code}' "http://localhost:8080/data/kaliningrad/10/570/325.pbf")
-          S10=$(curl -s "http://localhost:8080/data/kaliningrad/10/570/325.pbf" | wc -c)
-          PROXY=$(curl -so /dev/null -w '%{http_code}' "http://localhost:5000/tiles/data/kaliningrad/10/570/325.pbf")
-          PS10=$(curl -s "http://localhost:5000/tiles/data/kaliningrad/10/570/325.pbf" | wc -c)
-          LOG=$(tail -5 /tmp/tilemaker.log 2>/dev/null | tr '\n' '|')
-          printf "mbt=%s\nts_z10=%s\nts_z10_size=%s\nproxy_z10=%s\nproxy_z10_size=%s\nlog=%s\n" \
-            "$MBT" "$T10" "$S10" "$PROXY" "$PS10" "$LOG" > /tmp/r.txt
-          cat /tmp/r.txt
-          ENC=$(base64 -w0 /tmp/r.txt)
-          SHA=$(curl -sf -H "Authorization: token $TOKEN" \
+          cd /home/yc-user/osm
+          {
+            echo "=== RESULT ==="
+            echo "mbtiles: $(du -sh kaliningrad.mbtiles 2>/dev/null)"
+            echo "disk: $(df -h / | tail -1)"
+            echo "tileserver: $(docker ps | grep tileserver || echo 'not running')"
+            curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print('bounds:', d.get('bounds'))
+print('minzoom:', d.get('minzoom'))
+print('maxzoom:', d.get('maxzoom'))
+" 2>/dev/null
+          } > /tmp/regen-result.txt
+          cat /tmp/regen-result.txt
+          ENC=$(base64 -w0 /tmp/regen-result.txt)
+          SHA_FILE=$(curl -sf -H "Authorization: token $TOKEN" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
             | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
           curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: osm fix result [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}" && echo "Written"
+            -d "{\"message\":\"ci: regen result [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}"
