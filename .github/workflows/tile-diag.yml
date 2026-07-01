@@ -37,46 +37,46 @@ jobs:
           fi
           echo "Coastline: $(ls coastline/*.shp)"
 
+          # Always clear old clipped files to avoid stale cache
+          echo "Clearing old clipped files..."
+          rm -f lithuania-clipped.osm.pbf warminsko-clipped.osm.pbf pomorskie-clipped.osm.pbf
+          rm -f lithuania-full.osm.pbf warminsko-full.osm.pbf pomorskie-full.osm.pbf
+
           download_and_clip() {
             local URL="$1" RAW="$2" CLIPPED="$3" BBOX="$4" MIN_MB="$5"
-            if [ -f "$CLIPPED" ] && [ "$(stat -c%s $CLIPPED)" -gt 100000 ]; then
-              echo "  $CLIPPED cached: $(du -sh $CLIPPED)"
-              return 0
-            fi
             FINAL_URL=$(curl -sIL -A "Mozilla/5.0" --max-redirs 5 "$URL" -o /dev/null -w "%{url_effective}")
-            echo "  Downloading from $FINAL_URL..."
+            echo "  URL: $FINAL_URL"
             curl -L -A "Mozilla/5.0" --max-redirs 5 --progress-bar --max-time 600 -o "$RAW" "$FINAL_URL"
             SIZE_MB=$(du -sm "$RAW" | cut -f1)
             echo "  Downloaded ${SIZE_MB}MB"
-            [ "$SIZE_MB" -ge "$MIN_MB" ] || { echo "ERROR: too small"; exit 1; }
-            echo "  Clipping to $BBOX..."
+            [ "$SIZE_MB" -ge "$MIN_MB" ] || { echo "ERROR: too small (${SIZE_MB}MB)"; exit 1; }
+            echo "  Clipping to bbox $BBOX..."
             osmium extract --bbox "$BBOX" "$RAW" -o "$CLIPPED" --overwrite --strategy=simple
             rm -f "$RAW"
             echo "  Clipped: $(du -sh $CLIPPED)"
           }
 
-          # Lithuania: only southern strip 50km from Kaliningrad border (lat 54.3-56.0)
-          echo "[3/6] Lithuania (southern strip only)..."
+          # Lithuania: only ~50km south border strip (not the whole country)
+          echo "[3/6] Lithuania south strip (54.2-56.0N)..."
           download_and_clip \
             "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf" \
             "lithuania-full.osm.pbf" "lithuania-clipped.osm.pbf" \
             "19.5,54.2,24.5,56.0" 50
 
-          # Warminsko: only northern strip 50km from Kaliningrad border (lat 53.3-54.5)
-          echo "[4/6] Warminsko (northern strip)..."
+          echo "[4/6] Warminsko north strip (53.3-54.5N)..."
           download_and_clip \
             "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf" \
             "warminsko-full.osm.pbf" "warminsko-clipped.osm.pbf" \
             "18.8,53.3,22.9,54.5" 20
 
-          # Pomorskie: only eastern strip near Kaliningrad (lat 53.3-54.6, lon 16.5-20.5)
-          echo "[5/6] Pomorskie (eastern strip)..."
+          echo "[5/6] Pomorskie east strip (16.5-20.5E)..."
           download_and_clip \
             "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf" \
             "pomorskie-full.osm.pbf" "pomorskie-clipped.osm.pbf" \
             "16.5,53.3,20.5,54.6" 20
 
-          echo "=== Clipped files ===" && ls -lh *-clipped.osm.pbf
+          echo "=== Clipped files ==="
+          ls -lh *-clipped.osm.pbf
           TOTAL_MB=$(du -sm *-clipped.osm.pbf kaliningrad.osm.pbf | awk '{s+=$1}END{print s}')
           echo "Total input: ${TOTAL_MB}MB"
           free -h
