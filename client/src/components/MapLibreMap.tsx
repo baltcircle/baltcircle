@@ -33,7 +33,8 @@ const MAX_BOUNDS: [number, number, number, number] = [18.3, 53.2, 24.9, 57.3];
 // Fallback to old /tiles proxy if PMTiles not yet available
 const PMTILES_CDN = "https://unpkg.com/pmtiles@3/dist/pmtiles.js";
 // PMTiles file URL — updated by CI on each regeneration
-const PMTILES_URL = "https://github.com/baltcircle/baltcircle/releases/download/pmtiles-latest/kaliningrad.pmtiles";
+// PMTiles served same-origin via Express (Range request support, no CORS issues)
+const PMTILES_URL = "/kaliningrad.pmtiles";
 
 const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"; url: string }, minzoom: number, maxzoom: number): object => ({
   version: 8,
