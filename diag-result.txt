@@ -1,113 +1,15 @@
-=== TILEMAKER DOCKER IMAGE ===
-=== TILEMAKER BINARY ===
-/usr/local/bin/tilemaker
-=== OSM DIR CONTENTS ===
-total 62M
-drwxr-xr-x 2 yc-user yc-user 4.0K Jun 30 15:08 config
--rw-r--r-- 1 yc-user yc-user 3.2K Jun 30 16:31 config.json
--rw-r--r-- 1 yc-user yc-user  296 Jun 30 16:22 docker-compose.yml
--rw-r--r-- 1 yc-user yc-user  35M Jun 30 16:32 kaliningrad.mbtiles
--rw-r--r-- 1 yc-user yc-user  27M Jun 30 16:27 kaliningrad.osm.pbf
--rw-r--r-- 1 yc-user yc-user  28K Jun 30 16:31 process.lua
-drwxr-xr-x 2 yc-user yc-user 4.0K Jun 30 14:57 tiles
-=== PROCESS.LUA FIRST 30 LINES ===
--- Data processing based on openmaptiles.org schema
--- https://openmaptiles.org/schema/
--- Copyright (c) 2016, KlokanTech.com & OpenMapTiles contributors.
--- Used under CC-BY 4.0
-
---------
--- Alter these lines to control which languages are written for place/streetnames
---
--- Preferred language can be (for example) "en" for English, "de" for German, or nil to use OSM's name tag:
-preferred_language = nil
--- This is written into the following vector tile attribute (usually "name:latin"):
-preferred_language_attribute = "name:latin"
--- If OSM's name tag differs, then write it into this attribute (usually "name_int"):
-default_language_attribute = "name_int"
--- Also write these languages if they differ - for example, { "de", "fr" }
-additional_languages = { }
---------
-
--- Enter/exit Tilemaker
-function init_function()
-end
-function exit_function()
-end
-
--- Implement Sets in tables
-function Set(list)
-	local set = {}
-	for _, l in ipairs(list) do set[l] = true end
-	return set
-end
-=== CONFIG.JSON ===
-{
-	"layers": {
-		"place":            { "minzoom":  0, "maxzoom": 14 },
-		"boundary":         { "minzoom":  0, "maxzoom": 14, "simplify_below": 12, "simplify_level": 0.0003, "simplify_ratio": 2 },
-
-		"poi":              { "minzoom": 12, "maxzoom": 14 },
-		"poi_detail":       { "minzoom": 14, "maxzoom": 14, "write_to": "poi"},
-
-		"housenumber":      { "minzoom": 14, "maxzoom": 14 },
-
-		"waterway":         { "minzoom":  8,  "maxzoom": 14, "simplify_below": 12, "simplify_level": 0.0003, "simplify_ratio": 2 },
-		"waterway_detail":  { "minzoom": 12,  "maxzoom": 14, "write_to": "waterway" },
-
-		"transportation":             { "minzoom": 4,  "maxzoom": 14, "simplify_below": 13, "simplify_level": 0.0003 },
-		"transportation_name":        { "minzoom": 8,  "maxzoom": 14 },
-		"transportation_name_mid":    { "minzoom": 12, "maxzoom": 14, "write_to": "transportation_name" },
-		"transportation_name_detail": { "minzoom": 14, "maxzoom": 14, "write_to": "transportation_name" },
-
-		"building":          { "minzoom": 13, "maxzoom": 14 },
-
-		"water":             { "minzoom": 6,  "maxzoom": 14, "simplify_below": 12, "simplify_level": 0.0003, "simplify_ratio": 2},
-		"ocean":             { "minzoom": 0,  "maxzoom": 14, "source": "coastline/water_polygons.shp", "simplify_below": 13, "simplify_level": 0.0001, "simplify_ratio": 2, "write_to": "water", "index": true },
-		"water_name":        { "minzoom": 14, "maxzoom": 14 },
-		"water_name_detail": { "minzoom": 14, "maxzoom": 14, "write_to": "water_name" },
-
-		"aeroway":           { "minzoom": 11, "maxzoom": 14 },
-		"aerodrome_label":   { "minzoom": 10, "maxzoom": 14 },
-		"park":              { "minzoom": 11, "maxzoom": 14 },
-		"landuse":           { "minzoom":  4, "maxzoom": 14, "simplify_below": 13, "simplify_level": 0.0003, "simplify_ratio": 2 },
-		"urban_areas":       { "minzoom":  4, "maxzoom":  8, "source": "landcover/ne_10m_urban_areas/ne_10m_urban_areas.shp", "source_columns": ["featurecla"], "simplify_below": 7, "simplify_level": 0.0003, "simplify_ratio": 2, "write_to": "landuse" },
-		"landcover":         { "minzoom":  0, "maxzoom": 14, "simplify_below": 13, "simplify_level": 0.0003, "simplify_ratio": 2 },
-		"ice_shelf":         { "minzoom":  0, "maxzoom":  9, "source": "landcover/ne_10m_antarctic_ice_shelves_polys/ne_10m_antarctic_ice_shelves_polys.shp", "source_columns": ["featurecla"], "simplify_below": 13, "simplify_level": 0.0005, "write_to": "landcover" },
-		"glacier":           { "minzoom":  2, "maxzoom":  9, "source": "landcover/ne_10m_glaciated_areas/ne_10m_glaciated_areas.shp", "source_columns": ["featurecla"], "simplify_below": 13, "simplify_level": 0.0005, "write_to": "landcover" },
-		"mountain_peak":     { "minzoom": 11, "maxzoom": 14 }
-	},
-	"settings": {
-		"minzoom": 0,
-		"maxzoom": 14,
-		"basezoom": 14,
-		"include_ids": false,
-		"combine_below": 14,
-		"name": "Tilemaker to OpenMapTiles schema",
-		"version": "3.0",
-		"description": "Tile config based on OpenMapTiles schema",
-		"compress": "gzip",
-		"filemetadata": {
-			"tilejson": "2.0.0", 
-			"scheme": "xyz", 
-			"type": "baselayer", 
-			"format": "pbf", 
-            "tiles": ["https://example.com/liechtenstein/{z}/{x}/{y}.pbf"]
-		}
-	}
-}
-
-=== DOCKER COMPOSE FOR TILESERVER ===
+=== OSM DIR FULL TREE ===
+/home/yc-user/osm/config.json
+/home/yc-user/osm/config/tileserver-config.json
 /home/yc-user/osm/docker-compose.yml
-version: "3.8"
-services:
-  tileserver:
-    image: maptiler/tileserver-gl:latest
-    container_name: baltcircle-tileserver
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    volumes:
-      - /home/yc-user/osm:/data
-    command: --config /data/config/tileserver-config.json --port 8080
-=== BASH HISTORY TILEMAKER ===
+/home/yc-user/osm/kaliningrad.mbtiles
+/home/yc-user/osm/kaliningrad.osm.pbf
+/home/yc-user/osm/process.lua
+=== COASTLINE ===
+=== TILEMAKER VERSION ===
+Unknown option: --version
+=== OSMIUM INSTALLED ===
+not found
+=== DISK ===
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/vda1        39G   31G  7.8G  80% /
