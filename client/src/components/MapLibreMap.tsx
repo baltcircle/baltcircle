@@ -53,21 +53,32 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       id: "landcover", type: "fill", source: "kaliningrad", "source-layer": "landcover",
       paint: {
         "fill-color": ["match", ["get", "class"],
-          "farmland", "#ede7d5",
-          "grass",    "#d4edda",
-          "wood",     "#b5d5a0",
-          "wetland",  "#c8dfd0",
-          "sand",     "#f0e8c8",
+          "farmland",   "#ede7d5",
+          "allotments", "#e8e0c8",
+          "grass",      "#d4edda",
+          "grassland",  "#d4edda",
+          "forest",     "#b5d5a0",
+          "wood",       "#b5d5a0",
+          "wetland",    "#c8dfd0",
+          "swamp",      "#c8dfd0",
+          "sand",       "#f0e8c8",
           "#e8e0d0",
         ],
         "fill-opacity": 0.9,
       },
     },
 
-    // ── WATER ────────────────────────────────────────────────────────────────
+    // ── WATER (lakes only — ocean excluded to avoid blue flood at low zoom) ──
     {
-      id: "water", type: "fill", source: "kaliningrad", "source-layer": "water",
+      id: "water-lake", type: "fill", source: "kaliningrad", "source-layer": "water",
+      filter: ["!=", ["get", "class"], "ocean"],
       paint: { "fill-color": "#a8d5e8" },
+    },
+    {
+      id: "water-ocean", type: "fill", source: "kaliningrad", "source-layer": "water",
+      filter: ["==", ["get", "class"], "ocean"],
+      maxzoom: 7,
+      paint: { "fill-color": "#b8d8ea" },
     },
 
     // ── LANDUSE ──────────────────────────────────────────────────────────────
@@ -82,17 +93,13 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
           "military",     "#e8d8c8",
           "pitch",        "#c8e8c0",
           "playground",   "#d8f0d0",
+          "park",         "#c0e8b8",
+          "forest",       "#b5d5a0",
           "railway",      "#ddd0c8",
           "#ede8e0",
         ],
         "fill-opacity": 0.85,
       },
-    },
-
-    // ── PARK ─────────────────────────────────────────────────────────────────
-    {
-      id: "park-fill", type: "fill", source: "kaliningrad", "source-layer": "park",
-      paint: { "fill-color": "#c0e8b8", "fill-opacity": 0.7 },
     },
 
     // ── WATERWAYS ────────────────────────────────────────────────────────────
@@ -195,7 +202,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       minzoom: 12,
       filter: ["in", ["get", "class"], ["literal", ["primary", "secondary", "tertiary", "trunk", "motorway"]]],
       layout: {
-        "text-field": ["get", "name:latin"],
+        "text-field": ["coalesce", ["get", "name:ru"], ["get", "name"], ["get", "name:latin"]],
         "text-font": ["Noto Sans Regular"],
         "text-size": ["interpolate", ["linear"], ["zoom"], 12, 10, 14, 12],
         "symbol-placement": "line",
@@ -211,7 +218,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       minzoom: 11,
       filter: ["in", ["get", "class"], ["literal", ["river", "canal"]]],
       layout: {
-        "text-field": ["get", "name:latin"],
+        "text-field": ["coalesce", ["get", "name:ru"], ["get", "name"], ["get", "name:latin"]],
         "text-font": ["Noto Sans Regular"],
         "text-size": 11,
         "symbol-placement": "line",
@@ -220,25 +227,12 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       paint: { "text-color": "#3a7ab0", "text-halo-color": "rgba(255,255,255,0.8)", "text-halo-width": 1.5 },
     },
 
-    // ── PARK NAMES ───────────────────────────────────────────────────────────
-    {
-      id: "park-labels", type: "symbol", source: "kaliningrad", "source-layer": "park",
-      minzoom: 13,
-      layout: {
-        "text-field": ["get", "name:latin"],
-        "text-font": ["Noto Sans Regular"],
-        "text-size": 11,
-        "text-max-width": 8,
-      },
-      paint: { "text-color": "#3a7a3a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1.5 },
-    },
-
     // ── PLACE LABELS ─────────────────────────────────────────────────────────
     {
       id: "place-labels", type: "symbol", source: "kaliningrad", "source-layer": "place",
       filter: ["in", ["get", "class"], ["literal", ["city", "town", "village", "suburb", "hamlet"]]],
       layout: {
-        "text-field": ["get", "name:latin"],
+        "text-field": ["coalesce", ["get", "name:ru"], ["get", "name"], ["get", "name:latin"]],
         "text-font": ["Noto Sans Regular"],
         "text-size": ["interpolate", ["linear"], ["zoom"],
           6,  ["match", ["get", "class"], "city", 14, "town", 11, 9],
@@ -270,7 +264,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       minzoom: 13,
       filter: ["<=", ["get", "rank"], 3],
       layout: {
-        "text-field": ["get", "name:latin"],
+        "text-field": ["coalesce", ["get", "name:ru"], ["get", "name"], ["get", "name:latin"]],
         "text-font": ["Noto Sans Regular"],
         "text-size": 10,
         "text-max-width": 7,
