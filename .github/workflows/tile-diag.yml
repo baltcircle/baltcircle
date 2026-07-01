@@ -1,4 +1,4 @@
-name: Server Diag
+name: Tile Diag
 on: [workflow_dispatch]
 jobs:
   diag:
@@ -6,29 +6,28 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: check server state
+      - name: check tilemaker setup
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          echo "=== DISK ===" > /tmp/sdiag.txt
-          df -h / >> /tmp/sdiag.txt
-          echo "=== DOCKER CONTAINERS ===" >> /tmp/sdiag.txt
-          docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" >> /tmp/sdiag.txt
-          echo "=== TILESERVER DATA DIR ===" >> /tmp/sdiag.txt
-          docker exec baltcircle-tileserver ls -lh /data/ 2>/dev/null >> /tmp/sdiag.txt || echo "no exec" >> /tmp/sdiag.txt
-          echo "=== TILEMAKER LOCATION ===" >> /tmp/sdiag.txt
-          which tilemaker 2>/dev/null || find / -name "tilemaker" -type f 2>/dev/null | head -3 >> /tmp/sdiag.txt
-          echo "=== OSM PBF FILES ===" >> /tmp/sdiag.txt
-          find / -name "*.osm.pbf" -o -name "*.pbf" 2>/dev/null | grep -v proc | grep -v docker | head -10 >> /tmp/sdiag.txt
-          find /home -name "*.pbf" 2>/dev/null >> /tmp/sdiag.txt
-          find /opt -name "*.pbf" 2>/dev/null >> /tmp/sdiag.txt
-          find /root -name "*.pbf" 2>/dev/null >> /tmp/sdiag.txt
-          echo "=== TILEMAKER CONFIG ===" >> /tmp/sdiag.txt
-          find / -name "config.json" -path "*/tilemaker/*" 2>/dev/null | head -3 >> /tmp/sdiag.txt
-          find /home -name "*.json" 2>/dev/null | xargs grep -l "tilemaker\|openmaptiles" 2>/dev/null | head -3 >> /tmp/sdiag.txt
-          echo "=== MBTILES FILES ===" >> /tmp/sdiag.txt
-          find / -name "*.mbtiles" 2>/dev/null | grep -v proc | head -10 >> /tmp/sdiag.txt
+          echo "=== TILEMAKER DOCKER IMAGE ===" > /tmp/sdiag.txt
+          docker images | grep -i tilemaker >> /tmp/sdiag.txt
+          echo "=== TILEMAKER BINARY ===" >> /tmp/sdiag.txt
+          find /home /opt /usr /root -name "tilemaker" 2>/dev/null >> /tmp/sdiag.txt
+          echo "=== OSM DIR CONTENTS ===" >> /tmp/sdiag.txt
+          ls -lh /home/yc-user/osm/ >> /tmp/sdiag.txt
+          echo "=== PROCESS.LUA FIRST 30 LINES ===" >> /tmp/sdiag.txt
+          head -30 /home/yc-user/osm/process.lua >> /tmp/sdiag.txt 2>/dev/null || \
+            docker exec baltcircle-tileserver head -30 /data/process.lua >> /tmp/sdiag.txt 2>/dev/null
+          echo "=== CONFIG.JSON ===" >> /tmp/sdiag.txt
+          cat /home/yc-user/osm/config.json >> /tmp/sdiag.txt 2>/dev/null || \
+            docker exec baltcircle-tileserver cat /data/config.json >> /tmp/sdiag.txt 2>/dev/null
+          echo "=== DOCKER COMPOSE FOR TILESERVER ===" >> /tmp/sdiag.txt
+          find /home /opt -name "docker-compose*.yml" 2>/dev/null | xargs grep -l tileserver 2>/dev/null | head -3 >> /tmp/sdiag.txt
+          cat /home/yc-user/osm/docker-compose.yml >> /tmp/sdiag.txt 2>/dev/null
+          echo "=== BASH HISTORY TILEMAKER ===" >> /tmp/sdiag.txt
+          grep -i tilemaker /home/yc-user/.bash_history 2>/dev/null | tail -10 >> /tmp/sdiag.txt
           cat /tmp/sdiag.txt
           ENC=$(base64 -w0 /tmp/sdiag.txt)
           SHA_FILE=$(curl -sf -H "Authorization: token $TOKEN" \
@@ -36,4 +35,4 @@ jobs:
             | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
           curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: diag [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}" && echo OK
+            -d "{\"message\":\"ci: tilemaker diag [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}" && echo OK
