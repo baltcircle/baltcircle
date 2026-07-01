@@ -19,7 +19,7 @@ jobs:
           echo "=== RAM ===" && free -h
           echo "=== Disk ===" && df -h /
 
-          echo "[1/5] Checking coastline shapefile..."
+          echo "[1/4] Checking coastline shapefile..."
           if [ ! -f "coastline/simplified_water_polygons.shp" ]; then
             echo "Downloading coastline (22 MB)..."
             curl -L --progress-bar -o coastline.zip \
@@ -32,37 +32,31 @@ jobs:
             find coastline_tmp -name "*.prj" -exec cp {} coastline/ \;
             rm -rf coastline_tmp coastline.zip
           fi
-          echo "Coastline: $(ls -lh coastline/*.shp)"
+          echo "Coastline OK: $(ls -lh coastline/*.shp)"
 
-          echo "[2/5] Downloading Lithuania (211 MB)..."
+          echo "[2/4] Downloading Lithuania (211 MB)..."
           [ -f "lithuania.osm.pbf" ] || curl -L --progress-bar -o lithuania.osm.pbf \
             "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf"
 
-          echo "[3/5] Downloading Latvia (132 MB)..."
-          [ -f "latvia.osm.pbf" ] || curl -L --progress-bar -o latvia.osm.pbf \
-            "https://download.geofabrik.de/europe/latvia-latest.osm.pbf"
-
-          echo "[4/5] Downloading Poland subregions..."
+          echo "[3/4] Downloading Poland subregions..."
           [ -f "warminsko.osm.pbf" ] || curl -L --progress-bar -o warminsko.osm.pbf \
             "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf"
           [ -f "pomorskie.osm.pbf" ] || curl -L --progress-bar -o pomorskie.osm.pbf \
             "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf"
 
-          echo "=== Disk after downloads ===" && df -h /
           echo "=== Files ===" && ls -lh *.pbf
+          echo "=== Disk ===" && df -h /
 
-          echo "[5/5] Updating config.json ocean source..."
-          python3 -c "import json; f=open('config.json'); cfg=json.load(f); f.close(); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; f2=open('config.json','w'); json.dump(cfg,f2,indent=2); f2.close(); print('config.json updated: ocean source =', cfg['layers']['ocean']['source'])"
+          echo "[4/4] Updating config and running tilemaker (bbox: 18.5,53.3,24.5,57.5)..."
+          python3 -c "import json; f=open('config.json'); cfg=json.load(f); f.close(); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; f2=open('config.json','w'); json.dump(cfg,f2,indent=2); f2.close(); print('config.json updated')"
 
-          echo "Running tilemaker with all input files (no osmium needed)..."
           tilemaker \
             --input kaliningrad.osm.pbf \
             --input lithuania.osm.pbf \
-            --input latvia.osm.pbf \
             --input warminsko.osm.pbf \
             --input pomorskie.osm.pbf \
             --output extended.mbtiles \
-            --bbox 17.5,52.0,27.0,58.0 \
+            --bbox 18.5,53.3,24.5,57.5 \
             --config config.json \
             --process process.lua
 
