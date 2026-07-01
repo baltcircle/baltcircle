@@ -2,7 +2,6 @@ name: Regen Tiles Extended
 on:
   push:
     branches: [main]
-
   workflow_dispatch:
 jobs:
   regen:
@@ -17,11 +16,9 @@ jobs:
         run: |
           set -e
           cd /home/yc-user/osm
-          echo "=== Disk before ==="
-          df -h /
+          echo "=== Disk before ===" && df -h /
 
-          echo "[1/7] Installing osmium-tool..."
-          sudo apt-get install -y osmium-tool 2>&1 | tail -5
+          echo "[1/7] osmium already installed: $(which osmium)"
 
           echo "[2/7] Downloading simplified coastline (22 MB)..."
           if [ ! -f "coastline/simplified_water_polygons.shp" ]; then
@@ -36,33 +33,24 @@ jobs:
             rm -rf coastline_tmp coastline.zip
             ls -lh coastline/
           else
-            echo "Coastline already present"
+            echo "Coastline already present: $(ls coastline/)"
           fi
 
           echo "[3/7] Downloading Lithuania (211 MB)..."
-          if [ ! -f "lithuania.osm.pbf" ]; then
-            curl -L --progress-bar -o lithuania.osm.pbf \
-              "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf"
-          fi
+          [ -f "lithuania.osm.pbf" ] || curl -L --progress-bar -o lithuania.osm.pbf \
+            "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf"
 
           echo "[4/7] Downloading Latvia (132 MB)..."
-          if [ ! -f "latvia.osm.pbf" ]; then
-            curl -L --progress-bar -o latvia.osm.pbf \
-              "https://download.geofabrik.de/europe/latvia-latest.osm.pbf"
-          fi
+          [ -f "latvia.osm.pbf" ] || curl -L --progress-bar -o latvia.osm.pbf \
+            "https://download.geofabrik.de/europe/latvia-latest.osm.pbf"
 
           echo "[5/7] Downloading Poland subregions..."
-          if [ ! -f "warminsko.osm.pbf" ]; then
-            curl -L --progress-bar -o warminsko.osm.pbf \
-              "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf"
-          fi
-          if [ ! -f "pomorskie.osm.pbf" ]; then
-            curl -L --progress-bar -o pomorskie.osm.pbf \
-              "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf"
-          fi
+          [ -f "warminsko.osm.pbf" ] || curl -L --progress-bar -o warminsko.osm.pbf \
+            "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf"
+          [ -f "pomorskie.osm.pbf" ] || curl -L --progress-bar -o pomorskie.osm.pbf \
+            "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf"
 
-          echo "=== Disk after downloads ==="
-          df -h /
+          echo "=== Disk after downloads ===" && df -h /
 
           echo "[6/7] Merging and clipping to bbox [17.5,52.0,27.0,58.0]..."
           FILES="kaliningrad.osm.pbf"
@@ -71,31 +59,29 @@ jobs:
           [ -f "warminsko.osm.pbf" ] && FILES="$FILES warminsko.osm.pbf"
           [ -f "pomorskie.osm.pbf" ] && FILES="$FILES pomorskie.osm.pbf"
           echo "Merging: $FILES"
-
           osmium merge $FILES -o merged-tmp.osm.pbf --overwrite
           echo "Merged: $(du -sh merged-tmp.osm.pbf)"
-
-          osmium extract --bbox 17.5,52.0,27.0,58.0 \
-            merged-tmp.osm.pbf -o extended.osm.pbf --overwrite
+          osmium extract --bbox 17.5,52.0,27.0,58.0 merged-tmp.osm.pbf -o extended.osm.pbf --overwrite
           rm -f merged-tmp.osm.pbf
           echo "Extended: $(du -sh extended.osm.pbf)"
           df -h /
 
           echo "[7/7] Updating config and running tilemaker..."
-          python3 -c "
-import json
-with open('config.json') as f:
-    cfg = json.load(f)
-cfg['layers']['ocean']['source'] = 'coastline/simplified_water_polygons.shp'
-with open('config.json', 'w') as f:
-    json.dump(cfg, f, indent=2)
-print('config.json updated')
-"
+          python3 << 'PYEOF'
+          import json
+          with open('config.json') as f:
+              cfg = json.load(f)
+          cfg['layers']['ocean']['source'] = 'coastline/simplified_water_polygons.shp'
+          with open('config.json', 'w') as f:
+              json.dump(cfg, f, indent=2)
+          print('config.json updated: coastline path set to simplified_water_polygons.shp')
+          PYEOF
+
           tilemaker \
             --input extended.osm.pbf \
             --output extended.mbtiles \
             --config config.json \
-            --process process.lua 2>&1
+            --process process.lua
 
           echo "Result: $(du -sh extended.mbtiles)"
           cp extended.mbtiles kaliningrad.mbtiles
@@ -103,10 +89,11 @@ print('config.json updated')
           sleep 8
           docker ps | grep tileserver
           curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "
-import json,sys; d=json.load(sys.stdin)
-print('bounds:', d.get('bounds'))
-print('minzoom:', d.get('minzoom'), 'maxzoom:', d.get('maxzoom'))
-"
+          import json,sys
+          d=json.load(sys.stdin)
+          print('bounds:', d.get('bounds'))
+          print('zoom:', d.get('minzoom'), '-', d.get('maxzoom'))
+          "
           echo "ALL DONE"
 
       - name: Report result
@@ -119,9 +106,10 @@ print('minzoom:', d.get('minzoom'), 'maxzoom:', d.get('maxzoom'))
             echo "mbtiles: $(du -sh kaliningrad.mbtiles 2>/dev/null)"
             echo "disk: $(df -h / | tail -1)"
             curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "
-import json,sys; d=json.load(sys.stdin)
-print('bounds:', d.get('bounds'))
-" 2>/dev/null
+          import json,sys
+          d=json.load(sys.stdin)
+          print('bounds:', d.get('bounds'))
+          " 2>/dev/null || echo "tileserver not responding"
           } > /tmp/r.txt
           cat /tmp/r.txt
           ENC=$(base64 -w0 /tmp/r.txt)
@@ -130,4 +118,4 @@ print('bounds:', d.get('bounds'))
             | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
           curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: regen result [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}"
+            -d "{\"message\":\"ci: regen result\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}"
