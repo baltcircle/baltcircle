@@ -16,12 +16,23 @@ jobs:
         run: |
           set -e
           cd /home/yc-user/osm
-          echo "=== RAM ===" && free -h
+          echo "=== RAM before ===" && free -h
           echo "=== Disk ===" && df -h /
 
-          echo "[1/4] Checking coastline shapefile..."
+          echo "[0/5] Adding 4GB swap if not present..."
+          if [ "$(swapon --show | wc -l)" -eq 0 ]; then
+            sudo fallocate -l 4G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+            echo "Swap created"
+          else
+            echo "Swap already active"
+          fi
+          free -h
+
+          echo "[1/5] Checking coastline shapefile..."
           if [ ! -f "coastline/simplified_water_polygons.shp" ]; then
-            echo "Downloading coastline (22 MB)..."
             curl -L --progress-bar -o coastline.zip \
               "https://osmdata.openstreetmap.de/download/simplified-water-polygons-split-3857.zip"
             mkdir -p coastline
@@ -34,22 +45,23 @@ jobs:
           fi
           echo "Coastline OK: $(ls -lh coastline/*.shp)"
 
-          echo "[2/4] Downloading Lithuania (211 MB)..."
+          echo "[2/5] Downloading Lithuania..."
           [ -f "lithuania.osm.pbf" ] || curl -L --progress-bar -o lithuania.osm.pbf \
             "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf"
 
-          echo "[3/4] Downloading Poland subregions..."
+          echo "[3/5] Downloading Poland subregions..."
           [ -f "warminsko.osm.pbf" ] || curl -L --progress-bar -o warminsko.osm.pbf \
             "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf"
           [ -f "pomorskie.osm.pbf" ] || curl -L --progress-bar -o pomorskie.osm.pbf \
             "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf"
 
           echo "=== Files ===" && ls -lh *.pbf
-          echo "=== Disk ===" && df -h /
+          echo "=== Disk + RAM ===" && df -h / && free -h
 
-          echo "[4/4] Updating config and running tilemaker (bbox: 18.5,53.3,24.5,57.5)..."
+          echo "[4/5] Updating config.json..."
           python3 -c "import json; f=open('config.json'); cfg=json.load(f); f.close(); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; f2=open('config.json','w'); json.dump(cfg,f2,indent=2); f2.close(); print('config.json updated')"
 
+          echo "[5/5] Running tilemaker..."
           tilemaker \
             --input kaliningrad.osm.pbf \
             --input lithuania.osm.pbf \
