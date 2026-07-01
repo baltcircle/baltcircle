@@ -32,6 +32,8 @@ const MAX_BOUNDS: [number, number, number, number] = [18.3, 53.2, 24.9, 57.3];
 // PMTiles URL — loaded from /pmtiles_url.txt (written by CI after generation)
 // Fallback to old /tiles proxy if PMTiles not yet available
 const PMTILES_CDN = "https://unpkg.com/pmtiles@3/dist/pmtiles.js";
+// PMTiles file URL — updated by CI on each regeneration
+const PMTILES_URL = "https://github.com/baltcircle/baltcircle/releases/download/pmtiles-latest/kaliningrad.pmtiles";
 
 const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"; url: string }, minzoom: number, maxzoom: number): object => ({
   version: 8,
@@ -391,16 +393,10 @@ export function MapLibreMap({
     const tryInitPMTiles = async () => {
       if (cancelled || mapRef.current) return;
       try {
-        // Try to fetch pmtiles URL written by CI
-        const resp = await fetch("/pmtiles_url.txt");
-        if (!resp.ok) throw new Error("no pmtiles_url.txt");
-        const pmtilesUrl = (await resp.text()).trim();
-        if (!pmtilesUrl.startsWith("http")) throw new Error("invalid url");
-
         await loadPMTiles();
-        if (!cancelled) initMap({ type: "pmtiles", url: pmtilesUrl }, 0, 14);
+        if (!cancelled) initMap({ type: "pmtiles", url: PMTILES_URL }, 0, 14);
       } catch {
-        // Fallback: use old /tiles proxy (tileserver still running on server)
+        // Fallback: use old /tiles proxy
         tryInitXYZ();
       }
     };
