@@ -1,36 +1,133 @@
-name: Test Sudo and Osmium
+name: Regen Tiles Extended
 on:
   push:
     branches: [main]
+
   workflow_dispatch:
 jobs:
-  test:
+  regen:
     runs-on: [self-hosted, baltcircle-prod]
-    timeout-minutes: 10
+    timeout-minutes: 180
     permissions:
       contents: write
     steps:
-      - name: test sudo and osmium install
+      - name: Download data and generate extended tiles
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set +e
-          echo "=== SUDO TEST ===" > /tmp/test-result.txt
-          sudo echo "sudo works" >> /tmp/test-result.txt 2>&1 || echo "sudo FAILED: $?" >> /tmp/test-result.txt
-          echo "=== APT OSMIUM ===" >> /tmp/test-result.txt
-          sudo apt-get install -y osmium-tool 2>&1 | tail -3 >> /tmp/test-result.txt
-          echo "=== OSMIUM WHICH ===" >> /tmp/test-result.txt
-          which osmium >> /tmp/test-result.txt 2>&1 || echo "osmium not found" >> /tmp/test-result.txt
-          echo "=== WHOAMI ===" >> /tmp/test-result.txt
-          whoami >> /tmp/test-result.txt
-          id >> /tmp/test-result.txt
-          echo "=== DISK ===" >> /tmp/test-result.txt
-          df -h / >> /tmp/test-result.txt
-          cat /tmp/test-result.txt
-          ENC=$(base64 -w0 /tmp/test-result.txt)
+          set -e
+          cd /home/yc-user/osm
+          echo "=== Disk before ==="
+          df -h /
+
+          echo "[1/7] Installing osmium-tool..."
+          sudo apt-get install -y osmium-tool 2>&1 | tail -5
+
+          echo "[2/7] Downloading simplified coastline (22 MB)..."
+          if [ ! -f "coastline/simplified_water_polygons.shp" ]; then
+            curl -L --progress-bar -o coastline.zip \
+              "https://osmdata.openstreetmap.de/download/simplified-water-polygons-split-3857.zip"
+            mkdir -p coastline
+            unzip -o coastline.zip -d coastline_tmp
+            find coastline_tmp -name "*.shp" -exec cp {} coastline/ \;
+            find coastline_tmp -name "*.dbf" -exec cp {} coastline/ \;
+            find coastline_tmp -name "*.shx" -exec cp {} coastline/ \;
+            find coastline_tmp -name "*.prj" -exec cp {} coastline/ \;
+            rm -rf coastline_tmp coastline.zip
+            ls -lh coastline/
+          else
+            echo "Coastline already present"
+          fi
+
+          echo "[3/7] Downloading Lithuania (211 MB)..."
+          if [ ! -f "lithuania.osm.pbf" ]; then
+            curl -L --progress-bar -o lithuania.osm.pbf \
+              "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf"
+          fi
+
+          echo "[4/7] Downloading Latvia (132 MB)..."
+          if [ ! -f "latvia.osm.pbf" ]; then
+            curl -L --progress-bar -o latvia.osm.pbf \
+              "https://download.geofabrik.de/europe/latvia-latest.osm.pbf"
+          fi
+
+          echo "[5/7] Downloading Poland subregions..."
+          if [ ! -f "warminsko.osm.pbf" ]; then
+            curl -L --progress-bar -o warminsko.osm.pbf \
+              "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf"
+          fi
+          if [ ! -f "pomorskie.osm.pbf" ]; then
+            curl -L --progress-bar -o pomorskie.osm.pbf \
+              "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf"
+          fi
+
+          echo "=== Disk after downloads ==="
+          df -h /
+
+          echo "[6/7] Merging and clipping to bbox [17.5,52.0,27.0,58.0]..."
+          FILES="kaliningrad.osm.pbf"
+          [ -f "lithuania.osm.pbf" ] && FILES="$FILES lithuania.osm.pbf"
+          [ -f "latvia.osm.pbf" ]    && FILES="$FILES latvia.osm.pbf"
+          [ -f "warminsko.osm.pbf" ] && FILES="$FILES warminsko.osm.pbf"
+          [ -f "pomorskie.osm.pbf" ] && FILES="$FILES pomorskie.osm.pbf"
+          echo "Merging: $FILES"
+
+          osmium merge $FILES -o merged-tmp.osm.pbf --overwrite
+          echo "Merged: $(du -sh merged-tmp.osm.pbf)"
+
+          osmium extract --bbox 17.5,52.0,27.0,58.0 \
+            merged-tmp.osm.pbf -o extended.osm.pbf --overwrite
+          rm -f merged-tmp.osm.pbf
+          echo "Extended: $(du -sh extended.osm.pbf)"
+          df -h /
+
+          echo "[7/7] Updating config and running tilemaker..."
+          python3 -c "
+import json
+with open('config.json') as f:
+    cfg = json.load(f)
+cfg['layers']['ocean']['source'] = 'coastline/simplified_water_polygons.shp'
+with open('config.json', 'w') as f:
+    json.dump(cfg, f, indent=2)
+print('config.json updated')
+"
+          tilemaker \
+            --input extended.osm.pbf \
+            --output extended.mbtiles \
+            --config config.json \
+            --process process.lua 2>&1
+
+          echo "Result: $(du -sh extended.mbtiles)"
+          cp extended.mbtiles kaliningrad.mbtiles
+          docker restart baltcircle-tileserver
+          sleep 8
+          docker ps | grep tileserver
+          curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+print('bounds:', d.get('bounds'))
+print('minzoom:', d.get('minzoom'), 'maxzoom:', d.get('maxzoom'))
+"
+          echo "ALL DONE"
+
+      - name: Report result
+        if: always()
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd /home/yc-user/osm
+          {
+            echo "mbtiles: $(du -sh kaliningrad.mbtiles 2>/dev/null)"
+            echo "disk: $(df -h / | tail -1)"
+            curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+print('bounds:', d.get('bounds'))
+" 2>/dev/null
+          } > /tmp/r.txt
+          cat /tmp/r.txt
+          ENC=$(base64 -w0 /tmp/r.txt)
           SHA_FILE=$(curl -sf -H "Authorization: token $TOKEN" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
             | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
           curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: test result\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}" && echo OK
+            -d "{\"message\":\"ci: regen result [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}"
