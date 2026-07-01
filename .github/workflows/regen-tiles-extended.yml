@@ -2,7 +2,7 @@ name: Regen Tiles Extended
 on:
   push:
     branches: [main]
-    paths: ['.github/workflows/regen-tiles-extended.yml']
+
   workflow_dispatch:
 jobs:
   regen:
