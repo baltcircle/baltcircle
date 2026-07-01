@@ -18,6 +18,19 @@ jobs:
           cd /home/yc-user/osm
           free -h && df -h /
 
+          echo "[0/7] Upgrade tilemaker to latest..."
+          TILEMAKER_URL="https://github.com/systemed/tilemaker/releases/download/v3.0.0/tilemaker-ubuntu-22.04.gz"
+          TM_VERSION=$(tilemaker 2>&1 | grep -i version | head -1 || echo "old")
+          echo "Current tilemaker: $TM_VERSION"
+          if ! echo "$TM_VERSION" | grep -q "3\."; then
+            echo "Upgrading tilemaker to v3.0.0..."
+            curl -L "$TILEMAKER_URL" -o /tmp/tilemaker.gz
+            gunzip -f /tmp/tilemaker.gz
+            chmod +x /tmp/tilemaker
+            sudo mv /tmp/tilemaker /usr/local/bin/tilemaker
+            echo "New tilemaker: $(tilemaker --version 2>&1 | head -1)"
+          fi
+
           echo "[1/7] Swap..."
           if [ "$(swapon --show | wc -l)" -eq 0 ]; then
             sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
@@ -83,19 +96,13 @@ import json, os
 f = open('config.json')
 cfg = json.load(f)
 f.close()
-# Fix ocean source
 cfg['layers']['ocean']['source'] = 'coastline/simplified_water_polygons.shp'
-# Remove layers with missing shapefiles
-to_remove = []
-for name, layer in cfg.get('layers', {}).items():
-    src = layer.get('source', '')
-    if src and not src.startswith('coastline') and not os.path.exists(src):
-        print(f'Removing layer {name} (missing: {src})')
-        to_remove.append(name)
-for name in to_remove:
-    del cfg['layers'][name]
+to_remove = [n for n, l in cfg.get('layers', {}).items() if l.get('source','') and not l['source'].startswith('coastline') and not os.path.exists(l['source'])]
+for n in to_remove:
+    print(f'Skip missing layer: {n}')
+    del cfg['layers'][n]
 open('config.json', 'w').write(json.dumps(cfg, indent=2))
-print('config.json updated, layers kept:', list(cfg['layers'].keys()))
+print('Config ready, layers:', list(cfg['layers'].keys()))
 "
 
           tilemaker \
