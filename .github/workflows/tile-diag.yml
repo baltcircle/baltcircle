@@ -26,7 +26,6 @@ jobs:
             sudo mkswap /swapfile
             sudo swapon /swapfile
             grep -q swapfile /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-            echo "Swap created"
           fi
           free -h
 
@@ -42,31 +41,41 @@ jobs:
             rm -rf coastline_tmp coastline.zip
             echo "Coastline OK"
           else
-            echo "Coastline already present"
+            echo "Coastline already present: $(ls -lh coastline/*.shp)"
           fi
 
-          echo "[3/5] Downloading border region via Overpass API (bbox: 18.5,53.3,24.8,57.2)..."
-          if [ ! -f "border-region.osm.pbf" ] || [ "$(stat -c%s border-region.osm.pbf 2>/dev/null)" -lt 1000000 ]; then
-            rm -f border-region.osm.pbf border-region.osm
-            BBOX="18.5,53.3,24.8,57.2"
-            QUERY="[out:xml][timeout:900][bbox:${BBOX}];(node;<;>;);out body;"
-            for MIRROR in "https://overpass-api.de/api/interpreter" "https://overpass.kumi.systems/api/interpreter" "https://lz4.overpass-api.de/api/interpreter"; do
-              echo "Trying $MIRROR..."
-              curl -f --max-time 900 --retry 2 --progress-bar -d "data=${QUERY}" "$MIRROR" -o border-region.osm && break || true
-              [ -s border-region.osm ] && break
-            done
-            echo "Downloaded OSM: $(du -sh border-region.osm 2>/dev/null)"
-            osmium cat border-region.osm -o border-region.osm.pbf --overwrite
+          echo "[3/5] Downloading fresh border region via Overpass API (bbox: 18.5,53.3,24.8,57.2)..."
+          rm -f border-region.osm.pbf border-region.osm
+          BBOX="18.5,53.3,24.8,57.2"
+          QUERY="[out:xml][timeout:900][bbox:${BBOX}];(node;<;>;);out body;"
+          SUCCESS=0
+          for MIRROR in "https://overpass-api.de/api/interpreter" "https://overpass.kumi.systems/api/interpreter" "https://lz4.overpass-api.de/api/interpreter"; do
+            echo "Trying $MIRROR..."
+            curl -f --max-time 900 --retry 1 --progress-bar -d "data=${QUERY}" "$MIRROR" -o border-region.osm
+            SIZE=$(stat -c%s border-region.osm 2>/dev/null || echo 0)
+            echo "Downloaded: $(du -sh border-region.osm) (${SIZE} bytes)"
+            if [ "$SIZE" -gt 100000 ]; then
+              SUCCESS=1
+              break
+            fi
+            echo "Too small, trying next mirror..."
             rm -f border-region.osm
-            echo "PBF: $(du -sh border-region.osm.pbf)"
-          else
-            echo "border-region.osm.pbf cached: $(du -sh border-region.osm.pbf)"
+          done
+          if [ "$SUCCESS" -eq 0 ]; then
+            echo "ERROR: All Overpass mirrors failed"
+            exit 1
           fi
+          echo "Converting to PBF..."
+          osmium cat border-region.osm -o border-region.osm.pbf --overwrite
+          rm -f border-region.osm
+          echo "border-region PBF: $(du -sh border-region.osm.pbf)"
 
           echo "[4/5] Updating config.json ocean source..."
           python3 -c "import json; f=open('config.json'); cfg=json.load(f); f.close(); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; open('config.json','w').write(json.dumps(cfg,indent=2)); print('ocean source updated')"
 
-          echo "[5/5] Running tilemaker (Kaliningrad full + border strip)..."
+          echo "[5/5] Running tilemaker with BOTH inputs..."
+          echo "  kaliningrad.osm.pbf: $(du -sh kaliningrad.osm.pbf)"
+          echo "  border-region.osm.pbf: $(du -sh border-region.osm.pbf)"
           free -h
           tilemaker \
             --input kaliningrad.osm.pbf \
@@ -74,7 +83,6 @@ jobs:
             --output extended.mbtiles \
             --config config.json \
             --process process.lua
-
           echo "Result: $(du -sh extended.mbtiles)"
           cp extended.mbtiles kaliningrad.mbtiles
           docker restart baltcircle-tileserver
