@@ -1,2 +1,23 @@
-protomaps=200 bytes=76044
-orangemug=200
+=== DISK ===
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/vda1        39G   31G  7.8G  80% /
+=== DOCKER CONTAINERS ===
+NAMES                   IMAGE                           STATUS
+baltcircle-mvp          baltcicl-baltcircle             Up 27 minutes
+baltcircle-tileserver   maptiler/tileserver-gl:latest   Up 45 minutes (healthy)
+=== TILESERVER DATA DIR ===
+total 62M
+drwxr-xr-x 2 ubuntu ubuntu 4.0K Jun 30 15:08 config
+-rw-r--r-- 1 ubuntu ubuntu 3.2K Jun 30 16:31 config.json
+-rw-r--r-- 1 ubuntu ubuntu  296 Jun 30 16:22 docker-compose.yml
+-rw-r--r-- 1 ubuntu ubuntu  35M Jun 30 16:32 kaliningrad.mbtiles
+-rw-r--r-- 1 ubuntu ubuntu  27M Jun 30 16:27 kaliningrad.osm.pbf
+-rw-r--r-- 1 ubuntu ubuntu  28K Jun 30 16:31 process.lua
+drwxr-xr-x 2 ubuntu ubuntu 4.0K Jun 30 14:57 tiles
+=== TILEMAKER LOCATION ===
+=== OSM PBF FILES ===
+/home/yc-user/osm/kaliningrad.osm.pbf
+/home/yc-user/osm/kaliningrad.osm.pbf
+=== TILEMAKER CONFIG ===
+=== MBTILES FILES ===
+/home/yc-user/osm/kaliningrad.mbtiles
