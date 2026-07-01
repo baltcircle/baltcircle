@@ -1188,20 +1188,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
 
-  // ── PMTiles URL endpoint ─────────────────────────────────────────────────
-  // Returns the CDN URL of the current kaliningrad.pmtiles file (written by CI).
-  // MapLibreMap.tsx fetches this to resolve the PMTiles source URL at runtime.
-  app.get("/pmtiles_url.txt", (_req: Request, res: Response) => {
+  // ── PMTiles file serving ─────────────────────────────────────────────────
+  // Serves kaliningrad.pmtiles from the mounted /app/osm volume.
+  // Supports HTTP Range requests — required by PMTiles protocol.
+  app.get("/kaliningrad.pmtiles", (req: Request, res: Response) => {
     const fs = require("fs") as typeof import("fs");
     const path = require("path") as typeof import("path");
-    const urlFile = path.join(process.cwd(), "pmtiles_url.txt");
-    if (fs.existsSync(urlFile)) {
-      const url = fs.readFileSync(urlFile, "utf8").trim();
-      res.setHeader("Content-Type", "text/plain");
-      res.setHeader("Cache-Control", "public, max-age=3600");
-      res.send(url);
-    } else {
+    const filePath = path.join("/app/osm", "kaliningrad.pmtiles");
+    if (!fs.existsSync(filePath)) {
       res.status(404).end();
+      return;
+    }
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const rangeHeader = req.headers.range;
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    if (rangeHeader) {
+      const parts = rangeHeader.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunkSize = end - start + 1;
+      res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
+      res.setHeader("Content-Length", chunkSize);
+      res.status(206);
+      const stream = fs.createReadStream(filePath, { start, end });
+      stream.pipe(res);
+    } else {
+      res.setHeader("Content-Length", fileSize);
+      res.status(200);
+      fs.createReadStream(filePath).pipe(res);
     }
   });
 
