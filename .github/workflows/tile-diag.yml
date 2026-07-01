@@ -16,18 +16,16 @@ jobs:
         run: |
           set -e
           cd /home/yc-user/osm
-          echo "=== RAM ===" && free -h
-          echo "=== Disk ===" && df -h /
+          free -h && df -h /
 
-          echo "[1/6] Adding swap if not present..."
+          echo "[1/6] Swap..."
           if [ "$(swapon --show | wc -l)" -eq 0 ]; then
-            sudo fallocate -l 4G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
-            sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+            sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
             grep -q swapfile /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
           fi
           free -h
 
-          echo "[2/6] Checking coastline shapefile..."
+          echo "[2/6] Coastline..."
           if [ ! -f "coastline/simplified_water_polygons.shp" ]; then
             curl -L --progress-bar -o coastline.zip "https://osmdata.openstreetmap.de/download/simplified-water-polygons-split-3857.zip"
             mkdir -p coastline && unzip -o coastline.zip -d coastline_tmp
@@ -35,60 +33,64 @@ jobs:
             find coastline_tmp -name "*.dbf" -exec cp {} coastline/ \;
             find coastline_tmp -name "*.shx" -exec cp {} coastline/ \;
             find coastline_tmp -name "*.prj" -exec cp {} coastline/ \;
-            rm -rf coastline_tmp coastline.zip && echo "Coastline OK"
-          else
-            echo "Coastline present"
+            rm -rf coastline_tmp coastline.zip
           fi
+          echo "Coastline: $(ls coastline/*.shp)"
 
-          download_overpass() {
-            local BBOX="$1" OUT="$2"
-            local QUERY="[out:xml][timeout:600][bbox:${BBOX}];(node;<;>;);out body;"
-            rm -f "$OUT.osm" "$OUT"
-            for MIRROR in "https://overpass-api.de/api/interpreter" "https://overpass.kumi.systems/api/interpreter" "https://lz4.overpass-api.de/api/interpreter"; do
-              echo "  Trying $MIRROR for bbox $BBOX..."
-              curl -f --max-time 700 --retry 1 --progress-bar -d "data=${QUERY}" "$MIRROR" -o "$OUT.osm" || true
-              SIZE=$(stat -c%s "$OUT.osm" 2>/dev/null || echo 0)
-              if [ "$SIZE" -gt 100000 ]; then
-                echo "  Downloaded: $(du -sh $OUT.osm)"
-                osmium cat "$OUT.osm" -o "$OUT" --overwrite
-                rm -f "$OUT.osm"
-                echo "  PBF: $(du -sh $OUT)"
-                return 0
-              fi
-              echo "  Too small (${SIZE} bytes), trying next..."
-              rm -f "$OUT.osm"
-            done
-            echo "ERROR: all mirrors failed for bbox $BBOX"
-            return 1
+          # Clip bbox: ~50km around Kaliningrad border
+          BBOX="18.5,53.3,24.8,57.2"
+
+          clip_region() {
+            local URL="$1" RAW="$2" CLIPPED="$3"
+            if [ ! -f "$CLIPPED" ] || [ "$(stat -c%s $CLIPPED)" -lt 500000 ]; then
+              echo "  Downloading $RAW..."
+              curl -L --progress-bar -o "$RAW" "$URL"
+              echo "  Downloaded: $(du -sh $RAW)"
+              echo "  Clipping to bbox $BBOX..."
+              osmium extract --bbox "$BBOX" "$RAW" -o "$CLIPPED" --overwrite --strategy=simple
+              echo "  Clipped: $(du -sh $CLIPPED)"
+              rm -f "$RAW"
+            else
+              echo "  $CLIPPED already cached: $(du -sh $CLIPPED)"
+            fi
           }
 
-          echo "[3/6] Downloading Poland border strip (south of Kaliningrad)..."
-          # Warmia-Mazury + Pomerania border area, ~50km south
-          download_overpass "18.8,53.3,22.9,54.4" "poland-border.osm.pbf"
+          echo "[3/6] Lithuania border strip..."
+          clip_region \
+            "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf" \
+            "lithuania-full.osm.pbf" \
+            "lithuania-clipped.osm.pbf"
 
-          echo "[4/6] Downloading Lithuania border strip (north/east of Kaliningrad)..."
-          # Southern Lithuania, ~80km north
-          download_overpass "19.5,54.5,24.5,57.2" "lithuania-border.osm.pbf"
+          echo "[4/6] Poland (Warminsko) border strip..."
+          clip_region \
+            "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf" \
+            "warminsko-full.osm.pbf" \
+            "warminsko-clipped.osm.pbf"
 
-          echo "[5/6] Updating config.json..."
+          echo "[5/6] Poland (Pomorskie) border strip..."
+          clip_region \
+            "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf" \
+            "pomorskie-full.osm.pbf" \
+            "pomorskie-clipped.osm.pbf"
+
+          echo "=== Files ready ===" && ls -lh *-clipped.osm.pbf kaliningrad.osm.pbf
+          free -h
+
+          echo "[6/6] Updating config and running tilemaker..."
           python3 -c "import json; f=open('config.json'); cfg=json.load(f); f.close(); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; open('config.json','w').write(json.dumps(cfg,indent=2)); print('ocean source updated')"
 
-          echo "[6/6] Running tilemaker with all inputs..."
-          echo "  kaliningrad.osm.pbf: $(du -sh kaliningrad.osm.pbf)"
-          echo "  poland-border.osm.pbf: $(du -sh poland-border.osm.pbf)"
-          echo "  lithuania-border.osm.pbf: $(du -sh lithuania-border.osm.pbf)"
-          free -h
           tilemaker \
             --input kaliningrad.osm.pbf \
-            --input poland-border.osm.pbf \
-            --input lithuania-border.osm.pbf \
+            --input lithuania-clipped.osm.pbf \
+            --input warminsko-clipped.osm.pbf \
+            --input pomorskie-clipped.osm.pbf \
             --output extended.mbtiles \
             --config config.json \
             --process process.lua
+
           echo "Result: $(du -sh extended.mbtiles)"
           cp extended.mbtiles kaliningrad.mbtiles
-          docker restart baltcircle-tileserver
-          sleep 8
+          docker restart baltcircle-tileserver && sleep 8
           docker ps | grep tileserver
           curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "import json,sys; d=json.load(sys.stdin); print('bounds:', d.get('bounds')); print('zoom:', d.get('minzoom'),'-',d.get('maxzoom'))"
           echo "ALL DONE"
