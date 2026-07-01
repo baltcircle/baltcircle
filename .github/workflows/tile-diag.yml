@@ -1,4 +1,4 @@
-name: Tile Diag
+name: Server Diag
 on: [workflow_dispatch]
 jobs:
   diag:
@@ -6,21 +6,34 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: check glyphs proxy
+      - name: check server state
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          G1=$(curl -so /dev/null -w '%{http_code}' --max-time 8 'http://localhost:5000/glyphs/Noto%20Sans%20Regular/0-255.pbf')
-          G1S=$(curl -s --max-time 8 'http://localhost:5000/glyphs/Noto%20Sans%20Regular/0-255.pbf' | wc -c)
-          # Check what place layer returns
-          PLACE=$(curl -s 'http://localhost:8080/data/kaliningrad.json' | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('vector_layers','?'))" 2>/dev/null | head -c 300)
-          printf "glyphs_http=%s bytes=%s\nvector_layers=%s\n" "$G1" "$G1S" "$PLACE" > /tmp/r.txt
-          cat /tmp/r.txt
-          ENC=$(base64 -w0 /tmp/r.txt)
+          echo "=== DISK ===" > /tmp/sdiag.txt
+          df -h / >> /tmp/sdiag.txt
+          echo "=== DOCKER CONTAINERS ===" >> /tmp/sdiag.txt
+          docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" >> /tmp/sdiag.txt
+          echo "=== TILESERVER DATA DIR ===" >> /tmp/sdiag.txt
+          docker exec baltcircle-tileserver ls -lh /data/ 2>/dev/null >> /tmp/sdiag.txt || echo "no exec" >> /tmp/sdiag.txt
+          echo "=== TILEMAKER LOCATION ===" >> /tmp/sdiag.txt
+          which tilemaker 2>/dev/null || find / -name "tilemaker" -type f 2>/dev/null | head -3 >> /tmp/sdiag.txt
+          echo "=== OSM PBF FILES ===" >> /tmp/sdiag.txt
+          find / -name "*.osm.pbf" -o -name "*.pbf" 2>/dev/null | grep -v proc | grep -v docker | head -10 >> /tmp/sdiag.txt
+          find /home -name "*.pbf" 2>/dev/null >> /tmp/sdiag.txt
+          find /opt -name "*.pbf" 2>/dev/null >> /tmp/sdiag.txt
+          find /root -name "*.pbf" 2>/dev/null >> /tmp/sdiag.txt
+          echo "=== TILEMAKER CONFIG ===" >> /tmp/sdiag.txt
+          find / -name "config.json" -path "*/tilemaker/*" 2>/dev/null | head -3 >> /tmp/sdiag.txt
+          find /home -name "*.json" 2>/dev/null | xargs grep -l "tilemaker\|openmaptiles" 2>/dev/null | head -3 >> /tmp/sdiag.txt
+          echo "=== MBTILES FILES ===" >> /tmp/sdiag.txt
+          find / -name "*.mbtiles" 2>/dev/null | grep -v proc | head -10 >> /tmp/sdiag.txt
+          cat /tmp/sdiag.txt
+          ENC=$(base64 -w0 /tmp/sdiag.txt)
           SHA_FILE=$(curl -sf -H "Authorization: token $TOKEN" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
             | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
           curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: check [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}" && echo OK
+            -d "{\"message\":\"ci: diag [skip ci]\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}" && echo OK
