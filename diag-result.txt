@@ -1,3 +1,3 @@
 mbtiles: 37M	kaliningrad.mbtiles
-disk: /dev/vda1        39G   28G   12G  71% /
+disk: /dev/vda1        39G   28G   12G  72% /
 bounds: [18.913317, 54.317231, 22.887466, 55.645845]
