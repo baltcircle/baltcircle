@@ -1188,11 +1188,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
 
-  // ── OSM Tile Proxy ────────────────────────────────────────────────────────
+  // ── PMTiles URL endpoint ─────────────────────────────────────────────────
+  // Returns the CDN URL of the current kaliningrad.pmtiles file (written by CI).
+  // MapLibreMap.tsx fetches this to resolve the PMTiles source URL at runtime.
+  app.get("/pmtiles_url.txt", (_req: Request, res: Response) => {
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    const urlFile = path.join(process.cwd(), "pmtiles_url.txt");
+    if (fs.existsSync(urlFile)) {
+      const url = fs.readFileSync(urlFile, "utf8").trim();
+      res.setHeader("Content-Type", "text/plain");
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      res.send(url);
+    } else {
+      res.status(404).end();
+    }
+  });
+
+  // ── OSM Tile Proxy (legacy fallback — kept while tileserver still runs) ──
   // Proxies /tiles/* to local tileserver-gl (port 8080).
-  // In Docker, the app cannot reach localhost:8080 — uses host.docker.internal
-  // (mapped to host gateway via extra_hosts in docker-compose.yml).
-  // For TileJSON responses, rewrites internal tile URLs to same-origin /tiles/...
   // ── MapLibre Font Proxy ──────────────────────────────────────────────────
   // Proxies /glyphs/{fontstack}/{range}.pbf → protomaps GitHub Pages CDN.
   // Serving fonts same-origin avoids CORS issues in iOS WKWebView.
@@ -1539,4 +1553,3 @@ function maskPan(pan: string): string {
   const last4 = digits.slice(-4);
   return last4 ? `•••• ${last4}` : "Карта";
 }
-
