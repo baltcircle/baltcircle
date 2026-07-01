@@ -42,31 +42,31 @@ jobs:
             FINAL_URL=$(curl -sIL -A "Mozilla/5.0" --max-redirs 5 "$URL" -o /dev/null -w "%{url_effective}")
             curl -L -A "Mozilla/5.0" --max-redirs 5 --progress-bar --max-time 600 -o "$RAW" "$FINAL_URL"
             SIZE_MB=$(du -sm "$RAW" | cut -f1)
-            [ "$SIZE_MB" -ge "$MIN_MB" ] || { echo "ERROR: ${SIZE_MB}MB too small"; exit 1; }
+            [ "$SIZE_MB" -ge "$MIN_MB" ] || { echo "ERROR: ${SIZE_MB}MB"; exit 1; }
             osmium extract --bbox "$BBOX" "$RAW" -o "$CLIPPED" --overwrite --strategy=simple
             rm -f "$RAW"
             echo "  $(du -sh $CLIPPED)"
           }
 
-          echo "[3/7] Lithuania south strip..."
+          echo "[3/7] Lithuania..."
           download_and_clip \
             "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf" \
             "lithuania-full.osm.pbf" "lithuania-clipped.osm.pbf" \
             "20.8,54.2,22.9,55.2" 50
 
-          echo "[4/7] Warminsko north strip..."
+          echo "[4/7] Warminsko..."
           download_and_clip \
             "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf" \
             "warminsko-full.osm.pbf" "warminsko-clipped.osm.pbf" \
             "19.5,53.3,22.9,54.0" 20
 
-          echo "[5/7] Pomorskie east strip..."
+          echo "[5/7] Pomorskie..."
           download_and_clip \
             "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf" \
             "pomorskie-full.osm.pbf" "pomorskie-clipped.osm.pbf" \
             "18.3,53.3,20.5,54.4" 20
 
-          echo "[6/7] Merging kaliningrad + all clipped into one pbf..."
+          echo "[6/7] Merging..."
           ls -lh *-clipped.osm.pbf kaliningrad.osm.pbf
           osmium merge \
             kaliningrad.osm.pbf \
@@ -78,12 +78,13 @@ jobs:
           rm -f lithuania-clipped.osm.pbf warminsko-clipped.osm.pbf pomorskie-clipped.osm.pbf
           free -h
 
-          echo "[7/7] Config + tilemaker (single input)..."
+          echo "[7/7] Config + tilemaker..."
           python3 -c "import json; f=open('config.json'); cfg=json.load(f); f.close(); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; open('config.json','w').write(json.dumps(cfg,indent=2)); print('ocean updated')"
 
           tilemaker \
             --input merged-border.osm.pbf \
             --output extended.mbtiles \
+            --bbox 18.3,53.3,24.9,57.3 \
             --config config.json \
             --process process.lua
 
