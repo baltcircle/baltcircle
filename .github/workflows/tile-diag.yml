@@ -52,17 +52,21 @@ jobs:
 
           echo "=== Disk after downloads ===" && df -h /
 
-          echo "[6/7] Merging and clipping to bbox [17.5,52.0,27.0,58.0]..."
-          FILES="kaliningrad.osm.pbf"
-          [ -f "lithuania.osm.pbf" ] && FILES="$FILES lithuania.osm.pbf"
-          [ -f "latvia.osm.pbf" ]    && FILES="$FILES latvia.osm.pbf"
-          [ -f "warminsko.osm.pbf" ] && FILES="$FILES warminsko.osm.pbf"
-          [ -f "pomorskie.osm.pbf" ] && FILES="$FILES pomorskie.osm.pbf"
-          echo "Merging: $FILES"
-          osmium merge $FILES -o merged-tmp.osm.pbf --overwrite
-          echo "Merged: $(du -sh merged-tmp.osm.pbf)"
-          osmium extract --bbox 17.5,52.0,27.0,58.0 merged-tmp.osm.pbf -o extended.osm.pbf --overwrite
-          rm -f merged-tmp.osm.pbf
+          echo "[6/7] Clipping each file to bbox [17.5,52.0,27.0,58.0] then merging..."
+          BBOX="17.5,52.0,27.0,58.0"
+          CLIPPED=""
+          for SRC in kaliningrad.osm.pbf lithuania.osm.pbf latvia.osm.pbf warminsko.osm.pbf pomorskie.osm.pbf; do
+            if [ -f "$SRC" ]; then
+              OUT="clipped_${SRC}"
+              echo "  Clipping $SRC..."
+              osmium extract --bbox $BBOX "$SRC" -o "$OUT" --overwrite
+              CLIPPED="$CLIPPED $OUT"
+            fi
+          done
+          echo "Clipped files: $CLIPPED"
+          echo "Merging clipped files..."
+          osmium merge $CLIPPED -o extended.osm.pbf --overwrite
+          rm -f $CLIPPED
           echo "Extended: $(du -sh extended.osm.pbf)"
           df -h /
 
