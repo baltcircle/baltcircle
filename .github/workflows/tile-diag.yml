@@ -67,15 +67,7 @@ jobs:
           df -h /
 
           echo "[7/7] Updating config and running tilemaker..."
-          python3 << 'PYEOF'
-          import json
-          with open('config.json') as f:
-              cfg = json.load(f)
-          cfg['layers']['ocean']['source'] = 'coastline/simplified_water_polygons.shp'
-          with open('config.json', 'w') as f:
-              json.dump(cfg, f, indent=2)
-          print('config.json updated: coastline path set to simplified_water_polygons.shp')
-          PYEOF
+          python3 -c "import json; f=open('config.json'); cfg=json.load(f); f.close(); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; f2=open('config.json','w'); json.dump(cfg,f2,indent=2); f2.close(); print('config.json updated')"
 
           tilemaker \
             --input extended.osm.pbf \
@@ -88,12 +80,7 @@ jobs:
           docker restart baltcircle-tileserver
           sleep 8
           docker ps | grep tileserver
-          curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "
-          import json,sys
-          d=json.load(sys.stdin)
-          print('bounds:', d.get('bounds'))
-          print('zoom:', d.get('minzoom'), '-', d.get('maxzoom'))
-          "
+          curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "import json,sys; d=json.load(sys.stdin); print('bounds:', d.get('bounds')); print('zoom:', d.get('minzoom'), '-', d.get('maxzoom'))"
           echo "ALL DONE"
 
       - name: Report result
@@ -105,11 +92,7 @@ jobs:
           {
             echo "mbtiles: $(du -sh kaliningrad.mbtiles 2>/dev/null)"
             echo "disk: $(df -h / | tail -1)"
-            curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "
-          import json,sys
-          d=json.load(sys.stdin)
-          print('bounds:', d.get('bounds'))
-          " 2>/dev/null || echo "tileserver not responding"
+            curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "import json,sys; d=json.load(sys.stdin); print('bounds:', d.get('bounds'))" 2>/dev/null || echo "tileserver not responding"
           } > /tmp/r.txt
           cat /tmp/r.txt
           ENC=$(base64 -w0 /tmp/r.txt)
