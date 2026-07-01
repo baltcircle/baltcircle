@@ -10,31 +10,29 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download data and generate extended tiles
+      - name: Generate extended tiles
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           cd /home/yc-user/osm
-          echo "=== RAM before ===" && free -h
+          echo "=== RAM ===" && free -h
           echo "=== Disk ===" && df -h /
 
-          echo "[0/5] Adding 4GB swap if not present..."
+          echo "[1/5] Adding swap if not present..."
           if [ "$(swapon --show | wc -l)" -eq 0 ]; then
             sudo fallocate -l 4G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
             sudo chmod 600 /swapfile
             sudo mkswap /swapfile
             sudo swapon /swapfile
+            grep -q swapfile /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
             echo "Swap created"
-          else
-            echo "Swap already active"
           fi
           free -h
 
-          echo "[1/5] Checking coastline shapefile..."
+          echo "[2/5] Checking coastline shapefile..."
           if [ ! -f "coastline/simplified_water_polygons.shp" ]; then
-            curl -L --progress-bar -o coastline.zip \
-              "https://osmdata.openstreetmap.de/download/simplified-water-polygons-split-3857.zip"
+            curl -L --progress-bar -o coastline.zip "https://osmdata.openstreetmap.de/download/simplified-water-polygons-split-3857.zip"
             mkdir -p coastline
             unzip -o coastline.zip -d coastline_tmp
             find coastline_tmp -name "*.shp" -exec cp {} coastline/ \;
@@ -42,33 +40,38 @@ jobs:
             find coastline_tmp -name "*.shx" -exec cp {} coastline/ \;
             find coastline_tmp -name "*.prj" -exec cp {} coastline/ \;
             rm -rf coastline_tmp coastline.zip
+            echo "Coastline OK"
+          else
+            echo "Coastline already present"
           fi
-          echo "Coastline OK: $(ls -lh coastline/*.shp)"
 
-          echo "[2/5] Downloading Lithuania..."
-          [ -f "lithuania.osm.pbf" ] || curl -L --progress-bar -o lithuania.osm.pbf \
-            "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf"
+          echo "[3/5] Downloading border region via Overpass API (bbox: 18.5,53.3,24.8,57.2)..."
+          if [ ! -f "border-region.osm.pbf" ] || [ "$(stat -c%s border-region.osm.pbf 2>/dev/null)" -lt 1000000 ]; then
+            rm -f border-region.osm.pbf border-region.osm
+            BBOX="18.5,53.3,24.8,57.2"
+            QUERY="[out:xml][timeout:900][bbox:${BBOX}];(node;<;>;);out body;"
+            for MIRROR in "https://overpass-api.de/api/interpreter" "https://overpass.kumi.systems/api/interpreter" "https://lz4.overpass-api.de/api/interpreter"; do
+              echo "Trying $MIRROR..."
+              curl -f --max-time 900 --retry 2 --progress-bar -d "data=${QUERY}" "$MIRROR" -o border-region.osm && break || true
+              [ -s border-region.osm ] && break
+            done
+            echo "Downloaded OSM: $(du -sh border-region.osm 2>/dev/null)"
+            osmium cat border-region.osm -o border-region.osm.pbf --overwrite
+            rm -f border-region.osm
+            echo "PBF: $(du -sh border-region.osm.pbf)"
+          else
+            echo "border-region.osm.pbf cached: $(du -sh border-region.osm.pbf)"
+          fi
 
-          echo "[3/5] Downloading Poland subregions..."
-          [ -f "warminsko.osm.pbf" ] || curl -L --progress-bar -o warminsko.osm.pbf \
-            "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf"
-          [ -f "pomorskie.osm.pbf" ] || curl -L --progress-bar -o pomorskie.osm.pbf \
-            "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf"
+          echo "[4/5] Updating config.json ocean source..."
+          python3 -c "import json; f=open('config.json'); cfg=json.load(f); f.close(); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; open('config.json','w').write(json.dumps(cfg,indent=2)); print('ocean source updated')"
 
-          echo "=== Files ===" && ls -lh *.pbf
-          echo "=== Disk + RAM ===" && df -h / && free -h
-
-          echo "[4/5] Updating config.json..."
-          python3 -c "import json; f=open('config.json'); cfg=json.load(f); f.close(); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; f2=open('config.json','w'); json.dump(cfg,f2,indent=2); f2.close(); print('config.json updated')"
-
-          echo "[5/5] Running tilemaker..."
+          echo "[5/5] Running tilemaker (Kaliningrad full + border strip)..."
+          free -h
           tilemaker \
             --input kaliningrad.osm.pbf \
-            --input lithuania.osm.pbf \
-            --input warminsko.osm.pbf \
-            --input pomorskie.osm.pbf \
+            --input border-region.osm.pbf \
             --output extended.mbtiles \
-            --bbox 18.5,53.3,24.5,57.5 \
             --config config.json \
             --process process.lua
 
@@ -77,7 +80,7 @@ jobs:
           docker restart baltcircle-tileserver
           sleep 8
           docker ps | grep tileserver
-          curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "import json,sys; d=json.load(sys.stdin); print('bounds:', d.get('bounds')); print('zoom:', d.get('minzoom'), '-', d.get('maxzoom'))"
+          curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "import json,sys; d=json.load(sys.stdin); print('bounds:', d.get('bounds')); print('zoom:', d.get('minzoom'),'-',d.get('maxzoom'))"
           echo "ALL DONE"
 
       - name: Report result
@@ -86,16 +89,8 @@ jobs:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd /home/yc-user/osm
-          {
-            echo "mbtiles: $(du -sh kaliningrad.mbtiles 2>/dev/null)"
-            echo "disk: $(df -h / | tail -1)"
-            curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "import json,sys; d=json.load(sys.stdin); print('bounds:', d.get('bounds'))" 2>/dev/null || echo "tileserver not responding"
-          } > /tmp/r.txt
+          { echo "mbtiles: $(du -sh kaliningrad.mbtiles 2>/dev/null)"; echo "disk: $(df -h / | tail -1)"; curl -s "http://localhost:8080/data/kaliningrad.json" | python3 -c "import json,sys; d=json.load(sys.stdin); print('bounds:', d.get('bounds'))" 2>/dev/null || echo "tileserver not responding"; } > /tmp/r.txt
           cat /tmp/r.txt
           ENC=$(base64 -w0 /tmp/r.txt)
-          SHA_FILE=$(curl -sf -H "Authorization: token $TOKEN" \
-            "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
-          curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
-            "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" \
-            -d "{\"message\":\"ci: regen result\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}"
+          SHA_FILE=$(curl -sf -H "Authorization: token $TOKEN" "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
+          curl -sf -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" "https://api.github.com/repos/baltcircle/baltcircle/contents/diag-result.txt" -d "{\"message\":\"ci: regen result\",\"content\":\"$ENC\",\"sha\":\"$SHA_FILE\"}"
