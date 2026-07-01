@@ -27,11 +27,14 @@ jobs:
           if [ "$(swapon --show | wc -l)" -eq 0 ]; then sudo swapon /swapfile || true; fi
 
           TM_VER=$(tilemaker --version 2>&1 | head -1 || echo "old")
-          echo "tilemaker: $TM_VER"
+          echo "tilemaker now: $TM_VER"
           if ! echo "$TM_VER" | grep -qE "3\.[0-9]"; then
-            curl -L "https://github.com/systemed/tilemaker/releases/download/v3.0.0/tilemaker-ubuntu-22.04.gz" -o /tmp/tm.gz
-            gunzip -f /tmp/tm.gz && chmod +x /tmp/tilemaker
-            sudo mv /tmp/tilemaker /usr/local/bin/tilemaker
+            echo "Upgrading tilemaker to v3.0.0..."
+            curl -L "https://github.com/systemed/tilemaker/releases/download/v3.0.0/tilemaker-ubuntu-22.04.zip" -o /tmp/tilemaker.zip
+            unzip -o /tmp/tilemaker.zip -d /tmp/tilemaker-bin/
+            chmod +x /tmp/tilemaker-bin/tilemaker
+            sudo mv /tmp/tilemaker-bin/tilemaker /usr/local/bin/tilemaker
+            rm -rf /tmp/tilemaker.zip /tmp/tilemaker-bin
             echo "upgraded: $(tilemaker --version 2>&1 | head -1)"
           fi
 
