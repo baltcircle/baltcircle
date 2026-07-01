@@ -3,7 +3,10 @@ import type { MapObject, Parking, Ride } from "@shared/schema";
 import { REAL_CENTER } from "@shared/geo";
 
 declare global {
-  interface Window { maplibregl: any; }
+  interface Window {
+    maplibregl: any;
+    pmtilesProtocol: any;
+  }
 }
 
 interface MapLibreMapProps {
@@ -24,14 +27,19 @@ const KALININGRAD_BOUNDARY = {
   features: [{ type: "Feature" as const, geometry: { type: "Polygon" as const, coordinates: [OBLAST_RING] }, properties: {} }],
 };
 
-// maxBounds: slightly larger than oblast so user can't scroll far outside
 const MAX_BOUNDS: [number, number, number, number] = [18.3, 53.2, 24.9, 57.3];
 
-const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object => ({
+// PMTiles URL — loaded from /pmtiles_url.txt (written by CI after generation)
+// Fallback to old /tiles proxy if PMTiles not yet available
+const PMTILES_CDN = "https://unpkg.com/pmtiles@3/dist/pmtiles.js";
+
+const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"; url: string }, minzoom: number, maxzoom: number): object => ({
   version: 8,
   glyphs: "/glyphs/{fontstack}/{range}.pbf",
   sources: {
-    kaliningrad: { type: "vector", tiles: [tileUrl], minzoom, maxzoom },
+    kaliningrad: tileSource.type === "pmtiles"
+      ? { type: "vector", url: `pmtiles://${tileSource.url}`, minzoom, maxzoom }
+      : { type: "vector", tiles: [tileSource.url], minzoom, maxzoom },
     "kaliningrad-boundary": { type: "geojson", data: KALININGRAD_BOUNDARY },
   },
   layers: [
@@ -103,95 +111,62 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
       },
     },
 
-    // ── ROADS — casing (outline) ─────────────────────────────────────────────
+    // ── ROADS — casing ───────────────────────────────────────────────────────
     {
       id: "road-motorway-case", type: "line", source: "kaliningrad", "source-layer": "transportation",
       filter: ["==", ["get", "class"], "motorway"],
-      paint: {
-        "line-color": "#e8a000",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 2, 12, 5, 14, 9],
-        "line-gap-width": 0,
-      },
+      paint: { "line-color": "#e8a000", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 2, 12, 5, 14, 9] },
     },
     {
       id: "road-trunk-case", type: "line", source: "kaliningrad", "source-layer": "transportation",
       filter: ["==", ["get", "class"], "trunk"],
-      paint: {
-        "line-color": "#e8c060",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.5, 12, 4, 14, 7],
-      },
+      paint: { "line-color": "#e8c060", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.5, 12, 4, 14, 7] },
     },
     {
       id: "road-primary-case", type: "line", source: "kaliningrad", "source-layer": "transportation",
       filter: ["==", ["get", "class"], "primary"],
-      paint: {
-        "line-color": "#d4c090",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 12, 3, 14, 6],
-      },
+      paint: { "line-color": "#d4c090", "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 12, 3, 14, 6] },
     },
     {
       id: "road-secondary-case", type: "line", source: "kaliningrad", "source-layer": "transportation",
       filter: ["in", ["get", "class"], ["literal", ["secondary", "tertiary"]]],
       minzoom: 10,
-      paint: {
-        "line-color": "#c8b898",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1, 12, 2, 14, 5],
-      },
+      paint: { "line-color": "#c8b898", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1, 12, 2, 14, 5] },
     },
 
     // ── ROADS — fill ─────────────────────────────────────────────────────────
     {
       id: "road-motorway", type: "line", source: "kaliningrad", "source-layer": "transportation",
       filter: ["==", ["get", "class"], "motorway"],
-      paint: {
-        "line-color": "#ffc840",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1, 12, 3.5, 14, 7],
-      },
+      paint: { "line-color": "#ffc840", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1, 12, 3.5, 14, 7] },
     },
     {
       id: "road-trunk", type: "line", source: "kaliningrad", "source-layer": "transportation",
       filter: ["==", ["get", "class"], "trunk"],
-      paint: {
-        "line-color": "#fde090",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.8, 12, 2.5, 14, 5],
-      },
+      paint: { "line-color": "#fde090", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.8, 12, 2.5, 14, 5] },
     },
     {
       id: "road-primary", type: "line", source: "kaliningrad", "source-layer": "transportation",
       filter: ["==", ["get", "class"], "primary"],
-      paint: {
-        "line-color": "#ffffff",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 9, 0.8, 12, 2, 14, 4.5],
-      },
+      paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 9, 0.8, 12, 2, 14, 4.5] },
     },
     {
       id: "road-secondary", type: "line", source: "kaliningrad", "source-layer": "transportation",
       filter: ["in", ["get", "class"], ["literal", ["secondary", "tertiary"]]],
       minzoom: 10,
-      paint: {
-        "line-color": "#ffffff",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 12, 1.5, 14, 3.5],
-      },
+      paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 12, 1.5, 14, 3.5] },
     },
     {
       id: "road-minor", type: "line", source: "kaliningrad", "source-layer": "transportation",
       filter: ["in", ["get", "class"], ["literal", ["minor", "service"]]],
       minzoom: 12,
-      paint: {
-        "line-color": "#f8f4ee",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.5, 14, 2],
-      },
+      paint: { "line-color": "#f8f4ee", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.5, 14, 2] },
     },
-    // Rail
     {
       id: "rail", type: "line", source: "kaliningrad", "source-layer": "transportation",
       filter: ["==", ["get", "class"], "rail"],
       minzoom: 10,
-      paint: {
-        "line-color": "#bbb0a8",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 14, 2],
-        "line-dasharray": [2, 2],
-      },
+      paint: { "line-color": "#bbb0a8", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 14, 2], "line-dasharray": [2, 2] },
     },
 
     // ── BUILDINGS ────────────────────────────────────────────────────────────
@@ -205,7 +180,7 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
       },
     },
 
-    // ── OBLAST BOUNDARY (outline) ─────────────────────────────────────────────
+    // ── OBLAST BOUNDARY ───────────────────────────────────────────────────────
     {
       id: "oblast-boundary", type: "line", source: "kaliningrad-boundary",
       paint: { "line-color": "#3a6a9a", "line-width": 2, "line-opacity": 1 },
@@ -224,11 +199,7 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
         "text-max-angle": 30,
         "text-padding": 5,
       },
-      paint: {
-        "text-color": "#5a4a3a",
-        "text-halo-color": "rgba(255,255,255,0.9)",
-        "text-halo-width": 1.5,
-      },
+      paint: { "text-color": "#5a4a3a", "text-halo-color": "rgba(255,255,255,0.9)", "text-halo-width": 1.5 },
     },
 
     // ── WATERWAY NAMES ───────────────────────────────────────────────────────
@@ -243,11 +214,7 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
         "symbol-placement": "line",
         "text-max-angle": 30,
       },
-      paint: {
-        "text-color": "#3a7ab0",
-        "text-halo-color": "rgba(255,255,255,0.8)",
-        "text-halo-width": 1.5,
-      },
+      paint: { "text-color": "#3a7ab0", "text-halo-color": "rgba(255,255,255,0.8)", "text-halo-width": 1.5 },
     },
 
     // ── PARK NAMES ───────────────────────────────────────────────────────────
@@ -260,11 +227,7 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
         "text-size": 11,
         "text-max-width": 8,
       },
-      paint: {
-        "text-color": "#3a7a3a",
-        "text-halo-color": "rgba(255,255,255,0.85)",
-        "text-halo-width": 1.5,
-      },
+      paint: { "text-color": "#3a7a3a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1.5 },
     },
 
     // ── PLACE LABELS ─────────────────────────────────────────────────────────
@@ -283,11 +246,7 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
         "text-padding": 3,
         "symbol-sort-key": ["match", ["get", "class"], "city", 1, "town", 2, "village", 3, 4],
       },
-      paint: {
-        "text-color": "#2d3a4a",
-        "text-halo-color": "rgba(255,255,255,0.9)",
-        "text-halo-width": 1.5,
-      },
+      paint: { "text-color": "#2d3a4a", "text-halo-color": "rgba(255,255,255,0.9)", "text-halo-width": 1.5 },
     },
 
     // ── HOUSE NUMBERS ────────────────────────────────────────────────────────
@@ -299,11 +258,7 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
         "text-font": ["Noto Sans Regular"],
         "text-size": 9,
       },
-      paint: {
-        "text-color": "#7a6a55",
-        "text-halo-color": "rgba(255,255,255,0.8)",
-        "text-halo-width": 1,
-      },
+      paint: { "text-color": "#7a6a55", "text-halo-color": "rgba(255,255,255,0.8)", "text-halo-width": 1 },
     },
 
     // ── POI LABELS ───────────────────────────────────────────────────────────
@@ -318,16 +273,12 @@ const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object =
         "text-max-width": 7,
         "text-offset": [0, 1],
       },
-      paint: {
-        "text-color": "#5a4a6a",
-        "text-halo-color": "rgba(255,255,255,0.85)",
-        "text-halo-width": 1.5,
-      },
+      paint: { "text-color": "#5a4a6a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1.5 },
     },
   ],
 });
 
-// ── CDN & WORKER ──────────────────────────────────────────────────────────────
+// ── CDN ───────────────────────────────────────────────────────────────────────
 const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
 const CDN_BASE      = "https://unpkg.com/maplibre-gl@4.7.1/dist";
 const CDN_CSP_JS    = `${CDN_BASE}/maplibre-gl-csp.js`;
@@ -371,6 +322,33 @@ function loadMaplibre(): Promise<void> {
   });
 }
 
+/** Load pmtiles.js from CDN and register protocol with maplibregl */
+function loadPMTiles(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (window.pmtilesProtocol) { resolve(); return; }
+    const existing = document.getElementById("pmtiles-js") as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error("pmtiles CDN failed")));
+      return;
+    }
+    const s = document.createElement("script");
+    s.id = "pmtiles-js"; s.src = PMTILES_CDN;
+    s.onload = () => {
+      try {
+        const pmtiles = (window as any).pmtiles;
+        if (!pmtiles) throw new Error("pmtiles not found on window");
+        const protocol = new pmtiles.Protocol();
+        window.maplibregl.addProtocol("pmtiles", protocol.tile.bind(protocol));
+        window.pmtilesProtocol = protocol;
+        resolve();
+      } catch (e) { reject(e); }
+    };
+    s.onerror = () => reject(new Error("pmtiles CDN failed"));
+    document.head.appendChild(s);
+  });
+}
+
 // ── COMPONENT ─────────────────────────────────────────────────────────────────
 export function MapLibreMap({
   parkings = [], mapObjects = [], ride, height = "100%",
@@ -385,7 +363,11 @@ export function MapLibreMap({
     ensureCSS();
     let cancelled = false;
 
-    const initMap = (tileUrl: string, minzoom: number, maxzoom: number) => {
+    const initMap = (
+      tileSource: { type: "pmtiles"; url: string } | { type: "xyz"; url: string },
+      minzoom: number,
+      maxzoom: number
+    ) => {
       if (cancelled || mapRef.current) return;
       const ml = window.maplibregl;
       const { width, height: h } = el.getBoundingClientRect();
@@ -393,7 +375,7 @@ export function MapLibreMap({
       try {
         const map = new ml.Map({
           container: el,
-          style: buildStyle(tileUrl, minzoom, maxzoom),
+          style: buildStyle(tileSource, minzoom, maxzoom),
           center: DEFAULT_CENTER,
           zoom: 10,
           maxBounds: MAX_BOUNDS,
@@ -406,10 +388,25 @@ export function MapLibreMap({
       } catch { /* WebGL unavailable */ }
     };
 
-    const tryInit = () => {
+    const tryInitPMTiles = async () => {
       if (cancelled || mapRef.current) return;
-      const ml = window.maplibregl;
-      if (!ml?.Map) return;
+      try {
+        // Try to fetch pmtiles URL written by CI
+        const resp = await fetch("/pmtiles_url.txt");
+        if (!resp.ok) throw new Error("no pmtiles_url.txt");
+        const pmtilesUrl = (await resp.text()).trim();
+        if (!pmtilesUrl.startsWith("http")) throw new Error("invalid url");
+
+        await loadPMTiles();
+        if (!cancelled) initMap({ type: "pmtiles", url: pmtilesUrl }, 0, 14);
+      } catch {
+        // Fallback: use old /tiles proxy (tileserver still running on server)
+        tryInitXYZ();
+      }
+    };
+
+    const tryInitXYZ = () => {
+      if (cancelled || mapRef.current) return;
       const origin = window.location.origin;
       fetch(`${origin}/tiles/data/kaliningrad.json`)
         .then(r => r.json())
@@ -419,18 +416,20 @@ export function MapLibreMap({
           const tileUrl = rawTiles.map((u: string) =>
             u.startsWith("http") ? u : `${origin}${u.startsWith("/") ? "" : "/"}${u}`
           )[0] ?? `${origin}/tiles/data/kaliningrad/{z}/{x}/{y}.pbf`;
-          initMap(tileUrl, j.minzoom ?? 0, j.maxzoom ?? 14);
+          initMap({ type: "xyz", url: tileUrl }, j.minzoom ?? 0, j.maxzoom ?? 14);
         })
-        .catch(() => { if (!cancelled) initMap(`${origin}/tiles/data/kaliningrad/{z}/{x}/{y}.pbf`, 0, 14); });
+        .catch(() => {
+          if (!cancelled) initMap({ type: "xyz", url: `${window.location.origin}/tiles/data/kaliningrad/{z}/{x}/{y}.pbf` }, 0, 14);
+        });
     };
 
     const ro = new ResizeObserver(() => {
-      if (!mapRef.current) tryInit(); else mapRef.current.resize();
+      if (!mapRef.current) tryInitPMTiles(); else mapRef.current.resize();
     });
     ro.observe(el);
 
     loadMaplibre()
-      .then(() => { if (!cancelled) tryInit(); })
+      .then(() => { if (!cancelled) tryInitPMTiles(); })
       .catch(() => { /* CDN unavailable */ });
 
     return () => { cancelled = true; ro.disconnect(); };
