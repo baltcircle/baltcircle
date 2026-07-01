@@ -72,7 +72,7 @@ jobs:
             echo "$OUT: $(du -sh $OUT)"
           }
 
-          clip "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf" "lithuania-full.osm.pbf" "lithuania-clipped.osm.pbf" "20.8,54.2,22.9,55.2" 50
+          clip "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf" "lithuania-full.osm.pbf" "lithuania-clipped.osm.pbf" "20.8,53.5,26.8,56.5" 50
           clip "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf" "warminsko-full.osm.pbf" "warminsko-clipped.osm.pbf" "19.5,53.3,22.9,54.0" 20
           clip "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf" "pomorskie-full.osm.pbf" "pomorskie-clipped.osm.pbf" "18.3,53.3,20.5,54.4" 20
 
@@ -86,7 +86,7 @@ jobs:
 
           echo "=== tilemaker ==="
           tilemaker --input merged.osm.pbf --output kaliningrad.pmtiles \
-            --bbox 18.3,53.3,24.9,57.3 \
+            --bbox 18.3,53.3,26.8,57.3 \
             --config config-openmaptiles.json \
             --process process-openmaptiles.lua
           echo "pmtiles: $(du -sh kaliningrad.pmtiles)"
@@ -124,3 +124,4 @@ jobs:
             curl -sf -X PUT -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" "https://api.github.com/repos/$REPO/contents/pmtiles_url.txt" -d "{\"message\":\"ci: pmtiles url created\",\"content\":\"$ENC\"}"
           fi
           echo "pmtiles_url.txt committed"
+
