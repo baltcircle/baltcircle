@@ -1,3 +1,3 @@
 mbtiles: 35M	kaliningrad.mbtiles
 disk: /dev/vda1        39G   31G  7.7G  80% /
-bounds: [19, 54, 23, 56]
+tileserver not responding
