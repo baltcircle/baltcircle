@@ -25,7 +25,7 @@ const KALININGRAD_BOUNDARY = {
 };
 
 // maxBounds: slightly larger than oblast so user can't scroll far outside
-const MAX_BOUNDS: [number, number, number, number] = [18.8, 53.8, 23.6, 55.8];
+const MAX_BOUNDS: [number, number, number, number] = [18.3, 53.2, 24.9, 57.3];
 
 const buildStyle = (tileUrl: string, minzoom: number, maxzoom: number): object => ({
   version: 8,
