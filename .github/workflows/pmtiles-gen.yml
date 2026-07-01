@@ -1,6 +1,10 @@
 name: Generate PMTiles
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pmtiles-gen.yml'
 
 jobs:
   generate:
@@ -19,21 +23,19 @@ jobs:
           cd /home/yc-user/osm
           echo "=== Start ===" && free -h && df -h /
 
-          # Swap
           if [ "$(swapon --show | wc -l)" -eq 0 ]; then sudo swapon /swapfile || true; fi
           echo "swap: $(free -h | grep Swap)"
 
-          # tilemaker v3
           TM_VER=$(tilemaker --version 2>&1 | head -1 || echo "old")
           echo "tilemaker now: $TM_VER"
           if ! echo "$TM_VER" | grep -qE "3\.[0-9]"; then
+            echo "upgrading tilemaker to v3.0.0..."
             curl -L "https://github.com/systemed/tilemaker/releases/download/v3.0.0/tilemaker-ubuntu-22.04.gz" -o /tmp/tm.gz
             gunzip -f /tmp/tm.gz && chmod +x /tmp/tilemaker
             sudo mv /tmp/tilemaker /usr/local/bin/tilemaker
             echo "upgraded: $(tilemaker --version 2>&1 | head -1)"
           fi
 
-          # Coastline
           if [ ! -f "coastline/simplified_water_polygons.shp" ]; then
             curl -L -A "Mozilla/5.0" --max-redirs 5 \
               "https://osmdata.openstreetmap.de/download/simplified-water-polygons-split-3857.zip" -o coastline.zip
@@ -134,4 +136,4 @@ print('layers ok:', list(cfg['layers'].keys()))
               "https://api.github.com/repos/$REPO/contents/pmtiles_url.txt" \
               -d "{\"message\":\"ci: pmtiles url updated\",\"content\":\"$ENC\"}"
           fi
-          echo "Done"
+          echo "pmtiles_url.txt committed to repo"
