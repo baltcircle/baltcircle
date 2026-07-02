@@ -199,7 +199,17 @@
   body {
     @apply font-sans antialiased bg-background text-foreground;
     font-feature-settings: "cv11", "ss01", "ss03";
+    /* Lighter base weight overall (Roboto Flex is variable, so this renders
+     * cleanly). Individual weight utilities are softened below. */
+    font-weight: 350;
   }
+  /* Reduce overall font thickness by shifting every Tailwind weight utility
+   * down one notch. Change these numbers to tune the interface weight. */
+  .font-normal   { font-weight: 350 !important; }  /* was 400 */
+  .font-medium   { font-weight: 400 !important; }  /* was 500 */
+  .font-semibold { font-weight: 500 !important; }  /* was 600 */
+  .font-bold     { font-weight: 600 !important; }  /* was 700 */
+  .font-extrabold{ font-weight: 700 !important; }  /* was 800 */
   /* Customer map route: pin to the visible viewport and kill page scroll /
    * rubber-band overscroll. Scoped via .route-locked so /profile, /tariffs,
    * /rides and /admin/* keep normal document scrolling. */

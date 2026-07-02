@@ -145,7 +145,7 @@ export function DrawerMenu({ open, onClose }: Props) {
             </div>
             <Link
               href="/payment-methods"
-              className="mt-3 flex items-center justify-center w-full h-10 rounded-full bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors"
+              className="mt-3 flex items-center justify-center w-full h-10 rounded-full bg-primary hover:opacity-90 text-primary-foreground text-sm font-medium transition-colors"
             >
               Добавить оплату
             </Link>
