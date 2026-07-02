@@ -122,35 +122,35 @@
   --brand-bark: 36 30% 88%;
 
   --background: 200 38% 9%;
-  --foreground: 36 30% 92%;
+  --foreground: 45 33% 77%;           /* #D7CDB0 — beige text (dark theme) */
   --border: 200 22% 18%;
 
   --card: 200 35% 12%;
-  --card-foreground: 36 30% 92%;
+  --card-foreground: 45 33% 77%;      /* #D7CDB0 */
   --card-border: 200 22% 17%;
 
   /* Sidebar uses the brand primary tone in dark mode */
   --sidebar: 239 52% 24%;                       /* #1D1E5D */
-  --sidebar-foreground: 0 0% 100%;
+  --sidebar-foreground: 45 33% 77%;             /* #D7CDB0 */
   --sidebar-border: 239 52% 34%;                /* lighter #1D1E5D */
   --sidebar-primary: 36 56% 70%;
   --sidebar-primary-foreground: 200 50% 12%;
   --sidebar-accent: 239 52% 34%;                /* lighter #1D1E5D */
-  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-accent-foreground: 45 33% 77%;      /* #D7CDB0 */
   --sidebar-ring: 239 52% 44%;                  /* lighter #1D1E5D */
 
   --popover: 200 35% 13%;
-  --popover-foreground: 36 30% 92%;
+  --popover-foreground: 45 33% 77%;   /* #D7CDB0 */
   --popover-border: 200 22% 20%;
 
   --primary: 239 52% 24%;             /* #1D1E5D  — dark theme primary */
-  --primary-foreground: 0 0% 100%;    /* white text on primary */
+  --primary-foreground: 45 33% 77%;   /* #D7CDB0  — beige text on primary */
 
   --secondary: 200 25% 18%;
-  --secondary-foreground: 36 30% 92%;
+  --secondary-foreground: 45 33% 77%; /* #D7CDB0 */
 
   --muted: 200 22% 16%;
-  --muted-foreground: 36 18% 68%;
+  --muted-foreground: 45 20% 62%;     /* dimmer #D7CDB0 for secondary text */
 
   --accent: 36 56% 60%;
   --accent-foreground: 200 50% 10%;
@@ -219,6 +219,17 @@
     overflow: hidden;
     overscroll-behavior: none;
     position: relative;
+  }
+  /* Dark theme: force the hardcoded light text utilities (text-white,
+   * text-zinc-100/50, text-gray-100/50) to the brand beige #D7CDB0 so ALL
+   * dark-mode text matches the light theme's beige. Change the color here to
+   * retune every beige text at once. */
+  .dark .dark\:text-white,
+  .dark .dark\:text-zinc-100,
+  .dark .dark\:text-zinc-50,
+  .dark .dark\:text-gray-100,
+  .dark .dark\:text-gray-50 {
+    color: hsl(45 33% 77%) !important;   /* #D7CDB0 */
   }
   h1, h2, h3, h4, h5 {
     letter-spacing: -0.012em;
