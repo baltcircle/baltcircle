@@ -57,15 +57,16 @@ export function PaymentMethodsPage() {
   const tbankConfigured = cfgQ.data?.configured === true;
 
   // Start a real T-Bank card binding via a small verification PAYMENT
-  // (Init + Recurrent=Y): the backend creates the payment and returns a
-  // PaymentURL we redirect to. The rider pays a tiny amount (e.g. 1 ₽) on
-  // T-Bank's hosted form — card data never reaches us — and the resulting
-  // RebillId lets us charge rides later. This is more reliable than AddCard on
-  // test/sandbox terminals, which reject cards even with documented test cards.
+  // The backend picks the binding method from config (TBANK_CARD_BIND_METHOD):
+  // either a no-charge AddCard binding or a tiny (e.g. 1 ₽) Init+Recurrent
+  // verification payment that is reliably reversed/refunded afterwards. Either
+  // way the backend returns a hosted PaymentURL we redirect to — card data never
+  // reaches us — and the binding yields the token we need for future ride
+  // charges. Swapping the method is a server env change, not a client change.
   const bindCardMut = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/payments/tbank/bind-card-payment");
-      return (await res.json()) as { paymentUrl: string; amountKopecks?: number };
+      const res = await apiRequest("POST", "/api/payments/tbank/bind-card");
+      return (await res.json()) as { paymentUrl: string; amountKopecks?: number; method?: string };
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: METHODS_KEY });

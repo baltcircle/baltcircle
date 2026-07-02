@@ -352,6 +352,8 @@ function migratePaymentMethodsTable() {
   addColumn("amount_kopecks", "amount_kopecks INTEGER");
   addColumn("brand", "brand TEXT");
   addColumn("account_token", "account_token TEXT"); // SBP AccountToken for ChargeQr recurring charges
+  addColumn("refund_status", "refund_status TEXT"); // none | pending | refunded | failed (1 ₽ verification charge)
+  addColumn("refund_error", "refund_error TEXT");   // reason when refund_status = failed
 }
 migratePaymentMethodsTable();
 

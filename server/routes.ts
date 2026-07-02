@@ -23,7 +23,7 @@ import {
   tbankInitRidePayment, generateRideOrderId, classifyRidePayment,
   tbankInitSavedCardCharge, tbankCharge, generateSavedCardRideOrderId,
   tbankGetState,
-  tbankCancel,
+  tbankRefundVerificationCharge,
   tbankAddAccountQr, tbankGetAddAccountQrState,
   generateSbpBindOrderId, extractQrPayload, classifyAccountBinding,
 } from "./tbank";
@@ -340,14 +340,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const resp = await tbankAddCard(cfg, { customerKey: user.id });
       if (!resp.Success || !resp.PaymentURL) {
-        return res.status(502).json(tbankErrorBody(resp));
+        // AddCard rejected (some terminals don't support card binding without a
+        // payment). Transparently FALL BACK to the Init+Recurrent 1 ₽ path so the
+        // rider still gets a working binding — with the hardened refund.
+        log(`[tbank] AddCard unavailable (${resp.ErrorCode ?? "?"}: ${resp.Message ?? "?"}), falling back to 1 ₽ verification payment`, "tbank");
+        return void (await bindViaVerificationPayment(cfg, user.id, res));
       }
-      storage.createPendingCardMethod({
+      // AddCard binds with NO charge — there is nothing to refund.
+      const method = storage.createPendingCardMethod({
         userId: user.id,
         customerKey: user.id,
         requestKey: typeof resp.RequestKey === "string" ? resp.RequestKey : undefined,
       });
-      res.json({ paymentUrl: resp.PaymentURL });
+      storage.updatePaymentMethod(method.id, { refundStatus: "none" });
+      res.json({ paymentUrl: resp.PaymentURL, method: "addcard" });
     } catch (err: any) {
       res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
     }
@@ -370,39 +376,45 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
 
-    // Unique per attempt so each binding payment correlates to exactly one row.
-    // Must stay <= 50 chars or T-Bank rejects Init with code 212 (the user id is
-    // a 36-char UUID, so embedding it overflowed the limit).
-    const orderId = generateBindOrderId();
-    const amountKopecks = cfg.cardBindAmountKopecks;
+    await bindViaVerificationPayment(cfg, user.id, res);
+  });
 
-    try {
-      const resp = await tbankInitBindCard(cfg, {
-        orderId,
-        amountKopecks,
-        customerKey: user.id,
-        description: "Проверочный платёж для привязки карты",
-        successUrl: `${cfg.publicAppUrl}/payment-methods`,
-        failUrl: `${cfg.publicAppUrl}/payment-methods`,
-        notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
-      });
-      if (!resp.Success || !resp.PaymentURL) {
-        return res.status(502).json(tbankErrorBody(resp));
+  // Unified card-binding entry point the client uses. Picks the method from
+  // config (TBANK_CARD_BIND_METHOD): "addcard" tries a no-charge AddCard binding
+  // first (and auto-falls-back to the 1 ₽ payment if the terminal rejects it);
+  // "payment" (default) goes straight to the 1 ₽ verification payment. Swapping
+  // the strategy is an env change, not a code change.
+  app.post("/api/payments/tbank/bind-card", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Требуется вход" });
+    const user = storage.getUser(userId);
+    if (!user) return res.status(401).json({ error: "Требуется вход" });
+
+    const cfg = getTbankConfig();
+    if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
+
+    if (cfg.cardBindMethod === "addcard") {
+      // No-charge AddCard, with automatic fallback to the 1 ₽ payment inside the
+      // route handler when the terminal doesn't support charge-free binding.
+      try {
+        const resp = await tbankAddCard(cfg, { customerKey: user.id });
+        if (!resp.Success || !resp.PaymentURL) {
+          log(`[tbank] AddCard unavailable (${resp.ErrorCode ?? "?"}: ${resp.Message ?? "?"}), falling back to 1 ₽ verification payment`, "tbank");
+          return void (await bindViaVerificationPayment(cfg, user.id, res));
+        }
+        const method = storage.createPendingCardMethod({
+          userId: user.id,
+          customerKey: user.id,
+          requestKey: typeof resp.RequestKey === "string" ? resp.RequestKey : undefined,
+        });
+        storage.updatePaymentMethod(method.id, { refundStatus: "none" });
+        return res.json({ paymentUrl: resp.PaymentURL, method: "addcard" });
+      } catch (err: any) {
+        return res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
       }
-      const method = storage.createPendingBindPayment({
-        userId: user.id,
-        customerKey: user.id,
-        orderId,
-        amountKopecks,
-      });
-      storage.updatePaymentMethod(method.id, {
-        paymentId: resp.PaymentId != null ? String(resp.PaymentId) : null,
-        paymentUrl: resp.PaymentURL,
-      });
-      res.json({ paymentUrl: resp.PaymentURL, amountKopecks });
-    } catch (err: any) {
-      res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
     }
+    // Default: 1 ₽ verification payment (RebillId-guaranteed on all terminals).
+    await bindViaVerificationPayment(cfg, user.id, res);
   });
 
   // Start an SBP ACCOUNT binding via AddAccountQr. Unlike a card, the rider binds
@@ -940,8 +952,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         lastErrorMessage: null,
         lastErrorDetails: null,
       });
-      // Refund the 1 ₽ verification charge — fire-and-forget, non-fatal.
-      if (method.paymentId) tbankCancel(cfg, method.paymentId);
+      // Reverse/refund the 1 ₽ verification charge and record the outcome so a
+      // stuck rouble is observable. `status` is the fresh GetState status.
+      if (method.paymentId) refundVerificationCharge(cfg, method.id, method.paymentId, status);
       return res.json(updated);
     }
     if (outcome === "failed") {
@@ -1683,9 +1696,11 @@ function handleInitBindingNotification(
       lastErrorMessage: null,
       lastErrorDetails: null,
     });
-    // Refund the 1 ₽ verification charge — fire-and-forget, non-fatal.
+    // Reverse/refund the 1 ₽ verification charge and record the outcome so a
+    // stuck rouble is observable (refundStatus/refundError). We pass the fresh
+    // notification status so the helper need not re-query GetState.
     const effectivePaymentId = paymentId || method.paymentId;
-    if (cfg && effectivePaymentId) tbankCancel(cfg, effectivePaymentId);
+    if (cfg && effectivePaymentId) refundVerificationCharge(cfg, method.id, effectivePaymentId, status);
   } else if (outcome === "failed") {
     storage.updatePaymentMethod(method.id, {
       status: "failed",
@@ -1720,6 +1735,8 @@ function handleAddCardNotification(body: Record<string, unknown>): void {
       rebillId: rebillId || pending.rebillId,
       label: pan ? maskPan(pan) : "Карта",
       brand: pan ? cardBrand(pan) ?? pending.brand : pending.brand,
+      // AddCard binds with no charge — nothing to refund.
+      refundStatus: "none",
       lastErrorCode: null,
       lastErrorMessage: null,
       lastErrorDetails: null,
@@ -1753,6 +1770,93 @@ function bindingErrorPatch(body: {
     lastErrorMessage: str(body.Message),
     lastErrorDetails: str(body.Details),
   };
+}
+
+// Reverse/refund the 1 rouble verification charge for a just-activated card
+// method and PERSIST the outcome so a stuck 1 rouble is observable (refundStatus
+// / refundError on the row) instead of vanishing into logs. Fire-and-forget from
+// the caller's perspective (never blocks activation), but unlike the old
+// tbankCancel it records whether the money actually came back. `knownStatus` is
+// the fresh payment status from the same notification/GetState, letting the
+// helper skip a redundant GetState round-trip.
+function refundVerificationCharge(
+  cfg: TbankConfig,
+  methodId: number,
+  paymentId: string,
+  knownStatus?: string,
+): void {
+  // Mark pending immediately so the UI/support can see a refund is in flight.
+  storage.updatePaymentMethod(methodId, { refundStatus: "pending", refundError: null });
+  void tbankRefundVerificationCharge(cfg, paymentId, knownStatus)
+    .then((outcome) => {
+      if (outcome.result === "failed") {
+        storage.updatePaymentMethod(methodId, {
+          refundStatus: "failed",
+          refundError: outcome.reason,
+        });
+      } else {
+        // "refunded" (reversal or real refund) or "nothing_to_cancel" (already
+        // settled/reversed) — either way no money is outstanding.
+        storage.updatePaymentMethod(methodId, {
+          refundStatus: "refunded",
+          refundError: null,
+        });
+      }
+    })
+    .catch((err) => {
+      storage.updatePaymentMethod(methodId, {
+        refundStatus: "failed",
+        refundError: String(err?.message ?? "неизвестная ошибка возврата"),
+      });
+    });
+}
+
+// Bind a card via the Init+Recurrent 1 ₽ verification-payment path and write the
+// JSON response. Shared by the /bind-card-payment route AND the AddCard fallback
+// (when a terminal can't bind without a payment), so both paths behave
+// identically — including the hardened reversal/refund of the 1 ₽ once the
+// binding is confirmed. Sends a 502 with the acquirer's reason on failure.
+async function bindViaVerificationPayment(
+  cfg: TbankConfig,
+  userId: string,
+  res: Response,
+): Promise<void> {
+  // Unique per attempt so each binding payment correlates to exactly one row.
+  // Must stay <= 50 chars or T-Bank rejects Init with code 212 (a UUID user id
+  // is 36 chars, so embedding it whole would overflow the limit).
+  const orderId = generateBindOrderId();
+  const amountKopecks = cfg.cardBindAmountKopecks;
+
+  try {
+    const resp = await tbankInitBindCard(cfg, {
+      orderId,
+      amountKopecks,
+      customerKey: userId,
+      description: "Проверочный платёж для привязки карты",
+      successUrl: `${cfg.publicAppUrl}/payment-methods`,
+      failUrl: `${cfg.publicAppUrl}/payment-methods`,
+      notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
+    });
+    if (!resp.Success || !resp.PaymentURL) {
+      res.status(502).json(tbankErrorBody(resp));
+      return;
+    }
+    const method = storage.createPendingBindPayment({
+      userId,
+      customerKey: userId,
+      orderId,
+      amountKopecks,
+    });
+    storage.updatePaymentMethod(method.id, {
+      paymentId: resp.PaymentId != null ? String(resp.PaymentId) : null,
+      paymentUrl: resp.PaymentURL,
+      // A charge is now outstanding; it will be reversed/refunded on activation.
+      refundStatus: "pending",
+    });
+    res.json({ paymentUrl: resp.PaymentURL, amountKopecks, method: "payment" });
+  } catch (err: any) {
+    res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
+  }
 }
 
 // Build a masked PAN label from a T-Bank-provided masked pan. T-Bank already
