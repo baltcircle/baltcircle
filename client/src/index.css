@@ -70,8 +70,8 @@
   --chart-4: 24 30% 38%;
   --chart-5: 12 60% 52%;
 
-  --font-sans: "Outfit", "Inter", system-ui, -apple-system, sans-serif;
-  --font-display: "Outfit", "Inter", system-ui, sans-serif;
+  --font-sans: "Roboto Flex", system-ui, -apple-system, sans-serif;
+  --font-display: "Roboto Flex", system-ui, sans-serif;
   --font-serif: "Source Serif 4", Georgia, serif;
   --font-mono: "JetBrains Mono", Menlo, monospace;
   --radius: 0.625rem;
