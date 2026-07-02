@@ -168,9 +168,10 @@ export function MapPage() {
         className="absolute left-0 right-0 z-20 flex items-center justify-between px-4"
         style={{ top: "max(1rem, env(safe-area-inset-top))" }}
       >
-        {/* Logo — top left */}
-        <div className="rounded-2xl bg-white/85 backdrop-blur-sm shadow-lg px-3 py-2">
-          <Logo className="text-foreground h-8" />
+        {/* Logo — top left. Uses the theme card surface so it follows the
+         * palette (teal in light, blue in dark) instead of a white pill. */}
+        <div className="rounded-2xl bg-card/90 backdrop-blur-sm shadow-lg px-3 py-2">
+          <Logo className="text-card-foreground h-8" />
         </div>
 
         {/* Right controls: theme toggle + hamburger */}
@@ -204,7 +205,7 @@ export function MapPage() {
         onClick={handleGeolocate}
         aria-label="Моё местоположение"
         data-testid="home-geolocate-button"
-        className="absolute right-4 z-20 w-12 h-12 rounded-full bg-white/85 backdrop-blur-sm shadow-lg flex items-center justify-center text-gray-700 hover:bg-white active:scale-95 transition-all"
+        className="absolute right-4 z-20 w-12 h-12 rounded-full bg-card/90 text-card-foreground backdrop-blur-sm shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
         style={{ bottom: "calc(max(1.5rem, env(safe-area-inset-bottom)) + 4rem + 1rem)" }}
       >
         <MapPin className="w-5 h-5" />
@@ -221,7 +222,7 @@ export function MapPage() {
         {activeRide ? (
           /* Active ride card */
           <div
-            className="rounded-2xl bg-white/90 dark:bg-zinc-900/90 backdrop-blur-sm shadow-xl px-4 py-3"
+            className="rounded-2xl bg-card/95 text-card-foreground backdrop-blur-sm shadow-xl px-4 py-3"
             data-testid="home-active-ride-card"
           >
             <div className="flex items-center justify-between gap-3">
@@ -256,7 +257,7 @@ export function MapPage() {
                 href="/rent"
                 data-testid="link-ride-details"
                 aria-label="Подробнее о поездке"
-                className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-white/80 border border-gray-200 text-muted-foreground hover-elevate active:scale-95 transition-transform"
+                className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-secondary text-secondary-foreground border border-card-border hover-elevate active:scale-95 transition-transform"
               >
                 <ChevronRight className="w-5 h-5" />
               </Link>

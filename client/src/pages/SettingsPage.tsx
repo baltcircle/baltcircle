@@ -187,7 +187,7 @@ export function SettingsPage() {
           <p className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-widest text-gray-400 dark:text-zinc-500">Настройки приложения</p>
           <div className="px-4 py-3">
             <p className="text-base font-semibold text-gray-900 dark:text-white mb-3">Тема приложения</p>
-            <div className="flex rounded-full bg-gray-100 dark:bg-zinc-700 p-1 gap-1">
+            <div className="flex rounded-full bg-muted p-1 gap-1">
               {(["system", "light", "dark"] as const).map((m) => {
                 const active = mode === m;
                 return (
@@ -197,8 +197,8 @@ export function SettingsPage() {
                     onClick={() => setMode(m)}
                     className={`flex-1 flex items-center justify-center h-8 rounded-full text-sm font-medium transition-all ${
                       active
-                        ? "bg-white dark:bg-zinc-500 text-gray-900 dark:text-white shadow"
-                        : "text-gray-500 dark:text-zinc-400"
+                        ? "bg-primary text-primary-foreground shadow"
+                        : "text-muted-foreground"
                     }`}
                   >
                     {m === "system" && "Авто"}
