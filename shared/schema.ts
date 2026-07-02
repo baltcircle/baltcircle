@@ -460,6 +460,7 @@ export const paymentMethods = sqliteTable("payment_methods", {
   userId: text("user_id").notNull(),
   type: text("type").notNull(),              // card | sbp
   label: text("label").notNull(),            // display label, e.g. "•••• 4242" / "СБП"
+  brand: text("brand"),                      // payment system: "visa" | "mastercard" | "mir" (derived from PAN BIN); null when unknown
   status: text("status").notNull().default("linked"), // pending | active | failed | linked (legacy)
   // ----- Real T-Bank metadata (added for the acquiring integration) -----
   provider: text("provider"),                // "tbank" for real bindings; null for legacy MVP rows

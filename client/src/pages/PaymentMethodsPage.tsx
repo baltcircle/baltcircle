@@ -8,8 +8,9 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { fmtDate } from "@/lib/format";
 import { TBANK_CONFIG_KEY, type TbankConfigResponse } from "@/lib/payment";
 import {
-  CreditCard, Smartphone, Loader2, Trash2, AlertCircle, RefreshCw, Plus,
+  CreditCard, Loader2, Trash2, AlertCircle, RefreshCw, Plus,
 } from "lucide-react";
+import { CardBrandIcon, SbpBrandIcon } from "@/components/PaymentBrandIcon";
 
 const METHODS_KEY = ["/api/payment-methods"];
 
@@ -40,10 +41,6 @@ export function PaymentMethodsPage() {
   // "Платежи настраиваются" notice instead of offering a flow that would 503.
   const cfgQ = useQuery<TbankConfigResponse>({ queryKey: TBANK_CONFIG_KEY });
   const tbankConfigured = cfgQ.data?.configured === true;
-
-  const hasActiveOrPendingCard = methods.some(
-    (m) => m.type === "card" && (m.status === "active" || m.status === "pending"),
-  );
 
   // Start a real T-Bank card binding via a small verification PAYMENT
   // (Init + Recurrent=Y): the backend creates the payment and returns a
@@ -205,9 +202,9 @@ export function PaymentMethodsPage() {
     refreshBindMut.isPending ||
     redirecting;
 
-  // Guard the "Add card" action, mirroring the previous card-block gating:
-  // don't offer the flow when acquiring isn't configured, the rider isn't
-  // registered, a card is already linked, or a request is in flight.
+  // Guard the "Add card" action: don't offer the flow when acquiring isn't
+  // configured, the rider isn't registered, or a request is in flight. Multiple
+  // cards ARE allowed — no "already linked" short-circuit.
   const handleAddCard = () => {
     if (userLoading || cfgQ.isLoading) return;
     if (!tbankConfigured) {
@@ -222,10 +219,6 @@ export function PaymentMethodsPage() {
         title: "Нужен вход в аккаунт",
         description: "Войдите, чтобы привязать карту.",
       });
-      return;
-    }
-    if (hasActiveOrPendingCard) {
-      toast.toast({ title: "Карта уже привязана" });
       return;
     }
     bindCardMut.mutate();
@@ -248,10 +241,6 @@ export function PaymentMethodsPage() {
         <header className="mb-5">
           <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Оплата</div>
           <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Способы оплаты</h1>
-          <p className="text-muted-foreground text-sm mt-1 max-w-prose">
-            Привяжите банковскую карту через защищённую форму T-Bank. Данные карты вводятся только на
-            стороне банка — мы их не видим и не храним.
-          </p>
         </header>
 
         {/* Linked methods — profile-style rows */}
@@ -287,13 +276,11 @@ export function PaymentMethodsPage() {
                     data-testid={`method-row-${m.id}`}
                   >
                     <div className="flex items-center gap-3">
-                      <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
-                        {m.type === "card" ? (
-                          <CreditCard className="w-5 h-5" />
-                        ) : (
-                          <Smartphone className="w-5 h-5" />
-                        )}
-                      </span>
+                      {m.type === "card" ? (
+                        <CardBrandIcon brand={m.brand as any} />
+                      ) : (
+                        <SbpBrandIcon />
+                      )}
                       <div className="min-w-0 flex-1">
                         <p className="text-base font-semibold text-gray-900 dark:text-white truncate font-mono">
                           {m.label}
@@ -360,7 +347,7 @@ export function PaymentMethodsPage() {
         <div className="mt-4 rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800">
           <button
             type="button"
-            disabled={busy || hasActiveOrPendingCard}
+            disabled={busy}
             onClick={handleAddCard}
             data-testid="button-bind-card"
             className="w-full px-4 py-3 border-b border-gray-100 dark:border-zinc-700 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
@@ -370,13 +357,15 @@ export function PaymentMethodsPage() {
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-base font-semibold text-gray-900 dark:text-white">
-                {hasActiveOrPendingCard ? "Карта уже привязана" : "Добавить карту"}
+                {methods.some((m) => m.type === "card" && (m.status === "active" || m.status === "pending"))
+                  ? "Добавить ещё карту"
+                  : "Добавить карту"}
               </p>
               <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">
                 {cardBusy ? "Открываем форму банка…" : "Через защищённую форму T-Bank"}
               </p>
             </div>
-            {!hasActiveOrPendingCard && !cardBusy && (
+            {!cardBusy && (
               <Plus className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
             )}
           </button>
@@ -388,9 +377,7 @@ export function PaymentMethodsPage() {
             data-testid="button-add-sbp"
             className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 text-left"
           >
-            <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
-              <Smartphone className="w-5 h-5" />
-            </span>
+            <SbpBrandIcon />
             <div className="min-w-0 flex-1">
               <p className="text-base font-semibold text-gray-900 dark:text-white">Добавить счёт СБП</p>
               <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">Оплата по СБП появится позже</p>
