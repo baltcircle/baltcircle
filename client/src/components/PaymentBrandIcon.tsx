@@ -64,17 +64,18 @@ function MirLogo() {
 }
 
 function SbpLogo() {
-  // Stylised СБП (Fast Payments System) rainbow mark.
+  // Official СБП (Fast Payments System) mark — eight coloured triangles.
+  // Vector so it stays crisp at any size. Source: sbp.nspk.ru brand assets.
   return (
-    <svg viewBox="0 0 24 24" className="w-6 h-6" role="img" aria-label="СБП">
-      <path fill="#5B57A2" d="M3 6.5l3 1.7v7.6L3 14z" />
-      <path fill="#D90751" d="M6 8.2l3.4-2 3 1.7-3.4 2z" />
-      <path fill="#00A650" d="M6 15.8l3.4 2 3-1.7-3.4-2z" />
-      <path fill="#F48120" d="M9.4 6.2L12 4.7l3 1.7-2.6 1.5z" />
-      <path fill="#00AEEF" d="M9.4 17.8L12 19.3l3-1.7-2.6-1.5z" />
-      <path fill="#654CA0" d="M12.4 8l3-1.7 3 1.7-3 1.7z" />
-      <path fill="#00A650" d="M12.4 16l3 1.7 3-1.7-3-1.7z" />
-      <path fill="#FED700" d="M15.4 9.7l3-1.7 2.6 1.5v4l-2.6 1.5-3-1.7z" />
+    <svg viewBox="0 0 97 120" className="w-5 h-6" fill="none" role="img" aria-label="СБП">
+      <path fill="#5B57A2" d="M0 26.12l14.532 25.975v15.844L.017 93.863 0 26.12z" />
+      <path fill="#D90751" d="M55.797 42.643l13.617-8.346 27.868-.026-41.485 25.414V42.643z" />
+      <path fill="#FAB718" d="M55.72 25.967l.077 34.39-14.566-8.95V0l14.49 25.967z" />
+      <path fill="#ED6F26" d="M97.282 34.271l-27.869.026-13.693-8.33L41.231 0l56.05 34.271z" />
+      <path fill="#63B22F" d="M55.797 94.007V77.322l-14.566-8.78.008 51.458 14.558-25.993z" />
+      <path fill="#1487C9" d="M69.38 85.737L14.531 52.095 0 26.12l97.223 59.583-27.844.034z" />
+      <path fill="#017F36" d="M41.24 120l14.556-25.993 13.583-8.27 27.843-.034L41.24 120z" />
+      <path fill="#984995" d="M.017 93.863l41.333-25.32-13.896-8.526-12.922 7.922L.017 93.863z" />
     </svg>
   );
 }
