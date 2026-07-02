@@ -351,6 +351,7 @@ function migratePaymentMethodsTable() {
   addColumn("payment_url", "payment_url TEXT");
   addColumn("amount_kopecks", "amount_kopecks INTEGER");
   addColumn("brand", "brand TEXT");
+  addColumn("account_token", "account_token TEXT"); // SBP AccountToken for ChargeQr recurring charges
 }
 migratePaymentMethodsTable();
 
@@ -705,10 +706,23 @@ export interface IStorage {
     orderId: string;
     amountKopecks: number;
   }): PaymentMethod;
+  // SBP account binding (AddAccountQr): a pending sbp-type method keyed by the
+  // RequestKey so the notification/state poll can attach the AccountToken.
+  createPendingSbpBinding(input: {
+    userId: string;
+    customerKey: string;
+    orderId: string;
+    requestKey?: string;
+  }): PaymentMethod;
   getPaymentMethod(id: number): PaymentMethod | undefined;
   findPendingCardMethod(userId: string): PaymentMethod | undefined;
   findCardMethodByOrderId(orderId: string): PaymentMethod | undefined;
   findCardMethodByRequestKey(userId: string, requestKey: string): PaymentMethod | undefined;
+  // Locate any T-Bank method (card or sbp) by RequestKey alone — used by the SBP
+  // binding notification, which carries a RequestKey but no user id.
+  findMethodByRequestKey(requestKey: string): PaymentMethod | undefined;
+  // The rider's saved SBP account usable for a recurring charge (active + token).
+  getActiveSavedSbp(userId: string, paymentMethodId?: number): PaymentMethod | undefined;
   updatePaymentMethod(id: number, patch: Partial<PaymentMethod>): PaymentMethod | undefined;
   // The rider's saved T-Bank card usable for a recurring charge (active + RebillId)
   getActiveSavedCard(userId: string, paymentMethodId?: number): PaymentMethod | undefined;
@@ -1147,6 +1161,33 @@ export class DatabaseStorage implements IStorage {
     } as any).returning().get() as PaymentMethod;
   }
 
+  // Create a pending SBP account binding (AddAccountQr). The account is not
+  // usable until the payer authorises it in their bank and T-Bank returns an
+  // AccountToken (via notification or GetAddAccountQrState). We store the
+  // RequestKey + OrderId so either path can correlate back to this row. No
+  // account/card data is ever stored — only the opaque provider identifiers.
+  createPendingSbpBinding(input: {
+    userId: string;
+    customerKey: string;
+    orderId: string;
+    requestKey?: string;
+  }) {
+    const now = Date.now();
+    return db.insert(paymentMethods).values({
+      userId: input.userId,
+      type: "sbp",
+      label: "СБП (привязывается…)",
+      status: "pending",
+      provider: "tbank",
+      purpose: "sbp_binding",
+      customerKey: input.customerKey,
+      orderId: input.orderId,
+      requestKey: input.requestKey ?? null,
+      createdAt: now,
+      updatedAt: now,
+    } as any).returning().get() as PaymentMethod;
+  }
+
   getPaymentMethod(id: number) {
     return db.select().from(paymentMethods).where(eq(paymentMethods.id, id)).get() as
       | PaymentMethod
@@ -1179,6 +1220,31 @@ export class DatabaseStorage implements IStorage {
   findCardMethodByRequestKey(userId: string, requestKey: string) {
     return db.select().from(paymentMethods)
       .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.provider} = 'tbank' AND ${paymentMethods.requestKey} = ${requestKey}`)
+      .orderBy(desc(paymentMethods.createdAt))
+      .get() as PaymentMethod | undefined;
+  }
+
+  // Locate any T-Bank method by RequestKey alone (no user scope). The SBP
+  // binding notification carries a RequestKey but not our user id, so this is
+  // how the webhook attaches the AccountToken to the right pending row.
+  findMethodByRequestKey(requestKey: string) {
+    return db.select().from(paymentMethods)
+      .where(sql`${paymentMethods.provider} = 'tbank' AND ${paymentMethods.requestKey} = ${requestKey}`)
+      .orderBy(desc(paymentMethods.createdAt))
+      .get() as PaymentMethod | undefined;
+  }
+
+  // Resolve the rider's saved SBP account eligible for a recurring charge: an
+  // active sbp-type method with an AccountToken. Mirrors getActiveSavedCard.
+  getActiveSavedSbp(userId: string, paymentMethodId?: number) {
+    if (paymentMethodId != null) {
+      const m = this.getPaymentMethod(paymentMethodId);
+      if (!m || m.userId !== userId) return undefined;
+      if (m.provider !== "tbank" || m.status !== "active" || !m.accountToken) return undefined;
+      return m;
+    }
+    return db.select().from(paymentMethods)
+      .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.provider} = 'tbank' AND ${paymentMethods.status} = 'active' AND ${paymentMethods.accountToken} IS NOT NULL AND ${paymentMethods.accountToken} != ''`)
       .orderBy(desc(paymentMethods.createdAt))
       .get() as PaymentMethod | undefined;
   }

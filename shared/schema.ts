@@ -467,7 +467,12 @@ export const paymentMethods = sqliteTable("payment_methods", {
   customerKey: text("customer_key"),         // T-Bank CustomerKey (== our user id)
   cardId: text("card_id"),                   // T-Bank CardId once the card is bound
   rebillId: text("rebill_id"),               // T-Bank RebillId for recurring charges (if returned)
-  requestKey: text("request_key"),           // AddCard RequestKey, to correlate the binding & poll GetAddCardState
+  requestKey: text("request_key"),           // AddCard / AddAccountQr RequestKey, to correlate the binding & poll GetAddCardState / GetAddAccountQrState
+  // SBP (СБП) account binding: the AccountToken issued by the payer's bank after
+  // a successful AddAccountQr. It is the СБП analogue of a card's RebillId — the
+  // recurring token we pass to ChargeQr to debit the linked account. Populated
+  // from the binding notification (never a secret card number).
+  accountToken: text("account_token"),       // T-Bank AccountToken for SBP recurring charges (ChargeQr)
   // ----- Init+Recurrent verification-payment binding (the primary path) -----
   purpose: text("purpose"),                  // "card_binding" for the Init verification payment; null otherwise
   orderId: text("order_id"),                 // our Init OrderId, echoed back in notifications to correlate
