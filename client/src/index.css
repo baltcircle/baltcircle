@@ -26,15 +26,16 @@
   --brand-bark: 24 30% 28%;       /* warm brown text */
 
   /* Light theme mirrors the dark theme's structure but in the brand teal
-   * #61B5C4 instead of the blue #1D1E5D: teal surfaces + beige #D7CDB0 text.
-   * Surfaces are progressively lighter teals for elevation. Change these HSL
-   * values to retune the whole light palette. */
+   * #61B5C4 instead of the blue #1D1E5D. Content text is DARK navy-teal for
+   * strong contrast on the teal surfaces (buttons/menu keep beige text via
+   * --primary-foreground / --sidebar-foreground). Change these HSL values to
+   * retune the whole light palette. */
   --background: 189 46% 62%;      /* lighter #61B5C4 base */
-  --foreground: 45 33% 88%;       /* lightened #D7CDB0 beige for contrast on teal */
+  --foreground: 200 55% 14%;      /* #10242f — dark navy-teal text for contrast */
   --border: 189 46% 47%;          /* darker #61B5C4 divider */
 
   --card: 189 46% 57%;            /* #61B5C4 — card surface (matches menu) */
-  --card-foreground: 45 33% 88%;  /* light beige text */
+  --card-foreground: 200 55% 14%; /* #10242f — dark text on teal card */
   --card-border: 189 46% 47%;     /* darker #61B5C4 */
 
   /* Sidebar uses the brand primary tone in light mode */
@@ -48,20 +49,20 @@
   --sidebar-ring: 45 33% 77%;                   /* #D7CDB0 */
 
   --popover: 189 46% 57%;         /* #61B5C4 popover surface */
-  --popover-foreground: 45 33% 88%;
+  --popover-foreground: 200 55% 14%; /* #10242f — dark text */
   --popover-border: 189 46% 47%;  /* darker #61B5C4 */
 
   --primary: 189 46% 57%;             /* #61B5C4  — light theme primary */
   --primary-foreground: 45 33% 77%;   /* #D7CDB0  — button text on primary */
 
   --secondary: 189 46% 52%;       /* slightly deeper #61B5C4 */
-  --secondary-foreground: 45 33% 88%;
+  --secondary-foreground: 200 55% 14%; /* #10242f — dark text */
 
   --muted: 189 46% 52%;           /* deeper #61B5C4 hover/muted surface */
-  --muted-foreground: 45 30% 82%; /* dimmer beige for secondary text */
+  --muted-foreground: 200 40% 26%; /* #274050 — dark muted text for contrast */
 
   --accent: 189 46% 52%;
-  --accent-foreground: 45 33% 88%;
+  --accent-foreground: 200 55% 14%; /* #10242f — dark text */
 
   --destructive: 0 68% 45%;
   --destructive-foreground: 0 0% 100%;
