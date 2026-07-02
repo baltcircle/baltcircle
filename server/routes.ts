@@ -24,6 +24,8 @@ import {
   tbankInitSavedCardCharge, tbankCharge, generateSavedCardRideOrderId,
   tbankGetState,
   tbankCancel,
+  tbankAddAccountQr, tbankGetAddAccountQrState,
+  generateSbpBindOrderId, extractQrPayload, classifyAccountBinding,
 } from "./tbank";
 import type { TbankConfig } from "./tbank";
 import { log } from "./index";
@@ -401,6 +403,133 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err: any) {
       res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
     }
+  });
+
+  // Start an SBP ACCOUNT binding via AddAccountQr. Unlike a card, the rider binds
+  // their bank account once and future ride tariffs are charged via ChargeQr with
+  // the returned AccountToken (SBP's analogue of a card RebillId). AddAccountQr
+  // returns a RequestKey (to poll/correlate) and a Data payload the rider opens
+  // in their bank app to authorise the binding. The AccountToken itself arrives
+  // asynchronously (notification webhook, or the refresh poll below). We create a
+  // pending sbp-type row (purpose=sbp_binding) keyed by the RequestKey so both
+  // resolution paths can find it. No account data ever reaches us. If the
+  // SBP-recurrent product isn't activated on the terminal, T-Bank answers
+  // Success=false and we surface its reason (502) rather than crashing.
+  app.post("/api/payments/tbank/bind-sbp", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Требуется вход" });
+    const user = storage.getUser(userId);
+    if (!user) return res.status(401).json({ error: "Требуется вход" });
+
+    const cfg = getTbankConfig();
+    if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
+
+    // Correlates this binding to exactly one pending row; <= 50 chars.
+    const orderId = generateSbpBindOrderId();
+
+    try {
+      const resp = await tbankAddAccountQr(cfg, {
+        customerKey: user.id,
+        description: "Привязка счёта СБП для оплаты поездок",
+        dataType: "PAYLOAD",
+      });
+      // Success=false covers the "product not activated on terminal" case: we
+      // relay the acquirer's own message so the UI explains it, no crash.
+      if (!resp.Success) {
+        return res.status(502).json(tbankErrorBody(resp));
+      }
+      const qrPayload = extractQrPayload(resp);
+      if (!qrPayload) {
+        return res.status(502).json({
+          error: "Платёжный сервис не вернул данные для QR. Попробуйте позже.",
+        });
+      }
+      const method = storage.createPendingSbpBinding({
+        userId: user.id,
+        customerKey: user.id,
+        orderId,
+        requestKey: typeof resp.RequestKey === "string" ? resp.RequestKey : undefined,
+      });
+      res.json({
+        methodId: method.id,
+        requestKey: typeof resp.RequestKey === "string" ? resp.RequestKey : null,
+        qrPayload,
+      });
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message ?? "Не удалось привязать счёт СБП. Попробуйте позже." });
+    }
+  });
+
+  // Refresh a pending SBP account binding by polling GetAddAccountQrState. This
+  // is the recovery path when the notification webhook never arrives (or the
+  // rider closed the tab before it landed), leaving the method "pending". The
+  // poll signs ONLY RequestKey (see tbankGetAddAccountQrState); on ACTIVE with an
+  // AccountToken we activate the method and persist the opaque token used by
+  // future ChargeQr; on INACTIVE we mark it failed. The rider can refresh only
+  // their OWN method; staff may refresh any. Returns the updated method.
+  app.get("/api/payments/tbank/refresh-bind-sbp/:paymentMethodId", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Требуется вход" });
+
+    const method = storage.getPaymentMethod(Number(req.params.paymentMethodId));
+    if (!method) return res.status(404).json({ error: "Способ оплаты не найден" });
+
+    const actor = storage.getUser(userId);
+    const isStaff = actor?.role === "admin" || actor?.role === "operator";
+    if (method.userId !== userId && !isStaff) {
+      return res.status(404).json({ error: "Способ оплаты не найден" });
+    }
+
+    if (method.provider !== "tbank" || method.type !== "sbp" || !method.requestKey) {
+      return res.status(400).json({ error: "Для этого способа оплаты проверка статуса недоступна." });
+    }
+    if (method.status === "active") {
+      return res.json(method); // already resolved; nothing to poll
+    }
+
+    const cfg = getTbankConfig();
+    if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
+
+    let resp;
+    try {
+      resp = await tbankGetAddAccountQrState(cfg, method.requestKey);
+    } catch (err: any) {
+      return res.status(502).json({ error: err?.message ?? "Не удалось проверить статус. Попробуйте позже." });
+    }
+
+    if (!resp.Success) {
+      // The poll itself was rejected (bad RequestKey, etc.). Surface the
+      // acquirer's reason but do NOT mark the method failed — only our query
+      // failed, the binding state is unknown.
+      return res.status(502).json(tbankErrorBody(resp));
+    }
+
+    const status = typeof resp.Status === "string" ? resp.Status : "";
+    const accountToken = typeof resp.AccountToken === "string" ? resp.AccountToken : "";
+    const bankName = typeof resp.BankMemberName === "string" ? resp.BankMemberName.trim() : "";
+    const outcome = classifyAccountBinding({ status, accountToken });
+
+    if (outcome === "active") {
+      const updated = storage.updatePaymentMethod(method.id, {
+        status: "active",
+        accountToken: accountToken || method.accountToken,
+        label: bankName ? `СБП · ${bankName}` : "СБП",
+        lastErrorCode: null,
+        lastErrorMessage: null,
+        lastErrorDetails: null,
+      });
+      return res.json(updated);
+    }
+    if (outcome === "failed") {
+      const updated = storage.updatePaymentMethod(method.id, {
+        status: "failed",
+        ...bindingErrorPatch(resp),
+      });
+      return res.json(updated);
+    }
+    // Still pending — the webhook may yet arrive; report unchanged.
+    const updated = storage.updatePaymentMethod(method.id, { status: "pending" });
+    return res.json(updated);
   });
 
   // Start a ride by paying its tariff up front via an ordinary T-Bank payment
@@ -1397,9 +1526,66 @@ function handleTbankNotification(body: Record<string, unknown>, cfg?: TbankConfi
       handleInitBindingNotification(byOrder, body, cfg);
       return;
     }
+
+    // SBP account binding via OrderId (some notifications echo our OrderId). A
+    // matching sbp_binding row means this notification carries the AccountToken
+    // for a pending SBP account binding.
+    if (byOrder && byOrder.purpose === "sbp_binding") {
+      handleSbpBindingNotification(byOrder, body);
+      return;
+    }
+  }
+
+  // SBP account binding via RequestKey. The AddAccountQr notification carries a
+  // RequestKey (and the AccountToken once authorised) but not necessarily our
+  // OrderId, so correlate the pending sbp_binding row by its RequestKey.
+  const requestKey = typeof body.RequestKey === "string" ? body.RequestKey : "";
+  if (requestKey) {
+    const byRequestKey = storage.findMethodByRequestKey(requestKey);
+    if (byRequestKey && byRequestKey.purpose === "sbp_binding") {
+      handleSbpBindingNotification(byRequestKey, body);
+      return;
+    }
   }
 
   handleAddCardNotification(body);
+}
+
+// Resolve an SBP account binding (AddAccountQr) from a notification. Activates
+// the method only when an AccountToken is present alongside ACTIVE — the token
+// is the recurring credential we need for future ChargeQr charges (SBP's
+// analogue of a card RebillId). Persists the AccountToken and any acquirer error
+// fields (never a secret). Idempotent: a duplicate notification for an already
+// active method is ignored.
+function handleSbpBindingNotification(
+  method: PaymentMethod,
+  body: Record<string, unknown>,
+): void {
+  if (method.status === "active") return; // already resolved
+
+  const status = typeof body.Status === "string" ? body.Status : "";
+  const accountToken = typeof body.AccountToken === "string" ? body.AccountToken : "";
+  const bankName = typeof body.BankMemberName === "string" ? body.BankMemberName.trim() : "";
+  const success = body.Success === false ? false : undefined;
+
+  const outcome = classifyAccountBinding({ status, accountToken, success });
+  if (outcome === "active") {
+    storage.updatePaymentMethod(method.id, {
+      status: "active",
+      accountToken: accountToken || method.accountToken,
+      label: bankName ? `СБП · ${bankName}` : "СБП",
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      lastErrorDetails: null,
+    });
+  } else if (outcome === "failed") {
+    storage.updatePaymentMethod(method.id, {
+      status: "failed",
+      ...bindingErrorPatch(body),
+    });
+  }
+  // Otherwise an intermediate state (NEW/PROCESSING) — leave pending; a later
+  // notification (ACTIVE with AccountToken) or the refresh poll will resolve it.
 }
 
 // Resolve an ordinary ride-payment order from a notification. On the first

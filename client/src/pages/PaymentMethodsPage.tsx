@@ -8,9 +8,10 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { fmtDate } from "@/lib/format";
 import { TBANK_CONFIG_KEY, type TbankConfigResponse } from "@/lib/payment";
 import {
-  CreditCard, Loader2, Trash2, AlertCircle, RefreshCw, Plus,
+  CreditCard, Loader2, Trash2, AlertCircle, RefreshCw, Plus, X, ExternalLink, CheckCircle2,
 } from "lucide-react";
 import { CardBrandIcon, SbpBrandIcon } from "@/components/PaymentBrandIcon";
+import { BikeQr } from "@/components/BikeQr";
 
 const METHODS_KEY = ["/api/payment-methods"];
 
@@ -29,10 +30,23 @@ function statusLabel(status: string): { text: string; cls: string } {
   }
 }
 
+// Live state for an in-progress SBP account binding. `payload` is the QR/
+// deeplink the rider opens in their bank; `methodId` is the pending row we poll
+// to detect activation. `status` drives the modal's headline (waiting → success
+// / failed). Held in component state so the QR modal survives re-renders while
+// the rider authorises the binding in their bank app.
+interface SbpBinding {
+  methodId: number;
+  payload: string;
+  status: "waiting" | "active" | "failed";
+  error?: string;
+}
+
 export function PaymentMethodsPage() {
   const toast = useToast();
   const { isRegistered, isLoading: userLoading } = useCurrentUser();
   const [redirecting, setRedirecting] = useState(false);
+  const [sbpBinding, setSbpBinding] = useState<SbpBinding | null>(null);
 
   const methodsQ = useQuery<PaymentMethod[]>({ queryKey: METHODS_KEY });
   const methods = methodsQ.data ?? [];
@@ -62,6 +76,27 @@ export function PaymentMethodsPage() {
     },
     onError: (e: Error) =>
       toast.toast({ title: "Не удалось привязать карту", description: cleanErr(e), variant: "destructive" }),
+  });
+
+  // Start a real SBP ACCOUNT binding via AddAccountQr. The backend returns a QR
+  // payload/deeplink and the id of a pending sbp-type method. We open a modal
+  // showing the QR (scan from another device) + an "Открыть в банке" deeplink
+  // button (tap on the same phone). The AccountToken arrives asynchronously once
+  // the rider authorises in their bank, so the modal polls refresh-bind-sbp
+  // until the method activates (or fails). If the SBP-recurrent product isn't
+  // activated on the terminal, the backend relays T-Bank's message and we show
+  // it via cleanErr — no crash.
+  const bindSbpMut = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/payments/tbank/bind-sbp");
+      return (await res.json()) as { methodId: number; requestKey: string | null; qrPayload: string };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+      setSbpBinding({ methodId: data.methodId, payload: data.qrPayload, status: "waiting" });
+    },
+    onError: (e: Error) =>
+      toast.toast({ title: "Не удалось привязать счёт СБП", description: cleanErr(e), variant: "destructive" }),
   });
 
   const unlinkMut = useMutation({
@@ -146,6 +181,50 @@ export function PaymentMethodsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [methods]);
 
+  // Poll the in-progress SBP binding while its modal is open. The AccountToken
+  // arrives asynchronously (the rider authorises in their bank), so we poll
+  // refresh-bind-sbp every 2s for up to ~2min. On "active" we flip the modal to
+  // its success state (and refresh the list); on "failed" we show the acquirer's
+  // reason. Stops as soon as the binding resolves or the modal closes.
+  useEffect(() => {
+    if (!sbpBinding || sbpBinding.status !== "waiting") return;
+    const methodId = sbpBinding.methodId;
+    let tries = 0;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await apiRequest("GET", `/api/payments/tbank/refresh-bind-sbp/${methodId}`);
+        const m = (await res.json()) as PaymentMethod;
+        if (cancelled) return;
+        if (m.status === "active") {
+          queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+          setSbpBinding((b) => (b && b.methodId === methodId ? { ...b, status: "active" } : b));
+        } else if (m.status === "failed") {
+          queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+          setSbpBinding((b) =>
+            b && b.methodId === methodId ? { ...b, status: "failed", error: methodError(m) } : b,
+          );
+        }
+      } catch {
+        // Transient poll failure (e.g. the state query was rejected) — keep
+        // waiting; the notification webhook may still resolve the binding.
+      }
+    };
+    const interval = setInterval(() => {
+      if (++tries >= 60) {
+        clearInterval(interval);
+        return;
+      }
+      void poll();
+    }, 2000);
+    void poll();
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sbpBinding?.methodId, sbpBinding?.status]);
+
   // When T-Bank redirects the rider back to /payment-methods after the hosted
   // form, the Success/Fail URL may carry Success / RequestKey / ErrorCode query
   // params. We don't trust these for state changes (the notification webhook is
@@ -197,6 +276,7 @@ export function PaymentMethodsPage() {
 
   const busy =
     bindCardMut.isPending ||
+    bindSbpMut.isPending ||
     unlinkMut.isPending ||
     refreshMut.isPending ||
     refreshBindMut.isPending ||
@@ -224,16 +304,31 @@ export function PaymentMethodsPage() {
     bindCardMut.mutate();
   };
 
-  // SBP acquiring isn't wired up yet — surface an honest "coming later" notice
-  // rather than fabricating a linked account row.
+  // Start a real SBP account binding. Same guards as the card flow: acquiring
+  // must be configured and the rider registered. Multiple SBP accounts ARE
+  // allowed — no "already linked" short-circuit. The QR modal then walks the
+  // rider through authorising the binding in their bank.
   const handleAddSbp = () => {
-    toast.toast({
-      title: "СБП скоро",
-      description: "Оплата по СБП появится позже.",
-    });
+    if (userLoading || cfgQ.isLoading) return;
+    if (!tbankConfigured) {
+      toast.toast({
+        title: "Платежи настраиваются",
+        description: "Привязка счёта СБП будет доступна позже.",
+      });
+      return;
+    }
+    if (!isRegistered) {
+      toast.toast({
+        title: "Нужен вход в аккаунт",
+        description: "Войдите, чтобы привязать счёт СБП.",
+      });
+      return;
+    }
+    bindSbpMut.mutate();
   };
 
   const cardBusy = redirecting || bindCardMut.isPending;
+  const sbpBusy = bindSbpMut.isPending;
 
   return (
     <OverlayShell title="Способы оплаты">
@@ -375,18 +470,145 @@ export function PaymentMethodsPage() {
             disabled={busy}
             onClick={handleAddSbp}
             data-testid="button-add-sbp"
-            className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 text-left"
+            className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
           >
-            <SbpBrandIcon />
+            {sbpBusy ? (
+              <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
+                <Loader2 className="w-5 h-5 animate-spin" />
+              </span>
+            ) : (
+              <SbpBrandIcon />
+            )}
             <div className="min-w-0 flex-1">
-              <p className="text-base font-semibold text-gray-900 dark:text-white">Добавить счёт СБП</p>
-              <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">Оплата по СБП появится позже</p>
+              <p className="text-base font-semibold text-gray-900 dark:text-white">
+                {methods.some((m) => m.type === "sbp" && (m.status === "active" || m.status === "pending"))
+                  ? "Добавить ещё счёт СБП"
+                  : "Добавить счёт СБП"}
+              </p>
+              <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">
+                {sbpBusy ? "Готовим QR…" : "Оплата по СБП — привязка без карты"}
+              </p>
             </div>
-            <Plus className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
+            {!sbpBusy && (
+              <Plus className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
+            )}
           </button>
         </div>
       </div>
+
+      {sbpBinding && (
+        <SbpBindModal
+          binding={sbpBinding}
+          onClose={() => setSbpBinding(null)}
+        />
+      )}
     </OverlayShell>
+  );
+}
+
+// Modal walking the rider through an SBP account binding. Shows the QR (scan
+// with another device's camera / bank app) plus an "Открыть в банке" button
+// that opens the deeplink on the same phone. The parent polls the binding
+// status and flips `binding.status` to "active"/"failed", which this modal
+// reflects. The payload is a bank deeplink/URL rendered locally as a QR (no
+// network), so the account credential never leaves the rider's device path.
+function SbpBindModal({
+  binding,
+  onClose,
+}: {
+  binding: SbpBinding;
+  onClose: () => void;
+}) {
+  // Whether the payload is openable as a link on this device. SBP payloads are
+  // https:// or a bank-scheme deeplink; either is safe to hand to the browser.
+  const canOpen = /^(https?:|[a-z][a-z0-9+.-]*:)/i.test(binding.payload.trim());
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4"
+      data-testid="sbp-bind-modal"
+      onClick={onClose}
+    >
+      <div
+        className="w-full sm:max-w-sm bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl border border-gray-200 dark:border-zinc-800 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 pt-5 pb-2">
+          <h2 className="text-lg font-display font-light text-gray-900 dark:text-white">
+            Привязка счёта СБП
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            data-testid="button-close-sbp-modal"
+            className="flex items-center justify-center w-9 h-9 rounded-full text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors shrink-0"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="px-5 pb-6">
+          {binding.status === "active" ? (
+            <div className="flex flex-col items-center text-center py-6" data-testid="sbp-bind-success">
+              <CheckCircle2 className="w-14 h-14 text-green-500" />
+              <p className="mt-3 text-base font-semibold text-gray-900 dark:text-white">Счёт СБП привязан</p>
+              <p className="mt-1 text-sm text-gray-500 dark:text-zinc-400">
+                Теперь можно оплачивать поездки через СБП.
+              </p>
+              <button
+                type="button"
+                onClick={onClose}
+                data-testid="button-sbp-done"
+                className="mt-5 w-full py-3 rounded-xl bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-semibold hover:opacity-90 transition-opacity"
+              >
+                Готово
+              </button>
+            </div>
+          ) : binding.status === "failed" ? (
+            <div className="flex flex-col items-center text-center py-6" data-testid="sbp-bind-failed">
+              <AlertCircle className="w-14 h-14 text-red-500" />
+              <p className="mt-3 text-base font-semibold text-gray-900 dark:text-white">Не удалось привязать счёт</p>
+              {binding.error && (
+                <p className="mt-1 text-sm text-red-500">{binding.error}</p>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                data-testid="button-sbp-close-failed"
+                className="mt-5 w-full py-3 rounded-xl bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-semibold hover:opacity-90 transition-opacity"
+              >
+                Закрыть
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center">
+              <p className="text-sm text-gray-500 dark:text-zinc-400 text-center mb-4">
+                Отсканируйте QR камерой или приложением банка, а на этом телефоне — нажмите «Открыть в банке».
+              </p>
+              <div className="rounded-2xl bg-white p-3 border border-gray-200" data-testid="sbp-qr">
+                <BikeQr value={binding.payload} size={220} />
+              </div>
+              {canOpen && (
+                <a
+                  href={binding.payload}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid="button-open-in-bank"
+                  className="mt-5 w-full inline-flex items-center justify-center gap-2 py-3 rounded-xl bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-semibold hover:opacity-90 transition-opacity"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Открыть в банке
+                </a>
+              )}
+              <div className="mt-4 flex items-center gap-2 text-xs text-gray-400 dark:text-zinc-500">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>Ждём подтверждения в банке…</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

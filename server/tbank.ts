@@ -218,6 +218,17 @@ export interface TbankResponse {
   PaymentURL?: string;
   CustomerKey?: string;
   RequestKey?: string;
+  // SBP (AddAccountQr) — the QR payload / deeplink / base64 image is returned in
+  // `Data` (its exact shape depends on the requested DataType). Some acquirer
+  // builds echo a QrCodeData/Payload field too; we read whichever is present.
+  Data?: unknown;
+  QrCodeData?: unknown;
+  Payload?: unknown;
+  // SBP account binding token (issued by the payer's bank, arrives in the
+  // binding notification / GetAddAccountQrState once the account is ACTIVE).
+  AccountToken?: string;
+  BankMemberId?: string;
+  BankMemberName?: string;
   [k: string]: unknown;
 }
 
@@ -595,7 +606,7 @@ export async function tbankCancel(
   paymentId: string,
 ): Promise<void> {
   try {
-    const resp = await signedPost(cfg, "Cancel", { PaymentId: paymentId });
+    const resp = await signedPost(cfg, "/Cancel", { PaymentId: paymentId });
     if (!resp.Success) {
       log(`[tbank] Cancel failed for PaymentId=${paymentId}: ${resp.Message ?? resp.Details ?? "unknown"}`, "tbank");
     } else {
@@ -604,4 +615,165 @@ export async function tbankCancel(
   } catch (err: any) {
     log(`[tbank] Cancel error for PaymentId=${paymentId}: ${err?.message}`, "tbank");
   }
+}
+
+// ---------- SBP (СБП) account binding & recurring charge ----------
+//
+// The СБП analogue of the card RebillId flow. Instead of a card + RebillId we
+// bind the rider's bank ACCOUNT and receive an AccountToken, then debit it later
+// with ChargeQr. Flow:
+//   1. AddAccountQr        → returns a QR payload / deeplink the rider opens in
+//                            their bank app to authorise the account binding, plus
+//                            a RequestKey to poll the binding state.
+//   2. (notification)      → T-Bank POSTs the binding result to our webhook with
+//                            an AccountToken once the account is ACTIVE.
+//   3. GetAddAccountQrState→ recovery poll (by RequestKey) when the webhook never
+//                            arrived; returns Status + AccountToken when ACTIVE.
+//   4. Init (DATA={QR:true},
+//      Recurrent=Y) + ChargeQr(AccountToken) → later recurring debit.
+//
+// Token correctness (the classic code 204 trap): signedPost signs the EXACT
+// root-level scalar payload it sends. AddAccountQr's `Data` is a nested object,
+// so it is excluded from the token by design (isScalar drops it) yet still sent
+// — identical to how Receipt/DATA are handled elsewhere. We therefore sign and
+// send exactly the documented fields.
+
+export interface AddAccountQrInput {
+  // Ties the bound account to the rider in T-Bank's cabinet (== our user id),
+  // mirroring the CustomerKey we use for card binding.
+  customerKey: string;
+  description: string;
+  // "PAYLOAD" returns a functional payment link/deeplink (default); "IMAGE"
+  // returns a base64 QR image. We request PAYLOAD and render the QR client-side
+  // so we can also offer an "open in bank" deeplink button on mobile.
+  dataType?: "PAYLOAD" | "IMAGE";
+}
+
+// Initiate an SBP account binding. Returns a RequestKey (to poll the state) and
+// a Data payload (the QR/deeplink the rider opens in their bank app). The
+// AccountToken itself does NOT come back here — it arrives in the binding
+// notification once the payer authorises it in their bank.
+export async function tbankAddAccountQr(
+  cfg: TbankConfig,
+  input: AddAccountQrInput,
+): Promise<TbankResponse> {
+  return signedPost(cfg, "/AddAccountQr", {
+    // Description is shown in the rider's bank app; DataType selects PAYLOAD vs
+    // IMAGE. The binding is correlated to the rider via our own pending row keyed
+    // by the returned RequestKey. (CustomerKey is not a documented AddAccountQr
+    // field — sending it would break the token, the same code 204 trap.)
+    Description: input.description,
+    DataType: input.dataType ?? "PAYLOAD",
+  });
+}
+
+// Poll the state of an SBP account binding started with AddAccountQr. Accepts
+// ONLY TerminalKey + RequestKey (plus the injected Token) per the T-Bank spec
+// (developer.tbank.ru/eacq/api/get-add-account-qr-state) — sending extra fields
+// would fold them into our token while T-Bank signs only its own set (code 204).
+// On success returns Status (NEW/PROCESSING/ACTIVE/INACTIVE) and, once ACTIVE,
+// the AccountToken (+ BankMemberId/BankMemberName).
+export async function tbankGetAddAccountQrState(
+  cfg: TbankConfig,
+  requestKey: string,
+): Promise<TbankResponse> {
+  return signedPost(cfg, "/GetAddAccountQrState", { RequestKey: requestKey });
+}
+
+export interface InitSbpChargeInput {
+  // Our order id for this SBP recurring charge (unique per attempt, <= 50 chars).
+  orderId: string;
+  // Amount in kopecks for the tariff. Note: SBP has a 10 ₽ minimum per T-Bank.
+  amountKopecks: number;
+  description: string;
+  // CustomerKey ties the charge to the rider whose account we're debiting.
+  customerKey: string;
+  // Where T-Bank POSTs the asynchronous result.
+  notificationUrl: string;
+}
+
+// Create the payment object for a recurring SBP charge against a bound ACCOUNT
+// via /Init, then /ChargeQr with the AccountToken. Per the T-Bank spec the
+// parent-linked recurring SBP payment sets Recurrent=Y and DATA={"QR":"true"}.
+// DATA is a nested object so it never takes part in the token (by design); the
+// scalar fields are signed exactly as sent (avoids code 204). Returns a
+// PaymentId used by the subsequent ChargeQr.
+export async function tbankInitSbpCharge(
+  cfg: TbankConfig,
+  input: InitSbpChargeInput,
+): Promise<TbankResponse> {
+  return signedPost(cfg, "/Init", {
+    Amount: input.amountKopecks,
+    OrderId: input.orderId,
+    Description: input.description,
+    CustomerKey: input.customerKey,
+    Recurrent: "Y",
+    NotificationURL: input.notificationUrl,
+    // Nested → excluded from the token, included in the body (like Receipt).
+    DATA: { QR: "true" },
+  });
+}
+
+export interface ChargeQrInput {
+  // PaymentId returned by the preceding Init for this SBP charge.
+  paymentId: string;
+  // The stored SBP account token issued when the rider's account was bound.
+  accountToken: string;
+}
+
+// Debit a bound SBP account via /ChargeQr using PaymentId + AccountToken. No
+// account data beyond the opaque token is involved. On success the response
+// Status is AUTHORIZED/CONFIRMED (classifyRidePayment maps those to "paid"); a
+// deferred result arrives later on the NotificationURL. Signs and sends exactly
+// PaymentId + AccountToken (avoids code 204).
+export async function tbankChargeQr(
+  cfg: TbankConfig,
+  input: ChargeQrInput,
+): Promise<TbankResponse> {
+  return signedPost(cfg, "/ChargeQr", {
+    PaymentId: input.paymentId,
+    AccountToken: input.accountToken,
+  });
+}
+
+// Build a compact, collision-resistant OrderId for an SBP account binding.
+// Same constraints as the card generators — <= 50 chars, ASCII latin/digits/dash
+// only. A distinct "TRSB" (TakeRide Sbp Binding) prefix lets logs/handlers tell
+// an SBP account binding apart from a card binding at a glance.
+export function generateSbpBindOrderId(): string {
+  const ts = Date.now().toString(36);
+  let rand = "";
+  while (rand.length < 6) rand += randomInt(36).toString(36);
+  return `TRSB-${ts}-${rand.slice(0, 6)}`;
+}
+
+// Extract the QR payload / deeplink from an AddAccountQr response. The acquirer
+// returns it in `Data` (PAYLOAD → a link/deeplink string; IMAGE → base64), and
+// some builds echo a QrCodeData/Payload field. Returns the first non-empty
+// string we find so the client can render a QR and/or an "open in bank" link.
+export function extractQrPayload(resp: TbankResponse): string {
+  for (const v of [resp.Data, resp.QrCodeData, resp.Payload]) {
+    if (typeof v === "string" && v.trim().length > 0) return v.trim();
+  }
+  return "";
+}
+
+// Map a T-Bank AddAccountQr binding state/notification to our lifecycle. The
+// account is "active" once the acquirer reports ACTIVE (with an AccountToken);
+// it is "failed" on INACTIVE or an explicit terminal rejection; everything else
+// (NEW/PROCESSING) is still in flight. Mirrors classifyCardBinding so the
+// notification webhook and the state poller agree on each status.
+export function classifyAccountBinding(args: {
+  status?: string;
+  accountToken?: string;
+  success?: boolean;
+}): CardBindingOutcome {
+  const status = (args.status || "").trim().toUpperCase();
+  if (status === "ACTIVE" || (args.accountToken && args.accountToken.length > 0)) {
+    return "active";
+  }
+  if (args.success === false || status === "INACTIVE" || FAILED_BINDING_STATUSES.includes(status)) {
+    return "failed";
+  }
+  return "pending";
 }
