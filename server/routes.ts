@@ -25,6 +25,7 @@ import {
   tbankGetState,
   tbankCancel,
 } from "./tbank";
+import type { TbankConfig } from "./tbank";
 import { log } from "./index";
 
 // Resolve the active rider id. A registered rider has their user id stored in
