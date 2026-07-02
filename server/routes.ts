@@ -1833,8 +1833,10 @@ async function bindViaVerificationPayment(
       amountKopecks,
       customerKey: userId,
       description: "Проверочный платёж для привязки карты",
-      successUrl: `${cfg.publicAppUrl}/payment-methods`,
-      failUrl: `${cfg.publicAppUrl}/payment-methods`,
+      // ?from=tbank marks the return leg so the client can rewrite history and
+      // avoid the Back-button loop into T-Bank's hosted form.
+      successUrl: `${cfg.publicAppUrl}/payment-methods?from=tbank`,
+      failUrl: `${cfg.publicAppUrl}/payment-methods?from=tbank`,
       notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
     });
     if (!resp.Success || !resp.PaymentURL) {

@@ -87,6 +87,17 @@ export function PaymentResultPage() {
     }
   }, [status, queryClient]);
 
+  // Break the Back-button loop into T-Bank. We arrive here via a full page load
+  // from T-Bank's hosted form, so the browser's previous history entry is a
+  // T-Bank URL that redirects forward again if the rider presses Back. Rewrite
+  // history once on mount so a single Back leaves cleanly to the map ("/").
+  useEffect(() => {
+    if (!orderId) return;
+    window.history.replaceState({}, "", "/");
+    window.history.pushState({}, "", `/payment-result?orderId=${encodeURIComponent(orderId)}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="px-4 lg:px-10 py-10 max-w-xl mx-auto" data-testid="page-payment-result">
       <header className="mb-6">
