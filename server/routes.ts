@@ -726,6 +726,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         cardId: cardId || method.cardId,
         rebillId: rebillId || method.rebillId,
         label: pan ? maskPan(pan) : method.label === "Карта (привязывается…)" ? "Карта" : method.label,
+        brand: pan ? cardBrand(pan) ?? method.brand : method.brand,
         lastErrorCode: null,
         lastErrorMessage: null,
         lastErrorDetails: null,
@@ -804,6 +805,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         cardId: cardId || method.cardId,
         paymentId: method.paymentId,
         label: pan ? maskPan(pan) : method.label === "Карта (привязывается…)" ? "Карта" : method.label,
+        brand: pan ? cardBrand(pan) ?? method.brand : method.brand,
         lastErrorCode: null,
         lastErrorMessage: null,
         lastErrorDetails: null,
@@ -1489,6 +1491,7 @@ function handleInitBindingNotification(
       cardId: cardId || method.cardId,
       paymentId: paymentId || method.paymentId,
       label: pan ? maskPan(pan) : "Карта",
+      brand: pan ? cardBrand(pan) ?? method.brand : method.brand,
       lastErrorCode: null,
       lastErrorMessage: null,
       lastErrorDetails: null,
@@ -1529,6 +1532,7 @@ function handleAddCardNotification(body: Record<string, unknown>): void {
       cardId: cardId || pending.cardId,
       rebillId: rebillId || pending.rebillId,
       label: pan ? maskPan(pan) : "Карта",
+      brand: pan ? cardBrand(pan) ?? pending.brand : pending.brand,
       lastErrorCode: null,
       lastErrorMessage: null,
       lastErrorDetails: null,
@@ -1570,4 +1574,23 @@ function maskPan(pan: string): string {
   const digits = pan.replace(/\D/g, "");
   const last4 = digits.slice(-4);
   return last4 ? `•••• ${last4}` : "Карта";
+}
+
+// Derive the payment system from the card's BIN. T-Bank sends a masked PAN whose
+// leading 6 digits (the BIN) are visible (e.g. "430000******0777"), which is
+// enough to classify the network. Returns null when the BIN doesn't match a
+// known range so the client falls back to a generic card icon. Ranges:
+//   Visa        4xxxxx
+//   Mastercard  51–55, 2221–2720
+//   МИР (Mir)   2200–2204
+function cardBrand(pan: string): "visa" | "mastercard" | "mir" | null {
+  const digits = pan.replace(/\D/g, "");
+  if (digits.length < 4) return null;
+  const d4 = Number(digits.slice(0, 4));
+  if (digits[0] === "4") return "visa";
+  if (d4 >= 2200 && d4 <= 2204) return "mir";
+  const d2 = Number(digits.slice(0, 2));
+  if (d2 >= 51 && d2 <= 55) return "mastercard";
+  if (d4 >= 2221 && d4 <= 2720) return "mastercard";
+  return null;
 }

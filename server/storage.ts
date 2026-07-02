@@ -350,6 +350,7 @@ function migratePaymentMethodsTable() {
   addColumn("payment_id", "payment_id TEXT");
   addColumn("payment_url", "payment_url TEXT");
   addColumn("amount_kopecks", "amount_kopecks INTEGER");
+  addColumn("brand", "brand TEXT");
 }
 migratePaymentMethodsTable();
 
