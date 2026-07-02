@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { Link, useLocation, useSearch } from "wouter";
+import { useEffect, useMemo } from "react";
+import { Link, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card } from "@/components/ui/card";
@@ -36,22 +36,70 @@ const STATUS_LABELS: Record<string, string> = {
 // The webhook may not have arrived yet, so we poll the order status until it
 // settles to paid/failed. On "paid" the ride has already been started by the
 // server; we offer a link straight into the active ride.
+// sessionStorage key carrying the acquirer's return params across the clean
+// reboot we perform to escape the leftover T-Bank history stack.
+const TBANK_RESULT_RETURN_KEY = "tbankResultReturnParams";
+
 export function PaymentResultPage() {
   const search = useSearch();
-  const [, navigate] = useLocation();
   const queryClient = useQueryClient();
   const params = new URLSearchParams(search);
   const orderId = params.get("orderId") ?? "";
+
+  // Escape the Back-into-T-Bank trap by REBOOTING to a clean URL. Arriving here
+  // is a full page load from T-Bank's form, so the history below us still holds
+  // one or more T-Bank entries that redirect forward again on Back — and a
+  // native swipe-back can reach them even after a single-entry rewrite. Fighting
+  // history by hand (replaceState/pushState/popstate) also desynced wouter.
+  //
+  // Instead: if the URL still carries the acquirer's return params (Success/
+  // ErrorCode/Message/Details), stash them and `location.replace` to a clean
+  // `/payment-result?orderId=...`. That physically drops every leftover T-Bank
+  // entry (Back and swipe both leave cleanly) and reboots the SPA with wouter
+  // pristine. On the fresh load we read the stashed error params back so the
+  // failure hint still shows.
+  useEffect(() => {
+    if (!orderId) return;
+    const hasAcquirerParams =
+      params.has("Success") ||
+      params.has("ErrorCode") ||
+      params.has("Message") ||
+      params.has("Details");
+    if (hasAcquirerParams) {
+      try {
+        sessionStorage.setItem(TBANK_RESULT_RETURN_KEY, search);
+      } catch {
+        /* storage disabled — reboot still fixes the trap, we just lose the hint */
+      }
+      window.location.replace(`/payment-result?orderId=${encodeURIComponent(orderId)}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // On the clean post-reboot load the acquirer params are gone from the URL, so
+  // read them from the stash we saved on the previous leg.
+  const stashedSearch = useMemo(() => {
+    try {
+      const s = sessionStorage.getItem(TBANK_RESULT_RETURN_KEY);
+      if (s) sessionStorage.removeItem(TBANK_RESULT_RETURN_KEY);
+      return s || "";
+    } catch {
+      return "";
+    }
+  }, []);
 
   // T-Bank may append acquirer fields to the FailURL it redirects back to
   // (Success=false, ErrorCode, Message, Details). We surface these as a hint
   // while the webhook is still in flight — the persisted order is authoritative
   // once it settles, but this lets the rider/support see a reason immediately.
+  // Read acquirer fields from the current URL if still present (pre-reboot), or
+  // from the stash saved before the reboot (post-reboot clean URL).
   const redirectError = (() => {
-    const success = (params.get("Success") ?? "").toLowerCase();
-    const code = (params.get("ErrorCode") ?? "").trim();
-    const message = (params.get("Message") ?? "").trim();
-    const details = (params.get("Details") ?? "").trim();
+    const p = search && params.has("Success") ? params : new URLSearchParams(stashedSearch);
+    const success = (p.get("Success") ?? "").toLowerCase();
+    const code = (p.get("ErrorCode") ?? "").trim();
+    const message = (p.get("Message") ?? "").trim();
+    const details = (p.get("Details") ?? "").trim();
     const declined = success === "false" || (code !== "" && code !== "0");
     if (!declined && !message && !details) return null;
     return {
@@ -87,27 +135,7 @@ export function PaymentResultPage() {
     }
   }, [status, queryClient]);
 
-  // Break the Back-into-T-Bank trap. We arrive here via a full page load from
-  // T-Bank's hosted form, so the history below us still holds one or more T-Bank
-  // URLs that redirect forward again on Back. A single-entry rewrite fixed the
-  // overlay button but not a native swipe-back, which can travel deeper into the
-  // leftover T-Bank stack. Install a `popstate` guard: whichever gesture fires
-  // first, we cancel the browser's default target and route to the map ("/")
-  // through wouter, so we never fall through to a T-Bank URL.
-  useEffect(() => {
-    if (!orderId) return;
-    const url = `/payment-result?orderId=${encodeURIComponent(orderId)}`;
-    window.history.replaceState({}, "", url);
-    window.history.pushState({}, "", url);
-    const onPop = () => {
-      window.removeEventListener("popstate", onPop);
-      window.history.pushState({}, "", url);
-      navigate("/", { replace: true });
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+
 
   return (
     <div className="px-4 lg:px-10 py-10 max-w-xl mx-auto" data-testid="page-payment-result">
@@ -138,7 +166,7 @@ export function PaymentResultPage() {
             Аренда велосипеда {statusQ.data?.bikeId} начата. Замок разблокирован — можно ехать!
           </div>
           <div className="flex flex-col gap-2">
-            <Button asChild onClick={() => navigate("/")}>
+            <Button asChild>
               <Link href="/"><BikeIcon className="w-4 h-4 mr-2" /> К поездке</Link>
             </Button>
             <Button asChild variant="outline"><Link href="/rides">История поездок</Link></Button>
