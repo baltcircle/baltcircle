@@ -22,10 +22,10 @@ function MenuItem({ href, icon: Icon, label }: Omit<MenuItemProps, "onClose">) {
   return (
     <Link
       href={href}
-      className="flex items-center gap-4 px-2 py-3 rounded-xl hover:bg-gray-50 dark:hover:bg-zinc-800/60 transition-colors"
+      className="flex items-center gap-4 px-2 py-3 rounded-xl text-sidebar-foreground hover:bg-black/10 transition-colors"
     >
-      <Icon className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
-      <span className="flex-1 text-base text-gray-800 dark:text-zinc-100">{label}</span>
+      <Icon className="w-5 h-5 text-sidebar-foreground/70 shrink-0" />
+      <span className="flex-1 text-base text-sidebar-foreground">{label}</span>
     </Link>
   );
 }
@@ -80,7 +80,7 @@ export function DrawerMenu({ open, onClose }: Props) {
 
       {/* Drawer panel */}
       <div
-        className={`fixed top-0 right-0 h-full w-80 bg-white dark:bg-zinc-900 shadow-2xl z-40 flex flex-col transform transition-transform duration-300 ease-in-out ${
+        className={`fixed top-0 right-0 h-full w-80 bg-sidebar text-sidebar-foreground shadow-2xl z-40 flex flex-col transform transition-transform duration-300 ease-in-out ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
@@ -91,38 +91,38 @@ export function DrawerMenu({ open, onClose }: Props) {
         >
           <button
             onClick={onClose}
-            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors"
+            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors"
           >
-            <X className="w-5 h-5 text-gray-500 dark:text-zinc-400" />
+            <X className="w-5 h-5 text-sidebar-foreground/80" />
           </button>
         </div>
 
         {/* User info block — кликабельный, ведёт в /settings */}
         <Link
           href="/settings"
-          className="mx-4 mt-2 block rounded-2xl hover:bg-gray-50 dark:hover:bg-zinc-800/60 transition-colors px-2 py-2"
+          className="mx-4 mt-2 block rounded-2xl hover:bg-black/10 transition-colors px-2 py-2"
         >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <h2 className="text-2xl font-semibold text-gray-900 dark:text-white leading-tight truncate">
+              <h2 className="text-2xl font-semibold text-sidebar-foreground leading-tight truncate">
                 {user?.name ?? "Гость"}
               </h2>
               {user?.phone && (
-                <p className="text-sm text-gray-400 dark:text-zinc-500 mt-0.5">{user.phone}</p>
+                <p className="text-sm text-sidebar-foreground/70 mt-0.5">{user.phone}</p>
               )}
             </div>
-            <ChevronRight className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0 mt-1.5" />
+            <ChevronRight className="w-5 h-5 text-sidebar-foreground/70 shrink-0 mt-1.5" />
           </div>
 
           {/* Stats */}
           <div className="flex gap-6 mt-4">
             <div>
-              <p className="text-2xl font-semibold text-gray-900 dark:text-white tabular-nums">{totalKm}</p>
-              <p className="text-xs text-gray-400 dark:text-zinc-500 uppercase tracking-wide mt-0.5">Километры</p>
+              <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums">{totalKm}</p>
+              <p className="text-xs text-sidebar-foreground/70 uppercase tracking-wide mt-0.5">Километры</p>
             </div>
             <div>
-              <p className="text-2xl font-semibold text-gray-900 dark:text-white tabular-nums">{rides.length}</p>
-              <p className="text-xs text-gray-400 dark:text-zinc-500 uppercase tracking-wide mt-0.5">Поездки</p>
+              <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums">{rides.length}</p>
+              <p className="text-xs text-sidebar-foreground/70 uppercase tracking-wide mt-0.5">Поездки</p>
             </div>
           </div>
         </Link>
@@ -153,7 +153,7 @@ export function DrawerMenu({ open, onClose }: Props) {
         )}
 
         {/* Divider */}
-        <div className="mx-4 mt-3 mb-2 h-px bg-gray-100 dark:bg-zinc-800" />
+        <div className="mx-4 mt-3 mb-2 h-px bg-sidebar-foreground/15" />
 
         {/* Nav items */}
         <nav className="flex-1 overflow-y-auto px-4">
