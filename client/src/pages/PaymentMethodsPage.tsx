@@ -2,31 +2,29 @@ import { useEffect, useRef, useState } from "react";
 import { OverlayShell } from "@/components/OverlayShell";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { PaymentMethod } from "@shared/schema";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { fmtDate } from "@/lib/format";
 import { TBANK_CONFIG_KEY, type TbankConfigResponse } from "@/lib/payment";
 import {
-  CreditCard, Smartphone, ShieldCheck, Loader2, ExternalLink, Trash2, Clock, AlertCircle,
-  RefreshCw,
+  CreditCard, Smartphone, Loader2, Trash2, AlertCircle, RefreshCw, Plus,
 } from "lucide-react";
 
 const METHODS_KEY = ["/api/payment-methods"];
 
-// Human label + tone for a payment-method status badge.
+// Human sublabel + tone for a payment-method status. Shown as the small
+// secondary line under the method label, matching the profile-row style.
 function statusLabel(status: string): { text: string; cls: string } {
   switch (status) {
     case "active":
-      return { text: "Активна", cls: "text-primary" };
+      return { text: "Активна", cls: "text-green-500" };
     case "pending":
-      return { text: "Привязывается…", cls: "text-amber-600" };
+      return { text: "Привязывается…", cls: "text-amber-500" };
     case "failed":
-      return { text: "Ошибка привязки", cls: "text-destructive" };
+      return { text: "Ошибка привязки", cls: "text-red-500" };
     default:
-      return { text: "Привязана", cls: "text-muted-foreground" };
+      return { text: "Привязана", cls: "text-gray-400 dark:text-zinc-500" };
   }
 }
 
@@ -207,188 +205,200 @@ export function PaymentMethodsPage() {
     refreshBindMut.isPending ||
     redirecting;
 
+  // Guard the "Add card" action, mirroring the previous card-block gating:
+  // don't offer the flow when acquiring isn't configured, the rider isn't
+  // registered, a card is already linked, or a request is in flight.
+  const handleAddCard = () => {
+    if (userLoading || cfgQ.isLoading) return;
+    if (!tbankConfigured) {
+      toast.toast({
+        title: "Платежи настраиваются",
+        description: "Привязка карты будет доступна позже.",
+      });
+      return;
+    }
+    if (!isRegistered) {
+      toast.toast({
+        title: "Нужен вход в аккаунт",
+        description: "Войдите, чтобы привязать карту.",
+      });
+      return;
+    }
+    if (hasActiveOrPendingCard) {
+      toast.toast({ title: "Карта уже привязана" });
+      return;
+    }
+    bindCardMut.mutate();
+  };
+
+  // SBP acquiring isn't wired up yet — surface an honest "coming later" notice
+  // rather than fabricating a linked account row.
+  const handleAddSbp = () => {
+    toast.toast({
+      title: "СБП скоро",
+      description: "Оплата по СБП появится позже.",
+    });
+  };
+
+  const cardBusy = redirecting || bindCardMut.isPending;
+
   return (
     <OverlayShell title="Способы оплаты">
-      <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-payment-methods">
-      <header className="mb-6">
-        <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Оплата</div>
-        <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Способы оплаты</h1>
-        <p className="text-muted-foreground text-sm mt-1 max-w-prose">
-          Привяжите банковскую карту через защищённую форму T-Bank. Данные карты вводятся только на
-          стороне банка — мы их не видим и не храним.
-        </p>
-      </header>
+      <div className="px-4 py-6 max-w-md mx-auto" data-testid="page-payment-methods">
+        <header className="mb-5">
+          <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Оплата</div>
+          <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Способы оплаты</h1>
+          <p className="text-muted-foreground text-sm mt-1 max-w-prose">
+            Привяжите банковскую карту через защищённую форму T-Bank. Данные карты вводятся только на
+            стороне банка — мы их не видим и не храним.
+          </p>
+        </header>
 
-      {/* Linked methods (persisted per user) */}
-      <Card className="p-6 mb-5" data-testid="card-linked-methods">
-        <div className="text-sm font-medium mb-3">Привязанные способы</div>
-        {methodsQ.isLoading ? (
-          <div className="text-sm text-muted-foreground" data-testid="methods-loading">Загрузка…</div>
-        ) : methods.length === 0 ? (
-          <div className="text-sm text-muted-foreground" data-testid="methods-empty">
-            Пока нет привязанных способов оплаты.
-          </div>
-        ) : (
-          <ul className="space-y-2" data-testid="methods-list">
-            {methods.map((m) => {
-              const st = statusLabel(m.status);
-              const canRefresh = m.provider === "tbank" && !!m.requestKey && m.status !== "active";
-              // Init-bind rows (the primary flow) have a PaymentId but no
-              // RequestKey — they're re-checked via GetState (/refresh-bind).
-              const canRefreshBind =
-                m.provider === "tbank" && !m.requestKey && !!m.paymentId && m.status !== "active";
-              const err = methodError(m);
-              return (
-                <li
-                  key={m.id}
-                  className="rounded-md bg-muted/60 p-3 text-sm"
-                  data-testid={`method-row-${m.id}`}
-                >
-                  <div className="flex items-center gap-3">
-                    {m.type === "card" ? (
-                      <CreditCard className="w-4 h-4 text-muted-foreground" />
-                    ) : (
-                      <Smartphone className="w-4 h-4 text-muted-foreground" />
-                    )}
-                    <span className="font-mono">{m.label}</span>
-                    <span className={`text-xs flex items-center gap-1 ${st.cls}`}>
-                      {m.status === "pending" && <Clock className="w-3 h-3" />}
-                      {m.status === "failed" && <AlertCircle className="w-3 h-3" />}
-                      {st.text}
-                    </span>
-                    <span className="ml-auto text-xs text-muted-foreground">{fmtDate(m.createdAt)}</span>
-                    {canRefresh && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busy}
-                        onClick={() => refreshMut.mutate(m.id)}
-                        data-testid={`button-refresh-${m.id}`}
-                        title="Проверить статус"
-                      >
-                        {refreshMut.isPending && refreshMut.variables === m.id ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <RefreshCw className="w-3.5 h-3.5" />
-                        )}
-                      </Button>
-                    )}
-                    {canRefreshBind && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busy}
-                        onClick={() => refreshBindMut.mutate(m.id)}
-                        data-testid={`button-refresh-bind-${m.id}`}
-                        title="Проверить статус"
-                      >
-                        {refreshBindMut.isPending && refreshBindMut.variables === m.id ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <RefreshCw className="w-3.5 h-3.5" />
-                        )}
-                      </Button>
-                    )}
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => unlinkMut.mutate(m.id)}
-                      data-testid={`button-unlink-${m.id}`}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                  {m.status === "failed" && err && (
-                    <div
-                      className="mt-2 text-xs text-destructive flex items-start gap-1.5"
-                      data-testid={`method-error-${m.id}`}
-                    >
-                      <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                      <span>{err}</span>
-                    </div>
-                  )}
-                  {m.status === "pending" && (
-                    <div className="mt-2 text-xs text-muted-foreground" data-testid={`method-pending-hint-${m.id}`}>
-                      {canRefresh || canRefreshBind
-                        ? "Если форма банка уже закрыта, нажмите «Проверить статус»."
-                        : "Статус обновится автоматически после подтверждения платежа банком."}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Card>
-
-      {/* Add a card via T-Bank */}
-      <Card className="p-6" data-testid="card-payment-method">
-        <div className="text-sm font-medium flex items-center gap-1.5 mb-3">
-          <CreditCard className="w-4 h-4 text-muted-foreground" /> Банковская карта
-        </div>
-
-        {userLoading || cfgQ.isLoading ? (
-          <div className="text-sm text-muted-foreground flex items-center gap-1.5" data-testid="tbank-loading">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Загрузка…
-          </div>
-        ) : !tbankConfigured ? (
-          <div
-            className="rounded-md bg-muted/60 p-3 text-sm flex items-start gap-2"
-            data-testid="tbank-unconfigured"
-          >
-            <AlertCircle className="w-4 h-4 mt-0.5 text-muted-foreground shrink-0" />
-            <span>Платежи настраиваются. Привязка карты будет доступна позже.</span>
-          </div>
-        ) : !isRegistered ? (
-          <div
-            className="rounded-md bg-muted/60 p-3 text-sm flex items-start gap-2"
-            data-testid="tbank-need-register"
-          >
-            <AlertCircle className="w-4 h-4 mt-0.5 text-muted-foreground shrink-0" />
-            <span>Войдите в аккаунт, чтобы привязать карту.</span>
-          </div>
-        ) : (
-          <div className="space-y-3" data-testid="block-card">
-            <Button
-              className="w-full"
-              disabled={busy || hasActiveOrPendingCard}
-              onClick={() => bindCardMut.mutate()}
-              data-testid="button-bind-card"
-            >
-              {redirecting || bindCardMut.isPending ? (
-                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Открываем форму банка…</>
-              ) : hasActiveOrPendingCard ? (
-                "Карта уже привязана"
-              ) : (
-                <><ExternalLink className="w-4 h-4 mr-2" /> Привязать карту</>
-              )}
-            </Button>
-            <div className="text-[11px] text-muted-foreground space-y-1.5">
-              <div className="flex items-center gap-1.5">
-                <ShieldCheck className="w-3 h-3 shrink-0" /> Привязка проходит через защищённую форму
-                Т-Банка: спишется проверочный платёж 1 ₽ (в тестовом режиме), карта сохраняется для
-                будущих поездок.
-              </div>
-              <div className="flex items-center gap-1.5">
-                <ShieldCheck className="w-3 h-3 shrink-0" /> Номер карты и CVC вводятся только на стороне
-                банка. Мы храним лишь маскированный номер и статус.
-              </div>
+        {/* Linked methods — profile-style rows */}
+        <div
+          className="rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800"
+          data-testid="card-linked-methods"
+        >
+          {methodsQ.isLoading ? (
+            <div className="px-4 py-4 text-sm text-muted-foreground" data-testid="methods-loading">
+              Загрузка…
             </div>
-          </div>
-        )}
-      </Card>
+          ) : methods.length === 0 ? (
+            <div className="px-4 py-4 text-sm text-muted-foreground" data-testid="methods-empty">
+              Пока нет привязанных способов оплаты.
+            </div>
+          ) : (
+            <ul className="divide-y divide-gray-100 dark:divide-zinc-700" data-testid="methods-list">
+              {methods.map((m) => {
+                const st = statusLabel(m.status);
+                const canRefresh = m.provider === "tbank" && !!m.requestKey && m.status !== "active";
+                // Init-bind rows (the primary flow) have a PaymentId but no
+                // RequestKey — they're re-checked via GetState (/refresh-bind).
+                const canRefreshBind =
+                  m.provider === "tbank" && !m.requestKey && !!m.paymentId && m.status !== "active";
+                const err = methodError(m);
+                const rowRefreshing =
+                  (refreshMut.isPending && refreshMut.variables === m.id) ||
+                  (refreshBindMut.isPending && refreshBindMut.variables === m.id);
+                return (
+                  <li
+                    key={m.id}
+                    className="px-4 py-3"
+                    data-testid={`method-row-${m.id}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
+                        {m.type === "card" ? (
+                          <CreditCard className="w-5 h-5" />
+                        ) : (
+                          <Smartphone className="w-5 h-5" />
+                        )}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-base font-semibold text-gray-900 dark:text-white truncate font-mono">
+                          {m.label}
+                        </p>
+                        <p className="text-xs mt-0.5">
+                          <span className={st.cls}>{st.text}</span>
+                          <span className="text-gray-400 dark:text-zinc-500"> · {fmtDate(m.createdAt)}</span>
+                        </p>
+                      </div>
+                      {(canRefresh || canRefreshBind) && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => (canRefresh ? refreshMut.mutate(m.id) : refreshBindMut.mutate(m.id))}
+                          data-testid={`button-refresh-${m.id}`}
+                          title="Проверить статус"
+                          className="flex items-center justify-center w-9 h-9 rounded-full text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50 shrink-0"
+                        >
+                          {rowRefreshing ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <RefreshCw className="w-4 h-4" />
+                          )}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => unlinkMut.mutate(m.id)}
+                        data-testid={`button-unlink-${m.id}`}
+                        title="Отвязать"
+                        className="flex items-center justify-center w-9 h-9 rounded-full text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50 shrink-0"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                    {m.status === "failed" && err && (
+                      <div
+                        className="mt-2 text-xs text-red-500 flex items-start gap-1.5"
+                        data-testid={`method-error-${m.id}`}
+                      >
+                        <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                        <span>{err}</span>
+                      </div>
+                    )}
+                    {m.status === "pending" && (
+                      <div
+                        className="mt-2 text-xs text-gray-400 dark:text-zinc-500"
+                        data-testid={`method-pending-hint-${m.id}`}
+                      >
+                        {canRefresh || canRefreshBind
+                          ? "Если форма банка уже закрыта, нажмите «Проверить статус»."
+                          : "Статус обновится автоматически после подтверждения платежа банком."}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
 
-      {/* SBP is planned but not yet implemented as real acquiring. */}
-      <Card className="p-6 mt-5 opacity-70" data-testid="card-sbp-soon">
-        <div className="text-sm font-medium flex items-center gap-1.5">
-          <Smartphone className="w-4 h-4 text-muted-foreground" /> СБП
+        {/* Add actions — profile-style rows */}
+        <div className="mt-4 rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800">
+          <button
+            type="button"
+            disabled={busy || hasActiveOrPendingCard}
+            onClick={handleAddCard}
+            data-testid="button-bind-card"
+            className="w-full px-4 py-3 border-b border-gray-100 dark:border-zinc-700 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
+          >
+            <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
+              {cardBusy ? <Loader2 className="w-5 h-5 animate-spin" /> : <CreditCard className="w-5 h-5" />}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-base font-semibold text-gray-900 dark:text-white">
+                {hasActiveOrPendingCard ? "Карта уже привязана" : "Добавить карту"}
+              </p>
+              <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">
+                {cardBusy ? "Открываем форму банка…" : "Через защищённую форму T-Bank"}
+              </p>
+            </div>
+            {!hasActiveOrPendingCard && !cardBusy && (
+              <Plus className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            disabled={busy}
+            onClick={handleAddSbp}
+            data-testid="button-add-sbp"
+            className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 text-left"
+          >
+            <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
+              <Smartphone className="w-5 h-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-base font-semibold text-gray-900 dark:text-white">Добавить счёт СБП</p>
+              <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">Оплата по СБП появится позже</p>
+            </div>
+            <Plus className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
+          </button>
         </div>
-        <div className="text-xs text-muted-foreground mt-2">
-          Оплата по СБП появится позже.
-        </div>
-      </Card>
-          </div>
+      </div>
     </OverlayShell>
   );
 }
