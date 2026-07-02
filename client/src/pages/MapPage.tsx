@@ -210,9 +210,12 @@ export function MapPage() {
         <MapPin className="w-5 h-5" />
       </button>
 
-      {/* Bottom action area — floats over the map */}
+      {/* Bottom action area — floats over the map.
+       * z-40 keeps it above the drawer backdrop (z-30) so the Scan button
+       * shows its true bg-primary colour and is not dimmed to look darker
+       * than the menu panel (which is also z-40, same #1D1E5D). */}
       <div
-        className="absolute left-4 right-4 z-20"
+        className="absolute left-4 right-4 z-40"
         style={{ bottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
       >
         {activeRide ? (

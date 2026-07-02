@@ -121,13 +121,17 @@
   --brand-foam: 36 30% 92%;
   --brand-bark: 36 30% 88%;
 
-  --background: 200 38% 9%;
+  /* Dark theme is unified on the brand blue #1D1E5D so the WHOLE app
+   * (map, menu, inner tabs) shares one tone. Surfaces above the base are
+   * progressively lighter blues for contrast. Change these HSL values to
+   * retune the entire dark palette. */
+  --background: 239 52% 18%;          /* #16174a — slightly darker #1D1E5D base */
   --foreground: 45 33% 77%;           /* #D7CDB0 — beige text (dark theme) */
-  --border: 200 22% 18%;
+  --border: 239 40% 34%;              /* lighter #1D1E5D divider */
 
-  --card: 200 35% 12%;
+  --card: 239 52% 24%;                /* #1D1E5D — card surface (matches menu) */
   --card-foreground: 45 33% 77%;      /* #D7CDB0 */
-  --card-border: 200 22% 17%;
+  --card-border: 239 40% 34%;         /* lighter #1D1E5D */
 
   /* Sidebar uses the brand primary tone in dark mode */
   --sidebar: 239 52% 24%;                       /* #1D1E5D */
@@ -139,17 +143,17 @@
   --sidebar-accent-foreground: 45 33% 77%;      /* #D7CDB0 */
   --sidebar-ring: 239 52% 44%;                  /* lighter #1D1E5D */
 
-  --popover: 200 35% 13%;
+  --popover: 239 52% 22%;             /* #1D1E5D popover surface */
   --popover-foreground: 45 33% 77%;   /* #D7CDB0 */
-  --popover-border: 200 22% 20%;
+  --popover-border: 239 40% 34%;      /* lighter #1D1E5D */
 
   --primary: 239 52% 24%;             /* #1D1E5D  — dark theme primary */
   --primary-foreground: 45 33% 77%;   /* #D7CDB0  — beige text on primary */
 
-  --secondary: 200 25% 18%;
+  --secondary: 239 45% 28%;           /* lighter #1D1E5D */
   --secondary-foreground: 45 33% 77%; /* #D7CDB0 */
 
-  --muted: 200 22% 16%;
+  --muted: 239 45% 28%;               /* lighter #1D1E5D hover/muted surface */
   --muted-foreground: 45 20% 62%;     /* dimmer #D7CDB0 for secondary text */
 
   --accent: 36 56% 60%;
