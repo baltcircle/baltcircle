@@ -479,6 +479,13 @@ export const paymentMethods = sqliteTable("payment_methods", {
   paymentId: text("payment_id"),             // T-Bank PaymentId returned by Init
   paymentUrl: text("payment_url"),           // hosted PaymentURL the rider opens (not a secret)
   amountKopecks: integer("amount_kopecks"),  // verification-payment amount in kopecks (e.g. 100 = 1 ₽)
+  // Refund/reversal state for the 1 ₽ verification charge (Init+Recurrent path).
+  // "none" = no charge to refund (AddCard path); "pending" = refund scheduled but
+  // not yet confirmed; "refunded" = Cancel succeeded (AUTHORIZED→reversal, no debit,
+  // won't appear in the cabinet's "Возвраты"; CONFIRMED→a real refund that does);
+  // "failed" = Cancel could not complete (the 1 ₽ may be stuck — see refundError).
+  refundStatus: text("refund_status"),       // none | pending | refunded | failed
+  refundError: text("refund_error"),         // human-readable reason when refundStatus = failed (acquirer message; never a secret)
   // Last binding error from T-Bank (notification or GetAddCardState). Acquirer
   // fields only — never a secret — so the UI/support can see WHY a bind failed.
   lastErrorCode: text("last_error_code"),

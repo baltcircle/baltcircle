@@ -50,6 +50,25 @@ export interface TbankConfig {
   // Amount (in kopecks) for the Init+Recurrent verification payment used to bind
   // a card. Env-configurable (TBANK_CARD_BIND_AMOUNT_KOPEKS), default 100 (1 ₽).
   cardBindAmountKopecks: number;
+  // Which binding method to prefer. Env-configurable via TBANK_CARD_BIND_METHOD:
+  //   "payment" (default) — Init+Recurrent 1 ₽ verification charge, then a
+  //                          reliable reversal/refund. Works on terminals where
+  //                          AddCard does not issue a RebillId.
+  //   "addcard"           — AddCard: bind the card with NO charge at all. Use
+  //                          only when the terminal issues a RebillId via AddCard
+  //                          (otherwise recurring charges have no token). Swap by
+  //                          env, no code change.
+  cardBindMethod: CardBindMethod;
+}
+
+// Card-binding method selector. "payment" = Init+Recurrent 1 ₽ charge (default);
+// "addcard" = AddCard with no charge.
+export type CardBindMethod = "payment" | "addcard";
+
+// Parse TBANK_CARD_BIND_METHOD. Defaults to "payment" (the safe, RebillId-
+// guaranteed path) for any empty/unknown value.
+export function parseCardBindMethod(raw: string | undefined): CardBindMethod {
+  return (raw || "").trim().toLowerCase() === "addcard" ? "addcard" : "payment";
 }
 
 // Resolve the runtime config from the environment. Returns null when the
@@ -70,6 +89,7 @@ export function getTbankConfig(): TbankConfig | null {
     publicAppUrl: publicAppUrl.replace(/\/+$/, ""),
     addCardCheckType: parseCheckType(process.env.TBANK_ADD_CARD_CHECK_TYPE),
     cardBindAmountKopecks: parseBindAmount(process.env.TBANK_CARD_BIND_AMOUNT_KOPEKS),
+    cardBindMethod: parseCardBindMethod(process.env.TBANK_CARD_BIND_METHOD),
   };
 }
 
@@ -598,23 +618,119 @@ export function classifyInitBinding(args: {
   return "pending";
 }
 
-// Cancel a payment by PaymentId. Used after card binding to refund the 1 ₽
-// verification charge. Logs and swallows errors — a failed cancel is not fatal
-// (the binding succeeded), but should be investigated.
+// Outcome of cancelling/refunding the 1 ₽ verification charge. "refunded" means
+// the money is back with the rider (a reversal of an AUTHORIZED hold — which
+// never debited and so does NOT show up in the cabinet's "Возвраты" list — or a
+// true refund of a CONFIRMED payment, which does). "nothing_to_cancel" means the
+// payment was already reversed/refunded/rejected, so no money is outstanding.
+// "failed" means the reversal could not complete and the 1 ₽ may be stuck.
+export type CancelOutcome =
+  | { result: "refunded"; status: string }
+  | { result: "nothing_to_cancel"; status: string }
+  | { result: "failed"; reason: string };
+
+// A single raw /Cancel call. For an AUTHORIZED payment this is a reversal (the
+// hold is released; nothing was debited). For a CONFIRMED payment this is a
+// refund (a real credit that appears in the cabinet). T-Bank picks the right
+// operation from the payment's current stage — we only send PaymentId.
+async function cancelOnce(cfg: TbankConfig, paymentId: string): Promise<TbankResponse> {
+  return signedPost(cfg, "/Cancel", { PaymentId: paymentId });
+}
+
+// Statuses for which a Cancel is a no-op because there is nothing to give back:
+// the payment never captured funds (REJECTED/rejected auth) or was already
+// reversed/refunded. Treated as success — no money is outstanding.
+const ALREADY_SETTLED_STATUSES: readonly string[] = [
+  "CANCELED",
+  "CANCELLED",
+  "REVERSED",
+  "REFUNDED",
+  "PARTIAL_REFUNDED",
+  "REJECTED",
+  "AUTH_FAIL",
+  "DEADLINE_EXPIRED",
+];
+
+// Robustly reverse/refund the 1 ₽ verification charge and REPORT the outcome.
+//
+// Why this is not a fire-and-forget one-liner: a plain /Cancel on a payment that
+// has not settled yet, or a transient acquirer error, silently leaves the rider's
+// 1 ₽ charged. So we:
+//   1. Read the current status via /GetState (unless we already know it).
+//   2. Skip if the payment already settled/reversed (nothing to give back).
+//   3. Call /Cancel with a few retries for transient failures.
+//   4. Return a structured outcome so the caller can PERSIST refund state and a
+//      stuck 1 ₽ becomes observable in the DB/UI instead of only in logs.
+export async function tbankRefundVerificationCharge(
+  cfg: TbankConfig,
+  paymentId: string,
+  knownStatus?: string,
+): Promise<CancelOutcome> {
+  if (!paymentId) return { result: "failed", reason: "нет PaymentId для возврата" };
+
+  // 1. Determine the current status (skip the extra call if the caller already
+  //    passed a fresh one from the same notification/GetState).
+  let status = (knownStatus || "").trim().toUpperCase();
+  if (!status) {
+    try {
+      const state = await tbankGetState(cfg, paymentId);
+      if (state.Success && typeof state.Status === "string") {
+        status = state.Status.trim().toUpperCase();
+      }
+    } catch (err: any) {
+      // Non-fatal — proceed to Cancel anyway; the acquirer reports the true
+      // state in the Cancel response.
+      log(`[tbank] refund GetState error for PaymentId=${paymentId}: ${err?.message}`, "tbank");
+    }
+  }
+
+  // 2. Nothing to reverse — already settled/reversed/rejected.
+  if (status && ALREADY_SETTLED_STATUSES.includes(status)) {
+    log(`[tbank] refund skip PaymentId=${paymentId}: already ${status}`, "tbank");
+    return { result: "nothing_to_cancel", status };
+  }
+
+  // 3. Cancel with retries for transient failures (network / acquirer 5xx-style).
+  const maxAttempts = 3;
+  let lastReason = "неизвестная ошибка";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const resp = await cancelOnce(cfg, paymentId);
+      if (resp.Success) {
+        const newStatus =
+          typeof resp.Status === "string" ? resp.Status.trim().toUpperCase() : status || "CANCELED";
+        log(`[tbank] refund OK PaymentId=${paymentId} (attempt ${attempt}, status ${newStatus})`, "tbank");
+        return { result: "refunded", status: newStatus };
+      }
+      // Success=false. If the acquirer says it's already reversed/refunded, treat
+      // as done rather than a failure (idempotent double-cancel is harmless).
+      const respStatus = typeof resp.Status === "string" ? resp.Status.trim().toUpperCase() : "";
+      if (respStatus && ALREADY_SETTLED_STATUSES.includes(respStatus)) {
+        log(`[tbank] refund PaymentId=${paymentId}: acquirer reports already ${respStatus}`, "tbank");
+        return { result: "nothing_to_cancel", status: respStatus };
+      }
+      lastReason = String(resp.Message ?? resp.Details ?? resp.ErrorCode ?? "Cancel отклонён");
+      log(`[tbank] refund attempt ${attempt}/${maxAttempts} failed PaymentId=${paymentId}: ${lastReason}`, "tbank");
+    } catch (err: any) {
+      lastReason = String(err?.message ?? "сетевая ошибка");
+      log(`[tbank] refund attempt ${attempt}/${maxAttempts} error PaymentId=${paymentId}: ${lastReason}`, "tbank");
+    }
+    // brief backoff before the next attempt (skip after the last one)
+    if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 400 * attempt));
+  }
+
+  log(`[tbank] refund GIVE UP PaymentId=${paymentId}: ${lastReason} — 1 ₽ may be stuck`, "tbank");
+  return { result: "failed", reason: lastReason };
+}
+
+// Backwards-compatible thin wrapper. Prefer tbankRefundVerificationCharge, which
+// returns a structured outcome the caller can persist. Kept so existing
+// fire-and-forget call sites still compile; it delegates and ignores the result.
 export async function tbankCancel(
   cfg: TbankConfig,
   paymentId: string,
 ): Promise<void> {
-  try {
-    const resp = await signedPost(cfg, "/Cancel", { PaymentId: paymentId });
-    if (!resp.Success) {
-      log(`[tbank] Cancel failed for PaymentId=${paymentId}: ${resp.Message ?? resp.Details ?? "unknown"}`, "tbank");
-    } else {
-      log(`[tbank] Cancel OK for PaymentId=${paymentId}`, "tbank");
-    }
-  } catch (err: any) {
-    log(`[tbank] Cancel error for PaymentId=${paymentId}: ${err?.message}`, "tbank");
-  }
+  await tbankRefundVerificationCharge(cfg, paymentId);
 }
 
 // ---------- SBP (СБП) account binding & recurring charge ----------
