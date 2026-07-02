@@ -33,21 +33,22 @@
   --card-foreground: 24 30% 22%;
   --card-border: 32 20% 88%;
 
-  --sidebar: 197 65% 32%;
-  --sidebar-foreground: 0 0% 100%;
-  --sidebar-border: 197 50% 24%;
+  /* Sidebar uses the brand primary tone in light mode */
+  --sidebar: 189 46% 57%;                       /* #61B5C4 */
+  --sidebar-foreground: 45 33% 77%;             /* #D7CDB0 */
+  --sidebar-border: 189 46% 47%;                /* darker #61B5C4 */
   --sidebar-primary: 36 60% 90%;
   --sidebar-primary-foreground: 200 70% 22%;
-  --sidebar-accent: 197 60% 26%;
-  --sidebar-accent-foreground: 0 0% 100%;
-  --sidebar-ring: 36 60% 90%;
+  --sidebar-accent: 189 46% 47%;                /* darker #61B5C4 */
+  --sidebar-accent-foreground: 45 33% 77%;      /* #D7CDB0 */
+  --sidebar-ring: 45 33% 77%;                   /* #D7CDB0 */
 
   --popover: 0 0% 100%;
   --popover-foreground: 24 30% 22%;
   --popover-border: 32 20% 86%;
 
-  --primary: 197 65% 32%;
-  --primary-foreground: 0 0% 100%;
+  --primary: 189 46% 57%;             /* #61B5C4  — light theme primary */
+  --primary-foreground: 45 33% 77%;   /* #D7CDB0  — button text on primary */
 
   --secondary: 36 38% 90%;
   --secondary-foreground: 24 30% 22%;
@@ -62,7 +63,7 @@
   --destructive-foreground: 0 0% 100%;
 
   --input: 32 22% 80%;
-  --ring: 197 65% 32%;
+  --ring: 189 46% 57%;                /* #61B5C4 */
 
   --chart-1: 197 65% 38%;
   --chart-2: 32 56% 56%;
@@ -128,21 +129,22 @@
   --card-foreground: 36 30% 92%;
   --card-border: 200 22% 17%;
 
-  --sidebar: 200 45% 11%;
-  --sidebar-foreground: 36 30% 92%;
-  --sidebar-border: 200 30% 18%;
+  /* Sidebar uses the brand primary tone in dark mode */
+  --sidebar: 239 52% 24%;                       /* #1D1E5D */
+  --sidebar-foreground: 0 0% 100%;
+  --sidebar-border: 239 52% 34%;                /* lighter #1D1E5D */
   --sidebar-primary: 36 56% 70%;
   --sidebar-primary-foreground: 200 50% 12%;
-  --sidebar-accent: 200 30% 18%;
-  --sidebar-accent-foreground: 36 30% 92%;
-  --sidebar-ring: 192 70% 52%;
+  --sidebar-accent: 239 52% 34%;                /* lighter #1D1E5D */
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-ring: 239 52% 44%;                  /* lighter #1D1E5D */
 
   --popover: 200 35% 13%;
   --popover-foreground: 36 30% 92%;
   --popover-border: 200 22% 20%;
 
-  --primary: 192 70% 52%;
-  --primary-foreground: 200 50% 10%;
+  --primary: 239 52% 24%;             /* #1D1E5D  — dark theme primary */
+  --primary-foreground: 0 0% 100%;    /* white text on primary */
 
   --secondary: 200 25% 18%;
   --secondary-foreground: 36 30% 92%;
@@ -157,7 +159,7 @@
   --destructive-foreground: 0 0% 100%;
 
   --input: 200 22% 26%;
-  --ring: 192 70% 52%;
+  --ring: 239 52% 44%;                /* lighter #1D1E5D */
 
   --chart-1: 192 70% 58%;
   --chart-2: 36 56% 62%;
