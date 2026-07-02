@@ -179,7 +179,7 @@ export function MapPage() {
             type="button"
             onClick={toggle}
             aria-label={theme === "dark" ? "Светлая тема" : "Тёмная тема"}
-            className="w-12 h-12 rounded-full bg-white/85 backdrop-blur-sm shadow-lg flex items-center justify-center text-gray-700 hover:bg-white active:scale-95 transition-all"
+            className="w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
           >
             {theme === "dark"
               ? <Sun className="w-5 h-5" />
@@ -191,7 +191,7 @@ export function MapPage() {
             onClick={() => setDrawerOpen(true)}
             aria-label="Открыть меню"
             data-testid="home-menu-button"
-            className="w-12 h-12 rounded-full bg-white/85 backdrop-blur-sm shadow-lg flex items-center justify-center text-gray-700 hover:bg-white active:scale-95 transition-all"
+            className="w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
           >
             <Menu className="w-5 h-5" />
           </button>
@@ -266,7 +266,7 @@ export function MapPage() {
             onClick={() => goRent(false)}
             aria-label={isRegistered ? "Сканировать QR" : "Сканировать QR (нужна регистрация)"}
             data-testid="home-primary-scan"
-            className="w-full h-14 rounded-full bg-primary hover:opacity-90 text-primary-foreground font-medium text-lg flex items-center justify-between px-6 shadow-xl active:scale-[0.98] transition-all"
+            className="w-full h-14 rounded-full bg-primary hover:opacity-90 text-primary-foreground font-medium text-lg flex items-center justify-between px-6 shadow-lg active:scale-[0.98] transition-all"
           >
             <span>Сканировать</span>
             <QrCode className="w-6 h-6" />
