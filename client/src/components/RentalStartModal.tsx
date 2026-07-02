@@ -89,8 +89,11 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
     },
     onSuccess: (data) => {
       // Hand off to T-Bank's hosted payment page. The rider returns to
-      // /payment-result?orderId=… afterwards.
-      window.location.href = data.paymentUrl;
+      // /payment-result?orderId=… afterwards. Use location.replace (NOT href) so
+      // the T-Bank form REPLACES the current history entry instead of pushing a
+      // new one — otherwise pressing Back after payment lands on the T-Bank form,
+      // which redirects forward again and traps the rider on the tab.
+      window.location.replace(data.paymentUrl);
     },
     onError: (err) => {
       toast.toast({ title: "Не удалось перейти к оплате", description: cleanErr(err), variant: "destructive" });
