@@ -26,11 +26,11 @@
   --brand-bark: 24 30% 28%;       /* warm brown text */
 
   --background: 36 38% 96%;       /* very light cream */
-  --foreground: 24 30% 22%;
+  --foreground: 24 32% 15%;       /* darkened for contrast on light theme */
   --border: 32 20% 86%;
 
   --card: 0 0% 100%;
-  --card-foreground: 24 30% 22%;
+  --card-foreground: 24 32% 15%;
   --card-border: 32 20% 88%;
 
   /* Sidebar uses the brand primary tone in light mode */
@@ -44,20 +44,20 @@
   --sidebar-ring: 45 33% 77%;                   /* #D7CDB0 */
 
   --popover: 0 0% 100%;
-  --popover-foreground: 24 30% 22%;
+  --popover-foreground: 24 32% 15%;
   --popover-border: 32 20% 86%;
 
   --primary: 189 46% 57%;             /* #61B5C4  — light theme primary */
   --primary-foreground: 45 33% 77%;   /* #D7CDB0  — button text on primary */
 
   --secondary: 36 38% 90%;
-  --secondary-foreground: 24 30% 22%;
+  --secondary-foreground: 24 32% 15%;
 
   --muted: 36 30% 92%;
-  --muted-foreground: 24 14% 42%;
+  --muted-foreground: 24 16% 32%;   /* darkened for contrast on light theme */
 
   --accent: 36 56% 78%;
-  --accent-foreground: 24 30% 22%;
+  --accent-foreground: 24 32% 15%;
 
   --destructive: 0 68% 45%;
   --destructive-foreground: 0 0% 100%;
@@ -199,17 +199,17 @@
   body {
     @apply font-sans antialiased bg-background text-foreground;
     font-feature-settings: "cv11", "ss01", "ss03";
-    /* Lighter base weight overall (Roboto Flex is variable, so this renders
+    /* Extra-light base weight overall (Roboto Flex is variable, so this renders
      * cleanly). Individual weight utilities are softened below. */
-    font-weight: 350;
+    font-weight: 250;
   }
-  /* Reduce overall font thickness by shifting every Tailwind weight utility
-   * down one notch. Change these numbers to tune the interface weight. */
-  .font-normal   { font-weight: 350 !important; }  /* was 400 */
-  .font-medium   { font-weight: 400 !important; }  /* was 500 */
-  .font-semibold { font-weight: 500 !important; }  /* was 600 */
-  .font-bold     { font-weight: 600 !important; }  /* was 700 */
-  .font-extrabold{ font-weight: 700 !important; }  /* was 800 */
+  /* Extra-light interface: shift every Tailwind weight utility down further so
+   * the whole app reads thin. Change these numbers to tune the weight. */
+  .font-normal   { font-weight: 250 !important; }  /* was 400 */
+  .font-medium   { font-weight: 300 !important; }  /* was 500 */
+  .font-semibold { font-weight: 400 !important; }  /* was 600 */
+  .font-bold     { font-weight: 500 !important; }  /* was 700 */
+  .font-extrabold{ font-weight: 600 !important; }  /* was 800 */
   /* Customer map route: pin to the visible viewport and kill page scroll /
    * rubber-band overscroll. Scoped via .route-locked so /profile, /tariffs,
    * /rides and /admin/* keep normal document scrolling. */
@@ -231,6 +231,49 @@
   .dark .dark\:text-gray-50 {
     color: hsl(45 33% 77%) !important;   /* #D7CDB0 */
   }
+
+  /* ── Unified theme surfaces ──────────────────────────────────────────
+   * Inner tab pages (Settings, Payment methods, Bikes, Parkings, etc.)
+   * were built with hardcoded gray/zinc surfaces, which showed up as a
+   * near-black background in dark mode instead of the app's Baltic-teal
+   * theme. Remap every hardcoded surface/border/muted-text utility to the
+   * theme tokens so the WHOLE app shares one palette. Change the tokens
+   * (--background, --card, --border …) above to retune every surface. */
+
+  /* Page backgrounds → --background */
+  .bg-gray-50 { background-color: hsl(var(--background)) !important; }
+  .dark .dark\:bg-zinc-900 { background-color: hsl(var(--background)) !important; }
+
+  /* Card / elevated surfaces → --card */
+  .dark .dark\:bg-zinc-800,
+  .dark .dark\:bg-zinc-700 { background-color: hsl(var(--card)) !important; }
+
+  /* Hover surfaces → --muted */
+  .hover\:bg-gray-100:hover,
+  .hover\:bg-gray-200:hover,
+  .hover\:bg-gray-50:hover { background-color: hsl(var(--muted)) !important; }
+  .dark .dark\:hover\:bg-zinc-700:hover,
+  .dark .dark\:hover\:bg-zinc-800:hover { background-color: hsl(var(--muted)) !important; }
+
+  /* Borders → --border */
+  .border-gray-100,
+  .border-gray-200 { border-color: hsl(var(--border)) !important; }
+  .dark .dark\:border-zinc-700,
+  .dark .dark\:border-zinc-800 { border-color: hsl(var(--border)) !important; }
+
+  /* Muted / secondary text → --muted-foreground (both themes) */
+  .text-gray-400,
+  .text-gray-500,
+  .text-gray-600 { color: hsl(var(--muted-foreground)) !important; }
+  .dark .dark\:text-zinc-300,
+  .dark .dark\:text-zinc-400,
+  .dark .dark\:text-zinc-500 { color: hsl(var(--muted-foreground)) !important; }
+
+  /* Primary body text → --foreground (both themes) */
+  .text-gray-700,
+  .text-gray-900 { color: hsl(var(--foreground)) !important; }
+  .dark .dark\:text-zinc-200 { color: hsl(var(--foreground)) !important; }
+
   h1, h2, h3, h4, h5 {
     letter-spacing: -0.012em;
   }
