@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "wouter";
 import { OverlayShell } from "@/components/OverlayShell";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { PaymentMethod } from "@shared/schema";
@@ -44,6 +45,7 @@ interface SbpBinding {
 
 export function PaymentMethodsPage() {
   const toast = useToast();
+  const [, navigate] = useLocation();
   const { isRegistered, isLoading: userLoading } = useCurrentUser();
   const [redirecting, setRedirecting] = useState(false);
   const [sbpBinding, setSbpBinding] = useState<SbpBinding | null>(null);
@@ -289,18 +291,30 @@ export function PaymentMethodsPage() {
       poll();
     }
 
-    // Break the Back-button loop into T-Bank. Returning from the hosted form is
-    // a FULL page load, so the browser's previous history entry is a T-Bank URL
-    // (its multi-step form pushed entries we can't strip from our side). Pressing
-    // Back — or the overlay back button, which calls history.back() — would land
-    // there and T-Bank would redirect forward again, trapping the rider.
+    // Break the Back-into-T-Bank trap. Returning from the hosted form is a FULL
+    // page load, so the browser's history below us still holds one or more
+    // T-Bank URLs (its multi-step form pushed several entries we can't strip).
+    // Any Back — the overlay button (history.back()) OR a native swipe gesture —
+    // is a `popstate`, and if it lands on a T-Bank entry the bank redirects
+    // forward again, trapping the rider.
     //
-    // We rewrite history so a single Back leaves cleanly: replace the current
-    // entry with the map ("/"), then push "/payment-methods" on top. Now Back
-    // from payment methods goes to the map (a valid in-app route), never to
-    // T-Bank. Also drops the query params so a manual reload can't re-trigger.
-    window.history.replaceState({}, "", "/");
+    // Rewriting a single entry only fixed the button (one step back) but not the
+    // swipe, which can travel deeper into the leftover T-Bank stack. Instead we
+    // install a `popstate` GUARD: drop the query params, push one guard entry on
+    // top, and intercept the FIRST back-navigation out of it. Whichever gesture
+    // fires, the guard cancels the browser's default target and routes us to the
+    // map ("/") through wouter, so we never fall through to a T-Bank URL.
+    window.history.replaceState({}, "", "/payment-methods");
     window.history.pushState({}, "", "/payment-methods");
+    const onPop = () => {
+      window.removeEventListener("popstate", onPop);
+      // Re-anchor above whatever the browser just popped to (possibly a T-Bank
+      // entry), then hand control to wouter so the overlay closes to the map.
+      window.history.pushState({}, "", "/payment-methods");
+      navigate("/", { replace: true });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [methods]);
 

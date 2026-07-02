@@ -87,14 +87,25 @@ export function PaymentResultPage() {
     }
   }, [status, queryClient]);
 
-  // Break the Back-button loop into T-Bank. We arrive here via a full page load
-  // from T-Bank's hosted form, so the browser's previous history entry is a
-  // T-Bank URL that redirects forward again if the rider presses Back. Rewrite
-  // history once on mount so a single Back leaves cleanly to the map ("/").
+  // Break the Back-into-T-Bank trap. We arrive here via a full page load from
+  // T-Bank's hosted form, so the history below us still holds one or more T-Bank
+  // URLs that redirect forward again on Back. A single-entry rewrite fixed the
+  // overlay button but not a native swipe-back, which can travel deeper into the
+  // leftover T-Bank stack. Install a `popstate` guard: whichever gesture fires
+  // first, we cancel the browser's default target and route to the map ("/")
+  // through wouter, so we never fall through to a T-Bank URL.
   useEffect(() => {
     if (!orderId) return;
-    window.history.replaceState({}, "", "/");
-    window.history.pushState({}, "", `/payment-result?orderId=${encodeURIComponent(orderId)}`);
+    const url = `/payment-result?orderId=${encodeURIComponent(orderId)}`;
+    window.history.replaceState({}, "", url);
+    window.history.pushState({}, "", url);
+    const onPop = () => {
+      window.removeEventListener("popstate", onPop);
+      window.history.pushState({}, "", url);
+      navigate("/", { replace: true });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
