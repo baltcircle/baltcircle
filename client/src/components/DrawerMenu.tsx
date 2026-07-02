@@ -129,17 +129,17 @@ export function DrawerMenu({ open, onClose }: Props) {
 
         {/* Payment banner — только если нет карты и не закрыт в эту сессию */}
         {showBanner && (
-          <div className="mx-4 mt-3 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900 px-4 py-3 relative">
+          <div className="mx-4 mt-3 rounded-2xl bg-black/10 border border-sidebar-foreground/15 px-4 py-3 relative">
             <button
               onClick={dismissBanner}
-              className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors"
+              className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors"
               aria-label="Закрыть"
             >
-              <X className="w-4 h-4 text-blue-400 dark:text-blue-500" />
+              <X className="w-4 h-4 text-sidebar-foreground/70" />
             </button>
             <div className="flex items-start gap-3 pr-6">
-              <CreditCard className="w-5 h-5 text-blue-500 dark:text-blue-400 shrink-0 mt-0.5" />
-              <p className="text-sm text-blue-800 dark:text-blue-200 leading-snug">
+              <CreditCard className="w-5 h-5 text-sidebar-foreground/80 shrink-0 mt-0.5" />
+              <p className="text-sm text-sidebar-foreground leading-snug">
                 Добавьте способ оплаты, чтобы начать кататься
               </p>
             </div>

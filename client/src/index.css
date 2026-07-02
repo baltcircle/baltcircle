@@ -38,22 +38,23 @@
   --card-foreground: 200 55% 14%; /* #10242f — dark text on teal card */
   --card-border: 189 46% 47%;     /* darker #61B5C4 */
 
-  /* Sidebar uses the brand primary tone in light mode */
+  /* Sidebar uses the brand primary tone in light mode. Text is dark navy-teal
+   * #10242f (same as content) so the whole light theme is one look. */
   --sidebar: 189 46% 57%;                       /* #61B5C4 */
-  --sidebar-foreground: 45 33% 77%;             /* #D7CDB0 */
+  --sidebar-foreground: 200 55% 14%;            /* #10242f — dark text */
   --sidebar-border: 189 46% 47%;                /* darker #61B5C4 */
   --sidebar-primary: 36 60% 90%;
   --sidebar-primary-foreground: 200 70% 22%;
   --sidebar-accent: 189 46% 47%;                /* darker #61B5C4 */
-  --sidebar-accent-foreground: 45 33% 77%;      /* #D7CDB0 */
-  --sidebar-ring: 45 33% 77%;                   /* #D7CDB0 */
+  --sidebar-accent-foreground: 200 55% 14%;     /* #10242f — dark text */
+  --sidebar-ring: 200 55% 14%;                  /* #10242f — dark */
 
   --popover: 189 46% 57%;         /* #61B5C4 popover surface */
   --popover-foreground: 200 55% 14%; /* #10242f — dark text */
   --popover-border: 189 46% 47%;  /* darker #61B5C4 */
 
   --primary: 189 46% 57%;             /* #61B5C4  — light theme primary */
-  --primary-foreground: 45 33% 77%;   /* #D7CDB0  — button text on primary */
+  --primary-foreground: 200 55% 14%;  /* #10242f  — dark button text on primary */
 
   --secondary: 189 46% 52%;       /* slightly deeper #61B5C4 */
   --secondary-foreground: 200 55% 14%; /* #10242f — dark text */
