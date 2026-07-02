@@ -72,7 +72,14 @@ export function PaymentMethodsPage() {
       queryClient.invalidateQueries({ queryKey: METHODS_KEY });
       if (data.paymentUrl) {
         setRedirecting(true);
-        window.location.href = data.paymentUrl;
+        // location.replace (NOT href): navigating to T-Bank's hosted form must
+        // REPLACE the current /payment-methods history entry, not push a new one.
+        // Otherwise the history becomes [способы оплаты → форма T-Bank → способы
+        // оплаты], and pressing Back (or swiping back) lands on the T-Bank form,
+        // which immediately redirects forward again — trapping the rider on the
+        // tab. Replacing our entry removes our half of that loop so Back goes to
+        // wherever the rider was before opening payment methods.
+        window.location.replace(data.paymentUrl);
       }
     },
     onError: (e: Error) =>
