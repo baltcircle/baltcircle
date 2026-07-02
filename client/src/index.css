@@ -25,13 +25,17 @@
   --brand-foam: 0 0% 100%;
   --brand-bark: 24 30% 28%;       /* warm brown text */
 
-  --background: 36 38% 96%;       /* very light cream */
-  --foreground: 24 32% 15%;       /* darkened for contrast on light theme */
-  --border: 32 20% 86%;
+  /* Light theme mirrors the dark theme's structure but in the brand teal
+   * #61B5C4 instead of the blue #1D1E5D: teal surfaces + beige #D7CDB0 text.
+   * Surfaces are progressively lighter teals for elevation. Change these HSL
+   * values to retune the whole light palette. */
+  --background: 189 46% 62%;      /* lighter #61B5C4 base */
+  --foreground: 45 33% 88%;       /* lightened #D7CDB0 beige for contrast on teal */
+  --border: 189 46% 47%;          /* darker #61B5C4 divider */
 
-  --card: 0 0% 100%;
-  --card-foreground: 24 32% 15%;
-  --card-border: 32 20% 88%;
+  --card: 189 46% 57%;            /* #61B5C4 — card surface (matches menu) */
+  --card-foreground: 45 33% 88%;  /* light beige text */
+  --card-border: 189 46% 47%;     /* darker #61B5C4 */
 
   /* Sidebar uses the brand primary tone in light mode */
   --sidebar: 189 46% 57%;                       /* #61B5C4 */
@@ -43,21 +47,21 @@
   --sidebar-accent-foreground: 45 33% 77%;      /* #D7CDB0 */
   --sidebar-ring: 45 33% 77%;                   /* #D7CDB0 */
 
-  --popover: 0 0% 100%;
-  --popover-foreground: 24 32% 15%;
-  --popover-border: 32 20% 86%;
+  --popover: 189 46% 57%;         /* #61B5C4 popover surface */
+  --popover-foreground: 45 33% 88%;
+  --popover-border: 189 46% 47%;  /* darker #61B5C4 */
 
   --primary: 189 46% 57%;             /* #61B5C4  — light theme primary */
   --primary-foreground: 45 33% 77%;   /* #D7CDB0  — button text on primary */
 
-  --secondary: 36 38% 90%;
-  --secondary-foreground: 24 32% 15%;
+  --secondary: 189 46% 52%;       /* slightly deeper #61B5C4 */
+  --secondary-foreground: 45 33% 88%;
 
-  --muted: 36 30% 92%;
-  --muted-foreground: 24 16% 32%;   /* darkened for contrast on light theme */
+  --muted: 189 46% 52%;           /* deeper #61B5C4 hover/muted surface */
+  --muted-foreground: 45 30% 82%; /* dimmer beige for secondary text */
 
-  --accent: 36 56% 78%;
-  --accent-foreground: 24 32% 15%;
+  --accent: 189 46% 52%;
+  --accent-foreground: 45 33% 88%;
 
   --destructive: 0 68% 45%;
   --destructive-foreground: 0 0% 100%;
@@ -248,7 +252,11 @@
   .bg-gray-50 { background-color: hsl(var(--background)) !important; }
   .dark .dark\:bg-zinc-900 { background-color: hsl(var(--background)) !important; }
 
-  /* Card / elevated surfaces → --card */
+  /* Card / elevated surfaces → --card (both themes).
+   * Light-mode cards use `bg-white dark:bg-zinc-800`; target that exact combo
+   * so brand-logo tiles (bg-white dark:bg-zinc-100) and the toggle knob
+   * (bg-white shadow, no dark:bg-zinc-800) stay white. */
+  .bg-white.dark\:bg-zinc-800,
   .dark .dark\:bg-zinc-800,
   .dark .dark\:bg-zinc-700 { background-color: hsl(var(--card)) !important; }
 
