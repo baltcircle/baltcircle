@@ -248,11 +248,23 @@ export function PaymentMethodsPage() {
     const search = window.location.search;
     if (!search || handledRedirect.current === search) return;
     const params = new URLSearchParams(search);
-    if (!params.has("Success") && !params.has("RequestKey") && !params.has("ErrorCode")) return;
+    // Recognise a return from T-Bank's hosted form. The Init path returns with
+    // ?from=tbank (a bare SuccessURL otherwise carries no params); the AddCard
+    // path returns with Success/RequestKey/ErrorCode.
+    const isTbankReturn =
+      params.has("from") ||
+      params.has("Success") ||
+      params.has("RequestKey") ||
+      params.has("ErrorCode");
+    if (!isTbankReturn) return;
     handledRedirect.current = search;
 
+    // Only show a failure toast on an EXPLICIT rejection. The Init path returns
+    // with just ?from=tbank (no Success param) and is resolved by the webhook, so
+    // a missing Success must NOT be treated as a failure.
+    const hasSuccessFlag = params.has("Success");
     const ok = (params.get("Success") || "").toLowerCase() === "true";
-    if (!ok) {
+    if (hasSuccessFlag && !ok) {
       const code = params.get("ErrorCode");
       toast.toast({
         title: "Не удалось привязать карту",
@@ -277,8 +289,18 @@ export function PaymentMethodsPage() {
       poll();
     }
 
-    // Strip the query params so a manual reload doesn't re-trigger.
-    window.history.replaceState({}, "", window.location.pathname);
+    // Break the Back-button loop into T-Bank. Returning from the hosted form is
+    // a FULL page load, so the browser's previous history entry is a T-Bank URL
+    // (its multi-step form pushed entries we can't strip from our side). Pressing
+    // Back — or the overlay back button, which calls history.back() — would land
+    // there and T-Bank would redirect forward again, trapping the rider.
+    //
+    // We rewrite history so a single Back leaves cleanly: replace the current
+    // entry with the map ("/"), then push "/payment-methods" on top. Now Back
+    // from payment methods goes to the map (a valid in-app route), never to
+    // T-Bank. Also drops the query params so a manual reload can't re-trigger.
+    window.history.replaceState({}, "", "/");
+    window.history.pushState({}, "", "/payment-methods");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [methods]);
 
