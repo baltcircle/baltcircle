@@ -170,7 +170,7 @@ export function SettingsPage() {
               aria-checked={pushEnabled}
               role="switch"
               className={`relative inline-flex w-11 h-6 rounded-full transition-colors duration-200 ${
-                pushEnabled ? "bg-blue-500" : "bg-gray-200 dark:bg-zinc-600"
+                pushEnabled ? "bg-primary" : "bg-gray-200 dark:bg-zinc-600"
               }`}
             >
               <span
