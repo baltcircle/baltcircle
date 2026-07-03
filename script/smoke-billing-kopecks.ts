@@ -11,19 +11,18 @@
 //
 // Run with:  npx tsx script/smoke-billing-kopecks.ts
 
-import { rmSync, existsSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createTestDb, teardown } from "./smoke-pg";
 import { TARIFFS, tariffPriceKopecks, OVERAGE_HOUR_PRICE } from "../shared/geo";
 import { computeOverage, finalRideCost, overageHourKopecks } from "../shared/billing";
 
 const PORT = 5631;
-const DB_PATH = "/tmp/bc-smoke-billing.db";
+const NAME = "billing-kopecks";
+let DB_URL = "";
+let server: ChildProcess;
 const BASE = `http://127.0.0.1:${PORT}`;
 const HOUR_MS = 60 * 60 * 1000;
 
-for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
-  if (existsSync(f)) rmSync(f);
-}
 
 function assert(cond: unknown, msg: string) {
   if (!cond) {
@@ -86,7 +85,7 @@ function startServer(): ChildProcess {
         NODE_ENV: "development",
         API_ONLY: "1",
         PORT: String(PORT),
-        DATABASE_PATH: DB_PATH,
+        DATABASE_URL: DB_URL,
         SMS_PROVIDER: "",
         TBANK_TERMINAL_KEY: "",
         TBANK_PASSWORD: "",
@@ -123,9 +122,10 @@ async function stop(proc: ChildProcess) {
   });
 }
 
-const server = startServer();
 
 async function main() {
+  DB_URL = (await createTestDb(NAME)).url;
+  server = startServer();
   await waitForServer();
 
   // Register a rider via the OTP dev fallback to get a session cookie.
@@ -214,8 +214,6 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await stop(server);
-    for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
-      if (existsSync(f)) rmSync(f);
-    }
+    await teardown(NAME, server);
+    setTimeout(() => process.exit(process.exitCode ?? 0), 300);
   });

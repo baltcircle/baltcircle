@@ -11,10 +11,13 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createTestDb, teardown } from "./smoke-pg";
 
 const PORT = 5611;
 const BASE = `http://127.0.0.1:${PORT}`;
-const DB_PATH = "/tmp/bc-smoke-spa.db";
+const NAME = "spa-fallback";
+let DB_URL = "";
+let server: ChildProcess;
 const DIST_INDEX = path.resolve("dist/public/index.html");
 
 function assert(cond: unknown, msg: string) {
@@ -30,7 +33,7 @@ assert(existsSync(DIST_INDEX), "dist/public/index.html exists (run npm run build
 
 function startServer(): ChildProcess {
   return spawn(process.execPath, ["dist/index.cjs"], {
-    env: { ...process.env, NODE_ENV: "production", PORT: String(PORT), DATABASE_PATH: DB_PATH, SMS_PROVIDER: "", SESSION_SECRET: "smoke-spa-fallback-test-secret" },
+    env: { ...process.env, NODE_ENV: "production", PORT: String(PORT), DATABASE_URL: DB_URL, SMS_PROVIDER: "", SESSION_SECRET: "smoke-spa-fallback-test-secret" },
     stdio: ["ignore", "ignore", "inherit"],
   });
 }
@@ -57,9 +60,9 @@ async function stop(proc: ChildProcess) {
   });
 }
 
-const server = startServer();
-
 async function main() {
+  DB_URL = (await createTestDb(NAME)).url;
+  server = startServer();
   await waitForServer();
 
   // The index.html the SPA fallback should serve, for byte comparison.
@@ -104,6 +107,6 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await stop(server);
+    await teardown(NAME, server);
     setTimeout(() => process.exit(process.exitCode ?? 0), 300);
   });

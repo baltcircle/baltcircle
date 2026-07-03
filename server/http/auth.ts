@@ -47,7 +47,7 @@ export function registerAuthRoutes(app: Express): void {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
       return res.status(400).json({ error: msg });
     }
-    const result = storage.startOtp({ name: parsed.data.name, phone: parsed.data.phone });
+    const result = await storage.startOtp({ name: parsed.data.name, phone: parsed.data.phone });
     if ("error" in result) {
       const status = result.retryAfterSec ? 429 : 400;
       return res.status(status).json(result);
@@ -56,7 +56,7 @@ export function registerAuthRoutes(app: Express): void {
       const sent = await sendOtpSms(result.phone, result.code);
       // Persist the provider's sending id/status so staff can later query the
       // provider's delivery status for this phone. Non-secret diagnostics only.
-      storage.recordOtpSend({
+      await storage.recordOtpSend({
         phone: result.phone,
         provider: sent.provider,
         providerMessageId: sent.providerMessageId,
@@ -77,13 +77,13 @@ export function registerAuthRoutes(app: Express): void {
 
   // Step 2: rider submits the code. On success we create/activate the rider and
   // bind the session, allowing rental/scan.
-  app.post("/api/auth/otp/verify", otpLimiter, (req, res) => {
+  app.post("/api/auth/otp/verify", otpLimiter, async (req, res) => {
     const parsed = otpVerifySchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
       return res.status(400).json({ error: msg });
     }
-    const result = storage.verifyOtp({
+    const result = await storage.verifyOtp({
       phone: parsed.data.phone,
       code: parsed.data.code,
       consentIp: clientIp(req),
@@ -95,14 +95,14 @@ export function registerAuthRoutes(app: Express): void {
 
   // Public probe so the client can tell whether a real SMS provider is wired up.
   // Never exposes the token — just the provider name and a configured flag.
-  app.get("/api/sms/config", (_req, res) => {
+  app.get("/api/sms/config", async (_req, res) => {
     res.json({ provider: smsProvider() || "(none)", configured: getSmsDiagnostics().configured });
   });
 
   // Admin-only SMS diagnostics. Returns ONLY non-secret metadata: provider,
   // configured flag, token LENGTH (never the token), sender and the API base.
   // Lets staff confirm the SigmaSMS wiring without ever seeing the secret.
-  app.get("/api/sms/diagnostics", requireRole("admin"), (_req, res) => {
+  app.get("/api/sms/diagnostics", requireRole("admin"), async (_req, res) => {
     res.json(getSmsDiagnostics());
   });
 
@@ -117,7 +117,7 @@ export function registerAuthRoutes(app: Express): void {
     const phone = typeof req.query.phone === "string" ? req.query.phone.trim() : "";
     if (!phone) return res.status(400).json({ error: "Укажите параметр phone" });
 
-    const row = storage.getLastOtpSend(phone);
+    const row = await storage.getLastOtpSend(phone);
     if (!row) {
       return res.status(404).json({ error: "По этому номеру нет записей об отправке кода" });
     }
@@ -130,7 +130,7 @@ export function registerAuthRoutes(app: Express): void {
       try {
         const live = await getSigmaSmsSendingStatus(row.providerMessageId);
         providerLookup = live;
-        storage.updateOtpProviderStatus({
+        await storage.updateOtpProviderStatus({
           phone,
           providerStatus: live.status ?? row.providerStatus ?? undefined,
           providerError: live.error ?? undefined,
@@ -141,7 +141,7 @@ export function registerAuthRoutes(app: Express): void {
     }
 
     // Re-read so the response reflects any refresh we just persisted.
-    const latest = storage.getLastOtpSend(phone) ?? row;
+    const latest = await storage.getLastOtpSend(phone) ?? row;
     res.json({
       phone: latest.phone,
       provider: latest.provider,
@@ -155,10 +155,10 @@ export function registerAuthRoutes(app: Express): void {
     });
   });
 
-  app.get("/api/users/current", (req, res) => {
+  app.get("/api/users/current", async (req, res) => {
     const id = req.session?.userId;
     if (!id) return res.json(null);
-    const user = storage.getUser(id);
+    const user = await storage.getUser(id);
     if (!user) {
       // Session points at a user that no longer exists (e.g. DB reset). Clear
       // the stale id so the client falls back to the unregistered state.
@@ -170,7 +170,7 @@ export function registerAuthRoutes(app: Express): void {
 
   // Self-service profile update for the logged-in rider. Name and email only —
   // phone changes are intentionally not accepted here (they need SMS OTP).
-  app.patch("/api/users/me", (req, res) => {
+  app.patch("/api/users/me", async (req, res) => {
     const id = req.session?.userId;
     if (!id) return res.status(401).json({ error: "Требуется вход" });
     const parsed = updateProfileSchema.safeParse(req.body);
@@ -178,7 +178,7 @@ export function registerAuthRoutes(app: Express): void {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
       return res.status(400).json({ error: msg });
     }
-    const result = storage.updateProfile(id, parsed.data);
+    const result = await storage.updateProfile(id, parsed.data);
     if ("error" in result) return res.status(400).json(result);
     res.json(result.user);
   });
@@ -195,7 +195,7 @@ export function registerAuthRoutes(app: Express): void {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
       return res.status(400).json({ error: msg });
     }
-    const result = storage.startPhoneChange({ userId: id, phone: parsed.data.phone });
+    const result = await storage.startPhoneChange({ userId: id, phone: parsed.data.phone });
     if ("error" in result) {
       const status = result.retryAfterSec ? 429 : 400;
       return res.status(status).json(result);
@@ -212,7 +212,7 @@ export function registerAuthRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/users/me/phone/verify", (req, res) => {
+  app.post("/api/users/me/phone/verify", async (req, res) => {
     const id = req.session?.userId;
     if (!id) return res.status(401).json({ error: "Требуется вход" });
     const parsed = phoneChangeVerifySchema.safeParse(req.body);
@@ -220,7 +220,7 @@ export function registerAuthRoutes(app: Express): void {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
       return res.status(400).json({ error: msg });
     }
-    const result = storage.verifyPhoneChange({ userId: id, code: parsed.data.code });
+    const result = await storage.verifyPhoneChange({ userId: id, code: parsed.data.code });
     if ("error" in result) return res.status(400).json(result);
     res.json(result.user);
   });

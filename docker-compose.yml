@@ -14,7 +14,11 @@ services:
     environment:
       NODE_ENV: production
       PORT: 5000
-      DATABASE_PATH: /app/data/data.db
+      # Managed PostgreSQL connection string (Yandex Cloud). SECRET — read from
+      # the host env (set by the deploy workflow from the GitHub `DATABASE_URL`
+      # secret). Required: the app fails fast if the pool cannot connect. Format:
+      # postgresql://user:password@host:6432/dbname?sslmode=verify-full
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       # SMS OTP — backend-only runtime config (not inlined into the client
       # bundle). Read from the host env (set by the deploy workflow from GitHub
       # secrets). If SMS_PROVIDER is empty the app uses a dev fallback that logs
@@ -62,9 +66,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - baltcircle_data:/app/data
+      # App data now lives in managed PostgreSQL (DATABASE_URL); no local DB
+      # volume needed. OSM tiles are served from a read-only host bind mount.
       - /home/yc-user/osm:/app/osm:ro
-
-volumes:
-  baltcircle_data:
-    name: baltcicl_baltcircle_data

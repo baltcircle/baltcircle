@@ -12,19 +12,17 @@
 //      that no code is stored in plaintext
 //
 // Run with:  npx tsx script/smoke-account.ts
-import { rmSync, existsSync } from "node:fs";
-import { spawn } from "node:child_process";
-import Database from "better-sqlite3";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createTestDb, teardown, openTestDb } from "./smoke-pg";
 
+const NAME = "account";
 const PORT = 5602;
-const DB_PATH = "/tmp/bc-smoke-account.db";
 const BASE = `http://127.0.0.1:${PORT}`;
 const OLD_PHONE = "+79990001122";
 const NEW_PHONE = "+79993334455";
 
-for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
-  if (existsSync(f)) rmSync(f);
-}
+let DB_URL = "";
+let server: ChildProcess;
 
 function assert(cond: unknown, msg: string) {
   if (!cond) {
@@ -54,16 +52,16 @@ function cookieFromSetCookie(setCookie: string | null): string | null {
   return setCookie.split(";")[0];
 }
 
-const server = spawn(
-  process.execPath,
-  ["node_modules/tsx/dist/cli.mjs", "server/index.ts"],
-  {
-    env: { ...process.env, NODE_ENV: "development", API_ONLY: "1", PORT: String(PORT), DATABASE_PATH: DB_PATH, SMS_PROVIDER: "" },
-    stdio: ["ignore", "ignore", "inherit"],
-  },
-);
-
 async function main() {
+  DB_URL = (await createTestDb(NAME)).url;
+  server = spawn(
+    process.execPath,
+    ["node_modules/tsx/dist/cli.mjs", "server/index.ts"],
+    {
+      env: { ...process.env, NODE_ENV: "development", API_ONLY: "1", PORT: String(PORT), DATABASE_URL: DB_URL, SMS_PROVIDER: "" },
+      stdio: ["ignore", "ignore", "inherit"],
+    },
+  );
   await waitForServer();
 
   // 1. Register a rider via OTP.
@@ -219,22 +217,24 @@ async function main() {
   assert(tickets.length === 1 && tickets[0].subject === "Не работает замок", "support ticket persisted and listed");
 
   // 5. Inspect the DB directly.
-  const db = new Database(DB_PATH, { readonly: true });
-  const userRow = db.prepare("SELECT phone FROM users WHERE id = ?").get(created.id) as { phone: string } | undefined;
+  const db = await openTestDb(DB_URL);
+  const userRow = (await db.prepare("SELECT phone FROM users WHERE id = ?").get(created.id)) as { phone: string } | undefined;
   assert(userRow?.phone === NEW_PHONE, "persisted phone is the new number");
 
-  const pcRow = db.prepare("SELECT code_hash, consumed FROM phone_change_requests WHERE user_id = ?").get(created.id) as
-    | { code_hash: string; consumed: number }
+  const pcRow = (await db.prepare("SELECT code_hash, consumed FROM phone_change_requests WHERE user_id = ?").get(created.id)) as
+    | { code_hash: string; consumed: boolean }
     | undefined;
-  assert(!!pcRow && pcRow.consumed === 1, "phone-change request consumed");
+  assert(!!pcRow && pcRow.consumed === true, "phone-change request consumed");
   assert(!!pcRow && !pcRow.code_hash.includes(pcStart.devCode), "phone-change code stored only as a hash");
 
-  const pmCount = (db.prepare("SELECT COUNT(*) AS c FROM payment_methods WHERE user_id = ?").get(created.id) as { c: number }).c;
+  const pmCount = Number(
+    ((await db.prepare("SELECT COUNT(*) AS c FROM payment_methods WHERE user_id = ?").get(created.id)) as { c: number | string }).c,
+  );
   assert(pmCount === 1, "one payment method row persisted");
 
-  const stRow = db.prepare("SELECT subject FROM support_tickets WHERE user_id = ?").get(created.id) as { subject: string } | undefined;
+  const stRow = (await db.prepare("SELECT subject FROM support_tickets WHERE user_id = ?").get(created.id)) as { subject: string } | undefined;
   assert(stRow?.subject === "Не работает замок", "support ticket persisted in DB");
-  db.close();
+  await db.close();
 
   console.log("\nAll account smoke checks passed.");
 }
@@ -244,7 +244,7 @@ main()
     console.error(err);
     process.exitCode = 1;
   })
-  .finally(() => {
-    server.kill("SIGTERM");
+  .finally(async () => {
+    await teardown(NAME, server);
     setTimeout(() => process.exit(process.exitCode ?? 0), 300);
   });

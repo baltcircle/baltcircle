@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { pgTable, text, integer, bigint, doublePrecision, boolean, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -6,19 +6,19 @@ import { z } from "zod";
 // Minimal rider identity captured at first rental. No sensitive payment data
 // is ever stored here — only a display name and a contact phone. Phone is not
 // ownership-verified yet (no SMS/OTP), so it is contact info, not auth.
-export const users = sqliteTable("users", {
+export const users = pgTable("users", {
   id: text("id").primaryKey(),               // generated server-side
   name: text("name").notNull(),
   phone: text("phone").notNull(),            // normalized to digits with optional leading +
   email: text("email"),                      // optional, rider-supplied; validated on update
   role: text("role").notNull().default("rider"), // rider | mechanic | operator | admin
-  consentAcceptedAt: integer("consent_accepted_at"), // unix ms when consent was accepted
+  consentAcceptedAt: bigint("consent_accepted_at", { mode: "number" }), // unix ms when consent was accepted
   consentVersion: text("consent_version"),   // e.g. "v1-2026-06-07"
   consentIp: text("consent_ip"),             // best-effort client IP captured at consent time
-  blockedAt: integer("blocked_at"),          // unix ms when an operator blocked the account; null = active
+  blockedAt: bigint("blocked_at", { mode: "number" }),          // unix ms when an operator blocked the account; null = active
   blockedReason: text("blocked_reason"),     // optional operator-supplied note shown in the admin UI
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at"),          // unix ms of last profile mutation
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }),          // unix ms of last profile mutation
 });
 export type User = typeof users.$inferSelect;
 export type UserRole = "rider" | "mechanic" | "operator" | "admin";
@@ -65,14 +65,14 @@ export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 // One pending verification per phone. The code is never stored in plaintext —
 // only an HMAC of the code is kept server-side. A row is created/replaced when
 // a rider asks for a code and consumed once verification succeeds.
-export const otpRequests = sqliteTable("otp_requests", {
+export const otpRequests = pgTable("otp_requests", {
   phone: text("phone").primaryKey(),         // normalized +7… form
   name: text("name").notNull(),              // carried through to user creation
   codeHash: text("code_hash").notNull(),     // HMAC-SHA256 of the OTP, never plaintext
-  expiresAt: integer("expires_at").notNull(),// unix ms — code invalid after this
+  expiresAt: bigint("expires_at", { mode: "number" }).notNull(),// unix ms — code invalid after this
   attempts: integer("attempts").notNull().default(0),     // wrong-code tries used
-  lastSentAt: integer("last_sent_at").notNull(),          // unix ms of last SMS, for resend lock
-  consumed: integer("consumed", { mode: "boolean" }).notNull().default(false),
+  lastSentAt: bigint("last_sent_at", { mode: "number" }).notNull(),          // unix ms of last SMS, for resend lock
+  consumed: boolean("consumed").notNull().default(false),
   // Delivery diagnostics for the last SMS send. SigmaSMS (and similar) return a
   // sending id + status that we persist so staff can later query the provider's
   // delivery status. None of these hold secrets — only the provider name, the
@@ -81,7 +81,7 @@ export const otpRequests = sqliteTable("otp_requests", {
   providerMessageId: text("provider_message_id"),  // provider's sending id, if returned
   providerStatus: text("provider_status"),         // last known provider status text
   providerError: text("provider_error"),           // safe provider error summary (no secrets)
-  providerCheckedAt: integer("provider_checked_at"),// unix ms of last status refresh
+  providerCheckedAt: bigint("provider_checked_at", { mode: "number" }),// unix ms of last status refresh
 });
 export type OtpRequest = typeof otpRequests.$inferSelect;
 
@@ -117,14 +117,14 @@ export type OtpVerifyInput = z.infer<typeof otpVerifySchema>;
 // OTP but is keyed by the user id (not the phone) and carries the *new* phone
 // through to the update. Only the HMAC of the code is stored. A row is
 // created/replaced when the rider requests a code and consumed on success.
-export const phoneChangeRequests = sqliteTable("phone_change_requests", {
+export const phoneChangeRequests = pgTable("phone_change_requests", {
   userId: text("user_id").primaryKey(),      // the rider changing their number
   newPhone: text("new_phone").notNull(),     // normalized +7… target number
   codeHash: text("code_hash").notNull(),     // HMAC-SHA256 of the OTP, never plaintext
-  expiresAt: integer("expires_at").notNull(),
+  expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
   attempts: integer("attempts").notNull().default(0),
-  lastSentAt: integer("last_sent_at").notNull(),
-  consumed: integer("consumed", { mode: "boolean" }).notNull().default(false),
+  lastSentAt: bigint("last_sent_at", { mode: "number" }).notNull(),
+  consumed: boolean("consumed").notNull().default(false),
 });
 export type PhoneChangeRequest = typeof phoneChangeRequests.$inferSelect;
 
@@ -147,16 +147,16 @@ export const phoneChangeVerifySchema = z.object({
 export type PhoneChangeVerifyInput = z.infer<typeof phoneChangeVerifySchema>;
 
 /* ------- BIKES ------- */
-export const bikes = sqliteTable("bikes", {
+export const bikes = pgTable("bikes", {
   id: text("id").primaryKey(),               // e.g. "BC-014"
   model: text("model").notNull(),            // Cruiser / Comfort / City+
   status: text("status").notNull(),          // see BIKE_STATUSES below
   battery: integer("battery").notNull(),     // 0-100 (smart lock battery)
-  lat: real("lat").notNull(),                // map % space, see note below
-  lng: real("lng").notNull(),
-  lastSeen: integer("last_seen").notNull(),  // unix ms
-  idleHours: real("idle_hours").notNull(),   // hours
-  flagged: integer("flagged", { mode: "boolean" }).notNull().default(false),
+  lat: doublePrecision("lat").notNull(),                // map % space, see note below
+  lng: doublePrecision("lng").notNull(),
+  lastSeen: bigint("last_seen", { mode: "number" }).notNull(),  // unix ms
+  idleHours: doublePrecision("idle_hours").notNull(),   // hours
+  flagged: boolean("flagged").notNull().default(false),
   // ----- Real-fleet operations fields (added for admin management) -----
   serial: text("serial"),                    // manufacturer serial / frame number
   lockId: text("lock_id"),                   // smart-lock id placeholder (no real integration yet)
@@ -164,7 +164,7 @@ export const bikes = sqliteTable("bikes", {
   notes: text("notes"),                      // operator free-text notes
   // `seed` marks demo fleet rows so the demo reseed migration can refresh them
   // without ever touching bikes an operator added manually.
-  seed: integer("seed", { mode: "boolean" }).notNull().default(false),
+  seed: boolean("seed").notNull().default(false),
 });
 
 // Operational statuses. `available`/`rented`/`reserved` drive the rental flow;
@@ -216,21 +216,21 @@ export type AdminUpdateBikeInput = z.infer<typeof adminUpdateBikeSchema>;
 // coordinates via mapToReal(). `status` gates public visibility: only "active"
 // parkings reach the public /api/parkings. `archivedAt` is a soft delete that
 // hides a point everywhere while keeping it referenceable from bikes/history.
-export const parkings = sqliteTable("parkings", {
+export const parkings = pgTable("parkings", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
-  lat: real("lat").notNull(),
-  lng: real("lng").notNull(),
+  lat: doublePrecision("lat").notNull(),
+  lng: doublePrecision("lng").notNull(),
   capacity: integer("capacity").notNull(),
   occupied: integer("occupied").notNull(),
   status: text("status").notNull().default("active"), // active | inactive
   notes: text("notes"),                  // operator instructions / free-text
-  archivedAt: integer("archived_at"),    // unix ms when archived; null = live
+  archivedAt: bigint("archived_at", { mode: "number" }),    // unix ms when archived; null = live
   // `seed` marks the demo parkings so a future reseed can refresh them without
   // touching operator-added points (mirrors the bikes table convention).
-  seed: integer("seed", { mode: "boolean" }).notNull().default(false),
-  createdAt: integer("created_at"),      // unix ms; null for legacy demo rows
-  updatedAt: integer("updated_at"),      // unix ms of last mutation
+  seed: boolean("seed").notNull().default(false),
+  createdAt: bigint("created_at", { mode: "number" }),      // unix ms; null for legacy demo rows
+  updatedAt: bigint("updated_at", { mode: "number" }),      // unix ms of last mutation
 });
 export type Parking = typeof parkings.$inferSelect;
 
@@ -269,7 +269,7 @@ export type AdminUpdateParkingInput = z.infer<typeof adminUpdateParkingSchema>;
 /** zone.kind = "operating" | "slow" | "forbidden"
  *  polygon = JSON array of [x,y] map points
  */
-export const zones = sqliteTable("zones", {
+export const zones = pgTable("zones", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   kind: text("kind").notNull(),
@@ -283,16 +283,16 @@ export type ZoneRow = typeof zones.$inferSelect;
  *  kind   = "route" (polyline) | "zone" (polygon)
  *  points = JSON array of [lat, lng] coordinates
  */
-export const mapObjects = sqliteTable("map_objects", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const mapObjects = pgTable("map_objects", {
+  id: serial("id").primaryKey(),
   name: text("name").notNull(),
   type: text("type").notNull(),
   kind: text("kind").notNull(),
   color: text("color").notNull().default("#1d6f8e"),
   points: text("points").notNull(),
   // Inactive objects are kept in the editor but never rendered on the public map.
-  active: integer("active", { mode: "boolean" }).notNull().default(true),
-  createdAt: integer("created_at").notNull(),
+  active: boolean("active").notNull().default(true),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 export type MapObject = typeof mapObjects.$inferSelect;
 export const insertMapObjectSchema = z.object({
@@ -312,18 +312,18 @@ export const updateMapObjectSchema = z.object({
 export type UpdateMapObjectInput = z.infer<typeof updateMapObjectSchema>;
 
 /* ------- RIDES ------- */
-export const rides = sqliteTable("rides", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const rides = pgTable("rides", {
+  id: serial("id").primaryKey(),
   bikeId: text("bike_id").notNull(),
   userId: text("user_id").notNull(),
-  startedAt: integer("started_at").notNull(),
-  endedAt: integer("ended_at"),
-  startLat: real("start_lat").notNull(),
-  startLng: real("start_lng").notNull(),
-  endLat: real("end_lat"),
-  endLng: real("end_lng"),
+  startedAt: bigint("started_at", { mode: "number" }).notNull(),
+  endedAt: bigint("ended_at", { mode: "number" }),
+  startLat: doublePrecision("start_lat").notNull(),
+  startLng: doublePrecision("start_lng").notNull(),
+  endLat: doublePrecision("end_lat"),
+  endLng: doublePrecision("end_lng"),
   track: text("track").notNull(),     // JSON: [[x,y,t], ...]
-  distanceM: real("distance_m").notNull().default(0),
+  distanceM: doublePrecision("distance_m").notNull().default(0),
   cost: integer("cost").notNull().default(0),   // stored in kopecks (integer) — never float rubles
   tariff: text("tariff").notNull(),
   status: text("status").notNull(),   // active | completed | cancelled
@@ -344,8 +344,8 @@ export type AdminRide = Ride & {
 // bike through its lifecycle (new → in progress → resolved/closed). `kind`
 // carries either a human-reported issue type (see TICKET_KINDS) or one of the
 // legacy auto-flag kinds kept for backward compatibility with seeded rows.
-export const tickets = sqliteTable("tickets", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const tickets = pgTable("tickets", {
+  id: serial("id").primaryKey(),
   bikeId: text("bike_id").notNull(),
   kind: text("kind").notNull(),          // issue type — see TICKET_KINDS
   priority: text("priority").notNull().default("medium"), // see TICKET_PRIORITIES
@@ -353,21 +353,21 @@ export const tickets = sqliteTable("tickets", {
   message: text("message").notNull(),    // description
   assignee: text("assignee"),            // optional free-text assignee name
   status: text("status").notNull(),      // see TICKET_STATUSES
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at"),      // unix ms of last mutation
-  closedAt: integer("closed_at"),        // unix ms when resolved/closed/cancelled
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }),      // unix ms of last mutation
+  closedAt: bigint("closed_at", { mode: "number" }),        // unix ms when resolved/closed/cancelled
 });
 export type Ticket = typeof tickets.$inferSelect;
 
 // History / comment entries attached to a ticket. Each row is either a free-text
 // operator comment or an auto-generated event note (status change, creation).
-export const ticketComments = sqliteTable("ticket_comments", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const ticketComments = pgTable("ticket_comments", {
+  id: serial("id").primaryKey(),
   ticketId: integer("ticket_id").notNull(),
   author: text("author").notNull(),     // operator display name or "Система"
   body: text("body").notNull(),
   kind: text("kind").notNull().default("comment"), // comment | event
-  createdAt: integer("created_at").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 export type TicketComment = typeof ticketComments.$inferSelect;
 
@@ -431,21 +431,21 @@ export const addTicketCommentSchema = z.object({
 export type AddTicketCommentInput = z.infer<typeof addTicketCommentSchema>;
 
 /* ------- PAYMENTS / BALANCE (single demo user) ------- */
-export const payments = sqliteTable("payments", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const payments = pgTable("payments", {
+  id: serial("id").primaryKey(),
   userId: text("user_id").notNull(),
   amount: integer("amount").notNull(), // kopecks (integer, signed) — never float rubles
   kind: text("kind").notNull(),       // topup | ride_charge | tariff_purchase
   description: text("description").notNull(),
-  createdAt: integer("created_at").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 export type Payment = typeof payments.$inferSelect;
 
-export const wallet = sqliteTable("wallet", {
+export const wallet = pgTable("wallet", {
   userId: text("user_id").primaryKey(),
   balance: integer("balance").notNull().default(0), // kopecks (integer) — never float rubles
   activeTariff: text("active_tariff").notNull().default("payg"),
-  tariffExpiresAt: integer("tariff_expires_at"),
+  tariffExpiresAt: bigint("tariff_expires_at", { mode: "number" }),
 });
 export type Wallet = typeof wallet.$inferSelect;
 
@@ -455,8 +455,8 @@ export type Wallet = typeof wallet.$inferSelect;
 // identifiers returned by the acquirer (CustomerKey, CardId, RebillId) plus a
 // masked PAN label and a lifecycle status. The PAN/CVC themselves are entered
 // only on T-Bank's hosted form and never reach our servers.
-export const paymentMethods = sqliteTable("payment_methods", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const paymentMethods = pgTable("payment_methods", {
+  id: serial("id").primaryKey(),
   userId: text("user_id").notNull(),
   type: text("type").notNull(),              // card | sbp
   label: text("label").notNull(),            // display label, e.g. "•••• 4242" / "СБП"
@@ -491,8 +491,8 @@ export const paymentMethods = sqliteTable("payment_methods", {
   lastErrorCode: text("last_error_code"),
   lastErrorMessage: text("last_error_message"),
   lastErrorDetails: text("last_error_details"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at"),          // unix ms of last status change
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }),          // unix ms of last status change
 });
 export type PaymentMethod = typeof paymentMethods.$inferSelect;
 
@@ -509,8 +509,8 @@ export type LinkPaymentMethodInput = z.infer<typeof linkPaymentMethodSchema>;
 // tariff up front on T-Bank's hosted form, and the ride is started once the
 // notification webhook confirms the payment. No card data is ever stored — only
 // the acquirer's order/payment identifiers, amounts, and a lifecycle status.
-export const paymentOrders = sqliteTable("payment_orders", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const paymentOrders = pgTable("payment_orders", {
+  id: serial("id").primaryKey(),
   orderId: text("order_id").notNull().unique(),   // our Init OrderId (<= 50 chars, echoed in notifications)
   userId: text("user_id").notNull(),
   bikeId: text("bike_id").notNull(),
@@ -531,8 +531,8 @@ export const paymentOrders = sqliteTable("payment_orders", {
   lastErrorCode: text("last_error_code"),
   lastErrorMessage: text("last_error_message"),
   lastErrorDetails: text("last_error_details"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }),
 });
 export type PaymentOrder = typeof paymentOrders.$inferSelect;
 export type PaymentOrderStatus = "pending" | "paid" | "failed";
@@ -559,13 +559,13 @@ export type RideChargeSavedCardInput = z.infer<typeof rideChargeSavedCardSchema>
 /* ------- SUPPORT TICKETS (rider help requests) ------- */
 // Lightweight contact form persistence for the current user. Riders can submit
 // a subject + message; staff handling happens out-of-band for the MVP.
-export const supportTickets = sqliteTable("support_tickets", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const supportTickets = pgTable("support_tickets", {
+  id: serial("id").primaryKey(),
   userId: text("user_id").notNull(),
   subject: text("subject").notNull(),
   message: text("message").notNull(),
   status: text("status").notNull().default("open"), // open | resolved
-  createdAt: integer("created_at").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 export type SupportTicket = typeof supportTickets.$inferSelect;
 

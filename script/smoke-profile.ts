@@ -9,18 +9,16 @@
 //   4. reopens the DB and asserts the row stored role/consent/email correctly
 //
 // Run with:  npx tsx script/smoke-profile.ts
-import { rmSync, existsSync } from "node:fs";
-import { spawn } from "node:child_process";
-import Database from "better-sqlite3";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createTestDb, teardown, openTestDb } from "./smoke-pg";
 
+const NAME = "profile";
 const PORT = 5601;
-const DB_PATH = "/tmp/bc-smoke-profile.db";
 const BASE = `http://127.0.0.1:${PORT}`;
 const ADMIN_PHONE = "+79991112233";
 
-for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
-  if (existsSync(f)) rmSync(f);
-}
+let DB_URL = "";
+let server: ChildProcess;
 
 function assert(cond: unknown, msg: string) {
   if (!cond) {
@@ -50,24 +48,24 @@ function cookieFromSetCookie(setCookie: string | null): string | null {
   return setCookie.split(";")[0];
 }
 
-const server = spawn(
-  process.execPath,
-  ["node_modules/tsx/dist/cli.mjs", "server/index.ts"],
-  {
-    env: {
-      ...process.env,
-      NODE_ENV: "development",
-      API_ONLY: "1",
-      PORT: String(PORT),
-      DATABASE_PATH: DB_PATH,
-      SMS_PROVIDER: "",
-      ADMIN_PHONE_NUMBERS: `8 999 111-22-33, +79005554433`,
-    },
-    stdio: ["ignore", "ignore", "inherit"],
-  },
-);
-
 async function main() {
+  DB_URL = (await createTestDb(NAME)).url;
+  server = spawn(
+    process.execPath,
+    ["node_modules/tsx/dist/cli.mjs", "server/index.ts"],
+    {
+      env: {
+        ...process.env,
+        NODE_ENV: "development",
+        API_ONLY: "1",
+        PORT: String(PORT),
+        DATABASE_URL: DB_URL,
+        SMS_PROVIDER: "",
+        ADMIN_PHONE_NUMBERS: `8 999 111-22-33, +79005554433`,
+      },
+      stdio: ["ignore", "ignore", "inherit"],
+    },
+  );
   await waitForServer();
 
   // 1. Register the admin phone via OTP.
@@ -132,15 +130,15 @@ async function main() {
   });
   assert(res.status === 401, "PATCH without session returns 401");
 
-  // 4. Verify persisted row in SQLite.
-  const db = new Database(DB_PATH, { readonly: true });
-  const row = db
+  // 4. Verify persisted row in Postgres.
+  const db = await openTestDb(DB_URL);
+  const row = (await db
     .prepare("SELECT name, phone, email, role, consent_version, consent_accepted_at FROM users WHERE phone = ?")
-    .get(ADMIN_PHONE) as
+    .get(ADMIN_PHONE)) as
     | { name: string; phone: string; email: string | null; role: string; consent_version: string | null; consent_accepted_at: number | null }
     | undefined;
-  db.close();
-  assert(!!row, "user row exists in SQLite");
+  await db.close();
+  assert(!!row, "user row exists in Postgres");
   assert(row!.email === "admin@baltcircle.app", "persisted email matches");
   assert(row!.role === "admin", "persisted role is admin");
   assert(row!.consent_version === "v1-2026-06-07", "persisted consent version matches");
@@ -154,7 +152,7 @@ main()
     console.error(err);
     process.exitCode = 1;
   })
-  .finally(() => {
-    server.kill("SIGTERM");
+  .finally(async () => {
+    await teardown(NAME, server);
     setTimeout(() => process.exit(process.exitCode ?? 0), 300);
   });

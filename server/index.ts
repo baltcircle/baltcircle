@@ -2,8 +2,8 @@ import "dotenv/config";
 import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
 import session from "express-session";
-import createSqliteStore from "better-sqlite3-session-store";
-import { sqliteDb } from "./storage";
+import connectPgSimple from "connect-pg-simple";
+import { pool, bootstrapReady } from "./storage";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
@@ -13,13 +13,13 @@ const httpServer = createServer(app);
 
 // Session-based rider identity. The session id lives in an httpOnly cookie that
 // survives refresh on the same device, so a registered rider stays recognized
-// without any SMS/auth provider. Sessions are persisted in a `sessions` table
-// inside the same SQLite file as the rest of the app (data.db), reusing the
-// single better-sqlite3 connection. Because the Docker volume already persists
-// data.db, sessions now survive Node/Docker restarts and redeploys — a
-// registered rider stays logged in across deploys without re-registering.
+// without any SMS/auth provider. Sessions are persisted in a `session` table in
+// the managed Postgres database, reusing the shared pg connection pool. Because
+// the database is external and durable, sessions survive Node/Docker restarts
+// and redeploys — a registered rider stays logged in across deploys without
+// re-registering.
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
-const SqliteStore = createSqliteStore(session);
+const PgStore = connectPgSimple(session);
 
 // Session signing secret. The dev default is a public string and must NEVER be
 // used in production — signing sessions with a known secret lets anyone forge a
@@ -41,11 +41,13 @@ app.use(
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
-    store: new SqliteStore({
-      client: sqliteDb,
+    store: new PgStore({
+      pool,
+      // connect-pg-simple creates the `session` table on first use if missing.
+      createTableIfMissing: true,
       // Sweep expired rows hourly; expiry itself is enforced per-row via the
       // `expire` column written from the cookie maxAge below.
-      expired: { clear: true, intervalMs: 60 * 60 * 1000 },
+      pruneSessionInterval: 60 * 60,
     }),
     cookie: {
       httpOnly: true,
@@ -116,6 +118,10 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Postgres pool + schema/migrations/seed must be ready before we serve any
+  // request (routes touch storage on the first hit). bootstrapReady resolves
+  // once the async bootstrap in server/db/bootstrap.ts has completed.
+  await bootstrapReady;
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

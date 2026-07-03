@@ -17,24 +17,24 @@ export function riderId(req: Request): string {
 
 // True when the session belongs to operator/admin staff. Staff may read/manage
 // any rider's rides; ordinary riders are confined to their own.
-export function isStaffSession(req: Request): boolean {
+export async function isStaffSession(req: Request): Promise<boolean> {
   const id = req.session?.userId;
-  const user = id ? storage.getUser(id) : undefined;
+  const user = id ? await storage.getUser(id) : undefined;
   return user?.role === "operator" || user?.role === "admin";
 }
 
 // Ownership guard for a ride: the acting rider owns it, or the caller is staff.
 // Uses riderId() (which falls back to "demo") so the public demo flow — where an
 // unregistered rider owns "demo" rides — keeps working.
-export function canManageRide(req: Request, ride: Ride): boolean {
-  return ride.userId === riderId(req) || isStaffSession(req);
+export async function canManageRide(req: Request, ride: Ride): Promise<boolean> {
+  return ride.userId === riderId(req) || (await isStaffSession(req));
 }
 
 // Display name of the acting staff member for ticket history. Falls back to a
 // generic label when no session user is resolvable (local dev with guard off).
-export function actorName(req: Request): string {
+export async function actorName(req: Request): Promise<string> {
   const id = req.session?.userId;
-  const user = id ? storage.getUser(id) : undefined;
+  const user = id ? await storage.getUser(id) : undefined;
   return user?.name ?? "Оператор";
 }
 
@@ -50,9 +50,9 @@ export function clientIp(req: Request): string | undefined {
 // the effective role (which honours the ADMIN_PHONE_NUMBERS env override).
 // 401 when not registered, 403 when registered but not privileged.
 export function requireRole(...roles: UserRole[]) {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     const id = req.session?.userId;
-    const user = id ? storage.getUser(id) : undefined;
+    const user = id ? await storage.getUser(id) : undefined;
     if (!user) return res.status(401).json({ error: "Требуется вход" });
     if (!roles.includes(user.role as UserRole)) {
       return res.status(403).json({ error: "Нет доступа" });
@@ -66,9 +66,9 @@ export function requireRole(...roles: UserRole[]) {
 // route an anonymous caller into the shared demo account — letting them read
 // and mutate the demo rider's balance, cards and tickets (IDOR / privacy leak).
 // Public surfaces (map, demo rides, analytics) intentionally keep the fallback.
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const id = req.session?.userId;
-  const user = id ? storage.getUser(id) : undefined;
+  const user = id ? await storage.getUser(id) : undefined;
   if (!user) return res.status(401).json({ error: "Требуется вход" });
   next();
 }

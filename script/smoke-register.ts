@@ -12,17 +12,15 @@
 //      the OTP code is stored only as a hash (never plaintext)
 //
 // Run with:  npx tsx script/smoke-register.ts
-import { rmSync, existsSync } from "node:fs";
-import { spawn } from "node:child_process";
-import Database from "better-sqlite3";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createTestDb, teardown, openTestDb } from "./smoke-pg";
 
+const NAME = "register";
 const PORT = 5599;
-const DB_PATH = "/tmp/bc-smoke-register.db";
 const BASE = `http://127.0.0.1:${PORT}`;
 
-for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
-  if (existsSync(f)) rmSync(f);
-}
+let DB_URL = "";
+let server: ChildProcess;
 
 function assert(cond: unknown, msg: string) {
   if (!cond) {
@@ -53,17 +51,17 @@ function cookieFromSetCookie(setCookie: string | null): string | null {
   return setCookie.split(";")[0];
 }
 
-const server = spawn(
-  process.execPath,
-  ["node_modules/tsx/dist/cli.mjs", "server/index.ts"],
-  {
-    // SMS_PROVIDER intentionally unset -> dev fallback echoes the code.
-    env: { ...process.env, NODE_ENV: "development", API_ONLY: "1", PORT: String(PORT), DATABASE_PATH: DB_PATH, SMS_PROVIDER: "" },
-    stdio: ["ignore", "ignore", "inherit"],
-  },
-);
-
 async function main() {
+  DB_URL = (await createTestDb(NAME)).url;
+  server = spawn(
+    process.execPath,
+    ["node_modules/tsx/dist/cli.mjs", "server/index.ts"],
+    {
+      // SMS_PROVIDER intentionally unset -> dev fallback echoes the code.
+      env: { ...process.env, NODE_ENV: "development", API_ONLY: "1", PORT: String(PORT), DATABASE_URL: DB_URL, SMS_PROVIDER: "" },
+      stdio: ["ignore", "ignore", "inherit"],
+    },
+  );
   await waitForServer();
 
   // 1. No user yet
@@ -132,19 +130,19 @@ async function main() {
   assert(body && body.id === created.id, "session cookie resolves /api/users/current to same user");
 
   // 6. Row persisted; OTP stored only as a hash, never plaintext
-  const db = new Database(DB_PATH, { readonly: true });
-  const row = db.prepare("SELECT id, name, phone FROM users WHERE id = ?").get(created.id) as
+  const db = await openTestDb(DB_URL);
+  const row = (await db.prepare("SELECT id, name, phone FROM users WHERE id = ?").get(created.id)) as
     | { id: string; name: string; phone: string }
     | undefined;
-  const otpRow = db.prepare("SELECT code_hash, consumed FROM otp_requests WHERE phone = ?").get("+79001234567") as
-    | { code_hash: string; consumed: number }
+  const otpRow = (await db.prepare("SELECT code_hash, consumed FROM otp_requests WHERE phone = ?").get("+79001234567")) as
+    | { code_hash: string; consumed: boolean }
     | undefined;
-  db.close();
-  assert(!!row, "user row exists in SQLite users table");
+  await db.close();
+  assert(!!row, "user row exists in users table");
   assert(row!.phone === "+79001234567", "persisted phone matches normalized value");
   assert(!!otpRow, "otp_requests row exists");
   assert(otpRow!.code_hash.length === 64 && otpRow!.code_hash !== startBody.devCode, "OTP stored as a hash, not plaintext");
-  assert(otpRow!.consumed === 1, "OTP request marked consumed after verification");
+  assert(otpRow!.consumed === true, "OTP request marked consumed after verification");
 
   console.log("\nAll OTP registration smoke checks passed.");
 }
@@ -154,7 +152,7 @@ main()
     console.error(err);
     process.exitCode = 1;
   })
-  .finally(() => {
-    server.kill("SIGTERM");
+  .finally(async () => {
+    await teardown(NAME, server);
     setTimeout(() => process.exit(process.exitCode ?? 0), 300);
   });

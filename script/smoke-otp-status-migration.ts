@@ -1,22 +1,18 @@
-// Smoke test for the in-place otp_requests migration (SMS delivery diagnostics)
+// Smoke test for the otp_requests provider-diagnostics columns on Postgres
 // and the storage methods that persist/read the provider delivery status.
 //
-// Reproduces a legacy DB whose otp_requests table predates the provider columns
-// (provider, provider_message_id, provider_status, provider_error,
-// provider_checked_at). The migration must add them in place while preserving
-// any pending OTP row, and recordOtpSend/getLastOtpSend/updateOtpProviderStatus
-// must round-trip the diagnostics.
+// On Postgres the schema is created in full by bootstrap (no in-place legacy
+// migration is needed). This test therefore:
+//   1. Boots bootstrap against a fresh throwaway Postgres DB.
+//   2. Asserts the otp_requests table already HAS every provider column.
+//   3. Seeds a pending OTP row, then verifies recordOtpSend / getLastOtpSend /
+//      updateOtpProviderStatus round-trip the diagnostics.
 //
 // Run with:  npx tsx script/smoke-otp-status-migration.ts
 
-import { rmSync, existsSync } from "node:fs";
-import Database from "better-sqlite3";
+import { createTestDb, dropTestDb, openTestDb } from "./smoke-pg";
 
-const DB_PATH = "/tmp/bc-smoke-otp-status-migration.db";
-
-for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
-  if (existsSync(f)) rmSync(f);
-}
+const NAME = "otp-status-migration";
 
 function assert(cond: unknown, msg: string) {
   if (!cond) {
@@ -30,40 +26,16 @@ function assert(cond: unknown, msg: string) {
 const PHONE = "+79991234567";
 
 async function main() {
-  // ---- 1. Seed a legacy otp_requests table (pre-provider columns) ----
-  const seed = new Database(DB_PATH);
-  seed.exec(`
-    CREATE TABLE otp_requests (
-      phone TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      code_hash TEXT NOT NULL,
-      expires_at INTEGER NOT NULL,
-      attempts INTEGER NOT NULL DEFAULT 0,
-      last_sent_at INTEGER NOT NULL,
-      consumed INTEGER NOT NULL DEFAULT 0
-    );
-  `);
-  // A pre-existing pending row that must survive the migration untouched.
-  seed.prepare(
-    "INSERT INTO otp_requests (phone, name, code_hash, expires_at, attempts, last_sent_at, consumed) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).run(PHONE, "Legacy Rider", "deadbeef", Date.now() + 300000, 0, Date.now(), 0);
+  // ---- 1. Fresh Postgres DB, boot storage (runs bootstrap) ----
+  const { url } = await createTestDb(NAME);
+  process.env.DATABASE_URL = url;
+  const { storage, bootstrapReady, pool } = await import("../server/storage");
+  await bootstrapReady;
 
-  const legacyCols = (seed.prepare("PRAGMA table_info(otp_requests)").all() as { name: string }[]).map(
-    (c) => c.name,
-  );
-  assert(!legacyCols.includes("provider"), "legacy table starts WITHOUT a provider column");
-  seed.close();
-
-  // ---- 2. Import storage against the legacy DB (runs the migration) ----
-  process.env.DATABASE_PATH = DB_PATH;
-  const { storage } = await import("../server/storage");
-
-  // ---- 3. The migration added the provider columns ----
-  const check = new Database(DB_PATH, { readonly: true });
-  const cols = (check.prepare("PRAGMA table_info(otp_requests)").all() as { name: string }[]).map(
-    (c) => c.name,
-  );
-  check.close();
+  // ---- 2. The provider columns exist from the start ----
+  const check = await openTestDb(url);
+  const cols = await check.columns("otp_requests");
+  await check.close();
   for (const col of [
     "provider",
     "provider_message_id",
@@ -71,36 +43,42 @@ async function main() {
     "provider_error",
     "provider_checked_at",
   ]) {
-    assert(cols.includes(col), `migration added the "${col}" column`);
+    assert(cols.includes(col), `otp_requests has the "${col}" column`);
   }
 
-  // The pre-existing legacy row survived the ALTERs.
-  const legacy = storage.getLastOtpSend(PHONE);
-  assert(!!legacy, "pre-existing pending OTP row is preserved");
-  assert(legacy!.name === "Legacy Rider", "legacy row keeps its original name");
-  assert(legacy!.provider == null, "legacy row has a null provider before any send is recorded");
+  // ---- 3. Seed a pending OTP row directly ----
+  await pool.query(
+    `INSERT INTO otp_requests (phone, name, code_hash, expires_at, attempts, last_sent_at, consumed)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [PHONE, "Legacy Rider", "deadbeef", Date.now() + 300000, 0, Date.now(), false],
+  );
+
+  const seeded = await storage.getLastOtpSend(PHONE);
+  assert(!!seeded, "pending OTP row is readable");
+  assert(seeded!.name === "Legacy Rider", "row keeps its original name");
+  assert(seeded!.provider == null, "row has a null provider before any send is recorded");
 
   // ---- 4. recordOtpSend persists provider diagnostics ----
-  storage.recordOtpSend({
+  await storage.recordOtpSend({
     phone: PHONE,
     provider: "sigmasms",
     providerMessageId: "abc-123",
     providerStatus: "queued",
   });
-  const afterSend = storage.getLastOtpSend(PHONE);
+  const afterSend = await storage.getLastOtpSend(PHONE);
   assert(afterSend!.provider === "sigmasms", "recordOtpSend persists the provider");
   assert(afterSend!.providerMessageId === "abc-123", "recordOtpSend persists the sending id");
   assert(afterSend!.providerStatus === "queued", "recordOtpSend persists the accepted status");
   assert(typeof afterSend!.providerCheckedAt === "number", "recordOtpSend stamps providerCheckedAt");
 
   // ---- 5. updateOtpProviderStatus refreshes the status without touching the id ----
-  storage.updateOtpProviderStatus({ phone: PHONE, providerStatus: "delivered" });
-  const afterRefresh = storage.getLastOtpSend(PHONE);
+  await storage.updateOtpProviderStatus({ phone: PHONE, providerStatus: "delivered" });
+  const afterRefresh = await storage.getLastOtpSend(PHONE);
   assert(afterRefresh!.providerStatus === "delivered", "updateOtpProviderStatus refreshes the status");
   assert(afterRefresh!.providerMessageId === "abc-123", "status refresh leaves the sending id intact");
   assert(afterRefresh!.codeHash === "deadbeef", "status refresh never touches the code hash");
 
-  if (!process.exitCode) console.log("\nAll otp_requests migration smoke checks passed.");
+  if (!process.exitCode) console.log("\nAll otp_requests provider-diagnostics smoke checks passed.");
 }
 
 main()
@@ -108,6 +86,13 @@ main()
     console.error(err);
     process.exitCode = 1;
   })
-  .finally(() => {
+  .finally(async () => {
+    try {
+      const { pool } = await import("../server/storage");
+      await pool.end();
+    } catch {
+      // ignore
+    }
+    await dropTestDb(NAME);
     setTimeout(() => process.exit(process.exitCode ?? 0), 100);
   });

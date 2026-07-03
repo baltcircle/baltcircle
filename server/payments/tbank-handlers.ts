@@ -23,24 +23,24 @@ import { log } from "../index";
 // The order row is always updated to "paid" with the resolved rideId (on success)
 // or the failure reason (on ride-start failure). Idempotent: an order that
 // already carries a rideId reuses it and never starts a second ride.
-export function startRideForPaidOrder(
+export async function startRideForPaidOrder(
   order: PaymentOrder,
   paymentId: string,
-): { ok: true; rideId: number } | { ok: false; reason: string } {
+): Promise<{ ok: true; rideId: number } | { ok: false; reason: string }> {
   let rideId: number | null = order.rideId ?? null;
   if (rideId == null) {
-    const existing = storage.getActiveRide(order.userId);
+    const existing = await storage.getActiveRide(order.userId);
     if (existing && existing.bikeId === order.bikeId) {
       rideId = existing.id;
     } else {
-      const started = storage.startRide({
+      const started = await storage.startRide({
         bikeId: order.bikeId,
         userId: order.userId,
         tariff: order.tariffId,
         prepaid: true,
       });
       if ("error" in started) {
-        storage.updateRidePaymentOrder(order.id, {
+        await storage.updateRidePaymentOrder(order.id, {
           status: "paid",
           paymentId: paymentId || order.paymentId,
           lastErrorMessage: started.error,
@@ -50,7 +50,7 @@ export function startRideForPaidOrder(
       rideId = started.id;
     }
   }
-  storage.updateRidePaymentOrder(order.id, {
+  await storage.updateRidePaymentOrder(order.id, {
     status: "paid",
     paymentId: paymentId || order.paymentId,
     rideId,
@@ -104,24 +104,24 @@ export function tbankErrorBody(resp: {
 //
 // The notification is assumed signature-verified by the caller. Statuses follow
 // the T-Kassa lifecycle (NEW/FORM_SHOWED/AUTHORIZED/CONFIRMED/REJECTED/...).
-export function handleTbankNotification(body: Record<string, unknown>, cfg?: TbankConfig | null): void {
+export async function handleTbankNotification(body: Record<string, unknown>, cfg?: TbankConfig | null): Promise<void> {
   const orderId = typeof body.OrderId === "string" ? body.OrderId : "";
 
   if (orderId) {
     // Ordinary ride payment: correlate by our OrderId. Checked first because a
     // ride order id and a card-binding order id never collide (distinct
     // prefixes / distinct tables), and a paid ride is the time-critical action.
-    const order = storage.getRidePaymentOrder(orderId);
+    const order = await storage.getRidePaymentOrder(orderId);
     if (order) {
-      handleRidePaymentNotification(order, body);
+      await handleRidePaymentNotification(order, body);
       return;
     }
 
     // Init binding path: correlate by our OrderId. A matching card_binding row
     // means this is a verification payment, not a ride/topup payment.
-    const byOrder = storage.findCardMethodByOrderId(orderId);
+    const byOrder = await storage.findCardMethodByOrderId(orderId);
     if (byOrder && byOrder.purpose === "card_binding") {
-      handleInitBindingNotification(byOrder, body, cfg);
+      await handleInitBindingNotification(byOrder, body, cfg);
       return;
     }
 
@@ -129,7 +129,7 @@ export function handleTbankNotification(body: Record<string, unknown>, cfg?: Tba
     // matching sbp_binding row means this notification carries the AccountToken
     // for a pending SBP account binding.
     if (byOrder && byOrder.purpose === "sbp_binding") {
-      handleSbpBindingNotification(byOrder, body);
+      await handleSbpBindingNotification(byOrder, body);
       return;
     }
   }
@@ -139,14 +139,14 @@ export function handleTbankNotification(body: Record<string, unknown>, cfg?: Tba
   // OrderId, so correlate the pending sbp_binding row by its RequestKey.
   const requestKey = typeof body.RequestKey === "string" ? body.RequestKey : "";
   if (requestKey) {
-    const byRequestKey = storage.findMethodByRequestKey(requestKey);
+    const byRequestKey = await storage.findMethodByRequestKey(requestKey);
     if (byRequestKey && byRequestKey.purpose === "sbp_binding") {
-      handleSbpBindingNotification(byRequestKey, body);
+      await handleSbpBindingNotification(byRequestKey, body);
       return;
     }
   }
 
-  handleAddCardNotification(body);
+  await handleAddCardNotification(body);
 }
 
 // Resolve an SBP account binding (AddAccountQr) from a notification. Activates
@@ -155,10 +155,10 @@ export function handleTbankNotification(body: Record<string, unknown>, cfg?: Tba
 // analogue of a card RebillId). Persists the AccountToken and any acquirer error
 // fields (never a secret). Idempotent: a duplicate notification for an already
 // active method is ignored.
-export function handleSbpBindingNotification(
+export async function handleSbpBindingNotification(
   method: PaymentMethod,
   body: Record<string, unknown>,
-): void {
+): Promise<void> {
   if (method.status === "active") return; // already resolved
 
   const status = typeof body.Status === "string" ? body.Status : "";
@@ -168,7 +168,7 @@ export function handleSbpBindingNotification(
 
   const outcome = classifyAccountBinding({ status, accountToken, success });
   if (outcome === "active") {
-    storage.updatePaymentMethod(method.id, {
+    await storage.updatePaymentMethod(method.id, {
       status: "active",
       accountToken: accountToken || method.accountToken,
       label: bankName ? `СБП · ${bankName}` : "СБП",
@@ -177,7 +177,7 @@ export function handleSbpBindingNotification(
       lastErrorDetails: null,
     });
   } else if (outcome === "failed") {
-    storage.updatePaymentMethod(method.id, {
+    await storage.updatePaymentMethod(method.id, {
       status: "failed",
       ...bindingErrorPatch(body),
     });
@@ -191,10 +191,10 @@ export function handleSbpBindingNotification(
 // notification re-uses the already-started ride and never double-charges or
 // double-starts) and record the rideId. On an explicit rejection we mark the
 // order failed and leave the bike available. Intermediate states stay pending.
-export function handleRidePaymentNotification(
+export async function handleRidePaymentNotification(
   order: PaymentOrder,
   body: Record<string, unknown>,
-): void {
+): Promise<void> {
   if (order.status === "paid") return; // already resolved — idempotent
 
   const status = typeof body.Status === "string" ? body.Status : "";
@@ -207,9 +207,9 @@ export function handleRidePaymentNotification(
     // duplicate notification cannot create a second ride. On a ride-start
     // failure the helper already marks the order paid with the reason; the
     // webhook just acks (no client to notify here).
-    startRideForPaidOrder(order, paymentId);
+    await startRideForPaidOrder(order, paymentId);
   } else if (outcome === "failed") {
-    storage.updateRidePaymentOrder(order.id, {
+    await storage.updateRidePaymentOrder(order.id, {
       status: "failed",
       paymentId: paymentId || order.paymentId,
       ...bindingErrorPatch(body),
@@ -222,11 +222,11 @@ export function handleRidePaymentNotification(
 // the method only when a RebillId is present alongside AUTHORIZED/CONFIRMED —
 // the RebillId is the recurring token we need for future charges. Persists the
 // PaymentId/RebillId and any acquirer error fields (never a secret).
-export function handleInitBindingNotification(
+export async function handleInitBindingNotification(
   method: PaymentMethod,
   body: Record<string, unknown>,
   cfg?: TbankConfig | null,
-): void {
+): Promise<void> {
   if (method.status === "active") return; // already resolved
 
   const status = typeof body.Status === "string" ? body.Status : "";
@@ -238,7 +238,7 @@ export function handleInitBindingNotification(
 
   const outcome = classifyInitBinding({ status, rebillId, success });
   if (outcome === "active") {
-    storage.updatePaymentMethod(method.id, {
+    await storage.updatePaymentMethod(method.id, {
       status: "active",
       rebillId: rebillId || method.rebillId,
       cardId: cardId || method.cardId,
@@ -253,9 +253,9 @@ export function handleInitBindingNotification(
     // stuck rouble is observable (refundStatus/refundError). We pass the fresh
     // notification status so the helper need not re-query GetState.
     const effectivePaymentId = paymentId || method.paymentId;
-    if (cfg && effectivePaymentId) refundVerificationCharge(cfg, method.id, effectivePaymentId, status);
+    if (cfg && effectivePaymentId) await refundVerificationCharge(cfg, method.id, effectivePaymentId, status);
   } else if (outcome === "failed") {
-    storage.updatePaymentMethod(method.id, {
+    await storage.updatePaymentMethod(method.id, {
       status: "failed",
       paymentId: paymentId || method.paymentId,
       ...bindingErrorPatch(body),
@@ -267,7 +267,7 @@ export function handleInitBindingNotification(
 
 // Resolve an AddCard binding (fallback path) from a notification keyed by
 // CustomerKey. Unchanged from the original AddCard-only behavior.
-export function handleAddCardNotification(body: Record<string, unknown>): void {
+export async function handleAddCardNotification(body: Record<string, unknown>): Promise<void> {
   const status = typeof body.Status === "string" ? body.Status : "";
   const customerKey = typeof body.CustomerKey === "string" ? body.CustomerKey : "";
   const cardId = typeof body.CardId === "string" ? body.CardId : "";
@@ -277,12 +277,12 @@ export function handleAddCardNotification(body: Record<string, unknown>): void {
   const success = body.Success === false ? false : undefined;
 
   if (!customerKey) return;
-  const pending = storage.findPendingCardMethod(customerKey);
+  const pending = await storage.findPendingCardMethod(customerKey);
   if (!pending) return;
 
   const outcome = classifyCardBinding({ status, cardId });
   if (outcome === "active") {
-    storage.updatePaymentMethod(pending.id, {
+    await storage.updatePaymentMethod(pending.id, {
       status: "active",
       cardId: cardId || pending.cardId,
       rebillId: rebillId || pending.rebillId,
@@ -298,7 +298,7 @@ export function handleAddCardNotification(body: Record<string, unknown>): void {
     // An explicit rejection (or Success=false) ends the binding. Persist the
     // acquirer's error fields so the rider/support can see *why* — never a
     // secret, these come straight from T-Bank.
-    storage.updatePaymentMethod(pending.id, {
+    await storage.updatePaymentMethod(pending.id, {
       status: "failed",
       ...bindingErrorPatch(body),
     });
@@ -332,32 +332,32 @@ export function bindingErrorPatch(body: {
 // tbankCancel it records whether the money actually came back. `knownStatus` is
 // the fresh payment status from the same notification/GetState, letting the
 // helper skip a redundant GetState round-trip.
-export function refundVerificationCharge(
+export async function refundVerificationCharge(
   cfg: TbankConfig,
   methodId: number,
   paymentId: string,
   knownStatus?: string,
-): void {
+): Promise<void> {
   // Mark pending immediately so the UI/support can see a refund is in flight.
-  storage.updatePaymentMethod(methodId, { refundStatus: "pending", refundError: null });
+  await storage.updatePaymentMethod(methodId, { refundStatus: "pending", refundError: null });
   void tbankRefundVerificationCharge(cfg, paymentId, knownStatus)
-    .then((outcome) => {
+    .then(async (outcome) => {
       if (outcome.result === "failed") {
-        storage.updatePaymentMethod(methodId, {
+        await storage.updatePaymentMethod(methodId, {
           refundStatus: "failed",
           refundError: outcome.reason,
         });
       } else {
         // "refunded" (reversal or real refund) or "nothing_to_cancel" (already
         // settled/reversed) — either way no money is outstanding.
-        storage.updatePaymentMethod(methodId, {
+        await storage.updatePaymentMethod(methodId, {
           refundStatus: "refunded",
           refundError: null,
         });
       }
     })
-    .catch((err) => {
-      storage.updatePaymentMethod(methodId, {
+    .catch(async (err) => {
+      await storage.updatePaymentMethod(methodId, {
         refundStatus: "failed",
         refundError: String(err?.message ?? "неизвестная ошибка возврата"),
       });
@@ -396,13 +396,13 @@ export async function bindViaVerificationPayment(
       res.status(502).json(tbankErrorBody(resp));
       return;
     }
-    const method = storage.createPendingBindPayment({
+    const method = await storage.createPendingBindPayment({
       userId,
       customerKey: userId,
       orderId,
       amountKopecks,
     });
-    storage.updatePaymentMethod(method.id, {
+    await storage.updatePaymentMethod(method.id, {
       paymentId: resp.PaymentId != null ? String(resp.PaymentId) : null,
       paymentUrl: resp.PaymentURL,
       // A charge is now outstanding; it will be reversed/refunded on activation.

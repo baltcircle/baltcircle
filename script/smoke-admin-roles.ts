@@ -13,17 +13,16 @@
 //   6. asserts a mechanic cannot grant the admin role (403)
 //
 // Run with:  npx tsx script/smoke-admin-roles.ts
-import { rmSync, existsSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createTestDb, teardown } from "./smoke-pg";
 
 const PORT = 5608;
-const DB_PATH = "/tmp/bc-smoke-admin-roles.db";
+const NAME = "admin-roles";
+let DB_URL = "";
+let server: ChildProcess;
 const BASE = `http://127.0.0.1:${PORT}`;
 const ADMIN_PHONE = "+79991113344";
 
-for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
-  if (existsSync(f)) rmSync(f);
-}
 
 function assert(cond: unknown, msg: string) {
   if (!cond) {
@@ -73,7 +72,8 @@ async function register(name: string, phone: string): Promise<{ cookie: string; 
   return { cookie, user };
 }
 
-const server = spawn(
+function startServer(): ChildProcess {
+  return spawn(
   process.execPath,
   ["node_modules/tsx/dist/cli.mjs", "server/index.ts"],
   {
@@ -82,16 +82,19 @@ const server = spawn(
       NODE_ENV: "development",
       API_ONLY: "1",
       PORT: String(PORT),
-      DATABASE_PATH: DB_PATH,
+      DATABASE_URL: DB_URL,
       SMS_PROVIDER: "",
       DISABLE_RATE_LIMIT: "1",
       ADMIN_PHONE_NUMBERS: ADMIN_PHONE,
     },
     stdio: ["ignore", "ignore", "inherit"],
   },
-);
+  );
+}
 
 async function main() {
+  DB_URL = (await createTestDb(NAME)).url;
+  server = startServer();
   await waitForServer();
 
   // 1. Register an admin (env-promoted), a rider, and a future mechanic.
@@ -182,7 +185,7 @@ main()
     console.error(err);
     process.exitCode = 1;
   })
-  .finally(() => {
-    server.kill("SIGTERM");
+  .finally(async () => {
+    await teardown(NAME, server);
     setTimeout(() => process.exit(process.exitCode ?? 0), 300);
   });

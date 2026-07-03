@@ -1,25 +1,22 @@
-// Smoke test for SQLite-backed session persistence across server restarts.
+// Smoke test for Postgres-backed session persistence across server restarts.
 //
-// Boots the real Express server against a throwaway SQLite DB, registers a
+// Boots the real Express server against a throwaway Postgres DB, registers a
 // rider via the OTP dev fallback to obtain a session cookie, then:
 //   1. confirms the cookie resolves /api/users/current to the created user
-//   2. asserts a row exists in the `sessions` table of data.db
-//   3. SIGTERMs the server and starts a fresh process against the SAME DB file
+//   2. asserts a row exists in the `session` table (connect-pg-simple)
+//   3. SIGTERMs the server and starts a fresh process against the SAME DB
 //   4. confirms the SAME cookie still resolves to the SAME user after restart
 //      (this is what in-memory storage failed to do)
 //
 // Run with:  npx tsx script/smoke-session.ts
-import { rmSync, existsSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
-import Database from "better-sqlite3";
+import { createTestDb, teardown, openTestDb } from "./smoke-pg";
 
+const NAME = "session";
 const PORT = 5601;
-const DB_PATH = "/tmp/bc-smoke-session.db";
 const BASE = `http://127.0.0.1:${PORT}`;
-
-for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
-  if (existsSync(f)) rmSync(f);
-}
+let DB_URL = "";
+let server: ChildProcess;
 
 function assert(cond: unknown, msg: string) {
   if (!cond) {
@@ -35,7 +32,7 @@ function startServer(): ChildProcess {
     process.execPath,
     ["node_modules/tsx/dist/cli.mjs", "server/index.ts"],
     {
-      env: { ...process.env, NODE_ENV: "development", API_ONLY: "1", PORT: String(PORT), DATABASE_PATH: DB_PATH, SMS_PROVIDER: "" },
+      env: { ...process.env, NODE_ENV: "development", API_ONLY: "1", PORT: String(PORT), DATABASE_URL: DB_URL, SMS_PROVIDER: "" },
       stdio: ["ignore", "ignore", "inherit"],
     },
   );
@@ -68,9 +65,9 @@ async function stop(proc: ChildProcess) {
   });
 }
 
-let server = startServer();
-
 async function main() {
+  DB_URL = (await createTestDb(NAME)).url;
+  server = startServer();
   await waitForServer();
 
   // Register a rider via the OTP dev fallback to obtain a real session.
@@ -97,16 +94,17 @@ async function main() {
   let body = await res.json();
   assert(body && body.id === created.id, "session resolves to user before restart");
 
-  // A session row is persisted in the same data.db.
-  let sdb = new Database(DB_PATH, { readonly: true });
-  const sessRow = sdb.prepare("SELECT sid, sess, expire FROM sessions LIMIT 1").get() as
-    | { sid: string; sess: string; expire: string }
+  // A session row is persisted in the same Postgres DB.
+  const sdb = await openTestDb(DB_URL);
+  const sessRow = (await sdb.prepare("SELECT sid, sess, expire FROM session LIMIT 1").get()) as
+    | { sid: string; sess: unknown; expire: unknown }
     | undefined;
-  sdb.close();
-  assert(!!sessRow, "a row exists in the sessions table");
-  assert(JSON.parse(sessRow!.sess).userId === created.id, "persisted session stores the rider's userId");
+  await sdb.close();
+  assert(!!sessRow, "a row exists in the session table");
+  const sess = typeof sessRow!.sess === "string" ? JSON.parse(sessRow!.sess) : sessRow!.sess;
+  assert((sess as { userId?: string }).userId === created.id, "persisted session stores the rider's userId");
 
-  // Restart the server against the same DB file.
+  // Restart the server against the same DB.
   await stop(server);
   server = startServer();
   await waitForServer();
@@ -125,6 +123,6 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await stop(server);
+    await teardown(NAME, server);
     setTimeout(() => process.exit(process.exitCode ?? 0), 300);
   });

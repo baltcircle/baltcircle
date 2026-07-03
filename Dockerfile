@@ -23,8 +23,8 @@ FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=5000
-ENV DATABASE_PATH=/app/data/data.db
-RUN mkdir -p /app/data
+# App data now lives in managed PostgreSQL (DATABASE_URL at runtime), not a
+# local SQLite file. No /app/data directory needed.
 COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

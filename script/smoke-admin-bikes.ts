@@ -13,17 +13,16 @@
 //   9. deletes a never-ridden bike (hard delete) and a ridden one (→ archive)
 //
 // Run with:  npx tsx script/smoke-admin-bikes.ts
-import { rmSync, existsSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createTestDb, teardown } from "./smoke-pg";
 
 const PORT = 5603;
-const DB_PATH = "/tmp/bc-smoke-admin-bikes.db";
+const NAME = "admin-bikes";
+let DB_URL = "";
+let server: ChildProcess;
 const BASE = `http://127.0.0.1:${PORT}`;
 const ADMIN_PHONE = "+79991112255";
 
-for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
-  if (existsSync(f)) rmSync(f);
-}
 
 function assert(cond: unknown, msg: string) {
   if (!cond) {
@@ -72,7 +71,8 @@ async function register(name: string, phone: string): Promise<{ cookie: string; 
   return { cookie, user };
 }
 
-const server = spawn(
+function startServer(): ChildProcess {
+  return spawn(
   process.execPath,
   ["node_modules/tsx/dist/cli.mjs", "server/index.ts"],
   {
@@ -81,13 +81,14 @@ const server = spawn(
       NODE_ENV: "development",
       API_ONLY: "1",
       PORT: String(PORT),
-      DATABASE_PATH: DB_PATH,
+      DATABASE_URL: DB_URL,
       SMS_PROVIDER: "",
       ADMIN_PHONE_NUMBERS: ADMIN_PHONE,
     },
     stdio: ["ignore", "ignore", "inherit"],
   },
-);
+  );
+}
 
 const j = (cookie: string, method: string, url: string, body?: any) =>
   fetch(`${BASE}${url}`, {
@@ -97,6 +98,8 @@ const j = (cookie: string, method: string, url: string, body?: any) =>
   });
 
 async function main() {
+  DB_URL = (await createTestDb(NAME)).url;
+  server = startServer();
   await waitForServer();
 
   const admin = await register("Админ", ADMIN_PHONE);
@@ -181,7 +184,7 @@ main()
     console.error(err);
     process.exitCode = 1;
   })
-  .finally(() => {
-    server.kill("SIGTERM");
+  .finally(async () => {
+    await teardown(NAME, server);
     setTimeout(() => process.exit(process.exitCode ?? 0), 300);
   });
