@@ -16,6 +16,20 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    // Split large, independent vendors into their own chunks so they cache
+    // separately and don't bloat the main entry. Route-level code-splitting
+    // (React.lazy) handles the page/feature code; this handles heavy libs.
+    rollupOptions: {
+      output: {
+        // maplibre-gl loads from CDN at runtime (see MapLibreMap) so it is not
+        // bundled. recharts is heavy and only used by the admin AnalyticsPage —
+        // splitting it keeps it out of the rider entry.
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "wouter", "@tanstack/react-query"],
+          "vendor-charts": ["recharts"],
+        },
+      },
+    },
   },
   server: {
     fs: {
