@@ -15,8 +15,9 @@ import { randomUUID, createHmac, randomInt, timingSafeEqual } from "node:crypto"
 import { copyFileSync, existsSync } from "node:fs";
 import {
   PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES, MAP_W, MAP_H,
-  TARIFFS, OVERAGE_HOUR_PRICE, tariffPriceKopecks,
+  TARIFFS, tariffPriceKopecks,
 } from "@shared/geo";
+import { computeOverage, finalRideCost } from "@shared/billing";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, sql } from "drizzle-orm";
@@ -1706,13 +1707,8 @@ export class DatabaseStorage implements IStorage {
       const tariffDef = TARIFFS.find((t) => t.id === r.tariff);
       const paidMs = (tariffDef?.durationHours ?? 0) * 60 * 60 * 1000;
       const usedMs = endedAt - r.startedAt;
-      let overageKopecks = 0;
-      let extraHours = 0;
-      if (paidMs > 0 && usedMs > paidMs) {
-        extraHours = Math.ceil((usedMs - paidMs) / (60 * 60 * 1000));
-        overageKopecks = extraHours * Math.round(OVERAGE_HOUR_PRICE * 100);
-      }
-      const finalCost = r.cost + overageKopecks;
+      const { extraHours, overageKopecks } = computeOverage(usedMs, paidMs);
+      const finalCost = finalRideCost(r.cost, overageKopecks);
 
       tx.update(rides).set({
         endedAt, status: "completed", cost: finalCost,

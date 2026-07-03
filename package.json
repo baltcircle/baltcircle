@@ -32,7 +32,8 @@
     "smoke:tbank-payment-orders-migration": "tsx script/smoke-tbank-payment-orders-migration.ts",
     "smoke:sigmasms": "tsx script/smoke-sigmasms.ts",
     "smoke:otp-status-migration": "tsx script/smoke-otp-status-migration.ts",
-    "smoke:error-message": "tsx script/smoke-error-message.ts"
+    "smoke:error-message": "tsx script/smoke-error-message.ts",
+    "smoke:billing-kopecks": "tsx script/smoke-billing-kopecks.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
