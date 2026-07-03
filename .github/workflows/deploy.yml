@@ -74,10 +74,12 @@ jobs:
             -v "$GITHUB_WORKSPACE":/app \
             -v "$LEGACY_VOLUME":/legacy \
             -w /app \
+            -e NODE_EXTRA_CA_CERTS=/tmp/yc-root.crt \
             node:20-bookworm-slim \
             bash -c '
               set -e
-              apt-get update >/dev/null && apt-get install -y --no-install-recommends python3 make g++ >/dev/null
+              apt-get update >/dev/null && apt-get install -y --no-install-recommends python3 make g++ curl ca-certificates >/dev/null
+              curl -fsSL -o /tmp/yc-root.crt https://storage.yandexcloud.net/cloud-certs/CA.pem
               npm ci
               echo "— creating schema (no demo seed)"
               npx tsx -e "import(\"./server/db/bootstrap\").then(m=>m.bootstrapReady).then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1);})"

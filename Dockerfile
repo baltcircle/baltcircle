@@ -23,6 +23,15 @@ FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=5000
+# Yandex Cloud managed-PostgreSQL CA, required for sslmode=verify-full at
+# runtime. Baked into the image and pointed at via NODE_EXTRA_CA_CERTS so the
+# pg pool can verify the server certificate.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends curl ca-certificates \
+  && curl -fsSL -o /etc/ssl/certs/yc-root.crt https://storage.yandexcloud.net/cloud-certs/CA.pem \
+  && apt-get purge -y curl && apt-get autoremove -y \
+  && rm -rf /var/lib/apt/lists/*
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/yc-root.crt
 # App data now lives in managed PostgreSQL (DATABASE_URL at runtime), not a
 # local SQLite file. No /app/data directory needed.
 COPY --from=build /app/package*.json ./
