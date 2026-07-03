@@ -86,6 +86,25 @@ async function main() {
   const cookie = cookieFromSetCookie(res.headers.get("set-cookie"))!;
   assert(!!cookie, "verify sets a session cookie");
 
+  // 1b. Private rider data must NOT fall back to the shared demo account for an
+  // anonymous caller — every wallet/payments/cards/tickets route returns 401
+  // without a session (regression guard for the riderId("demo") IDOR fix).
+  for (const [method, path] of [
+    ["GET", "/api/wallet"],
+    ["GET", "/api/payments"],
+    ["GET", "/api/payment-methods"],
+    ["GET", "/api/support/tickets"],
+  ] as const) {
+    res = await fetch(`${BASE}${path}`, { method });
+    assert(res.status === 401, `${method} ${path} without a session returns 401`);
+  }
+  res = await fetch(`${BASE}/api/wallet/topup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ amount: 100 }),
+  });
+  assert(res.status === 401, "POST /api/wallet/topup without a session returns 401");
+
   // 2a. Phone change requires a session.
   res = await fetch(`${BASE}/api/users/me/phone/start`, {
     method: "POST",
