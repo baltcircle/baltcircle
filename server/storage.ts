@@ -12,8 +12,10 @@ import type {
 } from "@shared/schema";
 import { CONSENT_VERSION } from "@shared/schema";
 import { randomUUID, createHmac, randomInt, timingSafeEqual } from "node:crypto";
+import { copyFileSync, existsSync } from "node:fs";
 import {
   PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES, MAP_W, MAP_H,
+  TARIFFS, OVERAGE_HOUR_PRICE, tariffPriceKopecks,
 } from "@shared/geo";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -78,7 +80,7 @@ CREATE TABLE IF NOT EXISTS rides (
   end_lat REAL, end_lng REAL,
   track TEXT NOT NULL,
   distance_m REAL NOT NULL DEFAULT 0,
-  cost REAL NOT NULL DEFAULT 0,
+  cost INTEGER NOT NULL DEFAULT 0,
   tariff TEXT NOT NULL,
   status TEXT NOT NULL
 );
@@ -106,14 +108,14 @@ CREATE TABLE IF NOT EXISTS ticket_comments (
 CREATE TABLE IF NOT EXISTS payments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id TEXT NOT NULL,
-  amount REAL NOT NULL,
+  amount INTEGER NOT NULL,
   kind TEXT NOT NULL,
   description TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS wallet (
   user_id TEXT PRIMARY KEY,
-  balance REAL NOT NULL DEFAULT 0,
+  balance INTEGER NOT NULL DEFAULT 0,
   active_tariff TEXT NOT NULL DEFAULT 'payg',
   tariff_expires_at INTEGER
 );
@@ -396,12 +398,64 @@ function migratePaymentOrdersTable() {
 }
 migratePaymentOrdersTable();
 
+// ---------- Money → kopecks migration (float rubles → integer kopecks) ----------
+// Historically rides.cost / payments.amount / wallet.balance were REAL (float
+// rubles), which loses precision on arithmetic. We move all money to INTEGER
+// kopecks. SQLite has dynamic typing, so the physical column keeps its old
+// affinity; this one-time pass multiplies every existing value by 100 and
+// rounds to the nearest integer. Guarded by a meta flag so it runs exactly
+// once. A copy of data.db is taken first so the pre-migration state is
+// recoverable. New writes (below) always store kopecks.
+function migrateMoneyToKopecks() {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+  const done = sqlite.prepare("SELECT value FROM meta WHERE key = 'money_kopecks_migrated'").get() as
+    | { value: string }
+    | undefined;
+  if (done?.value === "1") return;
+
+  // Back up the DB file before touching money columns (best-effort; skipped for
+  // the in-memory/absent file case). The backup name is timestamped so repeated
+  // fresh deploys don't clobber a prior backup.
+  const dbPath = process.env.DATABASE_PATH || "data.db";
+  try {
+    if (existsSync(dbPath)) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const backup = `${dbPath}.pre-kopecks-${stamp}.bak`;
+      if (!existsSync(backup)) copyFileSync(dbPath, backup);
+    }
+  } catch {
+    // A failed backup must not block startup; the conversion below is still
+    // idempotent-guarded and the operator can restore from volume snapshots.
+  }
+
+  // Convert in one transaction: rides.cost, payments.amount, wallet.balance.
+  // ROUND(x * 100) turns float rubles into integer kopecks; values already
+  // stored as whole rubles (e.g. 350) become 35000. This is a no-op-safe pass
+  // only run once thanks to the meta flag.
+  const convert = sqlite.transaction(() => {
+    sqlite.exec("UPDATE rides SET cost = CAST(ROUND(cost * 100) AS INTEGER)");
+    sqlite.exec("UPDATE payments SET amount = CAST(ROUND(amount * 100) AS INTEGER)");
+    sqlite.exec("UPDATE wallet SET balance = CAST(ROUND(balance * 100) AS INTEGER)");
+    sqlite
+      .prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('money_kopecks_migrated', '1')")
+      .run();
+  });
+  convert();
+}
+migrateMoneyToKopecks();
+
+
 const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
 
 // Bump this whenever the demo geography/seed data changes so existing
 // prototype databases get refreshed automatically on next startup
 // (MVP demo data — safe to wipe & reseed, no real user data).
-const DEMO_DATA_VERSION = 3;
+const DEMO_DATA_VERSION = 4;
 
 // Demo fleet size — kept small (a handful of sample bikes) so QR/rental flow
 // and admin tables have data without flooding the map/tables with 100 bikes.
@@ -528,7 +582,7 @@ function populateDemoData() {
 
   // Wallet — single demo user (seeded with a top-up so MVP can be exercised immediately)
   sqlite.prepare(
-    "INSERT INTO wallet (user_id, balance, active_tariff, tariff_expires_at) VALUES ('demo', 500, 'payg', NULL)"
+    "INSERT INTO wallet (user_id, balance, active_tariff, tariff_expires_at) VALUES ('demo', 50000, 'h2', NULL)"
   ).run();
 
   // Seed a couple of maintenance tickets against existing sample bikes so the
@@ -543,7 +597,7 @@ function populateDemoData() {
 
   // Seed some past payments and rides to give analytics a baseline
   const insertPay = sqlite.prepare("INSERT INTO payments (user_id, amount, kind, description, created_at) VALUES (?,?,?,?,?)");
-  insertPay.run("demo", 500, "topup", "Пополнение через банковскую карту •• 4242", now - 86400000 * 6);
+  insertPay.run("demo", 50000, "topup", "Пополнение через банковскую карту •• 4242", now - 86400000 * 6);
 
   const insertR = sqlite.prepare(
     "INSERT INTO rides (bike_id, user_id, started_at, ended_at, start_lat, start_lng, end_lat, end_lng, track, distance_m, cost, tariff, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
@@ -568,12 +622,14 @@ function populateDemoData() {
       trackPts.push([x, y, startedAt + (duration * t)]);
     }
     const distance = Math.floor(800 + rng() * 5200);
-    const minutes = duration / 60000;
-    const cost = Math.round(50 + minutes * 6);
+    // Hourly prepaid model: rider buys a fixed-hour tariff up front. Demo rides
+    // all fit inside one hour, so seed them as h1 (350 ₽) — cost in kopecks.
+    const seedTariff = TARIFFS[0]; // h1
+    const cost = tariffPriceKopecks(seedTariff);
     insertR.run(
       bikeId, user, startedAt, endedAt,
       sp.y, sp.x, ep.y, ep.x,
-      JSON.stringify(trackPts), distance, cost, "payg", "completed",
+      JSON.stringify(trackPts), distance, cost, seedTariff.id, "completed",
     );
   }
 }
@@ -772,7 +828,7 @@ export interface IStorage {
   // zones
   listZones(): ZoneRow[];
   // rides
-  startRide(input: { bikeId: string; userId: string; tariff: string }): Ride | { error: string };
+  startRide(input: { bikeId: string; userId: string; tariff: string; prepaid?: boolean }): Ride | { error: string };
   appendRidePoint(rideId: number, x: number, y: number): Ride | undefined;
   endRide(rideId: number): Ride | undefined;
   getRide(rideId: number): Ride | undefined;
@@ -1544,7 +1600,21 @@ export class DatabaseStorage implements IStorage {
 
   listZones() { return db.select().from(zones).all() as ZoneRow[]; }
 
-  startRide({ bikeId, userId, tariff }: { bikeId: string; userId: string; tariff: string }) {
+  startRide({ bikeId, userId, tariff, prepaid }: { bikeId: string; userId: string; tariff: string; prepaid?: boolean }) {
+    // Hourly, prepaid model: the rider picks an hourly tariff (h1/h2/h3) and
+    // pays its full price UP FRONT. The ride's cost is fixed to the tariff
+    // price at start (in kopecks); endRide only adds an overage charge if the
+    // rider exceeds the paid window (auto-extension). There is no per-minute
+    // accrual any more.
+    //
+    // Two payment paths:
+    //   - prepaid = true  -> the rider already paid on T-Bank's hosted/recurring
+    //     flow (ride/init). The wallet must NOT be charged again here.
+    //   - prepaid = false -> internal/demo flow: charge the tariff price from
+    //     the wallet balance atomically as part of starting the ride.
+    const tariffDef = TARIFFS.find((t) => t.id === tariff);
+    const costKopecks = tariffDef ? tariffPriceKopecks(tariffDef) : 0;
+
     // Atomic: re-check the bike/rider state and claim the bike inside ONE
     // transaction. Without this, two concurrent requests could both pass the
     // availability/active-ride checks and each insert a ride for the same bike
@@ -1562,12 +1632,30 @@ export class DatabaseStorage implements IStorage {
         .get() as Ride | undefined;
       if (active) return { error: "У вас уже есть активная поездка" };
 
+      // Internal (non-prepaid) flow: debit the tariff price from the wallet up
+      // front, inside the same transaction so a failure rolls the ride back.
+      if (!prepaid && costKopecks > 0) {
+        let w = tx.select().from(wallet).where(eq(wallet.userId, userId)).get() as Wallet | undefined;
+        if (!w) {
+          tx.insert(wallet).values({ userId, balance: 0, activeTariff: "payg", tariffExpiresAt: null } as any).run();
+          w = { userId, balance: 0 } as Wallet;
+        }
+        if (w.balance < costKopecks) {
+          return { error: "Недостаточно средств на балансе" };
+        }
+        tx.update(wallet).set({ balance: w.balance - costKopecks }).where(eq(wallet.userId, userId)).run();
+        tx.insert(payments).values({
+          userId, amount: -costKopecks, kind: "ride_charge",
+          description: `Аренда ${bikeId} • ${tariffDef?.name ?? tariff}`, createdAt: Date.now(),
+        }).run();
+      }
+
       const startedAt = Date.now();
       const track: [number, number, number][] = [[bike.lng, bike.lat, startedAt]];
       const row = tx.insert(rides).values({
         bikeId, userId, startedAt,
         startLat: bike.lat, startLng: bike.lng,
-        track: JSON.stringify(track), distanceM: 0, cost: 0, tariff, status: "active",
+        track: JSON.stringify(track), distanceM: 0, cost: costKopecks, tariff, status: "active",
       }).returning().get() as Ride;
       tx.update(bikes).set({ status: "rented", updatedAt: Date.now() } as any)
         .where(eq(bikes.id, bikeId)).run();
@@ -1586,10 +1674,11 @@ export class DatabaseStorage implements IStorage {
     const addedMeters = dMap * 30;
     pts.push([x, y, Date.now()]);
     const newDistance = r.distanceM + addedMeters;
-    const minutes = (Date.now() - r.startedAt) / 60000;
-    const newCost = Math.max(50, Math.round(50 + minutes * 6));
+    // Hourly prepaid model: cost is fixed at start (tariff price) and only
+    // changes on overage in endRide. Live points update the track/distance
+    // only — never the price.
     db.update(rides).set({
-      track: JSON.stringify(pts), distanceM: newDistance, cost: newCost,
+      track: JSON.stringify(pts), distanceM: newDistance,
     }).where(eq(rides.id, rideId)).run();
     db.update(bikes).set({ lat: y, lng: x, lastSeen: Date.now(), idleHours: 0 } as any)
       .where(eq(bikes.id, r.bikeId)).run();
@@ -1608,26 +1697,45 @@ export class DatabaseStorage implements IStorage {
       const pts: [number, number, number][] = JSON.parse(r.track);
       const last = pts[pts.length - 1];
       const endedAt = Date.now();
-      const minutes = (endedAt - r.startedAt) / 60000;
-      const cost = Math.max(50, Math.round(50 + minutes * 6));
+
+      // Hourly prepaid model. The tariff was paid at start (r.cost holds the
+      // prepaid tariff price, in kopecks). If the rider kept the bike past the
+      // paid window, auto-extend by charging one OVERAGE_HOUR_PRICE per started
+      // extra hour. Rides on an unknown/legacy tariff (durationHours unknown)
+      // skip overage and just settle at the recorded cost.
+      const tariffDef = TARIFFS.find((t) => t.id === r.tariff);
+      const paidMs = (tariffDef?.durationHours ?? 0) * 60 * 60 * 1000;
+      const usedMs = endedAt - r.startedAt;
+      let overageKopecks = 0;
+      let extraHours = 0;
+      if (paidMs > 0 && usedMs > paidMs) {
+        extraHours = Math.ceil((usedMs - paidMs) / (60 * 60 * 1000));
+        overageKopecks = extraHours * Math.round(OVERAGE_HOUR_PRICE * 100);
+      }
+      const finalCost = r.cost + overageKopecks;
+
       tx.update(rides).set({
-        endedAt, status: "completed", cost,
+        endedAt, status: "completed", cost: finalCost,
         endLat: last[1], endLng: last[0],
       }).where(eq(rides.id, rideId)).run();
       tx.update(bikes).set({ status: "available", lat: last[1], lng: last[0], lastSeen: endedAt, idleHours: 0 } as any)
         .where(eq(bikes.id, r.bikeId)).run();
-      // Charge the wallet inside the same tx. Read-or-create the row via tx so
-      // the debit rolls back with everything else on failure.
-      let w = tx.select().from(wallet).where(eq(wallet.userId, r.userId)).get() as Wallet | undefined;
-      if (!w) {
-        tx.insert(wallet).values({ userId: r.userId, balance: 0, activeTariff: "payg", tariffExpiresAt: null } as any).run();
-        w = { userId: r.userId, balance: 0 } as Wallet;
+
+      // Only the overage is charged at end — the base tariff was already paid at
+      // start (wallet debit or T-Bank). Debit the wallet for the extra hours,
+      // inside the same tx so it rolls back with everything else on failure.
+      if (overageKopecks > 0) {
+        let w = tx.select().from(wallet).where(eq(wallet.userId, r.userId)).get() as Wallet | undefined;
+        if (!w) {
+          tx.insert(wallet).values({ userId: r.userId, balance: 0, activeTariff: "payg", tariffExpiresAt: null } as any).run();
+          w = { userId: r.userId, balance: 0 } as Wallet;
+        }
+        tx.update(wallet).set({ balance: w.balance - overageKopecks }).where(eq(wallet.userId, r.userId)).run();
+        tx.insert(payments).values({
+          userId: r.userId, amount: -overageKopecks, kind: "ride_charge",
+          description: `Продление аренды ${r.bikeId} • +${extraHours} ч`, createdAt: endedAt,
+        }).run();
       }
-      tx.update(wallet).set({ balance: w.balance - cost }).where(eq(wallet.userId, r.userId)).run();
-      tx.insert(payments).values({
-        userId: r.userId, amount: -cost, kind: "ride_charge",
-        description: `Поездка ${r.bikeId} • ${Math.round(minutes)} мин`, createdAt: endedAt,
-      }).run();
       return tx.select().from(rides).where(eq(rides.id, rideId)).get() as Ride;
     });
   }

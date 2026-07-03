@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { TARIFFS } from "@shared/geo";
+import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
 import {
   insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
   adminSetRoleSchema, adminSetBlockedSchema,
@@ -749,7 +749,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           if (existing && existing.bikeId === bike.id) {
             rideId = existing.id;
           } else {
-            const started = storage.startRide({ bikeId: bike.id, userId: user.id, tariff: tariffDef.id });
+            const started = storage.startRide({ bikeId: bike.id, userId: user.id, tariff: tariffDef.id, prepaid: true });
             if ("error" in started) {
               storage.updateRidePaymentOrder(order.id, {
                 status: "paid",
@@ -1210,7 +1210,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(ride ?? null);
   });
   app.post("/api/rides/start", (req, res) => {
-    const schema = z.object({ bikeId: z.string(), tariff: z.string().default("payg") });
+    const schema = z.object({ bikeId: z.string(), tariff: z.enum(["h1", "h2", "h3"]) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     // A blocked account may stay logged in but cannot start new rentals.
@@ -1264,7 +1264,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const schema = z.object({ amount: z.number().positive().max(50000) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-    res.json(storage.topUp(riderId(req), parsed.data.amount));
+    res.json(storage.topUp(riderId(req), Math.round(parsed.data.amount * 100)));
   });
   app.post("/api/wallet/tariff", (req, res) => {
     const schema = z.object({
@@ -1276,11 +1276,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const tariffDef = TARIFFS.find((t) => t.id === parsed.data.tariff);
     if (!tariffDef) return res.status(400).json({ error: "Unknown tariff" });
     const durationMs = tariffDef.durationHours * 60 * 60 * 1000;
+    const priceKopecks = tariffPriceKopecks(tariffDef);
     const w = storage.getWallet(riderId(req));
-    if (w.balance < tariffDef.price) {
+    if (w.balance < priceKopecks) {
       return res.status(400).json({ error: "Недостаточно средств на балансе" });
     }
-    res.json(storage.purchaseTariff(riderId(req), parsed.data.tariff, tariffDef.price, durationMs));
+    res.json(storage.purchaseTariff(riderId(req), parsed.data.tariff, priceKopecks, durationMs));
   });
   app.get("/api/payments", (req, res) => res.json(storage.listPayments(riderId(req))));
 
@@ -1663,6 +1664,7 @@ function handleRidePaymentNotification(
           bikeId: order.bikeId,
           userId: order.userId,
           tariff: order.tariffId,
+          prepaid: true,
         });
         if ("error" in started) {
           // Payment succeeded but the ride could not start (e.g. the bike was

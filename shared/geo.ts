@@ -18,6 +18,15 @@ export interface Tariff {
   popular?: boolean;
 }
 
+// Price of one extra started hour when a rider exceeds their paid tariff
+// window (auto-extension). Uses the 1-hour rate. In rubles; ×100 for kopecks.
+export const OVERAGE_HOUR_PRICE = 350; // ₽ per started extra hour
+
+// Helper: tariff price in integer kopecks (money is stored/charged in kopecks).
+export function tariffPriceKopecks(t: Tariff): number {
+  return Math.round(t.price * 100);
+}
+
 export const TARIFFS: Tariff[] = [
   {
     id: "h1",

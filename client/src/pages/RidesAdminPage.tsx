@@ -192,12 +192,9 @@ export function RidesAdminPage() {
 
 function RideRowItem({ r, onEnd, busy }: { r: AdminRide; onEnd: () => void; busy: boolean }) {
   const active = r.status === "active";
-  // For an active ride the cost is still accruing — show a live estimate from
-  // elapsed time so the table doesn't read ₽0 until the ride ends.
+  // Hourly prepaid model: the ride cost is fixed at start (tariff price paid up
+  // front, in kopecks), so no live per-minute estimate is needed.
   const elapsedMs = (r.endedAt ?? Date.now()) - r.startedAt;
-  const estCost = active && r.cost === 0
-    ? Math.max(50, Math.round(50 + elapsedMs / 60000 * 6))
-    : r.cost;
 
   return (
     <TableRow data-testid={`ride-row-${r.id}`} className={active ? "" : "opacity-90"}>
@@ -210,8 +207,7 @@ function RideRowItem({ r, onEnd, busy }: { r: AdminRide; onEnd: () => void; busy
       <TableCell className="text-sm">{fmtDate(r.startedAt)}</TableCell>
       <TableCell className="text-sm">{fmtDuration(elapsedMs)}</TableCell>
       <TableCell className="text-right font-mono text-sm">
-        {fmtRub(estCost)}
-        {active && r.cost === 0 && <span className="text-muted-foreground"> ~</span>}
+        {fmtRub(r.cost)}
       </TableCell>
       <TableCell><RideStatusBadge status={r.status} /></TableCell>
       <TableCell className="text-right">

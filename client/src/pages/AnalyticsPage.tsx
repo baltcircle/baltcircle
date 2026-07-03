@@ -410,7 +410,7 @@ function ExportBar() {
         { header: "Начало", value: (r) => fmtDate(r.startedAt) },
         { header: "Конец", value: (r) => (r.endedAt ? fmtDate(r.endedAt) : "") },
         { header: "Дистанция, м", value: (r) => Math.round(r.distanceM) },
-        { header: "Стоимость, ₽", value: (r) => Math.round(r.cost) },
+        { header: "Стоимость, ₽", value: (r) => Math.round(r.cost) / 100 },
         { header: "Тариф", value: (r) => r.tariff },
         { header: "Статус", value: (r) => r.status },
       ]);
