@@ -21,6 +21,70 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # One-shot data migration: legacy SQLite (data.db in the old Docker volume)
+      # -> managed PostgreSQL. Runs only if the legacy volume still holds a
+      # data.db AND the migration has not been marked done. The migrate script is
+      # idempotent (ON CONFLICT DO NOTHING), and a marker file in the volume stops
+      # it from re-running on every deploy. Uses host networking so the container
+      # reaches the managed PG the same way the VM does.
+      - name: Migrate legacy SQLite data to PostgreSQL (one-shot)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -e
+          LEGACY_VOLUME="baltcicl_baltcircle_data"
+
+          if [ -z "$DATABASE_URL" ]; then
+            echo "❌ Secret DATABASE_URL is not set — cannot migrate or deploy. Set it in repo Settings → Secrets → Actions."
+            exit 1
+          fi
+
+          if ! docker volume inspect "$LEGACY_VOLUME" >/dev/null 2>&1; then
+            echo "ℹ️ Legacy volume $LEGACY_VOLUME not found — nothing to migrate (fresh install). Skipping."
+            exit 0
+          fi
+
+          # Check the marker + presence of data.db inside the legacy volume.
+          STATE=$(docker run --rm -v "$LEGACY_VOLUME":/legacy:ro alpine:3.20 sh -c '
+            if [ -f /legacy/.migrated-to-pg ]; then echo DONE;
+            elif [ -f /legacy/data.db ]; then echo PENDING;
+            else echo NODB; fi')
+
+          if [ "$STATE" = "DONE" ]; then
+            echo "✅ Migration already completed earlier (marker present). Skipping."
+            exit 0
+          fi
+          if [ "$STATE" = "NODB" ]; then
+            echo "ℹ️ No data.db in legacy volume — nothing to migrate. Skipping."
+            exit 0
+          fi
+
+          echo "➡️ Running one-shot SQLite → PostgreSQL migration..."
+          docker run --rm \
+            --network host \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e SKIP_DEMO_SEED=1 \
+            -e SQLITE_PATH=/legacy/data.db \
+            -v "$GITHUB_WORKSPACE":/app \
+            -v "$LEGACY_VOLUME":/legacy:ro \
+            -w /app \
+            node:20-bookworm-slim \
+            bash -c '
+              set -e
+              apt-get update >/dev/null && apt-get install -y --no-install-recommends python3 make g++ >/dev/null
+              npm ci
+              echo "— creating schema (no demo seed)"
+              npx tsx -e "import(\"./server/db/bootstrap\").then(m=>m.bootstrapReady).then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1);})"
+              echo "— dry run"
+              npx tsx script/migrate-sqlite-to-pg.ts --dry-run
+              echo "— real migration"
+              npx tsx script/migrate-sqlite-to-pg.ts
+            '
+
+          # Mark the volume so future deploys skip migration.
+          docker run --rm -v "$LEGACY_VOLUME":/legacy alpine:3.20 sh -c 'date -u +%FT%TZ > /legacy/.migrated-to-pg'
+          echo "✅ Migration finished and marked complete."
+
       - name: Rebuild and restart Docker app
         env:
           DOCKER_BUILDKIT: "1"
