@@ -88,6 +88,18 @@ function requireRole(...roles: UserRole[]) {
   };
 }
 
+// Guard for a registered rider's PRIVATE data (wallet, payments, saved cards,
+// support tickets). Without this the riderId() "demo" fallback would silently
+// route an anonymous caller into the shared demo account — letting them read
+// and mutate the demo rider's balance, cards and tickets (IDOR / privacy leak).
+// Public surfaces (map, demo rides, analytics) intentionally keep the fallback.
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  const id = req.session?.userId;
+  const user = id ? storage.getUser(id) : undefined;
+  if (!user) return res.status(401).json({ error: "Требуется вход" });
+  next();
+}
+
 // Guard for operator-facing mutation endpoints (map editor, tickets, bikes,
 // parkings). Enforcement rules:
 //   - In PRODUCTION the role check is ALWAYS enforced, even if
@@ -330,15 +342,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Per-user linked payment methods. No card numbers / CVC are ever accepted or
   // stored — only the method kind, a masked label, and a status. No real
   // acquiring is performed.
-  app.get("/api/payment-methods", (req, res) => {
+  app.get("/api/payment-methods", requireAuth, (req, res) => {
     res.json(storage.listPaymentMethods(riderId(req)));
   });
-  app.post("/api/payment-methods", (req, res) => {
+  app.post("/api/payment-methods", requireAuth, (req, res) => {
     const parsed = linkPaymentMethodSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     res.status(201).json(storage.linkPaymentMethod(riderId(req), parsed.data.type));
   });
-  app.delete("/api/payment-methods/:id", (req, res) => {
+  app.delete("/api/payment-methods/:id", requireAuth, (req, res) => {
     const ok = storage.unlinkPaymentMethod(riderId(req), Number(req.params.id));
     if (!ok) return res.status(404).json({ error: "Способ оплаты не найден" });
     res.json({ ok: true });
@@ -990,10 +1002,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // -------------- Support tickets (rider help requests) --------------
-  app.get("/api/support/tickets", (req, res) => {
+  app.get("/api/support/tickets", requireAuth, (req, res) => {
     res.json(storage.listSupportTickets(riderId(req)));
   });
-  app.post("/api/support/tickets", (req, res) => {
+  app.post("/api/support/tickets", requireAuth, (req, res) => {
     const parsed = createSupportTicketSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
@@ -1248,14 +1260,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // -------------- Wallet / Payments --------------
-  app.get("/api/wallet", (req, res) => res.json(storage.getWallet(riderId(req))));
-  app.post("/api/wallet/topup", (req, res) => {
+  app.get("/api/wallet", requireAuth, (req, res) => res.json(storage.getWallet(riderId(req))));
+  app.post("/api/wallet/topup", requireAuth, (req, res) => {
     const schema = z.object({ amount: z.number().positive().max(50000) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     res.json(storage.topUp(riderId(req), Math.round(parsed.data.amount * 100)));
   });
-  app.post("/api/wallet/tariff", (req, res) => {
+  app.post("/api/wallet/tariff", requireAuth, (req, res) => {
     const schema = z.object({
       tariff: z.enum(["h1", "h2", "h3"]),
     });
@@ -1272,7 +1284,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     res.json(storage.purchaseTariff(riderId(req), parsed.data.tariff, priceKopecks, durationMs));
   });
-  app.get("/api/payments", (req, res) => res.json(storage.listPayments(riderId(req))));
+  app.get("/api/payments", requireAuth, (req, res) => res.json(storage.listPayments(riderId(req))));
 
   // -------------- Service / maintenance tickets --------------
   // List is open (operator UI reads it freely); all mutations are staff-gated
