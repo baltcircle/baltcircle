@@ -18,6 +18,26 @@ jobs:
       - baltcircle-prod
 
     steps:
+      # The one-shot migration step below mounts the runner workspace into a
+      # root container to run `npm ci`, which leaves root-owned files behind.
+      # actions/checkout's `git clean -ffdx` then cannot delete them and the
+      # checkout fails on every subsequent run. This pre-checkout step uses a
+      # short-lived root container to reset ownership of the workspace back to
+      # the runner user so checkout can clean it. No-op when the dir is absent
+      # or already owned correctly.
+      - name: Reclaim workspace ownership (pre-checkout)
+        run: |
+          set -e
+          WORKDIR="${{ github.workspace }}"
+          if [ -d "$WORKDIR" ]; then
+            HOST_UID=$(id -u)
+            HOST_GID=$(id -g)
+            docker run --rm \
+              -v "$WORKDIR":/ws \
+              alpine:3.20 \
+              chown -R "$HOST_UID:$HOST_GID" /ws || true
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -66,20 +86,26 @@ jobs:
           # Legacy volume mounted read-write on purpose: the migrate script runs
           # wal_checkpoint(TRUNCATE) to fold data.db-wal into data.db before
           # reading, so the freshest transactions are not lost.
+          # Run npm ci in a container-internal copy of the repo (/build) instead
+          # of directly in the mounted workspace, so root-owned node_modules are
+          # never written into $GITHUB_WORKSPACE (which would break the next
+          # checkout's git clean). The workspace is mounted read-only as /src.
           docker run --rm \
             --network host \
             -e DATABASE_URL="$DATABASE_URL" \
             -e SKIP_DEMO_SEED=1 \
             -e SQLITE_PATH=/legacy/data.db \
-            -v "$GITHUB_WORKSPACE":/app \
+            -v "$GITHUB_WORKSPACE":/src:ro \
             -v "$LEGACY_VOLUME":/legacy \
-            -w /app \
+            -w /build \
             -e NODE_EXTRA_CA_CERTS=/tmp/yc-root.crt \
             node:20-bookworm-slim \
             bash -c '
               set -e
-              apt-get update >/dev/null && apt-get install -y --no-install-recommends python3 make g++ curl ca-certificates >/dev/null
+              apt-get update >/dev/null && apt-get install -y --no-install-recommends python3 make g++ curl ca-certificates rsync >/dev/null
               curl -fsSL -o /tmp/yc-root.crt https://storage.yandexcloud.net/cloud-certs/CA.pem
+              mkdir -p /build
+              rsync -a --exclude node_modules /src/ /build/
               npm ci
               echo "— creating schema (no demo seed)"
               npx tsx -e "import(\"./server/db/bootstrap\").then(m=>m.bootstrapReady).then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1);})"
