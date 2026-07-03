@@ -1,5 +1,5 @@
 import { Switch, Route, Router, Redirect, useLocation } from "wouter";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, lazy, Suspense } from "react";
 import { PENDING_BIKE_KEY } from "@/lib/pending-bike";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -18,17 +18,19 @@ import { PaymentResultPage } from "@/pages/PaymentResultPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SupportPage } from "@/pages/SupportPage";
 import { SafetyPage } from "@/pages/SafetyPage";
-import { LegalIndexPage } from "@/pages/LegalIndexPage";
-import { LegalDocPage } from "@/pages/LegalDocPage";
-import { AdminPage } from "@/pages/AdminPage";
-import { RidesAdminPage } from "@/pages/RidesAdminPage";
-import { BikesPage } from "@/pages/BikesPage";
-import { UsersPage } from "@/pages/UsersPage";
-import { AnalyticsPage } from "@/pages/AnalyticsPage";
-import { MaintenancePage } from "@/pages/MaintenancePage";
-import { MapEditorPage } from "@/pages/MapEditorPage";
-import { ParkingsPage } from "@/pages/ParkingsPage";
-import { OperationsMapPage } from "@/pages/OperationsMapPage";
+// Admin/operator pages and legal docs are code-split: a rider never downloads
+// this code, and the heavy chart/map-editor deps ride along in their own chunks.
+const LegalIndexPage = lazy(() => import("@/pages/LegalIndexPage").then((m) => ({ default: m.LegalIndexPage })));
+const LegalDocPage = lazy(() => import("@/pages/LegalDocPage").then((m) => ({ default: m.LegalDocPage })));
+const AdminPage = lazy(() => import("@/pages/AdminPage").then((m) => ({ default: m.AdminPage })));
+const RidesAdminPage = lazy(() => import("@/pages/RidesAdminPage").then((m) => ({ default: m.RidesAdminPage })));
+const BikesPage = lazy(() => import("@/pages/BikesPage").then((m) => ({ default: m.BikesPage })));
+const UsersPage = lazy(() => import("@/pages/UsersPage").then((m) => ({ default: m.UsersPage })));
+const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })));
+const MaintenancePage = lazy(() => import("@/pages/MaintenancePage").then((m) => ({ default: m.MaintenancePage })));
+const MapEditorPage = lazy(() => import("@/pages/MapEditorPage").then((m) => ({ default: m.MapEditorPage })));
+const ParkingsPage = lazy(() => import("@/pages/ParkingsPage").then((m) => ({ default: m.ParkingsPage })));
+const OperationsMapPage = lazy(() => import("@/pages/OperationsMapPage").then((m) => ({ default: m.OperationsMapPage })));
 import NotFound from "@/pages/not-found";
 
 // OverlayRouter — renders customer pages as a fixed overlay on top of the map.
@@ -99,6 +101,20 @@ const OVERLAY_ROUTES = [
   "/payment-result",
 ];
 
+// Minimal fallback shown while a code-split route chunk loads. Deliberately
+// plain (no heavy deps) so it appears instantly.
+function PageFallback() {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
+      <div
+        className="h-8 w-8 animate-spin rounded-full border-2 border-muted border-t-primary"
+        role="status"
+        aria-label="Загрузка"
+      />
+    </div>
+  );
+}
+
 function AppRouter() {
   const [loc] = useLocation();
   const isHome = loc === "/" || loc.startsWith("/bike/");
@@ -114,6 +130,7 @@ function AppRouter() {
       {/* Overlay customer pages — rendered as fixed layer on top of map with slide-up/down animation */}
       <OverlayRouter loc={loc} isOverlay={isOverlay} />
 
+    <Suspense fallback={<PageFallback />}>
     <Switch>
       {/* Customer / rider interface */}
       <Route path="/"><></></Route>
@@ -157,6 +174,7 @@ function AppRouter() {
 
       <Route component={NotFound} />
     </Switch>
+    </Suspense>
     </>
   );
 }
