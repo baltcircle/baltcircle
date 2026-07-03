@@ -120,6 +120,32 @@ async function main() {
   assert(res.status === 200, "rider starts a ride (200)");
   const ride = await res.json();
   assert(ride.status === "active", "started ride is active");
+  const startTrack = JSON.parse(ride.track) as [number, number, number][];
+  assert(startTrack.length >= 1, "fresh ride has a seed track point");
+
+  // Append-only GPS points: each /point is a single INSERT into ride_points,
+  // and the returned ride hydrates its live track from that table. Sending two
+  // points must grow the track and increase the accumulated distance.
+  const p0 = startTrack[startTrack.length - 1];
+  res = await j(rider.cookie, "POST", `/api/rides/${ride.id}/point`, { x: p0[0] + 10, y: p0[1] + 10 });
+  assert(res.status === 200, "rider appends GPS point #1 (200)");
+  const afterP1 = await res.json();
+  const trackP1 = JSON.parse(afterP1.track) as [number, number, number][];
+  assert(trackP1.length === startTrack.length + 1, "track grows by one after point #1");
+  assert(afterP1.distanceM > ride.distanceM, "distance increases after point #1");
+  res = await j(rider.cookie, "POST", `/api/rides/${ride.id}/point`, { x: p0[0] + 20, y: p0[1] + 20 });
+  assert(res.status === 200, "rider appends GPS point #2 (200)");
+  const afterP2 = await res.json();
+  const trackP2 = JSON.parse(afterP2.track) as [number, number, number][];
+  assert(trackP2.length === startTrack.length + 2, "track grows by two after point #2");
+  assert(afterP2.distanceM > afterP1.distanceM, "distance increases after point #2");
+
+  // getActiveRide must hydrate the same live track from ride_points.
+  res = await fetch(`${BASE}/api/rides/active`, { headers: { cookie: rider.cookie } });
+  assert(res.status === 200, "rider reads active ride (200)");
+  const activeRide = await res.json();
+  const activeTrack = JSON.parse(activeRide.track) as [number, number, number][];
+  assert(activeTrack.length === startTrack.length + 2, "active ride reflects all appended points");
 
   // Admin list shows the ride with rider identity attached.
   res = await fetch(`${BASE}/api/admin/rides`, { headers: { cookie: admin.cookie } });

@@ -389,6 +389,48 @@ function migratePaymentOrdersTable() {
 }
 migratePaymentOrdersTable();
 
+// ---------- Ride GPS points table (P0 load fix) ----------
+// Historically the full GPS track lived in rides.track as one JSON array that
+// was parsed + re-stringified on every appended point — O(N^2) writes per ride
+// and a heavy WAL churn under load. We move live points to their own append-
+// only table so each point is a single INSERT. rides.track stays as the
+// canonical stored track (written once at endRide) for history/analytics.
+sqlite.exec(`
+CREATE TABLE IF NOT EXISTS ride_points (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ride_id INTEGER NOT NULL,
+  x REAL NOT NULL,
+  y REAL NOT NULL,
+  t INTEGER NOT NULL
+);
+`);
+
+// ---------- Performance indexes (P0 load fix) ----------
+// None of the hot query paths had indexes: every getActiveRide/getUserByPhone/
+// payment lookup was a full table scan. At 100 bikes the tables are tiny so it
+// was invisible, but the history/payments tables grow unbounded. All indexes
+// are IF NOT EXISTS so this is idempotent and safe to re-run on every boot.
+sqlite.exec(`
+CREATE INDEX IF NOT EXISTS idx_rides_user_status ON rides (user_id, status);
+CREATE INDEX IF NOT EXISTS idx_rides_user ON rides (user_id);
+CREATE INDEX IF NOT EXISTS idx_rides_bike ON rides (bike_id);
+CREATE INDEX IF NOT EXISTS idx_rides_started ON rides (started_at);
+CREATE INDEX IF NOT EXISTS idx_ride_points_ride ON ride_points (ride_id, id);
+CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone);
+CREATE INDEX IF NOT EXISTS idx_bikes_status ON bikes (status);
+CREATE INDEX IF NOT EXISTS idx_pm_user ON payment_methods (user_id);
+CREATE INDEX IF NOT EXISTS idx_pm_user_provider_status ON payment_methods (user_id, provider, status);
+CREATE INDEX IF NOT EXISTS idx_pm_order ON payment_methods (order_id);
+CREATE INDEX IF NOT EXISTS idx_pm_request_key ON payment_methods (request_key);
+CREATE INDEX IF NOT EXISTS idx_po_order ON payment_orders (order_id);
+CREATE INDEX IF NOT EXISTS idx_po_user ON payment_orders (user_id);
+CREATE INDEX IF NOT EXISTS idx_po_payment ON payment_orders (payment_id);
+CREATE INDEX IF NOT EXISTS idx_payments_user ON payments (user_id);
+CREATE INDEX IF NOT EXISTS idx_tickets_bike ON tickets (bike_id);
+CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket ON ticket_comments (ticket_id);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_user ON support_tickets (user_id);
+`);
+
 // ---------- Money → kopecks migration (float rubles → integer kopecks) ----------
 // Historically rides.cost / payments.amount / wallet.balance were REAL (float
 // rubles), which loses precision on arithmetic. We move all money to INTEGER
