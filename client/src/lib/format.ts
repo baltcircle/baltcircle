@@ -23,8 +23,10 @@ export function bikeQrLink(bikeId: string) {
   return `${PUBLIC_BASE_URL}/bike/${bikeId}`;
 }
 
-export function fmtRub(value: number) {
-  const n = Math.round(value);
+export function fmtRub(kopecks: number) {
+  // Money is stored/transported in integer kopecks; divide for ruble display.
+  const rub = Math.round(kopecks) / 100;
+  const n = Number.isInteger(rub) ? rub : Math.round(rub);
   return n.toLocaleString("ru-RU") + " ₽";
 }
 export function fmtDistance(meters: number) {

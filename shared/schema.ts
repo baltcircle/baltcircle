@@ -324,7 +324,7 @@ export const rides = sqliteTable("rides", {
   endLng: real("end_lng"),
   track: text("track").notNull(),     // JSON: [[x,y,t], ...]
   distanceM: real("distance_m").notNull().default(0),
-  cost: real("cost").notNull().default(0),
+  cost: integer("cost").notNull().default(0),   // stored in kopecks (integer) — never float rubles
   tariff: text("tariff").notNull(),
   status: text("status").notNull(),   // active | completed | cancelled
 });
@@ -434,7 +434,7 @@ export type AddTicketCommentInput = z.infer<typeof addTicketCommentSchema>;
 export const payments = sqliteTable("payments", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: text("user_id").notNull(),
-  amount: real("amount").notNull(),
+  amount: integer("amount").notNull(), // kopecks (integer, signed) — never float rubles
   kind: text("kind").notNull(),       // topup | ride_charge | tariff_purchase
   description: text("description").notNull(),
   createdAt: integer("created_at").notNull(),
@@ -443,7 +443,7 @@ export type Payment = typeof payments.$inferSelect;
 
 export const wallet = sqliteTable("wallet", {
   userId: text("user_id").primaryKey(),
-  balance: real("balance").notNull().default(0),
+  balance: integer("balance").notNull().default(0), // kopecks (integer) — never float rubles
   activeTariff: text("active_tariff").notNull().default("payg"),
   tariffExpiresAt: integer("tariff_expires_at"),
 });
