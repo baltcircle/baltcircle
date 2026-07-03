@@ -122,7 +122,24 @@ async function main() {
         continue;
       }
 
-      const columns = Object.keys(rows[0]);
+      // Intersect source columns with the target Postgres columns. The legacy
+      // SQLite file may physically retain columns that were dropped from the
+      // current schema (e.g. payment_orders.kind); inserting them would fail
+      // with "column ... does not exist". We only copy columns the target has.
+      const pgCols = new Set(
+        (
+          await client.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = $1",
+            [table],
+          )
+        ).rows.map((r: { column_name: string }) => r.column_name),
+      );
+      const sourceCols = Object.keys(rows[0]);
+      const columns = sourceCols.filter((c) => pgCols.has(c));
+      const droppedCols = sourceCols.filter((c) => !pgCols.has(c));
+      if (droppedCols.length > 0) {
+        console.log(`  (skipping legacy columns not in target: ${droppedCols.join(", ")})`);
+      }
       const colList = columns.map((c) => `"${c}"`).join(", ");
       const conflictTarget = table === "payment_orders" ? "(order_id)" : "";
       // Prefer the primary key conflict target when we can infer it; otherwise
