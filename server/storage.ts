@@ -968,6 +968,41 @@ export class DatabaseStorage implements IStorage {
 
   listZones() { return db.select().from(zones).all() as ZoneRow[]; }
 
+  // ---- ride GPS points (append-only, avoids O(N^2) track rewrites) ----
+  // Live points go to their own ride_points table so each appended point is a
+  // single INSERT instead of parsing + re-stringifying the whole track JSON.
+  // rides.track stays the canonical stored track, finalised once in endRide.
+  private static _insertPoint = sqlite.prepare(
+    "INSERT INTO ride_points (ride_id, x, y, t) VALUES (?, ?, ?, ?)",
+  );
+  private static _selectPoints = sqlite.prepare(
+    "SELECT x, y, t FROM ride_points WHERE ride_id = ? ORDER BY id",
+  );
+  private static _selectLastPoint = sqlite.prepare(
+    "SELECT x, y, t FROM ride_points WHERE ride_id = ? ORDER BY id DESC LIMIT 1",
+  );
+
+  private insertRidePoint(rideId: number, x: number, y: number, t: number) {
+    DatabaseStorage._insertPoint.run(rideId, x, y, t);
+  }
+
+  private loadRidePoints(rideId: number): [number, number, number][] {
+    const rows = DatabaseStorage._selectPoints.all(rideId) as { x: number; y: number; t: number }[];
+    return rows.map((p) => [p.x, p.y, p.t]);
+  }
+
+  // Return the ride with its live track hydrated from ride_points. Only active
+  // rides read from ride_points (the authoritative live track); a finished
+  // ride already has its track flushed into rides.track by endRide, so we leave
+  // it untouched even though its point rows may linger.
+  private hydrateTrack(ride: Ride | undefined): Ride | undefined {
+    if (!ride) return ride;
+    if (ride.status !== "active") return ride;
+    const pts = this.loadRidePoints(ride.id);
+    if (pts.length === 0) return ride;
+    return { ...ride, track: JSON.stringify(pts) };
+  }
+
   startRide({ bikeId, userId, tariff, prepaid }: { bikeId: string; userId: string; tariff: string; prepaid?: boolean }) {
     // Hourly, prepaid model: the rider picks an hourly tariff (h1/h2/h3) and
     // pays its full price UP FRONT. The ride's cost is fixed to the tariff
@@ -1027,6 +1062,9 @@ export class DatabaseStorage implements IStorage {
       }).returning().get() as Ride;
       tx.update(bikes).set({ status: "rented", updatedAt: Date.now() } as any)
         .where(eq(bikes.id, bikeId)).run();
+      // Seed the append-only points table with the start point so the live
+      // track (hydrated from ride_points) is never empty for a fresh ride.
+      tx.run(sql`INSERT INTO ride_points (ride_id, x, y, t) VALUES (${row.id}, ${bike.lng}, ${bike.lat}, ${startedAt})`);
       return row;
     });
   }
@@ -1034,23 +1072,29 @@ export class DatabaseStorage implements IStorage {
   appendRidePoint(rideId: number, x: number, y: number) {
     const r = db.select().from(rides).where(eq(rides.id, rideId)).get() as Ride | undefined;
     if (!r || r.status !== "active") return undefined;
-    const pts: [number, number, number][] = JSON.parse(r.track);
-    const last = pts[pts.length - 1];
-    const dx = x - last[0], dy = y - last[1];
+    // Distance delta is computed from the LAST stored point only — a single
+    // indexed row read, not a parse of the whole track. Then we append one row
+    // instead of rewriting the entire track JSON (was O(N^2) per ride).
+    const last = DatabaseStorage._selectLastPoint.get(rideId) as
+      | { x: number; y: number; t: number }
+      | undefined;
+    const px = last ? last.x : r.startLng;
+    const py = last ? last.y : r.startLat;
+    const dx = x - px, dy = y - py;
     const dMap = Math.sqrt(dx * dx + dy * dy);
     // 1 map unit ≈ 30 metres (≈30km coastal span across 1000 units, demo scale)
     const addedMeters = dMap * 30;
-    pts.push([x, y, Date.now()]);
     const newDistance = r.distanceM + addedMeters;
+    this.insertRidePoint(rideId, x, y, Date.now());
     // Hourly prepaid model: cost is fixed at start (tariff price) and only
-    // changes on overage in endRide. Live points update the track/distance
-    // only — never the price.
-    db.update(rides).set({
-      track: JSON.stringify(pts), distanceM: newDistance,
-    }).where(eq(rides.id, rideId)).run();
+    // changes on overage in endRide. Live points update the distance only —
+    // never the price. rides.track is finalised once in endRide.
+    db.update(rides).set({ distanceM: newDistance }).where(eq(rides.id, rideId)).run();
     db.update(bikes).set({ lat: y, lng: x, lastSeen: Date.now(), idleHours: 0 } as any)
       .where(eq(bikes.id, r.bikeId)).run();
-    return db.select().from(rides).where(eq(rides.id, rideId)).get() as Ride;
+    return this.hydrateTrack(
+      db.select().from(rides).where(eq(rides.id, rideId)).get() as Ride,
+    );
   }
 
   endRide(rideId: number) {
@@ -1062,8 +1106,14 @@ export class DatabaseStorage implements IStorage {
     return db.transaction((tx) => {
       const r = tx.select().from(rides).where(eq(rides.id, rideId)).get() as Ride | undefined;
       if (!r || r.status !== "active") return undefined;
-      const pts: [number, number, number][] = JSON.parse(r.track);
-      const last = pts[pts.length - 1];
+      // Flush the append-only points into the canonical rides.track ONCE, at
+      // completion. Fall back to the legacy in-row track for rides that started
+      // before the ride_points migration and never got any point rows.
+      const pts: [number, number, number][] =
+        this.loadRidePoints(rideId) ?? [];
+      const track: [number, number, number][] =
+        pts.length > 0 ? pts : (JSON.parse(r.track) as [number, number, number][]);
+      const last = track[track.length - 1];
       const endedAt = Date.now();
 
       // Hourly prepaid model. The tariff was paid at start (r.cost holds the
@@ -1080,6 +1130,7 @@ export class DatabaseStorage implements IStorage {
       tx.update(rides).set({
         endedAt, status: "completed", cost: finalCost,
         endLat: last[1], endLng: last[0],
+        track: JSON.stringify(track),
       }).where(eq(rides.id, rideId)).run();
       tx.update(bikes).set({ status: "available", lat: last[1], lng: last[0], lastSeen: endedAt, idleHours: 0 } as any)
         .where(eq(bikes.id, r.bikeId)).run();
@@ -1104,25 +1155,29 @@ export class DatabaseStorage implements IStorage {
   }
 
   getRide(rideId: number) {
-    return db.select().from(rides).where(eq(rides.id, rideId)).get() as Ride | undefined;
+    return this.hydrateTrack(
+      db.select().from(rides).where(eq(rides.id, rideId)).get() as Ride | undefined,
+    );
   }
 
   getActiveRide(userId: string) {
-    return db.select().from(rides)
-      .where(sql`${rides.userId} = ${userId} AND ${rides.status} = 'active'`)
-      .get() as Ride | undefined;
+    return this.hydrateTrack(
+      db.select().from(rides)
+        .where(sql`${rides.userId} = ${userId} AND ${rides.status} = 'active'`)
+        .get() as Ride | undefined,
+    );
   }
 
   listRides(opts?: { userId?: string; limit?: number }) {
     const limit = opts?.limit ?? 50;
-    if (opts?.userId) {
-      return db.select().from(rides)
-        .where(eq(rides.userId, opts.userId))
-        .orderBy(desc(rides.startedAt))
-        .limit(limit)
-        .all() as Ride[];
-    }
-    return db.select().from(rides).orderBy(desc(rides.startedAt)).limit(limit).all() as Ride[];
+    const rows = opts?.userId
+      ? (db.select().from(rides)
+          .where(eq(rides.userId, opts.userId))
+          .orderBy(desc(rides.startedAt))
+          .limit(limit)
+          .all() as Ride[])
+      : (db.select().from(rides).orderBy(desc(rides.startedAt)).limit(limit).all() as Ride[]);
+    return rows.map((r) => this.hydrateTrack(r)!) as Ride[];
   }
 
   // Rides for the operator panel, newest first, joined to rider identity so the
@@ -1135,8 +1190,9 @@ export class DatabaseStorage implements IStorage {
     const all = db.select().from(users).all() as User[];
     const byId = new Map(all.map((u) => [u.id, u]));
     return rows.map((r) => {
-      const u = byId.get(r.userId);
-      return { ...r, userName: u?.name ?? null, userPhone: u?.phone ?? null } as AdminRide;
+      const hydrated = this.hydrateTrack(r)!;
+      const u = byId.get(hydrated.userId);
+      return { ...hydrated, userName: u?.name ?? null, userPhone: u?.phone ?? null } as AdminRide;
     });
   }
 
