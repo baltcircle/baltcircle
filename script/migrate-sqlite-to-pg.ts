@@ -85,7 +85,15 @@ function coerceRow(table: string, row: Record<string, unknown>): Record<string, 
 }
 
 async function main() {
-  const sqlite = new Database(SQLITE_PATH, { readonly: true });
+  // Open read-write so SQLite can flush the WAL into the main db file before we
+  // read. A stale data.db-wal (uncheckpointed transactions) would otherwise hide
+  // the freshest rows. We only ever SELECT, but the checkpoint needs write access.
+  const sqlite = new Database(SQLITE_PATH);
+  try {
+    sqlite.pragma("wal_checkpoint(TRUNCATE)");
+  } catch (e) {
+    console.warn("WAL checkpoint skipped:", (e as Error).message);
+  }
   const pg = new Pool({ connectionString: DATABASE_URL });
 
   // Only migrate tables that actually exist in the source DB.

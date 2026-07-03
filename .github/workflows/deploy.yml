@@ -59,14 +59,20 @@ jobs:
             exit 0
           fi
 
+          echo "➡️ Stopping old app container so it releases the SQLite file (WAL flush)..."
+          docker compose stop baltcircle || true
+
           echo "➡️ Running one-shot SQLite → PostgreSQL migration..."
+          # Legacy volume mounted read-write on purpose: the migrate script runs
+          # wal_checkpoint(TRUNCATE) to fold data.db-wal into data.db before
+          # reading, so the freshest transactions are not lost.
           docker run --rm \
             --network host \
             -e DATABASE_URL="$DATABASE_URL" \
             -e SKIP_DEMO_SEED=1 \
             -e SQLITE_PATH=/legacy/data.db \
             -v "$GITHUB_WORKSPACE":/app \
-            -v "$LEGACY_VOLUME":/legacy:ro \
+            -v "$LEGACY_VOLUME":/legacy \
             -w /app \
             node:20-bookworm-slim \
             bash -c '
