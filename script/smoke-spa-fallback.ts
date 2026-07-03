@@ -30,7 +30,7 @@ assert(existsSync(DIST_INDEX), "dist/public/index.html exists (run npm run build
 
 function startServer(): ChildProcess {
   return spawn(process.execPath, ["dist/index.cjs"], {
-    env: { ...process.env, NODE_ENV: "production", PORT: String(PORT), DATABASE_PATH: DB_PATH, SMS_PROVIDER: "" },
+    env: { ...process.env, NODE_ENV: "production", PORT: String(PORT), DATABASE_PATH: DB_PATH, SMS_PROVIDER: "", SESSION_SECRET: "smoke-spa-fallback-test-secret" },
     stdio: ["ignore", "ignore", "inherit"],
   });
 }

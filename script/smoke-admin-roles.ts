@@ -84,6 +84,7 @@ const server = spawn(
       PORT: String(PORT),
       DATABASE_PATH: DB_PATH,
       SMS_PROVIDER: "",
+      DISABLE_RATE_LIMIT: "1",
       ADMIN_PHONE_NUMBERS: ADMIN_PHONE,
     },
     stdio: ["ignore", "ignore", "inherit"],
