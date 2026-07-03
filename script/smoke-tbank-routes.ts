@@ -9,16 +9,15 @@
 //
 // Run with:  npx tsx script/smoke-tbank-routes.ts
 
-import { rmSync, existsSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createTestDb, teardown } from "./smoke-pg";
 
 const PORT = 5607;
-const DB_PATH = "/tmp/bc-smoke-tbank.db";
+const NAME = "tbank-routes";
+let DB_URL = "";
+let server: ChildProcess;
 const BASE = `http://127.0.0.1:${PORT}`;
 
-for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
-  if (existsSync(f)) rmSync(f);
-}
 
 function assert(cond: unknown, msg: string) {
   if (!cond) {
@@ -40,7 +39,7 @@ function startServer(): ChildProcess {
         NODE_ENV: "development",
         API_ONLY: "1",
         PORT: String(PORT),
-        DATABASE_PATH: DB_PATH,
+        DATABASE_URL: DB_URL,
         SMS_PROVIDER: "",
         TBANK_TERMINAL_KEY: "",
         TBANK_PASSWORD: "",
@@ -77,9 +76,10 @@ async function stop(proc: ChildProcess) {
   });
 }
 
-const server = startServer();
 
 async function main() {
+  DB_URL = (await createTestDb(NAME)).url;
+  server = startServer();
   await waitForServer();
 
   // Config probe reports unconfigured.
@@ -148,6 +148,6 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await stop(server);
+    await teardown(NAME, server);
     setTimeout(() => process.exit(process.exitCode ?? 0), 300);
   });

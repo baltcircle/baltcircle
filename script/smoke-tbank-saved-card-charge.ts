@@ -13,8 +13,8 @@
 //
 // Run with:  npx tsx script/smoke-tbank-saved-card-charge.ts
 
-import { rmSync, existsSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createTestDb, teardown } from "./smoke-pg";
 import { createHash } from "node:crypto";
 import {
   generateSavedCardRideOrderId,
@@ -23,12 +23,11 @@ import {
 } from "../server/tbank";
 
 const PORT = 5616;
-const DB_PATH = "/tmp/bc-smoke-tbank-saved-card.db";
+const NAME = "tbank-saved-card-charge";
+let DB_URL = "";
+let server: ChildProcess;
 const BASE = `http://127.0.0.1:${PORT}`;
 
-for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
-  if (existsSync(f)) rmSync(f);
-}
 
 function assert(cond: unknown, msg: string) {
   if (!cond) {
@@ -100,7 +99,7 @@ function startServer(): ChildProcess {
         NODE_ENV: "development",
         API_ONLY: "1",
         PORT: String(PORT),
-        DATABASE_PATH: DB_PATH,
+        DATABASE_URL: DB_URL,
         SMS_PROVIDER: "",
         TBANK_TERMINAL_KEY: "",
         TBANK_PASSWORD: "",
@@ -138,9 +137,10 @@ async function stop(proc: ChildProcess) {
 }
 
 const ROUTE = "/api/payments/tbank/ride/charge-saved-card";
-const server = startServer();
 
 async function main() {
+  DB_URL = (await createTestDb(NAME)).url;
+  server = startServer();
   await waitForServer();
 
   // charge-saved-card without a session -> 401 (registered-only).
@@ -211,6 +211,6 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await stop(server);
+    await teardown(NAME, server);
     setTimeout(() => process.exit(process.exitCode ?? 0), 300);
   });

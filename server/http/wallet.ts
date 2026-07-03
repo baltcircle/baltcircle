@@ -39,14 +39,14 @@ import {
 
 export function registerWalletRoutes(app: Express): void {
   // -------------- Wallet / Payments --------------
-  app.get("/api/wallet", requireAuth, (req, res) => res.json(storage.getWallet(riderId(req))));
-  app.post("/api/wallet/topup", requireAuth, (req, res) => {
+  app.get("/api/wallet", requireAuth, async (req, res) => res.json(await storage.getWallet(riderId(req))));
+  app.post("/api/wallet/topup", requireAuth, async (req, res) => {
     const schema = z.object({ amount: z.number().positive().max(50000) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-    res.json(storage.topUp(riderId(req), Math.round(parsed.data.amount * 100)));
+    res.json(await storage.topUp(riderId(req), Math.round(parsed.data.amount * 100)));
   });
-  app.post("/api/wallet/tariff", requireAuth, (req, res) => {
+  app.post("/api/wallet/tariff", requireAuth, async (req, res) => {
     const schema = z.object({
       tariff: z.enum(["h1", "h2", "h3"]),
     });
@@ -57,11 +57,11 @@ export function registerWalletRoutes(app: Express): void {
     if (!tariffDef) return res.status(400).json({ error: "Unknown tariff" });
     const durationMs = tariffDef.durationHours * 60 * 60 * 1000;
     const priceKopecks = tariffPriceKopecks(tariffDef);
-    const w = storage.getWallet(riderId(req));
+    const w = await storage.getWallet(riderId(req));
     if (w.balance < priceKopecks) {
       return res.status(400).json({ error: "Недостаточно средств на балансе" });
     }
-    res.json(storage.purchaseTariff(riderId(req), parsed.data.tariff, priceKopecks, durationMs));
+    res.json(await storage.purchaseTariff(riderId(req), parsed.data.tariff, priceKopecks, durationMs));
   });
-  app.get("/api/payments", requireAuth, (req, res) => res.json(storage.listPayments(riderId(req))));
+  app.get("/api/payments", requireAuth, async (req, res) => res.json(await storage.listPayments(riderId(req))));
 }

@@ -41,34 +41,34 @@ export function registerMapRoutes(app: Express): void {
   // -------------- Map objects (operator-drawn routes/zones) --------------
   // Public read returns only active objects so inactive ones never render on the
   // customer map. The editor reads /api/admin/map-objects for the full list.
-  app.get("/api/map-objects", (_req, res) => res.json(storage.listMapObjects({ activeOnly: true })));
-  app.get("/api/admin/map-objects", requireRoleWhenConfigured(), (_req, res) =>
-    res.json(storage.listMapObjects()),
+  app.get("/api/map-objects", async (_req, res) => res.json(await storage.listMapObjects({ activeOnly: true })));
+  app.get("/api/admin/map-objects", requireRoleWhenConfigured(), async (_req, res) =>
+    res.json(await storage.listMapObjects()),
   );
-  app.post("/api/map-objects", requireRoleWhenConfigured(), (req, res) => {
+  app.post("/api/map-objects", requireRoleWhenConfigured(), async (req, res) => {
     const parsed = insertMapObjectSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-    res.json(storage.createMapObject(parsed.data));
+    res.json(await storage.createMapObject(parsed.data));
   });
-  app.patch("/api/map-objects/:id", requireRoleWhenConfigured(), (req, res) => {
+  app.patch("/api/map-objects/:id", requireRoleWhenConfigured(), async (req, res) => {
     const parsed = updateMapObjectSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-    const obj = storage.setMapObjectActive(Number(req.params.id), parsed.data.active);
+    const obj = await storage.setMapObjectActive(Number(req.params.id), parsed.data.active);
     if (!obj) return res.status(404).json({ error: "Объект не найден" });
     res.json(obj);
   });
-  app.delete("/api/map-objects/:id", requireRoleWhenConfigured(), (req, res) => {
-    const ok = storage.deleteMapObject(Number(req.params.id));
+  app.delete("/api/map-objects/:id", requireRoleWhenConfigured(), async (req, res) => {
+    const ok = await storage.deleteMapObject(Number(req.params.id));
     if (!ok) return res.status(404).json({ error: "Объект не найден" });
     res.json({ ok: true });
   });
 
   // -------------- Analytics --------------
-  app.get("/api/analytics", (_req, res) => res.json(storage.analytics()));
+  app.get("/api/analytics", async (_req, res) => res.json(await storage.analytics()));
 
   // Period-scoped analytics for the admin "Аналитика v1" page. Staff-only.
   // `from`/`to` are unix-ms bounds (inclusive); defaults to the last 30 days.
-  app.get("/api/admin/analytics", requireRole("operator", "admin"), (req, res) => {
+  app.get("/api/admin/analytics", requireRole("operator", "admin"), async (req, res) => {
     const now = Date.now();
     const parseTs = (v: unknown, fallback: number) => {
       const n = Number(v);
@@ -77,6 +77,6 @@ export function registerMapRoutes(app: Express): void {
     const from = parseTs(req.query.from, now - 30 * 24 * 60 * 60 * 1000);
     const to = parseTs(req.query.to, now);
     if (from > to) return res.status(400).json({ error: "Некорректный диапазон дат" });
-    res.json(storage.adminAnalytics({ from, to }));
+    res.json(await storage.adminAnalytics({ from, to }));
   });
 }

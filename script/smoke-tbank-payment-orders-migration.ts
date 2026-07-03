@@ -1,29 +1,18 @@
-// Smoke test for the in-place payment_orders migration (ride pay-then-start).
+// Smoke test for the payment_orders T-Bank Init metadata columns on Postgres
+// (ride pay-then-start) and the storage methods that create/update ride orders.
 //
-// Reproduces the production bug: a legacy DB whose payment_orders table predates
-// the T-Bank Init metadata columns (no payment_id, payment_url, ride_id, error
-// fields, ...). Inserting a ride payment order on such a DB failed with
-//   "table payment_orders has no column named payment_id".
-//
-// The test:
-//   1. Pre-creates a throwaway DB with a LEGACY payment_orders table that has
-//      only the original core columns (no payment_id et al.).
-//   2. Imports the storage module (which runs migratePaymentOrdersTable() on
-//      load) against that DB via DATABASE_PATH.
-//   3. Asserts the migration added the missing columns and that creating +
-//      updating a ride payment order (the failing production path) now works,
-//      while the pre-existing legacy row is preserved.
+// On Postgres the schema is created in full by bootstrap (no in-place legacy
+// migration is needed). This test therefore:
+//   1. Boots bootstrap against a fresh throwaway Postgres DB.
+//   2. Asserts the payment_orders table already HAS every Init-metadata column.
+//   3. Verifies the previously failing production path (create + update a ride
+//      payment order, plus a saved-card order) now works end to end.
 //
 // Run with:  npx tsx script/smoke-tbank-payment-orders-migration.ts
 
-import { rmSync, existsSync } from "node:fs";
-import Database from "better-sqlite3";
+import { createTestDb, dropTestDb, openTestDb } from "./smoke-pg";
 
-const DB_PATH = "/tmp/bc-smoke-payment-orders-migration.db";
-
-for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
-  if (existsSync(f)) rmSync(f);
-}
+const NAME = "tbank-payment-orders-migration";
 
 function assert(cond: unknown, msg: string) {
   if (!cond) {
@@ -35,40 +24,16 @@ function assert(cond: unknown, msg: string) {
 }
 
 async function main() {
-  // ---- 1. Seed a legacy payment_orders table (pre-Init-metadata columns) ----
-  const seed = new Database(DB_PATH);
-  seed.exec(`
-    CREATE TABLE payment_orders (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      order_id TEXT NOT NULL UNIQUE,
-      user_id TEXT NOT NULL,
-      bike_id TEXT NOT NULL,
-      tariff_id TEXT NOT NULL,
-      amount_kopecks INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-  `);
-  // A pre-existing legacy row that must survive the migration untouched.
-  seed.prepare(
-    "INSERT INTO payment_orders (order_id, user_id, bike_id, tariff_id, amount_kopecks, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run("LEGACY-ORDER-1", "legacy-user", "BC-001", "h1", 12000, Date.now());
+  // ---- 1. Fresh Postgres DB, boot storage (runs bootstrap) ----
+  const { url } = await createTestDb(NAME);
+  process.env.DATABASE_URL = url;
+  const { storage, bootstrapReady, pool } = await import("../server/storage");
+  await bootstrapReady;
 
-  const legacyCols = (seed.prepare("PRAGMA table_info(payment_orders)").all() as { name: string }[]).map(
-    (c) => c.name,
-  );
-  assert(!legacyCols.includes("payment_id"), "legacy table starts WITHOUT a payment_id column");
-  seed.close();
-
-  // ---- 2. Import storage against the legacy DB (runs the migration) ----
-  process.env.DATABASE_PATH = DB_PATH;
-  const { storage } = await import("../server/storage");
-
-  // ---- 3. The migration added the missing columns ----
-  const check = new Database(DB_PATH, { readonly: true });
-  const cols = (check.prepare("PRAGMA table_info(payment_orders)").all() as { name: string }[]).map(
-    (c) => c.name,
-  );
-  check.close();
+  // ---- 2. The Init-metadata columns exist from the start ----
+  const check = await openTestDb(url);
+  const cols = await check.columns("payment_orders");
+  await check.close();
   for (const col of [
     "payment_id",
     "payment_url",
@@ -82,16 +47,21 @@ async function main() {
     "last_error_details",
     "updated_at",
   ]) {
-    assert(cols.includes(col), `migration added the "${col}" column`);
+    assert(cols.includes(col), `payment_orders has the "${col}" column`);
   }
 
-  // The pre-existing legacy row survived the ALTERs.
-  const legacy = storage.getRidePaymentOrder("LEGACY-ORDER-1");
+  // ---- 3. Seed a pre-existing legacy row and confirm it reads back ----
+  await pool.query(
+    `INSERT INTO payment_orders (order_id, user_id, bike_id, tariff_id, amount_kopecks, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    ["LEGACY-ORDER-1", "legacy-user", "BC-001", "h1", 12000, Date.now()],
+  );
+  const legacy = await storage.getRidePaymentOrder("LEGACY-ORDER-1");
   assert(!!legacy, "pre-existing legacy payment order row is preserved");
   assert(legacy!.userId === "legacy-user", "legacy row keeps its original user_id");
 
   // ---- 4. The failing production path now succeeds ----
-  const order = storage.createRidePaymentOrder({
+  const order = await storage.createRidePaymentOrder({
     orderId: "SMOKE-ORDER-1",
     userId: "smoke-user",
     bikeId: "BC-002",
@@ -102,7 +72,7 @@ async function main() {
   assert(order.status === "pending", "new order defaults to status=pending");
 
   // This is the exact write that threw "no column named payment_id" in prod.
-  const updated = storage.updateRidePaymentOrder(order.id, {
+  const updated = await storage.updateRidePaymentOrder(order.id, {
     paymentId: "999888777",
     paymentUrl: "https://securepay.tinkoff.ru/abc",
   });
@@ -110,7 +80,7 @@ async function main() {
   assert(updated?.paymentUrl === "https://securepay.tinkoff.ru/abc", "updateRidePaymentOrder persists payment_url");
 
   // ---- 5. A saved-card order records its source + RebillId reference ----
-  const savedOrder = storage.createRidePaymentOrder({
+  const savedOrder = await storage.createRidePaymentOrder({
     orderId: "SMOKE-ORDER-SAVED-1",
     userId: "smoke-user",
     bikeId: "BC-003",
@@ -126,7 +96,7 @@ async function main() {
   // The hosted path keeps defaulting to source=hosted.
   assert(order.source === "hosted", "hosted order defaults to source=hosted");
 
-  if (!process.exitCode) console.log("\nAll payment_orders migration smoke checks passed.");
+  if (!process.exitCode) console.log("\nAll payment_orders metadata smoke checks passed.");
 }
 
 main()
@@ -134,6 +104,13 @@ main()
     console.error(err);
     process.exitCode = 1;
   })
-  .finally(() => {
+  .finally(async () => {
+    try {
+      const { pool } = await import("../server/storage");
+      await pool.end();
+    } catch {
+      // ignore
+    }
+    await dropTestDb(NAME);
     setTimeout(() => process.exit(process.exitCode ?? 0), 100);
   });

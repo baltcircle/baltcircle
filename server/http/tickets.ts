@@ -39,15 +39,15 @@ import {
 
 export function registerSupportTicketRoutes(app: Express): void {
   // -------------- Support tickets (rider help requests) --------------
-  app.get("/api/support/tickets", requireAuth, (req, res) => {
-    res.json(storage.listSupportTickets(riderId(req)));
+  app.get("/api/support/tickets", requireAuth, async (req, res) => {
+    res.json(await storage.listSupportTickets(riderId(req)));
   });
-  app.post("/api/support/tickets", requireAuth, (req, res) => {
+  app.post("/api/support/tickets", requireAuth, async (req, res) => {
     const parsed = createSupportTicketSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
       return res.status(400).json({ error: msg });
     }
-    res.status(201).json(storage.createSupportTicket({ userId: riderId(req), ...parsed.data }));
+    res.status(201).json(await storage.createSupportTicket({ userId: riderId(req), ...parsed.data }));
   });
 }

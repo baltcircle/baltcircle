@@ -42,16 +42,16 @@ export function registerPaymentRoutes(app: Express): void {
   // Per-user linked payment methods. No card numbers / CVC are ever accepted or
   // stored — only the method kind, a masked label, and a status. No real
   // acquiring is performed.
-  app.get("/api/payment-methods", requireAuth, (req, res) => {
-    res.json(storage.listPaymentMethods(riderId(req)));
+  app.get("/api/payment-methods", requireAuth, async (req, res) => {
+    res.json(await storage.listPaymentMethods(riderId(req)));
   });
-  app.post("/api/payment-methods", requireAuth, (req, res) => {
+  app.post("/api/payment-methods", requireAuth, async (req, res) => {
     const parsed = linkPaymentMethodSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-    res.status(201).json(storage.linkPaymentMethod(riderId(req), parsed.data.type));
+    res.status(201).json(await storage.linkPaymentMethod(riderId(req), parsed.data.type));
   });
-  app.delete("/api/payment-methods/:id", requireAuth, (req, res) => {
-    const ok = storage.unlinkPaymentMethod(riderId(req), Number(req.params.id));
+  app.delete("/api/payment-methods/:id", requireAuth, async (req, res) => {
+    const ok = await storage.unlinkPaymentMethod(riderId(req), Number(req.params.id));
     if (!ok) return res.status(404).json({ error: "Способ оплаты не найден" });
     res.json({ ok: true });
   });
@@ -64,7 +64,7 @@ export function registerPaymentRoutes(app: Express): void {
 
   // Public config probe so the client can show "Платежи настраиваются" instead
   // of offering a flow that will 503. Never exposes the password/terminal key.
-  app.get("/api/payments/tbank/config", (_req, res) => {
+  app.get("/api/payments/tbank/config", async (_req, res) => {
     res.json({ configured: isTbankConfigured() });
   });
 
@@ -73,7 +73,7 @@ export function registerPaymentRoutes(app: Express): void {
   // key, a passwordHasDollar flag) — never the password or full terminal key. A
   // password whose leading `$` was stripped by shell/compose interpolation shows
   // up as an unexpectedly short passwordLength or passwordHasDollar=false here.
-  app.get("/api/payments/tbank/diagnostics", requireRole("admin"), (_req, res) => {
+  app.get("/api/payments/tbank/diagnostics", requireRole("admin"), async (_req, res) => {
     res.json(getTbankDiagnostics());
   });
 
@@ -84,7 +84,7 @@ export function registerPaymentRoutes(app: Express): void {
   app.post("/api/payments/tbank/add-card", paymentLimiter, async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
-    const user = storage.getUser(userId);
+    const user = await storage.getUser(userId);
     if (!user) return res.status(401).json({ error: "Требуется вход" });
 
     const cfg = getTbankConfig();
@@ -100,12 +100,12 @@ export function registerPaymentRoutes(app: Express): void {
         return void (await bindViaVerificationPayment(cfg, user.id, res));
       }
       // AddCard binds with NO charge — there is nothing to refund.
-      const method = storage.createPendingCardMethod({
+      const method = await storage.createPendingCardMethod({
         userId: user.id,
         customerKey: user.id,
         requestKey: typeof resp.RequestKey === "string" ? resp.RequestKey : undefined,
       });
-      storage.updatePaymentMethod(method.id, { refundStatus: "none" });
+      await storage.updatePaymentMethod(method.id, { refundStatus: "none" });
       res.json({ paymentUrl: resp.PaymentURL, method: "addcard" });
     } catch (err: any) {
       res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
@@ -123,7 +123,7 @@ export function registerPaymentRoutes(app: Express): void {
   app.post("/api/payments/tbank/bind-card-payment", paymentLimiter, async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
-    const user = storage.getUser(userId);
+    const user = await storage.getUser(userId);
     if (!user) return res.status(401).json({ error: "Требуется вход" });
 
     const cfg = getTbankConfig();
@@ -140,7 +140,7 @@ export function registerPaymentRoutes(app: Express): void {
   app.post("/api/payments/tbank/bind-card", paymentLimiter, async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
-    const user = storage.getUser(userId);
+    const user = await storage.getUser(userId);
     if (!user) return res.status(401).json({ error: "Требуется вход" });
 
     const cfg = getTbankConfig();
@@ -155,12 +155,12 @@ export function registerPaymentRoutes(app: Express): void {
           log(`[tbank] AddCard unavailable (${resp.ErrorCode ?? "?"}: ${resp.Message ?? "?"}), falling back to 1 ₽ verification payment`, "tbank");
           return void (await bindViaVerificationPayment(cfg, user.id, res));
         }
-        const method = storage.createPendingCardMethod({
+        const method = await storage.createPendingCardMethod({
           userId: user.id,
           customerKey: user.id,
           requestKey: typeof resp.RequestKey === "string" ? resp.RequestKey : undefined,
         });
-        storage.updatePaymentMethod(method.id, { refundStatus: "none" });
+        await storage.updatePaymentMethod(method.id, { refundStatus: "none" });
         return res.json({ paymentUrl: resp.PaymentURL, method: "addcard" });
       } catch (err: any) {
         return res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
@@ -183,7 +183,7 @@ export function registerPaymentRoutes(app: Express): void {
   app.post("/api/payments/tbank/bind-sbp", paymentLimiter, async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
-    const user = storage.getUser(userId);
+    const user = await storage.getUser(userId);
     if (!user) return res.status(401).json({ error: "Требуется вход" });
 
     const cfg = getTbankConfig();
@@ -209,7 +209,7 @@ export function registerPaymentRoutes(app: Express): void {
           error: "Платёжный сервис не вернул данные для QR. Попробуйте позже.",
         });
       }
-      const method = storage.createPendingSbpBinding({
+      const method = await storage.createPendingSbpBinding({
         userId: user.id,
         customerKey: user.id,
         orderId,
@@ -236,10 +236,10 @@ export function registerPaymentRoutes(app: Express): void {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
 
-    const method = storage.getPaymentMethod(Number(req.params.paymentMethodId));
+    const method = await storage.getPaymentMethod(Number(req.params.paymentMethodId));
     if (!method) return res.status(404).json({ error: "Способ оплаты не найден" });
 
-    const actor = storage.getUser(userId);
+    const actor = await storage.getUser(userId);
     const isStaff = actor?.role === "admin" || actor?.role === "operator";
     if (method.userId !== userId && !isStaff) {
       return res.status(404).json({ error: "Способ оплаты не найден" });
@@ -275,7 +275,7 @@ export function registerPaymentRoutes(app: Express): void {
     const outcome = classifyAccountBinding({ status, accountToken });
 
     if (outcome === "active") {
-      const updated = storage.updatePaymentMethod(method.id, {
+      const updated = await storage.updatePaymentMethod(method.id, {
         status: "active",
         accountToken: accountToken || method.accountToken,
         label: bankName ? `СБП · ${bankName}` : "СБП",
@@ -286,14 +286,14 @@ export function registerPaymentRoutes(app: Express): void {
       return res.json(updated);
     }
     if (outcome === "failed") {
-      const updated = storage.updatePaymentMethod(method.id, {
+      const updated = await storage.updatePaymentMethod(method.id, {
         status: "failed",
         ...bindingErrorPatch(resp),
       });
       return res.json(updated);
     }
     // Still pending — the webhook may yet arrive; report unchanged.
-    const updated = storage.updatePaymentMethod(method.id, { status: "pending" });
+    const updated = await storage.updatePaymentMethod(method.id, { status: "pending" });
     return res.json(updated);
   });
 
@@ -307,7 +307,7 @@ export function registerPaymentRoutes(app: Express): void {
   app.post("/api/payments/tbank/ride/init", paymentLimiter, async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
-    const user = storage.getUser(userId);
+    const user = await storage.getUser(userId);
     if (!user) return res.status(401).json({ error: "Требуется вход" });
     if (user.blockedAt) {
       return res.status(403).json({ error: "Аккаунт заблокирован. Обратитесь в поддержку." });
@@ -319,12 +319,12 @@ export function registerPaymentRoutes(app: Express): void {
       return res.status(400).json({ error: msg });
     }
 
-    const bike = storage.getBike(parsed.data.bikeId);
+    const bike = await storage.getBike(parsed.data.bikeId);
     if (!bike) return res.status(404).json({ error: "Велосипед не найден" });
     if (bike.status !== "available" && bike.status !== "reserved") {
       return res.status(409).json({ error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` });
     }
-    if (storage.getActiveRide(userId)) {
+    if (await storage.getActiveRide(userId)) {
       return res.status(409).json({ error: "У вас уже есть активная поездка" });
     }
 
@@ -352,14 +352,14 @@ export function registerPaymentRoutes(app: Express): void {
         return res.status(502).json(tbankErrorBody(resp));
       }
       try {
-        const order = storage.createRidePaymentOrder({
+        const order = await storage.createRidePaymentOrder({
           orderId,
           userId: user.id,
           bikeId: bike.id,
           tariffId: tariffDef.id,
           amountKopecks,
         });
-        storage.updateRidePaymentOrder(order.id, {
+        await storage.updateRidePaymentOrder(order.id, {
           paymentId: resp.PaymentId != null ? String(resp.PaymentId) : null,
           paymentUrl: resp.PaymentURL,
         });
@@ -387,7 +387,7 @@ export function registerPaymentRoutes(app: Express): void {
   app.post("/api/payments/tbank/ride/charge-saved-card", paymentLimiter, async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
-    const user = storage.getUser(userId);
+    const user = await storage.getUser(userId);
     if (!user) return res.status(401).json({ error: "Требуется вход" });
     if (user.blockedAt) {
       return res.status(403).json({ error: "Аккаунт заблокирован. Обратитесь в поддержку." });
@@ -399,12 +399,12 @@ export function registerPaymentRoutes(app: Express): void {
       return res.status(400).json({ error: msg });
     }
 
-    const bike = storage.getBike(parsed.data.bikeId);
+    const bike = await storage.getBike(parsed.data.bikeId);
     if (!bike) return res.status(404).json({ error: "Велосипед не найден" });
     if (bike.status !== "available" && bike.status !== "reserved") {
       return res.status(409).json({ error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` });
     }
-    if (storage.getActiveRide(userId)) {
+    if (await storage.getActiveRide(userId)) {
       return res.status(409).json({ error: "У вас уже есть активная поездка" });
     }
 
@@ -417,7 +417,7 @@ export function registerPaymentRoutes(app: Express): void {
 
     // Resolve a usable saved card (active T-Bank method with a RebillId). When
     // none exists the client should fall back to the hosted payment flow.
-    const card = storage.getActiveSavedCard(userId, parsed.data.paymentMethodId);
+    const card = await storage.getActiveSavedCard(userId, parsed.data.paymentMethodId);
     if (!card || !card.rebillId) {
       return res.status(409).json({ error: "Нет сохранённой карты для списания. Оплатите другой картой." });
     }
@@ -442,7 +442,7 @@ export function registerPaymentRoutes(app: Express): void {
       // races our synchronous response can correlate by OrderId.
       let order: PaymentOrder;
       try {
-        order = storage.createRidePaymentOrder({
+        order = await storage.createRidePaymentOrder({
           orderId,
           userId: user.id,
           bikeId: bike.id,
@@ -452,7 +452,7 @@ export function registerPaymentRoutes(app: Express): void {
           paymentMethodId: card.id,
           rebillId: card.rebillId,
         });
-        storage.updateRidePaymentOrder(order.id, { paymentId });
+        await storage.updateRidePaymentOrder(order.id, { paymentId });
       } catch (dbErr) {
         log(`[tbank] failed to persist saved-card order: ${(dbErr as Error)?.message ?? "?"}`, "tbank");
         return res.status(500).json({ error: "Не удалось сохранить заказ оплаты. Попробуйте позже." });
@@ -466,7 +466,7 @@ export function registerPaymentRoutes(app: Express): void {
       if (outcome === "paid") {
         // Start the ride now (guarded — a racing webhook cannot double-start).
         // Shared with the webhook path via startRideForPaidOrder().
-        const started = startRideForPaidOrder(order, paymentId);
+        const started = await startRideForPaidOrder(order, paymentId);
         if (!started.ok) {
           return res.status(409).json({ error: started.reason });
         }
@@ -474,7 +474,7 @@ export function registerPaymentRoutes(app: Express): void {
       }
 
       if (outcome === "failed") {
-        storage.updateRidePaymentOrder(order.id, {
+        await storage.updateRidePaymentOrder(order.id, {
           status: "failed",
           paymentId,
           ...bindingErrorPatch(charge),
@@ -494,10 +494,10 @@ export function registerPaymentRoutes(app: Express): void {
   // Status of a ride payment order for the post-redirect result page. The rider
   // may only read their OWN order. Returns the lifecycle status and, once the
   // ride has started, its id so the client can route into the active ride.
-  app.get("/api/payments/tbank/ride/:orderId", (req, res) => {
+  app.get("/api/payments/tbank/ride/:orderId", async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
-    const order = storage.getRidePaymentOrder(req.params.orderId);
+    const order = await storage.getRidePaymentOrder(req.params.orderId);
     if (!order || order.userId !== userId) {
       return res.status(404).json({ error: "Заказ не найден" });
     }
@@ -522,7 +522,7 @@ export function registerPaymentRoutes(app: Express): void {
   // updates here with a Token we verify against the terminal password. We must
   // always answer "OK" (HTTP 200) once the signature is valid, otherwise T-Bank
   // retries indefinitely. An invalid/missing token is rejected with 403.
-  app.post("/api/payments/tbank/notification", (req, res) => {
+  app.post("/api/payments/tbank/notification", async (req, res) => {
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются." });
 
@@ -555,10 +555,10 @@ export function registerPaymentRoutes(app: Express): void {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
 
-    const method = storage.getPaymentMethod(Number(req.params.id));
+    const method = await storage.getPaymentMethod(Number(req.params.id));
     if (!method) return res.status(404).json({ error: "Способ оплаты не найден" });
 
-    const actor = storage.getUser(userId);
+    const actor = await storage.getUser(userId);
     const isStaff = actor?.role === "admin" || actor?.role === "operator";
     if (method.userId !== userId && !isStaff) {
       return res.status(404).json({ error: "Способ оплаты не найден" });
@@ -595,7 +595,7 @@ export function registerPaymentRoutes(app: Express): void {
     const outcome = classifyCardBinding({ status, cardId });
 
     if (outcome === "active") {
-      const updated = storage.updatePaymentMethod(method.id, {
+      const updated = await storage.updatePaymentMethod(method.id, {
         status: "active",
         cardId: cardId || method.cardId,
         rebillId: rebillId || method.rebillId,
@@ -608,14 +608,14 @@ export function registerPaymentRoutes(app: Express): void {
       return res.json(updated);
     }
     if (outcome === "failed") {
-      const updated = storage.updatePaymentMethod(method.id, {
+      const updated = await storage.updatePaymentMethod(method.id, {
         status: "failed",
         ...bindingErrorPatch(resp),
       });
       return res.json(updated);
     }
     // Still pending — record any interim status detail and report unchanged.
-    const updated = storage.updatePaymentMethod(method.id, { status: "pending" });
+    const updated = await storage.updatePaymentMethod(method.id, { status: "pending" });
     return res.json(updated);
   });
 
@@ -632,10 +632,10 @@ export function registerPaymentRoutes(app: Express): void {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
 
-    const method = storage.getPaymentMethod(Number(req.params.paymentMethodId));
+    const method = await storage.getPaymentMethod(Number(req.params.paymentMethodId));
     if (!method) return res.status(404).json({ error: "Способ оплаты не найден" });
 
-    const actor = storage.getUser(userId);
+    const actor = await storage.getUser(userId);
     const isStaff = actor?.role === "admin" || actor?.role === "operator";
     if (method.userId !== userId && !isStaff) {
       return res.status(404).json({ error: "Способ оплаты не найден" });
@@ -673,7 +673,7 @@ export function registerPaymentRoutes(app: Express): void {
     const outcome = classifyInitBinding({ status, rebillId });
 
     if (outcome === "active") {
-      const updated = storage.updatePaymentMethod(method.id, {
+      const updated = await storage.updatePaymentMethod(method.id, {
         status: "active",
         rebillId: rebillId || method.rebillId,
         cardId: cardId || method.cardId,
@@ -690,14 +690,14 @@ export function registerPaymentRoutes(app: Express): void {
       return res.json(updated);
     }
     if (outcome === "failed") {
-      const updated = storage.updatePaymentMethod(method.id, {
+      const updated = await storage.updatePaymentMethod(method.id, {
         status: "failed",
         ...bindingErrorPatch(resp),
       });
       return res.json(updated);
     }
     // Still pending — the webhook may yet arrive; report unchanged.
-    const updated = storage.updatePaymentMethod(method.id, { status: "pending" });
+    const updated = await storage.updatePaymentMethod(method.id, { status: "pending" });
     return res.json(updated);
   });
 }

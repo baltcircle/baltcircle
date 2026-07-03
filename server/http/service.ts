@@ -43,34 +43,34 @@ export function registerServiceTicketRoutes(app: Express): void {
   // List is open (operator UI reads it freely); all mutations are staff-gated
   // when ADMIN_PHONE_NUMBERS is configured. Service tickets are the mechanic's
   // core surface, so mechanic/operator/admin may create, update and comment.
-  app.get("/api/tickets", (_req, res) => res.json(storage.listTickets()));
-  app.get("/api/tickets/:id", (req, res) => {
-    const t = storage.getTicket(Number(req.params.id));
+  app.get("/api/tickets", async (_req, res) => res.json(await storage.listTickets()));
+  app.get("/api/tickets/:id", async (req, res) => {
+    const t = await storage.getTicket(Number(req.params.id));
     if (!t) return res.status(404).json({ error: "Заявка не найдена" });
     res.json(t);
   });
-  app.post("/api/tickets", requireServiceStaff, (req, res) => {
+  app.post("/api/tickets", requireServiceStaff, async (req, res) => {
     const parsed = createTicketSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Проверьте данные" });
     }
-    res.status(201).json(storage.createTicket(parsed.data));
+    res.status(201).json(await storage.createTicket(parsed.data));
   });
-  app.patch("/api/tickets/:id", requireServiceStaff, (req, res) => {
+  app.patch("/api/tickets/:id", requireServiceStaff, async (req, res) => {
     const parsed = updateTicketSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Проверьте данные" });
     }
-    const t = storage.updateTicket(Number(req.params.id), parsed.data, actorName(req));
+    const t = await storage.updateTicket(Number(req.params.id), parsed.data, (await actorName(req)));
     if (!t) return res.status(404).json({ error: "Заявка не найдена" });
     res.json(t);
   });
-  app.post("/api/tickets/:id/comments", requireServiceStaff, (req, res) => {
+  app.post("/api/tickets/:id/comments", requireServiceStaff, async (req, res) => {
     const parsed = addTicketCommentSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Проверьте данные" });
     }
-    const t = storage.addTicketComment(Number(req.params.id), actorName(req), parsed.data.body);
+    const t = await storage.addTicketComment(Number(req.params.id), (await actorName(req)), parsed.data.body);
     if (!t) return res.status(404).json({ error: "Заявка не найдена" });
     res.status(201).json(t);
   });
