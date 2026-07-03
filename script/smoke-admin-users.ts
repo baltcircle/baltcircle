@@ -155,7 +155,7 @@ async function main() {
   res = await fetch(`${BASE}/api/rides/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json", cookie: rider.cookie },
-    body: JSON.stringify({ bikeId }),
+    body: JSON.stringify({ bikeId, tariff: "h1" }),
   });
   assert(res.status === 403, "blocked account cannot start a ride (403)");
 
@@ -169,10 +169,17 @@ async function main() {
   const unblocked = await res.json();
   assert(unblocked.blockedAt === null, "blockedAt cleared on unblock");
 
+  // Internal start debits the hourly tariff price up front, so fund the wallet.
+  res = await fetch(`${BASE}/api/wallet/topup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", cookie: rider.cookie },
+    body: JSON.stringify({ amount: 1000 }),
+  });
+  assert(res.status === 200, "rider tops up wallet before starting (200)");
   res = await fetch(`${BASE}/api/rides/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json", cookie: rider.cookie },
-    body: JSON.stringify({ bikeId }),
+    body: JSON.stringify({ bikeId, tariff: "h1" }),
   });
   assert(res.status === 200, "unblocked account can start a ride (200)");
 

@@ -113,11 +113,16 @@ function requireRoleWhenConfigured(...roles: UserRole[]) {
 // so they get a looser limit. The T-Bank notification webhook is intentionally
 // NOT limited: it is server-to-server from the bank and dropping it would lose
 // payment confirmations.
+// Set DISABLE_RATE_LIMIT=1 to bypass IP rate limiting. Used only by smoke tests,
+// which drive many registrations/payments from a single IP and would otherwise
+// trip the production limits. Never set in production.
+const rateLimitDisabled = () => process.env.DISABLE_RATE_LIMIT === "1";
 const otpLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
   max: 5, // 5 OTP requests per IP per window (start + verify share this)
   standardHeaders: true,
   legacyHeaders: false,
+  skip: rateLimitDisabled,
   message: { error: "Слишком много попыток. Попробуйте позже." },
 });
 const paymentLimiter = rateLimit({
@@ -125,6 +130,7 @@ const paymentLimiter = rateLimit({
   max: 20, // 20 payment-init calls per IP per window
   standardHeaders: true,
   legacyHeaders: false,
+  skip: rateLimitDisabled,
   message: { error: "Слишком много запросов. Попробуйте позже." },
 });
 

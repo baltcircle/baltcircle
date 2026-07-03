@@ -55,31 +55,38 @@ delete process.env.SIGMASMS_API_BASE;
   assert(req.body.recipient === PHONE, "body.recipient is the +7 phone");
   assert(req.body.type === "sms", "body.type is \"sms\"");
   assert(req.body.payload.sender === "TakeRide", "default sender is TakeRide");
-  // TEMPORARY (SigmaSMS moderation test): SigmaSMS sends the fixed moderation
-  // test text, not the OTP message. The real OTP is still generated server-side.
+  // By default SigmaSMS sends the real OTP message (same text as SMS.RU).
   assert(
     req.body.payload.text === sigmaSmsText(CODE),
-    "body.payload.text is the SigmaSMS moderation test message",
+    "body.payload.text is the SigmaSMS message text",
   );
   assert(
-    req.body.payload.text !== otpMessage(CODE),
-    "SigmaSMS text is overridden, not the real OTP message",
+    req.body.payload.text === otpMessage(CODE),
+    "default SigmaSMS text is the real OTP message",
+  );
+  assert(
+    req.body.payload.text.includes(CODE),
+    "default SigmaSMS text contains the OTP code",
   );
 }
 
-// --- 1b. SigmaSMS message override (temporary moderation test) -------------
+// --- 1b. SIGMASMS_MESSAGE_TEMPLATE override with {code} substitution -------
 {
   delete process.env.SIGMASMS_MESSAGE_TEMPLATE;
   assert(
-    sigmaSmsText(CODE) ===
-      "Это тестовое сообщение.\nИзменённый текст будет отправлен на модерацию.",
-    "default SigmaSMS text is the moderation test message with a newline",
+    sigmaSmsText(CODE) === otpMessage(CODE),
+    "without a template, SigmaSMS text falls back to the real OTP message",
   );
-  assert(!sigmaSmsText(CODE).includes(CODE), "default SigmaSMS text does not contain the OTP code");
+  assert(sigmaSmsText(CODE).includes(CODE), "default SigmaSMS text contains the OTP code");
+  process.env.SIGMASMS_MESSAGE_TEMPLATE = "Your code: {code}";
+  assert(
+    sigmaSmsText(CODE) === `Your code: ${CODE}`,
+    "SIGMASMS_MESSAGE_TEMPLATE overrides the text and {code} is substituted",
+  );
   process.env.SIGMASMS_MESSAGE_TEMPLATE = "custom moderation text";
   assert(
     sigmaSmsText(CODE) === "custom moderation text",
-    "SIGMASMS_MESSAGE_TEMPLATE overrides the SigmaSMS text",
+    "SIGMASMS_MESSAGE_TEMPLATE without {code} is used verbatim",
   );
   delete process.env.SIGMASMS_MESSAGE_TEMPLATE;
 }

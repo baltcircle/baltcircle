@@ -112,7 +112,11 @@ async function main() {
   const bikes = await (await fetch(`${BASE}/api/bikes`)).json();
   const available = bikes.find((b: any) => b.status === "available");
   assert(!!available, "a seeded available bike exists to rent");
-  res = await j(rider.cookie, "POST", "/api/rides/start", { bikeId: available.id });
+  // Hourly prepaid model: internal start debits the tariff price at start,
+  // so the rider needs funds and must pick a valid hourly tariff (h1/h2/h3).
+  res = await j(rider.cookie, "POST", "/api/wallet/topup", { amount: 1000 });
+  assert(res.status === 200, "rider tops up wallet (200)");
+  res = await j(rider.cookie, "POST", "/api/rides/start", { bikeId: available.id, tariff: "h1" });
   assert(res.status === 200, "rider starts a ride (200)");
   const ride = await res.json();
   res = await j(admin.cookie, "POST", `/api/admin/rides/${ride.id}/end`, {});
