@@ -1,4 +1,5 @@
 import type { Express, Request, Response, NextFunction } from "express";
+import rateLimit from "express-rate-limit";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { storage } from "./storage";
@@ -83,25 +84,55 @@ function requireRole(...roles: UserRole[]) {
   };
 }
 
-// Guard for operator-facing mutation endpoints. To avoid locking the operator
-// UI (map editor, tickets) out of local dev — where no admin exists — the guard
-// is only enforced when ADMIN_PHONE_NUMBERS is configured. With the env set
-// (staging/prod) it requires one of the given roles; without it the endpoints
-// stay open so the MVP map editor remains testable. Defaults to operator/admin;
-// service endpoints pass "mechanic" too so service staff can work tickets.
+// Guard for operator-facing mutation endpoints (map editor, tickets, bikes,
+// parkings). Enforcement rules:
+//   - In PRODUCTION the role check is ALWAYS enforced, even if
+//     ADMIN_PHONE_NUMBERS is unset. A missing/misconfigured env var must never
+//     silently open staff mutations to the public.
+//   - Outside production the guard is enforced only when ADMIN_PHONE_NUMBERS is
+//     set, so local dev — where no admin account exists — can still exercise
+//     the operator UI without being locked out.
+// Defaults to operator/admin; service endpoints pass "mechanic" too so service
+// staff can work tickets.
 function requireRoleWhenConfigured(...roles: UserRole[]) {
   const guard = requireRole(...(roles.length ? roles : (["operator", "admin"] as UserRole[])));
   return (req: Request, res: Response, next: NextFunction) => {
-    if (!process.env.ADMIN_PHONE_NUMBERS) return next();
+    const isProd = process.env.NODE_ENV === "production";
+    if (!isProd && !process.env.ADMIN_PHONE_NUMBERS) return next();
     return guard(req, res, next);
   };
 }
+
+// --- Rate limiters ---------------------------------------------------------
+// We sit behind nginx with `trust proxy` set, so the limiter keys on the real
+// client IP (first X-Forwarded-For hop). Standard headers on, legacy off.
+//
+// OTP start dispatches a REAL SMS (direct cost) and OTP verify is a code
+// guess — both are prime abuse targets, so they get a tight limit. Payment
+// init endpoints redirect to the acquirer; abuse there spams order creation,
+// so they get a looser limit. The T-Bank notification webhook is intentionally
+// NOT limited: it is server-to-server from the bank and dropping it would lose
+// payment confirmations.
+const otpLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 5, // 5 OTP requests per IP per window (start + verify share this)
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Слишком много попыток. Попробуйте позже." },
+});
+const paymentLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 20, // 20 payment-init calls per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Слишком много запросов. Попробуйте позже." },
+});
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   // -------------- Rider registration (SMS OTP) --------------
   // Step 1: rider submits name + phone + consent. We generate a code, persist
   // its hash, and dispatch it by SMS. No session is created yet.
-  app.post("/api/auth/otp/start", async (req, res) => {
+  app.post("/api/auth/otp/start", otpLimiter, async (req, res) => {
     const parsed = otpStartSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
@@ -137,7 +168,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // Step 2: rider submits the code. On success we create/activate the rider and
   // bind the session, allowing rental/scan.
-  app.post("/api/auth/otp/verify", (req, res) => {
+  app.post("/api/auth/otp/verify", otpLimiter, (req, res) => {
     const parsed = otpVerifySchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
@@ -328,7 +359,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // CustomerKey = user.id and returns the PaymentURL the client opens. A pending
   // payment-method row is created so the UI can show "привязывается…" until the
   // notification confirms it.
-  app.post("/api/payments/tbank/add-card", async (req, res) => {
+  app.post("/api/payments/tbank/add-card", paymentLimiter, async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
     const user = storage.getUser(userId);
@@ -367,7 +398,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // RebillId the notification webhook activates the method. Returns the
   // PaymentURL the client opens. A pending payment-method row (purpose=
   // card_binding) is created so the UI can show "привязывается…".
-  app.post("/api/payments/tbank/bind-card-payment", async (req, res) => {
+  app.post("/api/payments/tbank/bind-card-payment", paymentLimiter, async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
     const user = storage.getUser(userId);
@@ -384,7 +415,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // first (and auto-falls-back to the 1 ₽ payment if the terminal rejects it);
   // "payment" (default) goes straight to the 1 ₽ verification payment. Swapping
   // the strategy is an env change, not a code change.
-  app.post("/api/payments/tbank/bind-card", async (req, res) => {
+  app.post("/api/payments/tbank/bind-card", paymentLimiter, async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
     const user = storage.getUser(userId);
@@ -427,7 +458,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // resolution paths can find it. No account data ever reaches us. If the
   // SBP-recurrent product isn't activated on the terminal, T-Bank answers
   // Success=false and we surface its reason (502) rather than crashing.
-  app.post("/api/payments/tbank/bind-sbp", async (req, res) => {
+  app.post("/api/payments/tbank/bind-sbp", paymentLimiter, async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
     const user = storage.getUser(userId);
@@ -551,7 +582,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // bike is rentable and the tariff is known, resolve the price authoritatively
   // server-side (never trusting a client amount), create a pending payment order
   // and return the PaymentURL the client opens. No card data ever reaches us.
-  app.post("/api/payments/tbank/ride/init", async (req, res) => {
+  app.post("/api/payments/tbank/ride/init", paymentLimiter, async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
     const user = storage.getUser(userId);
@@ -631,7 +662,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // On a deferred state we leave the order pending and the notification webhook
   // finishes it. On failure we surface the acquirer's sanitized reason and leave
   // the bike available. No card data is ever touched — only the RebillId token.
-  app.post("/api/payments/tbank/ride/charge-saved-card", async (req, res) => {
+  app.post("/api/payments/tbank/ride/charge-saved-card", paymentLimiter, async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
     const user = storage.getUser(userId);

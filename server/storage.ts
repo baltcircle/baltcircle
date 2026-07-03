@@ -21,6 +21,14 @@ import { eq, desc, sql } from "drizzle-orm";
 
 const sqlite = new Database(process.env.DATABASE_PATH || "data.db");
 sqlite.pragma("journal_mode = WAL");
+// Wait (up to 5s) for a competing writer to release the lock instead of
+// throwing SQLITE_BUSY immediately. Without this, concurrent writes (ride
+// start/end, payments, session sweeps) surface as random 500s under load.
+sqlite.pragma("busy_timeout = 5000");
+// NORMAL is safe with WAL and much faster than FULL: on a crash the last
+// committed transaction is still durable; only an OS-level crash could lose
+// the most recent commit, which is acceptable for this workload.
+sqlite.pragma("synchronous = NORMAL");
 export const db = drizzle(sqlite);
 // Exposed so the express-session store can reuse this single connection,
 // keeping session rows in the same data.db that the Docker volume persists.
@@ -1537,24 +1545,34 @@ export class DatabaseStorage implements IStorage {
   listZones() { return db.select().from(zones).all() as ZoneRow[]; }
 
   startRide({ bikeId, userId, tariff }: { bikeId: string; userId: string; tariff: string }) {
-    const bike = this.getBike(bikeId);
-    if (!bike) return { error: "Велосипед не найден" };
-    if (bike.status !== "available" && bike.status !== "reserved") {
-      return { error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` };
-    }
-    if (bike.battery < 18) return { error: "Низкий заряд замка, выберите другой велосипед" };
-    const active = this.getActiveRide(userId);
-    if (active) return { error: "У вас уже есть активная поездка" };
+    // Atomic: re-check the bike/rider state and claim the bike inside ONE
+    // transaction. Without this, two concurrent requests could both pass the
+    // availability/active-ride checks and each insert a ride for the same bike
+    // (double-booking). The transaction serialises the check-and-claim so the
+    // second caller sees the bike already "rented" / the rider already riding.
+    return db.transaction((tx) => {
+      const bike = tx.select().from(bikes).where(eq(bikes.id, bikeId)).get() as Bike | undefined;
+      if (!bike) return { error: "Велосипед не найден" };
+      if (bike.status !== "available" && bike.status !== "reserved") {
+        return { error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` };
+      }
+      if (bike.battery < 18) return { error: "Низкий заряд замка, выберите другой велосипед" };
+      const active = tx.select().from(rides)
+        .where(sql`${rides.userId} = ${userId} AND ${rides.status} = 'active'`)
+        .get() as Ride | undefined;
+      if (active) return { error: "У вас уже есть активная поездка" };
 
-    const startedAt = Date.now();
-    const track: [number, number, number][] = [[bike.lng, bike.lat, startedAt]];
-    const row = db.insert(rides).values({
-      bikeId, userId, startedAt,
-      startLat: bike.lat, startLng: bike.lng,
-      track: JSON.stringify(track), distanceM: 0, cost: 0, tariff, status: "active",
-    }).returning().get() as Ride;
-    this.updateBike(bikeId, { status: "rented" });
-    return row;
+      const startedAt = Date.now();
+      const track: [number, number, number][] = [[bike.lng, bike.lat, startedAt]];
+      const row = tx.insert(rides).values({
+        bikeId, userId, startedAt,
+        startLat: bike.lat, startLng: bike.lng,
+        track: JSON.stringify(track), distanceM: 0, cost: 0, tariff, status: "active",
+      }).returning().get() as Ride;
+      tx.update(bikes).set({ status: "rented", updatedAt: Date.now() } as any)
+        .where(eq(bikes.id, bikeId)).run();
+      return row;
+    });
   }
 
   appendRidePoint(rideId: number, x: number, y: number) {
@@ -1579,28 +1597,39 @@ export class DatabaseStorage implements IStorage {
   }
 
   endRide(rideId: number) {
-    const r = db.select().from(rides).where(eq(rides.id, rideId)).get() as Ride | undefined;
-    if (!r || r.status !== "active") return undefined;
-    const pts: [number, number, number][] = JSON.parse(r.track);
-    const last = pts[pts.length - 1];
-    const endedAt = Date.now();
-    const minutes = (endedAt - r.startedAt) / 60000;
-    const cost = Math.max(50, Math.round(50 + minutes * 6));
-    db.update(rides).set({
-      endedAt, status: "completed", cost,
-      endLat: last[1], endLng: last[0],
-    }).where(eq(rides.id, rideId)).run();
-    db.update(bikes).set({ status: "available", lat: last[1], lng: last[0], lastSeen: endedAt, idleHours: 0 } as any)
-      .where(eq(bikes.id, r.bikeId)).run();
-    // charge wallet
-    const w = this.getWallet(r.userId);
-    const newBalance = w.balance - cost;
-    db.update(wallet).set({ balance: newBalance }).where(eq(wallet.userId, r.userId)).run();
-    db.insert(payments).values({
-      userId: r.userId, amount: -cost, kind: "ride_charge",
-      description: `Поездка ${r.bikeId} • ${Math.round(minutes)} мин`, createdAt: endedAt,
-    }).run();
-    return db.select().from(rides).where(eq(rides.id, rideId)).get() as Ride;
+    // Atomic: completing a ride touches four tables (ride, bike, wallet,
+    // payment ledger). Doing them as separate statements risks a partial state
+    // if the process dies mid-way — e.g. wallet debited but ride still active,
+    // or bike freed without a charge recorded. One transaction keeps them
+    // consistent: either the whole settlement lands or none of it does.
+    return db.transaction((tx) => {
+      const r = tx.select().from(rides).where(eq(rides.id, rideId)).get() as Ride | undefined;
+      if (!r || r.status !== "active") return undefined;
+      const pts: [number, number, number][] = JSON.parse(r.track);
+      const last = pts[pts.length - 1];
+      const endedAt = Date.now();
+      const minutes = (endedAt - r.startedAt) / 60000;
+      const cost = Math.max(50, Math.round(50 + minutes * 6));
+      tx.update(rides).set({
+        endedAt, status: "completed", cost,
+        endLat: last[1], endLng: last[0],
+      }).where(eq(rides.id, rideId)).run();
+      tx.update(bikes).set({ status: "available", lat: last[1], lng: last[0], lastSeen: endedAt, idleHours: 0 } as any)
+        .where(eq(bikes.id, r.bikeId)).run();
+      // Charge the wallet inside the same tx. Read-or-create the row via tx so
+      // the debit rolls back with everything else on failure.
+      let w = tx.select().from(wallet).where(eq(wallet.userId, r.userId)).get() as Wallet | undefined;
+      if (!w) {
+        tx.insert(wallet).values({ userId: r.userId, balance: 0, activeTariff: "payg", tariffExpiresAt: null } as any).run();
+        w = { userId: r.userId, balance: 0 } as Wallet;
+      }
+      tx.update(wallet).set({ balance: w.balance - cost }).where(eq(wallet.userId, r.userId)).run();
+      tx.insert(payments).values({
+        userId: r.userId, amount: -cost, kind: "ride_charge",
+        description: `Поездка ${r.bikeId} • ${Math.round(minutes)} мин`, createdAt: endedAt,
+      }).run();
+      return tx.select().from(rides).where(eq(rides.id, rideId)).get() as Ride;
+    });
   }
 
   getRide(rideId: number) {
