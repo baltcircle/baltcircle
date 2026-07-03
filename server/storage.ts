@@ -18,10 +18,22 @@ import {
 } from "@shared/geo";
 import { computeOverage, finalRideCost } from "@shared/billing";
 import { eq, desc, sql } from "drizzle-orm";
+import { EventEmitter } from "node:events";
 // db client + schema bootstrap + migrations + demo seed run on import of this module.
 // bootstrapReady MUST be awaited before serving requests (server entrypoint does this).
 import { db, pool, bootstrapReady } from "./db/bootstrap";
 export { db, pool, bootstrapReady };
+
+// ---------- Live active-ride events (SSE fan-out) ----------
+// Single Node process → an in-process emitter is a valid pub/sub bus. The SSE
+// endpoint subscribes per userId; ride mutations emit that user's id so only
+// the owning rider's stream is pushed a fresh active-ride snapshot. Bumped
+// max listeners so many concurrent riders don't trip the leak warning.
+export const rideEvents = new EventEmitter();
+rideEvents.setMaxListeners(0);
+// Event name is the userId; payload is the reason so the handler can decide
+// whether to re-read ("start"/"point") or push a terminal null ("end").
+export type RideEventReason = "start" | "point" | "end";
 
 
 // ---------- Storage interface ----------
@@ -229,6 +241,24 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  // ---------- Bikes read cache ----------
+  // The public bike list drives the map and is polled/streamed by every
+  // viewer, but the underlying rows change rarely (only on ride start/point/
+  // end and admin edits). A tiny in-memory TTL cache absorbs the read storm:
+  // one DB round-trip refreshes many concurrent readers. Any bike mutation
+  // calls invalidateBikesCache() so a stale list is never served past a real
+  // change. Only the full row set is cached; per-opts filtering stays cheap.
+  private static readonly BIKES_CACHE_TTL_MS = 3000;
+  private _bikesCache: Bike[] | null = null;
+  private _bikesCacheAt = 0;
+
+  // Drop the cached bike rows so the next listBikes() re-reads from the DB.
+  // Call after ANY write that can change a bike's row (status/position/CRUD).
+  invalidateBikesCache(): void {
+    this._bikesCache = null;
+    this._bikesCacheAt = 0;
+  }
+
   // Apply the env-driven admin override so callers always see the effective
   // role without each one re-checking ADMIN_PHONE_NUMBERS.
   private withResolvedRole(user: User | undefined): User | undefined {
@@ -769,13 +799,20 @@ export class DatabaseStorage implements IStorage {
   // Public list excludes archived (retired) bikes so they never appear on the
   // map or in rental selection. Admin callers pass includeArchived to see all.
   async listBikes(opts?: { includeArchived?: boolean }) {
-    const rows = (await db.select().from(bikes)) as Bike[];
+    const now = Date.now();
+    let rows = this._bikesCache;
+    if (!rows || now - this._bikesCacheAt >= DatabaseStorage.BIKES_CACHE_TTL_MS) {
+      rows = (await db.select().from(bikes)) as Bike[];
+      this._bikesCache = rows;
+      this._bikesCacheAt = now;
+    }
     if (opts?.includeArchived) return rows;
     return rows.filter((b) => b.status !== "archived");
   }
   async getBike(id: string) { return (await db.select().from(bikes).where(eq(bikes.id, id)).limit(1))[0] as Bike | undefined; }
   async updateBike(id: string, patch: Partial<Bike>) {
     await db.update(bikes).set(patch as any).where(eq(bikes.id, id));
+    this.invalidateBikesCache();
     return this.getBike(id);
   }
 
@@ -819,6 +856,7 @@ export class DatabaseStorage implements IStorage {
       notes: this.optStr(input.notes),
       seed: false,
     } as any);
+    this.invalidateBikesCache();
     return { bike: (await this.getBike(id))! };
   }
 
@@ -838,6 +876,7 @@ export class DatabaseStorage implements IStorage {
       set.parkingId = parkingId;
     }
     await db.update(bikes).set(set as any).where(eq(bikes.id, id));
+    this.invalidateBikesCache();
     return { bike: (await this.getBike(id))! };
   }
 
@@ -848,6 +887,7 @@ export class DatabaseStorage implements IStorage {
     if (!existing) return { error: "Велосипед не найден" };
     if (existing.status === "rented") return { error: "Нельзя архивировать велосипед во время активной аренды" };
     await db.update(bikes).set({ status: "archived" } as any).where(eq(bikes.id, id));
+    this.invalidateBikesCache();
     return { bike: (await this.getBike(id))! };
   }
 
@@ -860,9 +900,11 @@ export class DatabaseStorage implements IStorage {
     const rideCount = Number((await pool.query("SELECT COUNT(*) AS c FROM rides WHERE bike_id = $1", [id])).rows[0].c);
     if (rideCount > 0) {
       await db.update(bikes).set({ status: "archived" } as any).where(eq(bikes.id, id));
+      this.invalidateBikesCache();
       return { error: "У велосипеда есть история поездок — он переведён в архив", archived: (await this.getBike(id))! };
     }
     await db.delete(bikes).where(eq(bikes.id, id));
+    this.invalidateBikesCache();
     return { ok: true as const };
   }
   // ---------- Parkings: read + admin CRUD ----------
@@ -1015,7 +1057,7 @@ export class DatabaseStorage implements IStorage {
     // availability/active-ride checks and each insert a ride for the same bike
     // (double-booking). The transaction serialises the check-and-claim so the
     // second caller sees the bike already "rented" / the rider already riding.
-    return db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       const bike = (await tx.select().from(bikes).where(eq(bikes.id, bikeId)).limit(1))[0] as Bike | undefined;
       if (!bike) return { error: "Велосипед не найден" };
       if (bike.status !== "available" && bike.status !== "reserved") {
@@ -1059,6 +1101,13 @@ export class DatabaseStorage implements IStorage {
       await tx.execute(sql`INSERT INTO ride_points (ride_id, x, y, t) VALUES (${row.id}, ${bike.lng}, ${bike.lat}, ${startedAt})`);
       return row;
     });
+    // A successful start flipped a bike to "rented" → the public list is stale.
+    // Only fire side effects on the success shape (a Ride row, not an error).
+    if (result && !("error" in result)) {
+      this.invalidateBikesCache();
+      rideEvents.emit(userId, "start" as RideEventReason);
+    }
+    return result;
   }
 
   async appendRidePoint(rideId: number, x: number, y: number) {
@@ -1085,6 +1134,10 @@ export class DatabaseStorage implements IStorage {
     await db.update(rides).set({ distanceM: newDistance }).where(eq(rides.id, rideId));
     await db.update(bikes).set({ lat: y, lng: x, lastSeen: Date.now(), idleHours: 0 } as any)
       .where(eq(bikes.id, r.bikeId));
+    // Position changed → invalidate the map list and push the owning rider a
+    // fresh active-ride snapshot (new track point) over SSE.
+    this.invalidateBikesCache();
+    rideEvents.emit(r.userId, "point" as RideEventReason);
     return this.hydrateTrack(
       (await db.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride,
     );
@@ -1096,7 +1149,7 @@ export class DatabaseStorage implements IStorage {
     // if the process dies mid-way — e.g. wallet debited but ride still active,
     // or bike freed without a charge recorded. One transaction keeps them
     // consistent: either the whole settlement lands or none of it does.
-    return db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       const r = (await tx.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride | undefined;
       if (!r || r.status !== "active") return undefined;
       // Flush the append-only points into the canonical rides.track ONCE, at
@@ -1144,6 +1197,13 @@ export class DatabaseStorage implements IStorage {
       }
       return (await tx.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride;
     });
+    // Ended ride freed the bike (status "available") → refresh the map list and
+    // push a terminal event so the rider's SSE stream sends null (ride over).
+    if (result) {
+      this.invalidateBikesCache();
+      rideEvents.emit(result.userId, "end" as RideEventReason);
+    }
+    return result;
   }
 
   async getRide(rideId: number) {

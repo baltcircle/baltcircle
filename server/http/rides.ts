@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { storage } from "../storage";
+import { storage, rideEvents } from "../storage";
 import { z } from "zod";
 import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
 import {
@@ -59,6 +59,73 @@ export function registerRideRoutes(app: Express): void {
   app.get("/api/rides/active", async (req, res) => {
     const ride = await storage.getActiveRide(riderId(req));
     res.json(ride ?? null);
+  });
+  // Server-Sent Events stream of the caller's active ride. Replaces the 4s
+  // polling of /api/rides/active: the client opens ONE EventSource and the
+  // server pushes a fresh snapshot only when this rider's ride actually
+  // changes (start/point/end), driven by the in-process rideEvents bus.
+  //
+  // Why SSE (not WebSocket): the feed is one-way server→client, per-user (not a
+  // shared broadcast), rides over plain HTTP with the session cookie, and the
+  // browser's EventSource auto-reconnects on drop. No extra protocol upgrade,
+  // no ws dependency.
+  app.get("/api/rides/active/stream", async (req, res) => {
+    const uid = riderId(req);
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      // Disable proxy buffering (nginx) so events flush immediately.
+      "X-Accel-Buffering": "no",
+    });
+    res.flushHeaders?.();
+
+    let closed = false;
+    // Serialise pushes: an event that arrives while a DB read is in flight sets
+    // a "dirty" flag instead of racing a second concurrent read; we re-read
+    // once the current push finishes. Guarantees the last state always wins.
+    let sending = false;
+    let dirty = false;
+
+    const push = async () => {
+      if (closed) return;
+      if (sending) { dirty = true; return; }
+      sending = true;
+      try {
+        const ride = await storage.getActiveRide(uid);
+        if (closed) return;
+        res.write(`data: ${JSON.stringify(ride ?? null)}\n\n`);
+      } catch {
+        // A transient read error shouldn't kill the stream; the next event or
+        // the client's reconnect will re-sync.
+      } finally {
+        sending = false;
+        if (dirty && !closed) { dirty = false; void push(); }
+      }
+    };
+
+    const onEvent = () => { void push(); };
+    rideEvents.on(uid, onEvent);
+
+    // Initial snapshot so a freshly-opened stream shows current state at once.
+    void push();
+
+    // Heartbeat comment keeps intermediaries from closing an idle connection
+    // and lets us detect a dead socket. SSE comments (": ...") are ignored by
+    // the EventSource client.
+    const heartbeat = setInterval(() => {
+      if (!closed) res.write(": ping\n\n");
+    }, 25000);
+
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(heartbeat);
+      rideEvents.off(uid, onEvent);
+    };
+    req.on("close", cleanup);
+    res.on("error", cleanup);
   });
   app.post("/api/rides/start", async (req, res) => {
     const schema = z.object({ bikeId: z.string(), tariff: z.enum(["h1", "h2", "h3"]) });

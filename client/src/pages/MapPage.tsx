@@ -9,6 +9,7 @@ import { QrScanModal } from "@/components/QrScanModal";
 import { DrawerMenu } from "@/components/DrawerMenu";
 import { Logo } from "@/components/Logo";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
 import { useTheme } from "@/lib/theme";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -25,8 +26,9 @@ export function MapPage() {
   const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
   const activeQ = useQuery<Ride | null>({
     queryKey: ["/api/rides/active"],
-    refetchInterval: 4000,
   });
+  // Live active-ride updates via SSE (replaces the old 4s poll).
+  useActiveRideStream();
   const { isRegistered, isLoading: userLoading } = useCurrentUser();
   const { theme, toggle } = useTheme();
 

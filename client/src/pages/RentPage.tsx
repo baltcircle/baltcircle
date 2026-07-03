@@ -11,13 +11,16 @@ import { useToast } from "@/hooks/use-toast";
 import { ActiveRidePanel } from "@/components/ActiveRidePanel";
 import { RegistrationModal } from "@/components/RegistrationModal";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
 import { QrCode, Camera, Battery, MapPin, Clock, Sparkles } from "lucide-react";
 
 export function RentPage() {
   const [loc] = useLocation();
   const toast = useToast();
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
-  const activeQ = useQuery<Ride | null>({ queryKey: ["/api/rides/active"], refetchInterval: 4000 });
+  const activeQ = useQuery<Ride | null>({ queryKey: ["/api/rides/active"] });
+  // Live active-ride updates via SSE (replaces the old 4s poll).
+  useActiveRideStream();
   const { isRegistered } = useCurrentUser();
 
   const [scanState, setScanState] = useState<"idle" | "scanning" | "success" | "error">("idle");
