@@ -56,14 +56,12 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
   layers: [
     // Background = LAND colour. OpenMapTiles has no land layer, only water —
     // so ocean + lakes are drawn on top as real polygons from the water layer.
-    { id: "background", type: "background", paint: { "background-color": COLORS.land } },
+    { id: "background", type: "background", paint: { "background-color": COLORS.water } },
 
-    // ── OCEAN (drawn first, at all zooms; land background shows through elsewhere) ──
-    {
-      id: "water-ocean", type: "fill", source: "kaliningrad", "source-layer": "water",
-      filter: ["==", ["get", "class"], "ocean"],
-      paint: { "fill-color": COLORS.water },
-    },
+    // ── LAND MASK (draws oblast contour as land over the water background) ──
+    // Interim fix for the broken ocean polygon in PMTiles data (floods inland tiles at z7+).
+    // Sea = water background outside the contour; land = COLORS.land inside it.
+    { id: "land-mask", type: "fill", source: "kaliningrad-boundary", paint: { "fill-color": COLORS.land } },
 
     // ── LANDCOVER ────────────────────────────────────────────────────────────
     {
