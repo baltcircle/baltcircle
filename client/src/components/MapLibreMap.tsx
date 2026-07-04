@@ -29,6 +29,14 @@ const KALININGRAD_BOUNDARY = {
 
 const MAX_BOUNDS: [number, number, number, number] = [18.3, 53.2, 26.8, 57.3];
 
+// PALETTE - swap any value by HEX to re-theme the whole map
+const COLORS = {
+  land:            "#eef1e8", // land background (OpenMapTiles has no land layer)
+  water:           "#9fc9e0", // sea, gulfs, lakes, rivers
+  boundaryCountry: "#8a6fae", // RU / LT / PL state border (admin_level 2)
+  boundaryRegion:  "#9a86b8", // oblast / region border (admin_level 4)
+} as const;
+
 // PMTiles URL — loaded from /pmtiles_url.txt (written by CI after generation)
 // Fallback to old /tiles proxy if PMTiles not yet available
 const PMTILES_CDN = "https://unpkg.com/pmtiles@3/dist/pmtiles.js";
@@ -46,7 +54,16 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
     "kaliningrad-boundary": { type: "geojson", data: KALININGRAD_BOUNDARY },
   },
   layers: [
-    { id: "background", type: "background", paint: { "background-color": "#e8f0f7" } },
+    // Background = LAND colour. OpenMapTiles has no land layer, only water —
+    // so ocean + lakes are drawn on top as real polygons from the water layer.
+    { id: "background", type: "background", paint: { "background-color": COLORS.land } },
+
+    // ── OCEAN (drawn first, at all zooms; land background shows through elsewhere) ──
+    {
+      id: "water-ocean", type: "fill", source: "kaliningrad", "source-layer": "water",
+      filter: ["==", ["get", "class"], "ocean"],
+      paint: { "fill-color": COLORS.water },
+    },
 
     // ── LANDCOVER ────────────────────────────────────────────────────────────
     {
@@ -68,17 +85,11 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       },
     },
 
-    // ── WATER (lakes only — ocean excluded to avoid blue flood at low zoom) ──
+    // ── WATER (lakes/rivers polygons — drawn on top of landcover) ────────────
     {
       id: "water-lake", type: "fill", source: "kaliningrad", "source-layer": "water",
       filter: ["!=", ["get", "class"], "ocean"],
-      paint: { "fill-color": "#a8d5e8" },
-    },
-    {
-      id: "water-ocean", type: "fill", source: "kaliningrad", "source-layer": "water",
-      filter: ["==", ["get", "class"], "ocean"],
-      maxzoom: 7,
-      paint: { "fill-color": "#b8d8ea" },
+      paint: { "fill-color": COLORS.water },
     },
 
     // ── LANDUSE ──────────────────────────────────────────────────────────────
@@ -190,10 +201,24 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       },
     },
 
-    // ── OBLAST BOUNDARY ───────────────────────────────────────────────────────
+    // ── ADMIN BOUNDARIES (from vector data) ──────────────────────────────────
     {
-      id: "oblast-boundary", type: "line", source: "kaliningrad-boundary",
-      paint: { "line-color": "#3a6a9a", "line-width": 2, "line-opacity": 1 },
+      id: "boundary-region", type: "line", source: "kaliningrad", "source-layer": "boundary",
+      filter: ["==", ["get", "admin_level"], 4], minzoom: 6,
+      paint: {
+        "line-color": COLORS.boundaryRegion,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 6, 0.8, 10, 1.6],
+        "line-dasharray": [2, 2], "line-opacity": 0.7,
+      },
+    },
+    {
+      id: "boundary-country", type: "line", source: "kaliningrad", "source-layer": "boundary",
+      filter: ["==", ["get", "admin_level"], 2],
+      paint: {
+        "line-color": COLORS.boundaryCountry,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1.2, 9, 2.2, 12, 3],
+        "line-dasharray": [3, 1.5], "line-opacity": 0.85,
+      },
     },
 
     // ── ROAD NAMES ───────────────────────────────────────────────────────────
