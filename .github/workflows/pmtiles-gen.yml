@@ -1,6 +1,15 @@
 name: Generate PMTiles
 on:
   workflow_dispatch:
+    inputs:
+      bbox:
+        description: "Extract bbox W,S,E,N (region + border zone)"
+        required: false
+        default: "18.3,53.3,26.8,57.3"
+      city:
+        description: "City/region label for release notes"
+        required: false
+        default: "Kaliningrad"
   push:
     branches: [main]
     paths:
@@ -9,89 +18,57 @@ on:
 jobs:
   generate:
     runs-on: [self-hosted, baltcircle-prod]
-    timeout-minutes: 180
+    timeout-minutes: 60
     permissions:
       contents: write
 
     steps:
-      - name: Generate PMTiles and upload to GitHub Release
+      - name: Extract PMTiles from Protomaps build and upload to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          # Multi-city scaling: override bbox/city via workflow_dispatch inputs.
+          BBOX: ${{ github.event.inputs.bbox || '18.3,53.3,26.8,57.3' }}
+          CITY: ${{ github.event.inputs.city || 'Kaliningrad' }}
+          MAXZOOM: "14"
+          # Protomaps CLI version (self-hostable extract tool, ODbL data).
+          PMTILES_VER: "1.30.3"
         shell: bash
         run: |
           set -e
           cd /home/yc-user/osm
           echo "=== START ===" && free -h && df -h /
 
-          if [ "$(swapon --show | wc -l)" -eq 0 ]; then sudo swapon /swapfile || true; fi
-
-          TM_VER=$(tilemaker --version 2>&1 | head -1 || echo "old")
-          echo "tilemaker now: $TM_VER"
-          if ! echo "$TM_VER" | grep -qE "3\.[0-9]"; then
-            echo "Upgrading tilemaker to v3.0.0..."
-            curl -L "https://github.com/systemed/tilemaker/releases/download/v3.0.0/tilemaker-ubuntu-22.04.zip" -o /tmp/tilemaker.zip
-            unzip -o /tmp/tilemaker.zip -d /tmp/tilemaker-bin/
-            chmod +x /tmp/tilemaker-bin/build/tilemaker
-            sudo mv /tmp/tilemaker-bin/build/tilemaker /usr/local/bin/tilemaker
-            # Copy v3 compatible process and config files
-            cp /tmp/tilemaker-bin/resources/process-openmaptiles.lua /home/yc-user/osm/process-openmaptiles.lua
-            cp /tmp/tilemaker-bin/resources/config-openmaptiles.json /home/yc-user/osm/config-openmaptiles.json
-            rm -rf /tmp/tilemaker.zip /tmp/tilemaker-bin
-            echo "upgraded: $(tilemaker --version 2>&1 | head -1)"
-          else
-            # Already v3 — ensure we have the process files
-            if [ ! -f "/home/yc-user/osm/process-openmaptiles.lua" ]; then
-              curl -L "https://github.com/systemed/tilemaker/releases/download/v3.0.0/tilemaker-ubuntu-22.04.zip" -o /tmp/tilemaker.zip
-              unzip -o /tmp/tilemaker.zip -d /tmp/tilemaker-bin/
-              cp /tmp/tilemaker-bin/resources/process-openmaptiles.lua /home/yc-user/osm/process-openmaptiles.lua
-              cp /tmp/tilemaker-bin/resources/config-openmaptiles.json /home/yc-user/osm/config-openmaptiles.json
-              rm -rf /tmp/tilemaker.zip /tmp/tilemaker-bin
-            fi
+          # ── Ensure pmtiles CLI is available (replaces tilemaker + coastline + osmium) ──
+          PM_BIN="/home/yc-user/osm/pmtiles"
+          if [ ! -x "$PM_BIN" ] || ! "$PM_BIN" version 2>/dev/null | grep -q "$PMTILES_VER"; then
+            echo "Installing pmtiles CLI v$PMTILES_VER..."
+            curl -L "https://github.com/protomaps/go-pmtiles/releases/download/v${PMTILES_VER}/go-pmtiles_${PMTILES_VER}_Linux_x86_64.tar.gz" -o /tmp/pmtiles.tar.gz
+            tar -xzf /tmp/pmtiles.tar.gz -C /home/yc-user/osm pmtiles
+            chmod +x "$PM_BIN"
+            rm -f /tmp/pmtiles.tar.gz
           fi
+          echo "pmtiles: $("$PM_BIN" version 2>&1 | head -1)"
 
-          if [ ! -f "coastline/simplified_water_polygons.shp" ]; then
-            curl -L -A "Mozilla/5.0" --max-redirs 5 "https://osmdata.openstreetmap.de/download/simplified-water-polygons-split-3857.zip" -o coastline.zip
-            mkdir -p coastline && unzip -o coastline.zip -d coastline_tmp
-            find coastline_tmp -name "*.sh?" -exec cp {} coastline/ \;
-            find coastline_tmp -name "*.prj" -exec cp {} coastline/ \;
-            find coastline_tmp -name "*.dbf" -exec cp {} coastline/ \;
-            rm -rf coastline_tmp coastline.zip
-          fi
+          # ── Resolve the latest daily Protomaps planet build ──
+          # Builds published at build.protomaps.com/YYYYMMDD.pmtiles (kept ~90 days).
+          BUILD_URL=""
+          for i in $(seq 0 10); do
+            D=$(date -u -d "-${i} day" +%Y%m%d)
+            U="https://build.protomaps.com/${D}.pmtiles"
+            if curl -sfI "$U" -o /dev/null; then BUILD_URL="$U"; echo "using build $D"; break; fi
+          done
+          test -n "$BUILD_URL" || { echo "ERROR: no recent Protomaps build found"; exit 1; }
 
-          rm -f lithuania-clipped.osm.pbf warminsko-clipped.osm.pbf pomorskie-clipped.osm.pbf
-
-          clip() {
-            local URL="$1" RAW="$2" OUT="$3" BBOX="$4" MIN="$5"
-            FU=$(curl -sIL -A "Mozilla/5.0" --max-redirs 5 "$URL" -o /dev/null -w "%{url_effective}")
-            curl -L -A "Mozilla/5.0" --max-redirs 5 --max-time 600 -o "$RAW" "$FU"
-            SZ=$(du -sm "$RAW" | cut -f1)
-            test "$SZ" -ge "$MIN" || { echo "ERROR: $RAW only ${SZ}MB"; exit 1; }
-            osmium extract --bbox "$BBOX" "$RAW" -o "$OUT" --overwrite --strategy=smart
-            rm -f "$RAW"
-            echo "$OUT: $(du -sh $OUT)"
-          }
-
-          clip "https://download.geofabrik.de/europe/lithuania-latest.osm.pbf" "lithuania-full.osm.pbf" "lithuania-clipped.osm.pbf" "20.8,53.5,26.8,56.5" 50
-          clip "https://download.geofabrik.de/europe/poland/warminsko-mazurskie-latest.osm.pbf" "warminsko-full.osm.pbf" "warminsko-clipped.osm.pbf" "19.5,53.3,22.9,54.0" 20
-          clip "https://download.geofabrik.de/europe/poland/pomorskie-latest.osm.pbf" "pomorskie-full.osm.pbf" "pomorskie-clipped.osm.pbf" "18.3,53.3,20.5,54.4" 20
-
-          osmium merge kaliningrad.osm.pbf lithuania-clipped.osm.pbf warminsko-clipped.osm.pbf pomorskie-clipped.osm.pbf -o merged.osm.pbf --overwrite
-          echo "merged: $(du -sh merged.osm.pbf)"
-          rm -f lithuania-clipped.osm.pbf warminsko-clipped.osm.pbf pomorskie-clipped.osm.pbf
+          # ── Extract the region (range requests — reads only needed tiles) ──
+          echo "=== pmtiles extract $BBOX (maxzoom $MAXZOOM) ==="
+          "$PM_BIN" extract "$BUILD_URL" kaliningrad.pmtiles \
+            --bbox="$BBOX" --maxzoom="$MAXZOOM"
+          echo "pmtiles: $(du -sh kaliningrad.pmtiles)"
+          "$PM_BIN" show kaliningrad.pmtiles | head -8
           free -h
 
-          # Patch config-openmaptiles.json to use local coastline
-          python3 -c "import json,os; cfg=json.load(open('config-openmaptiles.json')); cfg['layers']['ocean']['source']='coastline/simplified_water_polygons.shp'; bad=[n for n,l in cfg.get('layers',{}).items() if l.get('source','') and not l['source'].startswith('coastline') and not os.path.exists(l['source'])]; [cfg['layers'].pop(n) for n in bad]; print('skip:',bad); print('layers:',list(cfg['layers'].keys())); open('config-openmaptiles.json','w').write(json.dumps(cfg,indent=2))"
-
-          echo "=== tilemaker ==="
-          tilemaker --input merged.osm.pbf --output kaliningrad.pmtiles \
-            --bbox 18.3,53.3,26.8,57.3 \
-            --config config-openmaptiles.json \
-            --process process-openmaptiles.lua
-          echo "pmtiles: $(du -sh kaliningrad.pmtiles)"
-          rm -f merged.osm.pbf
-
+          # ── Publish to GitHub Release (same flow as before) ──
           TAG="pmtiles-latest"
           EXIST=$(curl -sf -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/$REPO/releases/tags/$TAG" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
           if [ -n "$EXIST" ] && [ "$EXIST" != "None" ] && [ "$EXIST" != "" ]; then
@@ -100,7 +77,7 @@ jobs:
           curl -sf -X DELETE -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/$REPO/git/refs/tags/$TAG" || true
 
           SZ=$(du -sh kaliningrad.pmtiles | cut -f1)
-          REL=$(curl -sf -X POST -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" "https://api.github.com/repos/$REPO/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"PMTiles Map Data\",\"body\":\"Region: Kaliningrad + border zone. Size: $SZ\",\"draft\":false,\"prerelease\":false}")
+          REL=$(curl -sf -X POST -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" "https://api.github.com/repos/$REPO/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"PMTiles Map Data\",\"body\":\"Source: Protomaps basemap ($BUILD_URL). Region: $CITY (bbox $BBOX). Size: $SZ. Data (c) OpenStreetMap contributors, ODbL.\",\"draft\":false,\"prerelease\":false}")
           UPL=$(echo "$REL" | python3 -c "import json,sys; u=json.load(sys.stdin)['upload_url']; print(u.split('{')[0])")
           ASSET=$(curl -sf -X POST -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/octet-stream" "${UPL}?name=kaliningrad.pmtiles" --data-binary "@kaliningrad.pmtiles")
           URL=$(echo "$ASSET" | python3 -c "import json,sys; print(json.load(sys.stdin)['browser_download_url'])")
@@ -124,4 +101,3 @@ jobs:
             curl -sf -X PUT -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" "https://api.github.com/repos/$REPO/contents/pmtiles_url.txt" -d "{\"message\":\"ci: pmtiles url created\",\"content\":\"$ENC\"}"
           fi
           echo "pmtiles_url.txt committed"
-
