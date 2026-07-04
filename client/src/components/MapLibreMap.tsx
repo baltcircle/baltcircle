@@ -257,15 +257,26 @@ function ensureCSS() {
   document.head.appendChild(link);
 }
 
-async function makeWorkerBlobUrl(): Promise<string | null> {
+// The CSP maplibre build REQUIRES a worker URL before any Map is constructed.
+// This must run regardless of how maplibregl got loaded (fresh script or an
+// existing tag from a prior StrictMode mount), so it lives in its own
+// idempotent async step keyed off a window flag.
+async function ensureWorkerUrl(): Promise<void> {
+  const w = window as any;
+  if (w.__mlWorkerSet) return;
+  let blobUrl: string | null = null;
   try {
     const resp = await fetch(CDN_WORKER_JS);
     const text = await resp.text();
-    return URL.createObjectURL(new Blob([text], { type: "application/javascript" }));
-  } catch { return null; }
+    blobUrl = URL.createObjectURL(new Blob([text], { type: "application/javascript" }));
+  } catch { blobUrl = null; }
+  try {
+    window.maplibregl.setWorkerUrl(blobUrl ?? CDN_WORKER_JS);
+    w.__mlWorkerSet = true;
+  } catch { /* setWorkerUrl unavailable */ }
 }
 
-function loadMaplibre(): Promise<void> {
+function loadMaplibreScript(): Promise<void> {
   return new Promise((resolve, reject) => {
     if (window.maplibregl?.Map) { resolve(); return; }
     const existing = document.getElementById("maplibre-js") as HTMLScriptElement | null;
@@ -282,15 +293,15 @@ function loadMaplibre(): Promise<void> {
     }
     const s = document.createElement("script");
     s.id = "maplibre-js"; s.src = CDN_CSP_JS;
-    s.onload = () => {
-      makeWorkerBlobUrl().then(blobUrl => {
-        try { window.maplibregl.setWorkerUrl(blobUrl ?? CDN_WORKER_JS); resolve(); }
-        catch (e) { reject(e); }
-      });
-    };
+    s.onload = () => resolve();
     s.onerror = () => reject(new Error("CDN failed"));
     document.head.appendChild(s);
   });
+}
+
+async function loadMaplibre(): Promise<void> {
+  await loadMaplibreScript();
+  await ensureWorkerUrl();
 }
 
 /** Load pmtiles.js from CDN and register protocol with maplibregl */
