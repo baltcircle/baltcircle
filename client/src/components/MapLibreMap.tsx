@@ -350,84 +350,82 @@ export function MapLibreMap({
   const mapRef       = useRef<any>(null);
 
   useEffect(() => {
-    const D = (...a: any[]) => console.log("[MAPDBG]", ...a);
-    D("effect fired");
     const el = containerRef.current;
-    if (!el) { D("NO container ref -> abort"); return; }
-    D("container ok", el.getBoundingClientRect());
+    if (!el) return;
     ensureCSS();
     let cancelled = false;
+    let booting = false;
 
     const initMap = (
       tileSource: { type: "pmtiles"; url: string } | { type: "xyz"; url: string },
       minzoom: number,
       maxzoom: number
     ) => {
-      D("initMap called", { cancelled, hasMap: !!mapRef.current });
       if (cancelled || mapRef.current) return;
       const ml = window.maplibregl;
       const { width, height: h } = el.getBoundingClientRect();
-      D("initMap size", { width, h, ml: !!ml });
-      if (width === 0 || h === 0) { D("ZERO SIZE -> abort"); return; }
-      try {
-        const map = new ml.Map({
-          container: el,
-          style: buildStyle(tileSource, minzoom, maxzoom),
-          center: DEFAULT_CENTER,
-          zoom: 10,
-          maxBounds: MAX_BOUNDS,
-          attributionControl: false,
-          trackResize: true,
-        });
-        map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
-        map.once("load", () => map.resize());
-        mapRef.current = map;
-        map.on("error", (e: any) => D("MAP ERROR EVENT", e?.error?.message || e));
-        D("map constructed OK");
-      } catch (e) { D("initMap THREW", (e as any)?.message || e); }
+      if (width === 0 || h === 0) return;
+      const map = new ml.Map({
+        container: el,
+        style: buildStyle(tileSource, minzoom, maxzoom),
+        center: DEFAULT_CENTER,
+        zoom: 10,
+        maxBounds: MAX_BOUNDS,
+        attributionControl: false,
+        trackResize: true,
+      });
+      map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
+      map.once("load", () => map.resize());
+      mapRef.current = map;
     };
 
-    const tryInitPMTiles = async () => {
-      D("tryInitPMTiles", { cancelled, hasMap: !!mapRef.current });
+    const initXYZ = async () => {
       if (cancelled || mapRef.current) return;
+      const origin = window.location.origin;
       try {
-        await loadPMTiles();
-        D("loadPMTiles resolved, pmProto=", !!window.pmtilesProtocol, "pm=", !!(window as any).pmtiles);
-        if (!cancelled) initMap({ type: "pmtiles", url: PMTILES_URL }, 0, 14);
-      } catch (e) {
-        D("loadPMTiles FAILED -> XYZ fallback", (e as any)?.message || e);
-        // Fallback: use old /tiles proxy
-        tryInitXYZ();
+        const j: any = await fetch(`${origin}/tiles/data/kaliningrad.json`).then(r => r.json());
+        if (cancelled) return;
+        const rawTiles: string[] = Array.isArray(j.tiles) ? j.tiles : [];
+        const tileUrl = rawTiles.map((u: string) =>
+          u.startsWith("http") ? u : `${origin}${u.startsWith("/") ? "" : "/"}${u}`
+        )[0] ?? `${origin}/tiles/data/kaliningrad/{z}/{x}/{y}.pbf`;
+        initMap({ type: "xyz", url: tileUrl }, j.minzoom ?? 0, j.maxzoom ?? 14);
+      } catch {
+        if (!cancelled) initMap({ type: "xyz", url: `${origin}/tiles/data/kaliningrad/{z}/{x}/{y}.pbf` }, 0, 14);
       }
     };
 
-    const tryInitXYZ = () => {
-      if (cancelled || mapRef.current) return;
-      const origin = window.location.origin;
-      fetch(`${origin}/tiles/data/kaliningrad.json`)
-        .then(r => r.json())
-        .then((j: any) => {
-          if (cancelled) return;
-          const rawTiles: string[] = Array.isArray(j.tiles) ? j.tiles : [];
-          const tileUrl = rawTiles.map((u: string) =>
-            u.startsWith("http") ? u : `${origin}${u.startsWith("/") ? "" : "/"}${u}`
-          )[0] ?? `${origin}/tiles/data/kaliningrad/{z}/{x}/{y}.pbf`;
-          initMap({ type: "xyz", url: tileUrl }, j.minzoom ?? 0, j.maxzoom ?? 14);
-        })
-        .catch(() => {
-          if (!cancelled) initMap({ type: "xyz", url: `${window.location.origin}/tiles/data/kaliningrad/{z}/{x}/{y}.pbf` }, 0, 14);
-        });
+    // Single guaranteed-order boot: maplibre script + worker URL MUST both be
+    // ready before any `new Map()`. The CSP build's worker is required — if the
+    // map is constructed before setWorkerUrl() runs, the default worker loads an
+    // HTML SPA-fallback and dies with "Unexpected token '<'", leaving only the
+    // water background painted. Both the initial call and the ResizeObserver
+    // funnel through here; `booting`/`mapRef` guards make it idempotent.
+    const boot = async () => {
+      if (cancelled || mapRef.current || booting) return;
+      const { width, height: h } = el.getBoundingClientRect();
+      if (width === 0 || h === 0) return; // wait for a real size (ResizeObserver retries)
+      booting = true;
+      try {
+        await loadMaplibre();      // script + worker URL (order enforced inside)
+        if (cancelled) return;
+        await loadPMTiles();       // pmtiles protocol
+        if (cancelled) return;
+        initMap({ type: "pmtiles", url: PMTILES_URL }, 0, 14);
+      } catch {
+        if (!cancelled) await initXYZ();
+      } finally {
+        booting = false;
+      }
     };
 
     const ro = new ResizeObserver(() => {
-      if (!mapRef.current) tryInitPMTiles(); else mapRef.current.resize();
+      if (mapRef.current) mapRef.current.resize();
+      else void boot();
     });
     ro.observe(el);
 
-    D("calling loadMaplibre");
-    loadMaplibre()
-      .then(() => { D("loadMaplibre resolved, ml=", !!window.maplibregl?.Map, "workerSet=", !!(window as any).__mlWorkerSet); if (!cancelled) tryInitPMTiles(); })
-      .catch((e) => { D("loadMaplibre FAILED", (e as any)?.message || e); });
+    void boot();
 
     return () => { cancelled = true; ro.disconnect(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
