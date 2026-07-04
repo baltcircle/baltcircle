@@ -262,18 +262,22 @@ function ensureCSS() {
 // existing tag from a prior StrictMode mount), so it lives in its own
 // idempotent async step keyed off a window flag.
 async function ensureWorkerUrl(): Promise<void> {
+  const D = (...a: any[]) => console.log("[MAPDBG]", ...a);
   const w = window as any;
-  if (w.__mlWorkerSet) return;
+  if (w.__mlWorkerSet) { D("worker already set"); return; }
   let blobUrl: string | null = null;
   try {
+    D("fetching worker", CDN_WORKER_JS);
     const resp = await fetch(CDN_WORKER_JS);
     const text = await resp.text();
     blobUrl = URL.createObjectURL(new Blob([text], { type: "application/javascript" }));
-  } catch { blobUrl = null; }
+    D("worker blob created, len", text.length);
+  } catch (e) { D("worker fetch FAILED, fallback to direct url", (e as any)?.message || e); blobUrl = null; }
   try {
     window.maplibregl.setWorkerUrl(blobUrl ?? CDN_WORKER_JS);
     w.__mlWorkerSet = true;
-  } catch { /* setWorkerUrl unavailable */ }
+    D("setWorkerUrl OK, blob?", !!blobUrl);
+  } catch (e) { D("setWorkerUrl THREW", (e as any)?.message || e); }
 }
 
 function loadMaplibreScript(): Promise<void> {
@@ -402,17 +406,24 @@ export function MapLibreMap({
     // water background painted. Both the initial call and the ResizeObserver
     // funnel through here; `booting`/`mapRef` guards make it idempotent.
     const boot = async () => {
-      if (cancelled || mapRef.current || booting) return;
+      const D = (...a: any[]) => console.log("[MAPDBG]", ...a);
+      if (cancelled || mapRef.current || booting) { D("boot skip", { cancelled, hasMap: !!mapRef.current, booting }); return; }
       const { width, height: h } = el.getBoundingClientRect();
+      D("boot size", { width, h });
       if (width === 0 || h === 0) return; // wait for a real size (ResizeObserver retries)
       booting = true;
       try {
+        D("boot: loadMaplibre start");
         await loadMaplibre();      // script + worker URL (order enforced inside)
+        D("boot: loadMaplibre done, cancelled?", cancelled);
         if (cancelled) return;
         await loadPMTiles();       // pmtiles protocol
+        D("boot: loadPMTiles done, cancelled?", cancelled);
         if (cancelled) return;
         initMap({ type: "pmtiles", url: PMTILES_URL }, 0, 14);
-      } catch {
+        D("boot: initMap called, canvas?", document.querySelectorAll("canvas").length);
+      } catch (e) {
+        D("boot CATCH -> XYZ", (e as any)?.message || e);
         if (!cancelled) await initXYZ();
       } finally {
         booting = false;
