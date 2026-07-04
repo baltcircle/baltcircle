@@ -270,8 +270,14 @@ function loadMaplibre(): Promise<void> {
     if (window.maplibregl?.Map) { resolve(); return; }
     const existing = document.getElementById("maplibre-js") as HTMLScriptElement | null;
     if (existing) {
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () => reject(new Error("script failed")));
+      // Script already in DOM (e.g. React StrictMode double-mount). If it has
+      // finished loading the 'load' event will never fire again — poll instead.
+      const poll = window.setInterval(() => {
+        if (window.maplibregl?.Map) { window.clearInterval(poll); resolve(); }
+      }, 50);
+      existing.addEventListener("load", () => { window.clearInterval(poll); resolve(); });
+      existing.addEventListener("error", () => { window.clearInterval(poll); reject(new Error("script failed")); });
+      window.setTimeout(() => { window.clearInterval(poll); if (!window.maplibregl?.Map) reject(new Error("maplibre load timeout")); }, 15000);
       return;
     }
     const s = document.createElement("script");
@@ -288,27 +294,37 @@ function loadMaplibre(): Promise<void> {
 }
 
 /** Load pmtiles.js from CDN and register protocol with maplibregl */
+function registerPMTilesProtocol(): void {
+  if (window.pmtilesProtocol) return;
+  const pmtiles = (window as any).pmtiles;
+  if (!pmtiles) throw new Error("pmtiles not found on window");
+  const protocol = new pmtiles.Protocol();
+  window.maplibregl.addProtocol("pmtiles", protocol.tile.bind(protocol));
+  window.pmtilesProtocol = protocol;
+}
+
 function loadPMTiles(): Promise<void> {
   return new Promise((resolve, reject) => {
     if (window.pmtilesProtocol) { resolve(); return; }
+    // Script already loaded (e.g. StrictMode double-mount) — just register.
+    if ((window as any).pmtiles) { try { registerPMTilesProtocol(); resolve(); } catch (e) { reject(e); } return; }
     const existing = document.getElementById("pmtiles-js") as HTMLScriptElement | null;
     if (existing) {
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () => reject(new Error("pmtiles CDN failed")));
+      // Tag present but library not yet on window — the 'load' event may have
+      // already fired, so poll for window.pmtiles instead of only listening.
+      const poll = window.setInterval(() => {
+        if ((window as any).pmtiles) {
+          window.clearInterval(poll);
+          try { registerPMTilesProtocol(); resolve(); } catch (e) { reject(e as Error); }
+        }
+      }, 50);
+      existing.addEventListener("error", () => { window.clearInterval(poll); reject(new Error("pmtiles CDN failed")); });
+      window.setTimeout(() => { window.clearInterval(poll); if (!(window as any).pmtiles) reject(new Error("pmtiles load timeout")); }, 15000);
       return;
     }
     const s = document.createElement("script");
     s.id = "pmtiles-js"; s.src = PMTILES_CDN;
-    s.onload = () => {
-      try {
-        const pmtiles = (window as any).pmtiles;
-        if (!pmtiles) throw new Error("pmtiles not found on window");
-        const protocol = new pmtiles.Protocol();
-        window.maplibregl.addProtocol("pmtiles", protocol.tile.bind(protocol));
-        window.pmtilesProtocol = protocol;
-        resolve();
-      } catch (e) { reject(e); }
-    };
+    s.onload = () => { try { registerPMTilesProtocol(); resolve(); } catch (e) { reject(e); } };
     s.onerror = () => reject(new Error("pmtiles CDN failed"));
     document.head.appendChild(s);
   });
