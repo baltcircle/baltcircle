@@ -21,12 +21,13 @@ export default defineConfig({
     // (React.lazy) handles the page/feature code; this handles heavy libs.
     rollupOptions: {
       output: {
-        // maplibre-gl loads from CDN at runtime (see MapLibreMap) so it is not
-        // bundled. recharts is heavy and only used by the admin AnalyticsPage —
-        // splitting it keeps it out of the rider entry.
+        // maplibre-gl + pmtiles are bundled (Vite emits the map worker
+        // same-origin). Split them into their own chunk so the heavy map libs
+        // cache separately and stay out of the main entry. recharts is admin-only.
         manualChunks: {
           "vendor-react": ["react", "react-dom", "wouter", "@tanstack/react-query"],
           "vendor-charts": ["recharts"],
+          "vendor-map": ["maplibre-gl", "pmtiles"],
         },
       },
     },

@@ -1,12 +1,19 @@
 import { useEffect, useRef } from "react";
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
+import { Protocol } from "pmtiles";
 import type { MapObject, Parking, Ride } from "@shared/schema";
 import { REAL_CENTER } from "@shared/geo";
 
-declare global {
-  interface Window {
-    maplibregl: any;
-    pmtilesProtocol: any;
-  }
+// maplibre-gl is bundled by Vite, so its web-worker is emitted same-origin and
+// loaded automatically — no CDN, no cross-origin Worker, no setWorkerUrl hacks.
+// The pmtiles Protocol is registered once at module load below.
+let __pmRegistered = false;
+function ensurePMTilesProtocol() {
+  if (__pmRegistered) return;
+  const protocol = new Protocol();
+  maplibregl.addProtocol("pmtiles", protocol.tile.bind(protocol));
+  __pmRegistered = true;
 }
 
 interface MapLibreMapProps {
@@ -32,11 +39,7 @@ const COLORS = {
   boundaryRegion:  "#9a86b8", // oblast / region border (boundaries kind=region/county)
 } as const;
 
-// PMTiles URL — loaded from /pmtiles_url.txt (written by CI after generation)
-// Fallback to old /tiles proxy if PMTiles not yet available
-const PMTILES_CDN = "https://unpkg.com/pmtiles@3/dist/pmtiles.js";
-// PMTiles file URL — updated by CI on each regeneration
-// PMTiles served same-origin via Express (Range request support, no CORS issues)
+// PMTiles file served same-origin via Express (Range request support, no CORS).
 const PMTILES_URL = "/kaliningrad.pmtiles";
 
 const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"; url: string }, minzoom: number, maxzoom: number): object => {
@@ -243,107 +246,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
   };
 };
 
-// ── CDN ───────────────────────────────────────────────────────────────────────
 const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
-const CDN_BASE      = "https://unpkg.com/maplibre-gl@4.7.1/dist";
-const CDN_CSP_JS    = `${CDN_BASE}/maplibre-gl-csp.js`;
-const CDN_WORKER_JS = `${CDN_BASE}/maplibre-gl-csp-worker.js`;
-const CDN_CSS       = `${CDN_BASE}/maplibre-gl.css`;
-
-function ensureCSS() {
-  if (document.getElementById("maplibre-css")) return;
-  const link = document.createElement("link");
-  link.id = "maplibre-css"; link.rel = "stylesheet"; link.href = CDN_CSS;
-  document.head.appendChild(link);
-}
-
-// The CSP maplibre build REQUIRES a worker URL before any Map is constructed.
-// This must run regardless of how maplibregl got loaded (fresh script or an
-// existing tag from a prior StrictMode mount), so it lives in its own
-// idempotent async step keyed off a window flag.
-async function ensureWorkerUrl(): Promise<void> {
-  const D = (...a: any[]) => console.log("[MAPDBG]", ...a);
-  const w = window as any;
-  if (w.__mlWorkerSet) { D("worker already set"); return; }
-  let blobUrl: string | null = null;
-  try {
-    D("fetching worker", CDN_WORKER_JS);
-    const resp = await fetch(CDN_WORKER_JS);
-    const text = await resp.text();
-    blobUrl = URL.createObjectURL(new Blob([text], { type: "application/javascript" }));
-    D("worker blob created, len", text.length);
-  } catch (e) { D("worker fetch FAILED, fallback to direct url", (e as any)?.message || e); blobUrl = null; }
-  try {
-    window.maplibregl.setWorkerUrl(blobUrl ?? CDN_WORKER_JS);
-    w.__mlWorkerSet = true;
-    D("setWorkerUrl OK, blob?", !!blobUrl);
-  } catch (e) { D("setWorkerUrl THREW", (e as any)?.message || e); }
-}
-
-function loadMaplibreScript(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (window.maplibregl?.Map) { resolve(); return; }
-    const existing = document.getElementById("maplibre-js") as HTMLScriptElement | null;
-    if (existing) {
-      // Script already in DOM (e.g. React StrictMode double-mount). If it has
-      // finished loading the 'load' event will never fire again — poll instead.
-      const poll = window.setInterval(() => {
-        if (window.maplibregl?.Map) { window.clearInterval(poll); resolve(); }
-      }, 50);
-      existing.addEventListener("load", () => { window.clearInterval(poll); resolve(); });
-      existing.addEventListener("error", () => { window.clearInterval(poll); reject(new Error("script failed")); });
-      window.setTimeout(() => { window.clearInterval(poll); if (!window.maplibregl?.Map) reject(new Error("maplibre load timeout")); }, 15000);
-      return;
-    }
-    const s = document.createElement("script");
-    s.id = "maplibre-js"; s.src = CDN_CSP_JS;
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error("CDN failed"));
-    document.head.appendChild(s);
-  });
-}
-
-async function loadMaplibre(): Promise<void> {
-  await loadMaplibreScript();
-  await ensureWorkerUrl();
-}
-
-/** Load pmtiles.js from CDN and register protocol with maplibregl */
-function registerPMTilesProtocol(): void {
-  if (window.pmtilesProtocol) return;
-  const pmtiles = (window as any).pmtiles;
-  if (!pmtiles) throw new Error("pmtiles not found on window");
-  const protocol = new pmtiles.Protocol();
-  window.maplibregl.addProtocol("pmtiles", protocol.tile.bind(protocol));
-  window.pmtilesProtocol = protocol;
-}
-
-function loadPMTiles(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (window.pmtilesProtocol) { resolve(); return; }
-    // Script already loaded (e.g. StrictMode double-mount) — just register.
-    if ((window as any).pmtiles) { try { registerPMTilesProtocol(); resolve(); } catch (e) { reject(e); } return; }
-    const existing = document.getElementById("pmtiles-js") as HTMLScriptElement | null;
-    if (existing) {
-      // Tag present but library not yet on window — the 'load' event may have
-      // already fired, so poll for window.pmtiles instead of only listening.
-      const poll = window.setInterval(() => {
-        if ((window as any).pmtiles) {
-          window.clearInterval(poll);
-          try { registerPMTilesProtocol(); resolve(); } catch (e) { reject(e as Error); }
-        }
-      }, 50);
-      existing.addEventListener("error", () => { window.clearInterval(poll); reject(new Error("pmtiles CDN failed")); });
-      window.setTimeout(() => { window.clearInterval(poll); if (!(window as any).pmtiles) reject(new Error("pmtiles load timeout")); }, 15000);
-      return;
-    }
-    const s = document.createElement("script");
-    s.id = "pmtiles-js"; s.src = PMTILES_CDN;
-    s.onload = () => { try { registerPMTilesProtocol(); resolve(); } catch (e) { reject(e); } };
-    s.onerror = () => reject(new Error("pmtiles CDN failed"));
-    document.head.appendChild(s);
-  });
-}
 
 // ── COMPONENT ─────────────────────────────────────────────────────────────────
 export function MapLibreMap({
@@ -356,9 +259,7 @@ export function MapLibreMap({
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    ensureCSS();
     let cancelled = false;
-    let booting = false;
 
     const initMap = (
       tileSource: { type: "pmtiles"; url: string } | { type: "xyz"; url: string },
@@ -366,19 +267,18 @@ export function MapLibreMap({
       maxzoom: number
     ) => {
       if (cancelled || mapRef.current) return;
-      const ml = window.maplibregl;
       const { width, height: h } = el.getBoundingClientRect();
-      if (width === 0 || h === 0) return;
-      const map = new ml.Map({
+      if (width === 0 || h === 0) return; // wait for a real size (ResizeObserver retries)
+      const map = new maplibregl.Map({
         container: el,
-        style: buildStyle(tileSource, minzoom, maxzoom),
+        style: buildStyle(tileSource, minzoom, maxzoom) as any,
         center: DEFAULT_CENTER,
         zoom: 10,
         maxBounds: MAX_BOUNDS,
         attributionControl: false,
         trackResize: true,
       });
-      map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
+      map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
       map.once("load", () => map.resize());
       mapRef.current = map;
     };
@@ -399,44 +299,31 @@ export function MapLibreMap({
       }
     };
 
-    // Single guaranteed-order boot: maplibre script + worker URL MUST both be
-    // ready before any `new Map()`. The CSP build's worker is required — if the
-    // map is constructed before setWorkerUrl() runs, the default worker loads an
-    // HTML SPA-fallback and dies with "Unexpected token '<'", leaving only the
-    // water background painted. Both the initial call and the ResizeObserver
-    // funnel through here; `booting`/`mapRef` guards make it idempotent.
-    const boot = async () => {
-      const D = (...a: any[]) => console.log("[MAPDBG]", ...a);
-      if (cancelled || mapRef.current || booting) { D("boot skip", { cancelled, hasMap: !!mapRef.current, booting }); return; }
+    // maplibre + pmtiles are bundled (Vite emits the worker same-origin), so we
+    // just register the pmtiles protocol and build the map. No async loading, no
+    // worker-URL race, no cross-origin Worker restriction. The `earth` layer is
+    // rendered on top of the water background, fixing the ocean-flood bug.
+    const boot = () => {
+      if (cancelled || mapRef.current) return;
       const { width, height: h } = el.getBoundingClientRect();
-      D("boot size", { width, h });
-      if (width === 0 || h === 0) return; // wait for a real size (ResizeObserver retries)
-      booting = true;
+      if (width === 0 || h === 0) return; // ResizeObserver retries once sized
+      ensurePMTilesProtocol();
+      // If the pmtiles file is missing (e.g. first deploy before CI), fall back
+      // to the legacy XYZ proxy. We optimistically try pmtiles first.
       try {
-        D("boot: loadMaplibre start");
-        await loadMaplibre();      // script + worker URL (order enforced inside)
-        D("boot: loadMaplibre done, cancelled?", cancelled);
-        if (cancelled) return;
-        await loadPMTiles();       // pmtiles protocol
-        D("boot: loadPMTiles done, cancelled?", cancelled);
-        if (cancelled) return;
         initMap({ type: "pmtiles", url: PMTILES_URL }, 0, 14);
-        D("boot: initMap called, canvas?", document.querySelectorAll("canvas").length);
-      } catch (e) {
-        D("boot CATCH -> XYZ", (e as any)?.message || e);
-        if (!cancelled) await initXYZ();
-      } finally {
-        booting = false;
+      } catch {
+        void initXYZ();
       }
     };
 
     const ro = new ResizeObserver(() => {
       if (mapRef.current) mapRef.current.resize();
-      else void boot();
+      else boot();
     });
     ro.observe(el);
 
-    void boot();
+    boot();
 
     return () => { cancelled = true; ro.disconnect(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
