@@ -350,8 +350,11 @@ export function MapLibreMap({
   const mapRef       = useRef<any>(null);
 
   useEffect(() => {
+    const D = (...a: any[]) => console.log("[MAPDBG]", ...a);
+    D("effect fired");
     const el = containerRef.current;
-    if (!el) return;
+    if (!el) { D("NO container ref -> abort"); return; }
+    D("container ok", el.getBoundingClientRect());
     ensureCSS();
     let cancelled = false;
 
@@ -360,10 +363,12 @@ export function MapLibreMap({
       minzoom: number,
       maxzoom: number
     ) => {
+      D("initMap called", { cancelled, hasMap: !!mapRef.current });
       if (cancelled || mapRef.current) return;
       const ml = window.maplibregl;
       const { width, height: h } = el.getBoundingClientRect();
-      if (width === 0 || h === 0) return;
+      D("initMap size", { width, h, ml: !!ml });
+      if (width === 0 || h === 0) { D("ZERO SIZE -> abort"); return; }
       try {
         const map = new ml.Map({
           container: el,
@@ -377,15 +382,20 @@ export function MapLibreMap({
         map.addControl(new ml.AttributionControl({ compact: true }), "bottom-right");
         map.once("load", () => map.resize());
         mapRef.current = map;
-      } catch { /* WebGL unavailable */ }
+        map.on("error", (e: any) => D("MAP ERROR EVENT", e?.error?.message || e));
+        D("map constructed OK");
+      } catch (e) { D("initMap THREW", (e as any)?.message || e); }
     };
 
     const tryInitPMTiles = async () => {
+      D("tryInitPMTiles", { cancelled, hasMap: !!mapRef.current });
       if (cancelled || mapRef.current) return;
       try {
         await loadPMTiles();
+        D("loadPMTiles resolved, pmProto=", !!window.pmtilesProtocol, "pm=", !!(window as any).pmtiles);
         if (!cancelled) initMap({ type: "pmtiles", url: PMTILES_URL }, 0, 14);
-      } catch {
+      } catch (e) {
+        D("loadPMTiles FAILED -> XYZ fallback", (e as any)?.message || e);
         // Fallback: use old /tiles proxy
         tryInitXYZ();
       }
@@ -414,9 +424,10 @@ export function MapLibreMap({
     });
     ro.observe(el);
 
+    D("calling loadMaplibre");
     loadMaplibre()
-      .then(() => { if (!cancelled) tryInitPMTiles(); })
-      .catch(() => { /* CDN unavailable */ });
+      .then(() => { D("loadMaplibre resolved, ml=", !!window.maplibregl?.Map, "workerSet=", !!(window as any).__mlWorkerSet); if (!cancelled) tryInitPMTiles(); })
+      .catch((e) => { D("loadMaplibre FAILED", (e as any)?.message || e); });
 
     return () => { cancelled = true; ro.disconnect(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
