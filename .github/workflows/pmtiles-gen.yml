@@ -65,7 +65,7 @@ jobs:
           "$PM_BIN" extract "$BUILD_URL" kaliningrad.pmtiles \
             --bbox="$BBOX" --maxzoom="$MAXZOOM"
           echo "pmtiles: $(du -sh kaliningrad.pmtiles)"
-          "$PM_BIN" show kaliningrad.pmtiles | head -8
+          "$PM_BIN" show kaliningrad.pmtiles 2>&1 | head -8 || true
           free -h
 
           # ── Publish to GitHub Release (same flow as before) ──
