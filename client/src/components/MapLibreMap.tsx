@@ -31,10 +31,16 @@ interface MapLibreMapProps {
 
 const MAX_BOUNDS: [number, number, number, number] = [18.3, 53.2, 26.8, 57.3];
 
-// PALETTE - swap any value by HEX to re-theme the whole map
+// PALETTE - swap any value by HEX to re-theme the whole map.
+// Base tones follow the official Protomaps "light" flavor, tuned to the
+// TakeRide brand (#1D1E5D dark / #61B5C4 light).
 const COLORS = {
-  land:            "#eef1e8", // land polygon (Protomaps `earth` layer)
-  water:           "#9fc9e0", // sea, gulfs, lakes, rivers
+  land:            "#e8e6e1", // land polygon (Protomaps `earth` layer) — soft warm grey
+  water:           "#61B5C4", // sea, gulfs, lakes, rivers — TakeRide brand light
+  forest:          "#c4e7d2", // forest / wood (Protomaps light landcover.forest)
+  grass:           "#d2efcf", // grass / meadow / park (landcover.grassland)
+  farmland:        "#d8efd2", // farmland (landcover.farmland)
+  urban:           "#e6e6e6", // urban_area / residential
   boundaryCountry: "#8a6fae", // RU / LT / PL state border (boundaries kind=country)
   boundaryRegion:  "#9a86b8", // oblast / region border (boundaries kind=region/county)
 } as const;
@@ -65,13 +71,14 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         id: "landcover", type: "fill", source: "pm", "source-layer": "landcover",
         paint: {
           "fill-color": ["match", ["get", "kind"],
-            "farmland",   "#eae4d2",
-            "grassland",  "#d4e8c4",
-            "forest",     "#aecb96",
-            "urban_area", "#e8e3da",
-            "#e6dfcf",
+            "farmland",   COLORS.farmland,
+            "grassland",  COLORS.grass,
+            "forest",     COLORS.forest,
+            "scrub",      COLORS.grass,
+            "urban_area", COLORS.urban,
+            COLORS.grass,
           ],
-          "fill-opacity": 0.7,
+          "fill-opacity": 0.8,
         },
       },
 
@@ -80,30 +87,30 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         id: "landuse", type: "fill", source: "pm", "source-layer": "landuse", minzoom: 9,
         paint: {
           "fill-color": ["match", ["get", "kind"],
-            "forest",        "#aecb96",
-            "wood",          "#aecb96",
-            "park",          "#bce4b4",
-            "national_park", "#bce4b4",
-            "nature_reserve","#bce4b4",
-            "grass",         "#d4e8c4",
-            "meadow",        "#d4e8c4",
-            "farmland",      "#eae4d2",
-            "allotments",    "#e6ddc4",
-            "cemetery",      "#d0e4cc",
-            "military",      "#e4d4c4",
-            "industrial",    "#e4d8ca",
-            "commercial",    "#f0e8d2",
-            "residential",   "#ece7de",
-            "hospital",      "#f0dede",
-            "college",       "#f0ecda",
-            "university",    "#f0ecda",
-            "school",        "#f0ecda",
-            "kindergarten",  "#f0ecda",
+            "forest",        COLORS.forest,
+            "wood",          COLORS.forest,
+            "park",          COLORS.grass,
+            "national_park", COLORS.grass,
+            "nature_reserve",COLORS.grass,
+            "grass",         COLORS.grass,
+            "meadow",        COLORS.grass,
+            "farmland",      COLORS.farmland,
+            "allotments",    COLORS.farmland,
+            "cemetery",      COLORS.grass,
+            "military",      "#e4dccc",
+            "industrial",    "#e4ddd0",
+            "commercial",    "#ecebe4",
+            "residential",   COLORS.urban,
+            "hospital",      "#f0e2e2",
+            "college",       "#eeece2",
+            "university",    "#eeece2",
+            "school",        "#eeece2",
+            "kindergarten",  "#eeece2",
             "beach",         "#f3ecc8",
-            "pedestrian",    "#ece7de",
-            "#e8e3da",
+            "pedestrian",    COLORS.urban,
+            COLORS.urban,
           ],
-          "fill-opacity": 0.75,
+          "fill-opacity": 0.85,
         },
       },
 
