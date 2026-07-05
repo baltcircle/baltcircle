@@ -36,7 +36,7 @@ const MAX_BOUNDS: [number, number, number, number] = [18.3, 53.2, 26.8, 57.3];
 // TakeRide brand (#1D1E5D dark / #61B5C4 light).
 const COLORS = {
   land:            "#e8e6e1", // land polygon (Protomaps `earth` layer) — soft warm grey
-  water:           "#61B5C4", // sea, gulfs, lakes, rivers — TakeRide brand light
+  water:           "#9fc9e0", // sea, gulfs, lakes, rivers — muted blue
   forest:          "#c4e7d2", // forest / wood (Protomaps light landcover.forest)
   grass:           "#d2efcf", // grass / meadow / park (landcover.grassland)
   farmland:        "#d8efd2", // farmland (landcover.farmland)
@@ -84,14 +84,16 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
 
       // ── LANDUSE (z2+) ─────────────────────────────────────────────────────────
       {
+        // Protected-area kinds (national_park / nature_reserve / protected_area)
+        // are excluded: on the Curonian Spit they render as one big green
+        // rectangle over the real wood/sand/beach polygons underneath.
         id: "landuse", type: "fill", source: "pm", "source-layer": "landuse", minzoom: 9,
+        filter: ["!", ["in", ["get", "kind"], ["literal", ["national_park", "nature_reserve", "protected_area"]]]],
         paint: {
           "fill-color": ["match", ["get", "kind"],
             "forest",        COLORS.forest,
             "wood",          COLORS.forest,
             "park",          COLORS.grass,
-            "national_park", COLORS.grass,
-            "nature_reserve",COLORS.grass,
             "grass",         COLORS.grass,
             "meadow",        COLORS.grass,
             "farmland",      COLORS.farmland,
@@ -234,15 +236,37 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         paint: { "text-color": "#3a7ab0", "text-halo-color": "rgba(255,255,255,0.8)", "text-halo-width": 1.5 },
       },
 
-      // ── PLACE LABELS ──────────────────────────────────────────────────────────
+      // ── FAR-ZOOM LABELS (z<8): neighbouring countries + Kaliningrad, italic ────
+      // Only Lithuania / Poland (kind=country) and the city of Kaliningrad
+      // (kind=locality) show while the map is zoomed out. Cities appear from z8.
       {
-        id: "place-labels", type: "symbol", source: "pm", "source-layer": "places",
+        id: "country-labels", type: "symbol", source: "pm", "source-layer": "places",
+        maxzoom: 8,
+        filter: ["any",
+          ["==", ["get", "kind"], "country"],
+          ["all", ["==", ["get", "kind"], "locality"], ["==", ["get", "name"], "Kaliningrad"]],
+        ],
+        layout: {
+          "text-field": RU,
+          "text-font": ["Noto Sans Italic"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 4, 12, 7, 16],
+          "text-max-width": 8,
+          "text-transform": "uppercase",
+          "text-letter-spacing": 0.15,
+          "text-padding": 4,
+        },
+        paint: { "text-color": "#4a5a6a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1.5 },
+      },
+
+      // ── PLACE LABELS (z8+): cities, towns, villages ───────────────────────────
+      {
+        id: "place-labels", type: "symbol", source: "pm", "source-layer": "places", minzoom: 8,
         filter: ["in", ["get", "kind"], ["literal", ["locality", "city", "town", "village", "neighbourhood", "suburb"]]],
         layout: {
           "text-field": RU,
           "text-font": ["Noto Sans Regular"],
           "text-size": ["interpolate", ["linear"], ["zoom"],
-            6,  ["match", ["get", "kind"], "city", 14, "town", 11, 9],
+            8,  ["match", ["get", "kind"], "city", 15, "town", 12, 10],
             12, ["match", ["get", "kind"], "city", 20, "town", 15, 12],
           ],
           "text-max-width": 8,
