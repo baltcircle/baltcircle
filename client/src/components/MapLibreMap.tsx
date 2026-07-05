@@ -116,13 +116,16 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
 
       // ── WATER (lakes/rivers/lagoons — ocean stays as background) ──────────────
       {
+        // Protomaps stores rivers/canals as LineString inside the SAME `water`
+        // source-layer. A fill layer would triangulate those lines into diagonal
+        // wedges across land, so the fill must be constrained to real polygons.
         id: "water", type: "fill", source: "pm", "source-layer": "water",
-        filter: ["!=", ["get", "kind"], "ocean"],
+        filter: ["all", ["==", ["geometry-type"], "Polygon"], ["!=", ["get", "kind"], "ocean"]],
         paint: { "fill-color": COLORS.water },
       },
       {
         id: "water-line", type: "line", source: "pm", "source-layer": "water",
-        filter: ["in", ["get", "kind"], ["literal", ["river", "stream", "canal"]]],
+        filter: ["all", ["==", ["geometry-type"], "LineString"], ["in", ["get", "kind"], ["literal", ["river", "stream", "canal"]]]],
         paint: {
           "line-color": COLORS.water,
           "line-width": ["interpolate", ["linear"], ["zoom"], 9, 0.8, 12, 2.5, 14, 4],
