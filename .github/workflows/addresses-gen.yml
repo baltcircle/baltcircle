@@ -1,0 +1,30 @@
+name: Generate Address Tiles
+# Builds addresses.pmtiles (OSM house numbers) into /home/yc-user/osm, served by
+# the app at /addresses.pmtiles. Kept separate from pmtiles-gen.yml so the heavy
+# 571 MB region extract and the ~1 MB address overlay regenerate independently.
+on:
+  workflow_dispatch:
+    inputs:
+      addr_bbox:
+        description: "Address bbox S,W,N,E (Overpass order — city extent only)"
+        required: false
+        default: "54.63,20.35,54.78,20.65"
+      city:
+        description: "City label for logs"
+        required: false
+        default: "Kaliningrad"
+
+jobs:
+  addresses:
+    runs-on: [self-hosted, baltcircle-prod]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@v4
+
+      - name: Build address pmtiles from OSM and place in /home/yc-user/osm
+        env:
+          ADDR_BBOX: ${{ github.event.inputs.addr_bbox || '54.63,20.35,54.78,20.65' }}
+          CITY: ${{ github.event.inputs.city || 'Kaliningrad' }}
+        shell: bash
+        run: bash scripts/build-addresses.sh

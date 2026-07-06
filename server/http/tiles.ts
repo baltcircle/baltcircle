@@ -37,14 +37,14 @@ import {
   otpLimiter, paymentLimiter,
 } from "./context";
 
-export function registerTileRoutes(app: Express): void {
-  // ── PMTiles file serving ─────────────────────────────────────────────────
-  // Serves kaliningrad.pmtiles from the mounted /app/osm volume.
-  // Supports HTTP Range requests — required by PMTiles protocol.
-  app.get("/kaliningrad.pmtiles", (req: Request, res: Response) => {
+// ── PMTiles file serving (Range-request aware) ───────────────────────────────
+// Serves a .pmtiles file from the mounted /app/osm volume. PMTiles protocol
+// issues HTTP Range requests, so 206 partial responses are mandatory.
+function servePmtiles(fileName: string) {
+  return (req: Request, res: Response): void => {
     const fs = require("fs") as typeof import("fs");
     const path = require("path") as typeof import("path");
-    const filePath = path.join("/app/osm", "kaliningrad.pmtiles");
+    const filePath = path.join("/app/osm", fileName);
     if (!fs.existsSync(filePath)) {
       res.status(404).end();
       return;
@@ -64,14 +64,19 @@ export function registerTileRoutes(app: Express): void {
       res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
       res.setHeader("Content-Length", chunkSize);
       res.status(206);
-      const stream = fs.createReadStream(filePath, { start, end });
-      stream.pipe(res);
+      fs.createReadStream(filePath, { start, end }).pipe(res);
     } else {
       res.setHeader("Content-Length", fileSize);
       res.status(200);
       fs.createReadStream(filePath).pipe(res);
     }
-  });
+  };
+}
+
+export function registerTileRoutes(app: Express): void {
+  // Base map tiles (571 MB Protomaps extract) + address overlay (~1 MB OSM housenumbers).
+  app.get("/kaliningrad.pmtiles", servePmtiles("kaliningrad.pmtiles"));
+  app.get("/addresses.pmtiles", servePmtiles("addresses.pmtiles"));
 
   // ── OSM Tile Proxy (legacy fallback — kept while tileserver still runs) ──
   // Proxies /tiles/* to local tileserver-gl (port 8080).

@@ -44,10 +44,12 @@ const COLORS = {
   building:        "#cfd0e3", // building polygons — slightly deeper tint of brand #1D1E5D (reads over `urban`)
   boundaryCountry: "#8a6fae", // RU / LT / PL state border (boundaries kind=country)
   roadOutline:     "#1D1E5D", // ALL roads — 1px outline in dark-theme primary (hollow fill)
+  houseNumber:     "#1D1E5D", // house-number labels (z16+) — brand blue, rendered at 0.55 opacity
 } as const;
 
 // PMTiles file served same-origin via Express (Range request support, no CORS).
 const PMTILES_URL = "/kaliningrad.pmtiles";
+const ADDR_URL = "/addresses.pmtiles";
 
 const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"; url: string }, minzoom: number, maxzoom: number): object => {
   // Russian label with graceful fallback (Protomaps stores names in `name:ru` / `name` / `name:en`).
@@ -59,6 +61,10 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       pm: tileSource.type === "pmtiles"
         ? { type: "vector", url: `pmtiles://${tileSource.url}`, minzoom, maxzoom }
         : { type: "vector", tiles: [tileSource.url], minzoom, maxzoom },
+      // House-number overlay — separate lightweight pmtiles (OSM addr:housenumber).
+      // The base Protomaps extract carries no address data, so numbers ship as
+      // their own source. Tiles are built z14-16; MapLibre overzooms past z16.
+      addr: { type: "vector", url: `pmtiles://${ADDR_URL}`, minzoom: 14, maxzoom: 16 },
       // Static label anchor for Poland: the `places` country point for Polska sits
       // south of the map's maxBounds, so it never renders. This forces "ПОЛЬША"
       // into the visible area (just below Kaliningrad) on far zoom.
@@ -254,7 +260,27 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         paint: {
           "fill-color": COLORS.building,
           "fill-outline-color": COLORS.building,
-          "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.5, 14, 0.9],
+          // Opaque at z14+ so underlying road lines don't bleed through the building.
+          "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.7, 14, 1],
+        },
+      },
+
+      // ── HOUSE NUMBERS (z16+) ──────────────────────────────────────────────────
+      // Overlay from the `addresses` pmtiles. Kept off until z16 so numbers don't
+      // clutter the map (matches Google / 2GIS). Blue at 0.55 opacity; collision
+      // detection hides overlapping numbers automatically at lower zoom.
+      {
+        id: "house-numbers", type: "symbol", source: "addr", "source-layer": "addresses", minzoom: 16,
+        layout: {
+          "text-field": ["get", "hn"],
+          "text-font": ["Noto Sans Regular"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 16, 10, 18, 12],
+          "text-allow-overlap": false,
+          "text-padding": 4,
+        },
+        paint: {
+          "text-color": COLORS.houseNumber,
+          "text-opacity": ["interpolate", ["linear"], ["zoom"], 15.5, 0, 16, 0.55],
         },
       },
 
