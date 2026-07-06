@@ -192,23 +192,39 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       // `zoom` must sit directly inside a top-level interpolate, so the outline
       // width is a separate interpolate (= inner width + 2px), not arithmetic.
       ...(() => {
+        // Interior width by kind/zoom. Minor roads are clearly thinner than the
+        // trunk network at every zoom (Google/Яндекс/2ГИС style hierarchy).
         const ROAD_W: any = ["interpolate", ["linear"], ["zoom"],
           8,  ["match", ["get", "kind"], "highway", 1.2, "major_road", 0.9, 0.4],
-          12, ["match", ["get", "kind"], "highway", 4.5, "major_road", 3, "minor_road", 2, "path", 1, 1.5],
-          14, ["match", ["get", "kind"], "highway", 8, "major_road", 5.5, "minor_road", 3, "path", 1.5, 3],
+          12, ["match", ["get", "kind"], "highway", 4.5, "major_road", 3, "minor_road", 1, "path", 0.6, 1],
+          14, ["match", ["get", "kind"], "highway", 8, "major_road", 5.5, "minor_road", 2, "path", 1, 2],
+          16, ["match", ["get", "kind"], "highway", 12, "major_road", 8, "minor_road", 4, "path", 1.5, 3],
         ];
+        // Outline = interior + ~2px border (own interpolate; zoom must be top-level).
         const ROAD_W_OUT: any = ["interpolate", ["linear"], ["zoom"],
           8,  ["match", ["get", "kind"], "highway", 3.2, "major_road", 2.9, 2.4],
-          12, ["match", ["get", "kind"], "highway", 6.5, "major_road", 5, "minor_road", 4, "path", 3, 3.5],
-          14, ["match", ["get", "kind"], "highway", 10, "major_road", 7.5, "minor_road", 5, "path", 3.5, 5],
+          12, ["match", ["get", "kind"], "highway", 6.5, "major_road", 5, "minor_road", 2.6, "path", 2, 2.6],
+          14, ["match", ["get", "kind"], "highway", 10, "major_road", 7.5, "minor_road", 3.6, "path", 2.4, 3.6],
+          16, ["match", ["get", "kind"], "highway", 14, "major_road", 10, "minor_road", 5.6, "path", 3, 4.6],
         ];
-        const ROAD_FILTER: any = ["in", ["get", "kind"], ["literal", ["highway", "major_road", "minor_road", "path"]]];
+        // Zoom-gated visibility (matches reference maps): trunk roads from z8,
+        // minor roads only once the user zooms into a district (z13), paths z14.
+        // Filtering out minor/path at low zoom also means far fewer features are
+        // drawn on the oblast overview — lighter load.
+        const ROAD_FILTER: any = ["any",
+          ["in", ["get", "kind"], ["literal", ["highway", "major_road"]]],
+          ["all", ["==", ["get", "kind"], "minor_road"], [">=", ["zoom"], 13]],
+          ["all", ["==", ["get", "kind"], "path"], [">=", ["zoom"], 14]],
+        ];
+        // Semi-transparent dark outline so roads read softly (not heavy black
+        // borders); fully opaque land-coloured interior keeps the road body crisp.
+        const OUT_OPACITY = 0.45;
         return [
           {
             id: "road-outline", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
             filter: ROAD_FILTER,
             layout: { "line-cap": "round", "line-join": "round" },
-            paint: { "line-color": COLORS.roadOutline, "line-width": ROAD_W_OUT },
+            paint: { "line-color": COLORS.roadOutline, "line-width": ROAD_W_OUT, "line-opacity": OUT_OPACITY },
           },
           {
             id: "road-inner", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
