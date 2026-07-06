@@ -385,16 +385,24 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         },
         paint: {
           "text-color": COLORS.roadOutline,
-          // Two opacity behaviours by kind (Яндекс/Google-style):
-          //  - City/town/locality names FADE OUT past z13 so a zoomed-in
-          //    street view isn't cluttered by the settlement name.
-          //  - District names (neighbourhood/suburb) stay visible as in-city
-          //    landmarks, but dimmer (0.55) than street names.
-          // interpolate(zoom) must be top-level, so the per-kind branch is nested
-          // inside each zoom stop's output instead of wrapping the interpolate.
+          // Opacity rules (Яндекс/Google-style), by kind:
+          //  - Districts (neighbourhood/suburb): constant 0.55 — dimmer than
+          //    street names, but always visible as in-city landmarks.
+          //  - Towns/cities (population_rank >= 6: Калининград r10,
+          //    Светлогорск/Зеленоградск/Пионерский/Гурьевск r6):
+          //    FADE OUT by z13.5 so the settlement name doesn't clutter the
+          //    street-level view once you're inside it.
+          //  - Small settlements (villages, r<=5): stay visible at all zooms.
+          // interpolate(zoom) must stay top-level; the per-feature branch is
+          // nested inside each zoom stop's output.
           "text-opacity": ["interpolate", ["linear"], ["zoom"],
             12.5, ["match", ["get", "kind"], ["neighbourhood", "suburb"], 0.55, 1],
-            13.5, ["match", ["get", "kind"], ["neighbourhood", "suburb"], 0.55, 0],
+            13.5, [
+              "case",
+              ["in", ["get", "kind"], ["literal", ["neighbourhood", "suburb"]]], 0.55,
+              [">=", ["coalesce", ["get", "population_rank"], 0], 6], 0,
+              1,
+            ],
           ],
         },
       },
