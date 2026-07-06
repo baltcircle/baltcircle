@@ -189,11 +189,18 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       //
       // ROAD_W = interior width by kind/zoom; the outline layer is ROAD_W + 2px
       // (1px border each side).
+      // `zoom` must sit directly inside a top-level interpolate, so the outline
+      // width is a separate interpolate (= inner width + 2px), not arithmetic.
       ...(() => {
         const ROAD_W: any = ["interpolate", ["linear"], ["zoom"],
           8,  ["match", ["get", "kind"], "highway", 1.2, "major_road", 0.9, 0.4],
           12, ["match", ["get", "kind"], "highway", 4.5, "major_road", 3, "minor_road", 2, "path", 1, 1.5],
           14, ["match", ["get", "kind"], "highway", 8, "major_road", 5.5, "minor_road", 3, "path", 1.5, 3],
+        ];
+        const ROAD_W_OUT: any = ["interpolate", ["linear"], ["zoom"],
+          8,  ["match", ["get", "kind"], "highway", 3.2, "major_road", 2.9, 2.4],
+          12, ["match", ["get", "kind"], "highway", 6.5, "major_road", 5, "minor_road", 4, "path", 3, 3.5],
+          14, ["match", ["get", "kind"], "highway", 10, "major_road", 7.5, "minor_road", 5, "path", 3.5, 5],
         ];
         const ROAD_FILTER: any = ["in", ["get", "kind"], ["literal", ["highway", "major_road", "minor_road", "path"]]];
         return [
@@ -201,7 +208,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
             id: "road-outline", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
             filter: ROAD_FILTER,
             layout: { "line-cap": "round", "line-join": "round" },
-            paint: { "line-color": COLORS.roadOutline, "line-width": ["+", ROAD_W, 2] },
+            paint: { "line-color": COLORS.roadOutline, "line-width": ROAD_W_OUT },
           },
           {
             id: "road-inner", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
