@@ -87,7 +87,10 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         // Protected-area kinds (national_park / nature_reserve / protected_area)
         // are excluded: on the Curonian Spit they render as one big green
         // rectangle over the real wood/sand/beach polygons underneath.
-        id: "landuse", type: "fill", source: "pm", "source-layer": "landuse", minzoom: 9,
+        // minzoom 7: landcover (green base) only ships z5-7, landuse detail ships
+        // z7+. Starting landuse at z7 closes the z8 gap where the map turned white
+        // (no landcover, no landuse — only grey earth + water).
+        id: "landuse", type: "fill", source: "pm", "source-layer": "landuse", minzoom: 7,
         filter: ["!", ["in", ["get", "kind"], ["literal", ["national_park", "nature_reserve", "protected_area"]]]],
         paint: {
           "fill-color": ["match", ["get", "kind"],
@@ -223,10 +226,10 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         paint: { "text-color": "#5a4a3a", "text-halo-color": "rgba(255,255,255,0.9)", "text-halo-width": 1.5 },
       },
 
-      // ── WATER NAMES ───────────────────────────────────────────────────────────
+      // ── WATER NAMES (polygons: bays, lagoons, lakes) ──────────────────────────
       {
         id: "water-labels", type: "symbol", source: "pm", "source-layer": "water", minzoom: 9,
-        filter: ["has", "name"],
+        filter: ["all", ["has", "name"], ["==", ["geometry-type"], "Polygon"]],
         layout: {
           "text-field": RU,
           "text-font": ["Noto Sans Regular"],
@@ -236,20 +239,46 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         paint: { "text-color": "#3a7ab0", "text-halo-color": "rgba(255,255,255,0.8)", "text-halo-width": 1.5 },
       },
 
-      // ── FAR-ZOOM LABELS (z<8): neighbouring countries + Kaliningrad, italic ────
-      // Only Lithuania / Poland (kind=country) and the city of Kaliningrad
-      // (kind=locality) show while the map is zoomed out. Cities appear from z8.
+      // ── RIVER NAMES (LineString: written along the river, appear with roads) ──
+      // minzoom 12 matches road-labels so rivers no longer label too early, and
+      // symbol-placement:line writes the name INTO the river channel, not on top.
+      {
+        id: "river-labels", type: "symbol", source: "pm", "source-layer": "water", minzoom: 12,
+        filter: ["all", ["has", "name"], ["==", ["geometry-type"], "LineString"]],
+        layout: {
+          "text-field": RU,
+          "text-font": ["Noto Sans Italic"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 12, 10, 14, 12],
+          "symbol-placement": "line",
+          "text-max-angle": 30,
+          "text-padding": 5,
+        },
+        paint: { "text-color": "#3a7ab0", "text-halo-color": "rgba(255,255,255,0.8)", "text-halo-width": 1.5 },
+      },
+
+      // ── FAR-ZOOM LABELS (z<8): border countries + Kaliningrad, BOLD ───────────
+      // Neighbours Lithuania / Latvia / Poland (kind=country) plus the city of
+      // Kaliningrad show while zoomed out. Kaliningrad is matched by its Russian
+      // name because places store name=Калининград here (not the latin "Kaliningrad").
+      // Cities appear from z8 via place-labels.
       {
         id: "country-labels", type: "symbol", source: "pm", "source-layer": "places",
         maxzoom: 8,
         filter: ["any",
           ["==", ["get", "kind"], "country"],
-          ["all", ["==", ["get", "kind"], "locality"], ["==", ["get", "name"], "Kaliningrad"]],
+          ["all", ["==", ["get", "kind"], "locality"],
+            ["any",
+              ["==", ["get", "name"], "Kaliningrad"],
+              ["==", ["get", "name:ru"], "Калининград"],
+            ],
+          ],
         ],
         layout: {
           "text-field": RU,
-          "text-font": ["Noto Sans Italic"],
-          "text-size": ["interpolate", ["linear"], ["zoom"], 4, 12, 7, 16],
+          // Bold is not in the Protomaps font CDN (only Regular/Medium/Italic);
+          // Medium is the heaviest available weight — used here for "жирный".
+          "text-font": ["Noto Sans Medium"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 4, 13, 7, 17],
           "text-max-width": 8,
           "text-transform": "uppercase",
           "text-letter-spacing": 0.15,
