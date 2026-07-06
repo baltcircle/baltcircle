@@ -42,6 +42,8 @@ const COLORS = {
   farmland:        "#d8efd2", // farmland (landcover.farmland)
   urban:           "#e6e6e6", // urban_area / residential
   boundaryCountry: "#8a6fae", // RU / LT / PL state border (boundaries kind=country)
+  roadMajor:       "#5b6572", // major roads — "мокрый асфальт" (wet asphalt)
+  roadMajorCase:   "#454e59", // major road casing — darker wet asphalt for depth
 } as const;
 
 // PMTiles file served same-origin via Express (Range request support, no CORS).
@@ -192,7 +194,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         id: "road-major-case", type: "line", source: "pm", "source-layer": "roads",
         filter: ["==", ["get", "kind"], "major_road"], minzoom: 8,
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#d0bc86", "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 12, 3, 14, 6] },
+        paint: { "line-color": COLORS.roadMajorCase, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.6, 9, 2, 12, 4, 14, 7] },
       },
 
       // ── ROADS — fill ──────────────────────────────────────────────────────────
@@ -203,14 +205,14 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         paint: { "line-color": "#ffce55", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.8, 12, 3.5, 14, 7] },
       },
       {
-        // On the oblast overview (z8-11) major roads read as the light grey-lavender
-        // mesh (matching the Yandex reference); at z12+ they fade to the white fill.
+        // "Мокрый асфальт": major roads render as a dark blue-grey so they stand out
+        // against the light-green oblast fill at overview zoom instead of blending in.
         id: "road-major", type: "line", source: "pm", "source-layer": "roads",
         filter: ["==", ["get", "kind"], "major_road"], minzoom: 8,
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
-          "line-color": ["interpolate", ["linear"], ["zoom"], 8, "#dcd8ea", 11, "#e8e6f0", 12.5, "#ffffff"],
-          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.9, 9, 1.1, 12, 2.5, 14, 5],
+          "line-color": COLORS.roadMajor,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.9, 9, 1.2, 12, 2.6, 14, 5],
         },
       },
       {
