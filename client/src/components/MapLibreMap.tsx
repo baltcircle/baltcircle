@@ -393,8 +393,8 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
           // interpolate(zoom) must be top-level, so the per-kind branch is nested
           // inside each zoom stop's output instead of wrapping the interpolate.
           "text-opacity": ["interpolate", ["linear"], ["zoom"],
-            13, ["match", ["get", "kind"], ["neighbourhood", "suburb"], 0.55, 1],
-            14, ["match", ["get", "kind"], ["neighbourhood", "suburb"], 0.55, 0],
+            12.5, ["match", ["get", "kind"], ["neighbourhood", "suburb"], 0.55, 1],
+            13.5, ["match", ["get", "kind"], ["neighbourhood", "suburb"], 0.55, 0],
           ],
         },
       },
