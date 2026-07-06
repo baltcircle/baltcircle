@@ -365,18 +365,17 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         layout: {
           "text-field": RU,
           "text-font": ["Noto Sans Regular"],
-          // Base size by kind, with a +bump multiplier for five key towns
-          // (matched by their Russian name via the RU coalesce input).
-          "text-size": [
-            "*",
-            ["interpolate", ["linear"], ["zoom"],
-              8,  ["match", ["get", "kind"], "city", 15, "town", 12, 11],
-              12, ["match", ["get", "kind"], "city", 20, "town", 15, 12],
-            ],
-            ["match", RU,
-              ["Калининград", "Пионерский", "Зеленоградск", "Светлогорск", "Янтарный"], 1.25,
-              1,
-            ],
+          // Base size by kind, with a +bump for five key towns. The bump is
+          // applied INSIDE each interpolate stop's output (multiplying the base
+          // by the town factor) so that ["zoom"] stays the direct top-level input
+          // of interpolate (MapLibre requires this for text-size/line-width).
+          "text-size": ["interpolate", ["linear"], ["zoom"],
+            8,  ["*",
+              ["match", ["get", "kind"], "city", 15, "town", 12, 11],
+              ["match", RU, ["Калининград", "Пионерский", "Зеленоградск", "Светлогорск", "Янтарный"], 1.25, 1]],
+            12, ["*",
+              ["match", ["get", "kind"], "city", 20, "town", 15, 12],
+              ["match", RU, ["Калининград", "Пионерский", "Зеленоградск", "Светлогорск", "Янтарный"], 1.25, 1]],
           ],
           "text-anchor": "center",
           "text-offset": ["literal", [0, 0]],
