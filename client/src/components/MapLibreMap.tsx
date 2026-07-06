@@ -269,7 +269,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
           "text-max-angle": 30,
           "text-padding": 5,
         },
-        paint: { "text-color": "#5a4a3a", "text-halo-color": "rgba(255,255,255,0.9)", "text-halo-width": 1.5 },
+        paint: { "text-color": COLORS.roadOutline },
       },
 
       // ── WATER NAMES (polygons: bays, lagoons, lakes) ──────────────────────────
@@ -385,9 +385,17 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         },
         paint: {
           "text-color": COLORS.roadOutline,
-          // Districts (neighbourhood/suburb) are rendered more transparent than
-          // street names so the hierarchy reads clearly.
-          "text-opacity": ["match", ["get", "kind"], ["neighbourhood", "suburb"], 0.55, 1],
+          // Two opacity behaviours by kind (Яндекс/Google-style):
+          //  - City/town/locality names FADE OUT past z13 so a zoomed-in
+          //    street view isn't cluttered by the settlement name.
+          //  - District names (neighbourhood/suburb) stay visible as in-city
+          //    landmarks, but dimmer (0.55) than street names.
+          "text-opacity": [
+            "match", ["get", "kind"],
+            ["neighbourhood", "suburb"], 0.55,
+            // default: settlements — visible until z13, gone by z14
+            ["interpolate", ["linear"], ["zoom"], 13, 1, 14, 0],
+          ],
         },
       },
     ],
