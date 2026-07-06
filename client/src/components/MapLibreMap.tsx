@@ -40,7 +40,8 @@ const COLORS = {
   forest:          "#c4e7d2", // forest / wood (Protomaps light landcover.forest)
   grass:           "#d2efcf", // grass / meadow / park (landcover.grassland)
   farmland:        "#d8efd2", // farmland (landcover.farmland)
-  urban:           "#e6e6e6", // urban_area / residential
+  urban:           "#dcdcec", // urban_area / residential / built-up landuse — light tint of brand #1D1E5D
+  building:        "#cfd0e3", // building polygons — slightly deeper tint of brand #1D1E5D (reads over `urban`)
   boundaryCountry: "#8a6fae", // RU / LT / PL state border (boundaries kind=country)
   roadOutline:     "#1D1E5D", // ALL roads — 1px outline in dark-theme primary (hollow fill)
 } as const;
@@ -131,14 +132,14 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
             "allotments",    COLORS.farmland,
             "cemetery",      COLORS.grass,
             "military",      COLORS.land,
-            "industrial",    "#e4ddd0",
-            "commercial",    "#ecebe4",
+            "industrial",    COLORS.urban,
+            "commercial",    COLORS.urban,
             "residential",   COLORS.urban,
             "hospital",      "#f0e2e2",
-            "college",       "#eeece2",
-            "university",    "#eeece2",
-            "school",        "#eeece2",
-            "kindergarten",  "#eeece2",
+            "college",       COLORS.urban,
+            "university",    COLORS.urban,
+            "school",        COLORS.urban,
+            "kindergarten",  COLORS.urban,
             "beach",         "#f3ecc8",
             "pedestrian",    COLORS.urban,
             COLORS.urban,
@@ -251,8 +252,8 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       {
         id: "building", type: "fill", source: "pm", "source-layer": "buildings", minzoom: 13,
         paint: {
-          "fill-color": "#dcd5cb",
-          "fill-outline-color": "#c6bdb3",
+          "fill-color": COLORS.building,
+          "fill-outline-color": COLORS.building,
           "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.5, 14, 0.9],
         },
       },
