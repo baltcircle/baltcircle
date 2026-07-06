@@ -42,7 +42,6 @@ const COLORS = {
   farmland:        "#d8efd2", // farmland (landcover.farmland)
   urban:           "#e6e6e6", // urban_area / residential
   boundaryCountry: "#8a6fae", // RU / LT / PL state border (boundaries kind=country)
-  boundaryRegion:  "#9a86b8", // oblast / region border (boundaries kind=region/county)
 } as const;
 
 // PMTiles file served same-origin via Express (Range request support, no CORS).
@@ -58,6 +57,20 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       pm: tileSource.type === "pmtiles"
         ? { type: "vector", url: `pmtiles://${tileSource.url}`, minzoom, maxzoom }
         : { type: "vector", tiles: [tileSource.url], minzoom, maxzoom },
+      // Static label anchor for Poland: the `places` country point for Polska sits
+      // south of the map's maxBounds, so it never renders. This forces "ПОЛЬША"
+      // into the visible area (just below Kaliningrad) on far zoom.
+      "poland-label": {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features: [{
+            type: "Feature",
+            properties: { name: "Польша" },
+            geometry: { type: "Point", coordinates: [20.5, 54.25] },
+          }],
+        },
+      },
     },
     layers: [
       // Sea = background; the real `earth` land polygon (Protomaps) draws on top at every zoom.
@@ -102,7 +115,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
             "farmland",      COLORS.farmland,
             "allotments",    COLORS.farmland,
             "cemetery",      COLORS.grass,
-            "military",      "#e4dccc",
+            "military",      COLORS.land,
             "industrial",    "#e4ddd0",
             "commercial",    "#ecebe4",
             "residential",   COLORS.urban,
@@ -138,15 +151,8 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       },
 
       // ── ADMIN BOUNDARIES ──────────────────────────────────────────────────────
-      {
-        id: "boundary-region", type: "line", source: "pm", "source-layer": "boundaries",
-        filter: ["in", ["get", "kind"], ["literal", ["region", "county"]]], minzoom: 6,
-        paint: {
-          "line-color": COLORS.boundaryRegion,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 6, 0.8, 10, 1.6],
-          "line-dasharray": [2, 2], "line-opacity": 0.7,
-        },
-      },
+      // Region/county dashed borders removed: they cluttered the whole map with
+      // "district" outlines the user didn't want. Only the country border stays.
       {
         id: "boundary-country", type: "line", source: "pm", "source-layer": "boundaries",
         filter: ["==", ["get", "kind"], "country"],
@@ -265,7 +271,9 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         id: "country-labels", type: "symbol", source: "pm", "source-layer": "places",
         maxzoom: 8,
         filter: ["any",
-          ["==", ["get", "kind"], "country"],
+          // Poland's tile point is out of bounds and is rendered by the static
+          // `poland-label` layer below, so exclude it here to avoid a duplicate.
+          ["all", ["==", ["get", "kind"], "country"], ["!=", ["get", "name:ru"], "Польша"]],
           ["all", ["==", ["get", "kind"], "locality"],
             ["any",
               ["==", ["get", "name"], "Kaliningrad"],
@@ -280,6 +288,21 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
           "text-font": ["Noto Sans Medium"],
           "text-size": ["interpolate", ["linear"], ["zoom"], 4, 13, 7, 17],
           "text-max-width": 8,
+          "text-transform": "uppercase",
+          "text-letter-spacing": 0.15,
+          "text-padding": 4,
+        },
+        paint: { "text-color": "#4a5a6a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1.5 },
+      },
+
+      // ── POLAND STATIC LABEL (z<8): forced into visible area below Kaliningrad ──
+      {
+        id: "poland-label", type: "symbol", source: "poland-label",
+        maxzoom: 8,
+        layout: {
+          "text-field": ["get", "name"],
+          "text-font": ["Noto Sans Medium"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 4, 13, 7, 17],
           "text-transform": "uppercase",
           "text-letter-spacing": 0.15,
           "text-padding": 4,
