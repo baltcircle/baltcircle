@@ -265,22 +265,22 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         },
       },
 
-      // ── HOUSE NUMBERS (z16+) ──────────────────────────────────────────────────
-      // Overlay from the `addresses` pmtiles. Kept off until z16 so numbers don't
-      // clutter the map (matches Google / 2GIS). Blue at 0.55 opacity; collision
-      // detection hides overlapping numbers automatically at lower zoom.
+      // ── HOUSE NUMBERS (z15+) ──────────────────────────────────────────────────
+      // Overlay from the `addresses` pmtiles. Kept off until z15 (individual houses
+      // become distinguishable there) so numbers don't clutter the map. Blue at 0.55
+      // opacity; collision detection hides overlapping numbers automatically.
       {
-        id: "house-numbers", type: "symbol", source: "addr", "source-layer": "addresses", minzoom: 16,
+        id: "house-numbers", type: "symbol", source: "addr", "source-layer": "addresses", minzoom: 15,
         layout: {
           "text-field": ["get", "hn"],
           "text-font": ["Noto Sans Regular"],
-          "text-size": ["interpolate", ["linear"], ["zoom"], 16, 10, 18, 12],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 15, 10, 18, 12],
           "text-allow-overlap": false,
           "text-padding": 4,
         },
         paint: {
           "text-color": COLORS.houseNumber,
-          "text-opacity": ["interpolate", ["linear"], ["zoom"], 15.5, 0, 16, 0.55],
+          "text-opacity": ["interpolate", ["linear"], ["zoom"], 14.8, 0, 15.2, 0.55],
         },
       },
 
