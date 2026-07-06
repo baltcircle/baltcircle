@@ -42,8 +42,7 @@ const COLORS = {
   farmland:        "#d8efd2", // farmland (landcover.farmland)
   urban:           "#e6e6e6", // urban_area / residential
   boundaryCountry: "#8a6fae", // RU / LT / PL state border (boundaries kind=country)
-  roadMajor:       "#5b6572", // major roads — "мокрый асфальт" (wet asphalt)
-  roadMajorCase:   "#454e59", // major road casing — darker wet asphalt for depth
+  roadOutline:     "#1D1E5D", // ALL roads — 1px outline in dark-theme primary (hollow fill)
 } as const;
 
 // PMTiles file served same-origin via Express (Range request support, no CORS).
@@ -179,57 +178,43 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         },
       },
 
-      // ── ROADS — casing ────────────────────────────────────────────────────────
-      // minzoom 8: roads carry no country/admin property, so they can't be clipped
-      // to Kaliningrad oblast via expressions. At far zoom (z<8, the country-label
-      // view) the yellow highways bled across into Lithuania/Poland; gating them at
-      // z8 removes that bleed while keeping full road detail once zoomed in.
+      // ── ROADS — hollow outline ────────────────────────────────────────────────
+      // ALL roads (highway/major/minor/path) render as a hollow shape: a dark
+      // outline (COLORS.roadOutline, the dark-theme primary) with a land-coloured
+      // interior, so only a 1px border shows on each side. Collapsed into TWO
+      // layers (outline + interior) driven by `kind` widths to minimise draw calls
+      // vs. the previous per-class layers. minzoom 8: roads carry no country/admin
+      // property to clip to the oblast, so gating at z8 keeps them out of the
+      // far-zoom country-label view where they bled into Lithuania/Poland.
+      //
+      // ROAD_W = interior width by kind/zoom; the outline layer is ROAD_W + 2px
+      // (1px border each side).
+      ...(() => {
+        const ROAD_W: any = ["interpolate", ["linear"], ["zoom"],
+          8,  ["match", ["get", "kind"], "highway", 1.2, "major_road", 0.9, 0.4],
+          12, ["match", ["get", "kind"], "highway", 4.5, "major_road", 3, "minor_road", 2, "path", 1, 1.5],
+          14, ["match", ["get", "kind"], "highway", 8, "major_road", 5.5, "minor_road", 3, "path", 1.5, 3],
+        ];
+        const ROAD_FILTER: any = ["in", ["get", "kind"], ["literal", ["highway", "major_road", "minor_road", "path"]]];
+        return [
+          {
+            id: "road-outline", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
+            filter: ROAD_FILTER,
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: { "line-color": COLORS.roadOutline, "line-width": ["+", ROAD_W, 2] },
+          },
+          {
+            id: "road-inner", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
+            filter: ROAD_FILTER,
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: { "line-color": COLORS.land, "line-width": ROAD_W },
+          },
+        ];
+      })(),
       {
-        id: "road-hw-case", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
-        filter: ["==", ["get", "kind"], "highway"],
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#e0993a", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.5, 12, 5, 14, 9] },
-      },
-      {
-        id: "road-major-case", type: "line", source: "pm", "source-layer": "roads",
-        filter: ["==", ["get", "kind"], "major_road"], minzoom: 8,
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": COLORS.roadMajorCase, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.6, 9, 2, 12, 4, 14, 7] },
-      },
-
-      // ── ROADS — fill ──────────────────────────────────────────────────────────
-      {
-        id: "road-hw", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
-        filter: ["==", ["get", "kind"], "highway"],
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#ffce55", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.8, 12, 3.5, 14, 7] },
-      },
-      {
-        // "Мокрый асфальт": major roads render as a dark blue-grey so they stand out
-        // against the light-green oblast fill at overview zoom instead of blending in.
-        id: "road-major", type: "line", source: "pm", "source-layer": "roads",
-        filter: ["==", ["get", "kind"], "major_road"], minzoom: 8,
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: {
-          "line-color": COLORS.roadMajor,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.9, 9, 1.2, 12, 2.6, 14, 5],
-        },
-      },
-      {
-        id: "road-minor", type: "line", source: "pm", "source-layer": "roads",
-        filter: ["==", ["get", "kind"], "minor_road"], minzoom: 11,
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 11, 0.4, 14, 2.5] },
-      },
-      {
-        id: "road-path", type: "line", source: "pm", "source-layer": "roads",
-        filter: ["==", ["get", "kind"], "path"], minzoom: 13,
-        paint: { "line-color": "#e8e0d0", "line-width": ["interpolate", ["linear"], ["zoom"], 13, 0.5, 14, 1.2] },
-      },
-      {
-        id: "road-rail", type: "line", source: "pm", "source-layer": "roads",
-        filter: ["==", ["get", "kind"], "rail"], minzoom: 10,
-        paint: { "line-color": "#bbb0a8", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 14, 2], "line-dasharray": [2, 2] },
+        id: "road-rail", type: "line", source: "pm", "source-layer": "roads", minzoom: 10,
+        filter: ["==", ["get", "kind"], "rail"],
+        paint: { "line-color": COLORS.roadOutline, "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 14, 1.5], "line-dasharray": [2, 2] },
       },
 
       // ── BUILDINGS (z11+) ──────────────────────────────────────────────────────
