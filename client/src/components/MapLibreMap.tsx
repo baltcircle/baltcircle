@@ -218,7 +218,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         ];
         // Semi-transparent dark outline so roads read softly (not heavy black
         // borders); fully opaque land-coloured interior keeps the road body crisp.
-        const OUT_OPACITY = 0.45;
+        const OUT_OPACITY = 0.28;
         return [
           {
             id: "road-outline", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
@@ -235,9 +235,16 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         ];
       })(),
       {
+        // Only mainline rail (Яндекс-style): service tracks (spur/yard/siding/
+        // crossover) are excluded so the map isn't overloaded with yard clutter.
         id: "road-rail", type: "line", source: "pm", "source-layer": "roads", minzoom: 10,
-        filter: ["==", ["get", "kind"], "rail"],
-        paint: { "line-color": COLORS.roadOutline, "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 14, 1.5], "line-dasharray": [2, 2] },
+        filter: ["all", ["==", ["get", "kind"], "rail"], ["!", ["has", "service"]]],
+        paint: {
+          "line-color": COLORS.roadOutline,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 14, 1.5],
+          "line-dasharray": [2, 2],
+          "line-opacity": 0.45,
+        },
       },
 
       // ── BUILDINGS (z11+) ──────────────────────────────────────────────────────
