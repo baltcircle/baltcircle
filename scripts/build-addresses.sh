@@ -4,7 +4,7 @@
 # Env: ADDR_BBOX (Overpass order S,W,N,E), CITY (label).
 set -euo pipefail
 
-ADDR_BBOX="${ADDR_BBOX:-54.63,20.35,54.78,20.65}"
+ADDR_BBOX="${ADDR_BBOX:-54.60,19.85,55.00,20.70}"
 CITY="${CITY:-Kaliningrad}"
 OSM_DIR="/home/yc-user/osm"
 

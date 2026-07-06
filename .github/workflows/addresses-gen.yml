@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       addr_bbox:
-        description: "Address bbox S,W,N,E (Overpass order — city extent only)"
+        description: "Address bbox S,W,N,E (Overpass order — city + coastal towns)"
         required: false
-        default: "54.63,20.35,54.78,20.65"
+        default: "54.60,19.85,55.00,20.70"
       city:
         description: "City label for logs"
         required: false
@@ -24,7 +24,7 @@ jobs:
 
       - name: Build address pmtiles from OSM and place in /home/yc-user/osm
         env:
-          ADDR_BBOX: ${{ github.event.inputs.addr_bbox || '54.63,20.35,54.78,20.65' }}
+          ADDR_BBOX: ${{ github.event.inputs.addr_bbox || '54.60,19.85,55.00,20.70' }}
           CITY: ${{ github.event.inputs.city || 'Kaliningrad' }}
         shell: bash
         run: bash scripts/build-addresses.sh
