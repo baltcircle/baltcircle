@@ -67,7 +67,21 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
           features: [{
             type: "Feature",
             properties: { name: "Польша" },
-            geometry: { type: "Point", coordinates: [20.5, 54.25] },
+            geometry: { type: "Point", coordinates: [20.2, 54.0] },
+          }],
+        },
+      },
+      // Static anchor for Kaliningrad's far-zoom label. The tile `places` point
+      // can't be repositioned, so the city is pinned here (shifted east of its
+      // real coord) and excluded from the tile `country-labels` filter below.
+      "kaliningrad-label": {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features: [{
+            type: "Feature",
+            properties: { name: "Калининград" },
+            geometry: { type: "Point", coordinates: [20.95, 54.72] },
           }],
         },
       },
@@ -164,11 +178,15 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       },
 
       // ── ROADS — casing ────────────────────────────────────────────────────────
+      // minzoom 8: roads carry no country/admin property, so they can't be clipped
+      // to Kaliningrad oblast via expressions. At far zoom (z<8, the country-label
+      // view) the yellow highways bled across into Lithuania/Poland; gating them at
+      // z8 removes that bleed while keeping full road detail once zoomed in.
       {
-        id: "road-hw-case", type: "line", source: "pm", "source-layer": "roads",
+        id: "road-hw-case", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
         filter: ["==", ["get", "kind"], "highway"],
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#e0993a", "line-width": ["interpolate", ["linear"], ["zoom"], 7, 1.5, 12, 5, 14, 9] },
+        paint: { "line-color": "#e0993a", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.5, 12, 5, 14, 9] },
       },
       {
         id: "road-major-case", type: "line", source: "pm", "source-layer": "roads",
@@ -179,10 +197,10 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
 
       // ── ROADS — fill ──────────────────────────────────────────────────────────
       {
-        id: "road-hw", type: "line", source: "pm", "source-layer": "roads",
+        id: "road-hw", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
         filter: ["==", ["get", "kind"], "highway"],
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#ffce55", "line-width": ["interpolate", ["linear"], ["zoom"], 7, 0.8, 12, 3.5, 14, 7] },
+        paint: { "line-color": "#ffce55", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.8, 12, 3.5, 14, 7] },
       },
       {
         id: "road-major", type: "line", source: "pm", "source-layer": "roads",
@@ -270,17 +288,9 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       {
         id: "country-labels", type: "symbol", source: "pm", "source-layer": "places",
         maxzoom: 8,
-        filter: ["any",
-          // Poland's tile point is out of bounds and is rendered by the static
-          // `poland-label` layer below, so exclude it here to avoid a duplicate.
-          ["all", ["==", ["get", "kind"], "country"], ["!=", ["get", "name:ru"], "Польша"]],
-          ["all", ["==", ["get", "kind"], "locality"],
-            ["any",
-              ["==", ["get", "name"], "Kaliningrad"],
-              ["==", ["get", "name:ru"], "Калининград"],
-            ],
-          ],
-        ],
+        // Poland and Kaliningrad are both rendered by static label layers below
+        // (repositioned per design), so exclude them from the tile places here.
+        filter: ["all", ["==", ["get", "kind"], "country"], ["!=", ["get", "name:ru"], "Польша"]],
         layout: {
           "text-field": RU,
           // Bold is not in the Protomaps font CDN (only Regular/Medium/Italic);
@@ -303,6 +313,22 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
           "text-field": ["get", "name"],
           "text-font": ["Noto Sans Medium"],
           "text-size": ["interpolate", ["linear"], ["zoom"], 4, 13, 7, 17],
+          "text-transform": "uppercase",
+          "text-letter-spacing": 0.15,
+          "text-padding": 4,
+        },
+        paint: { "text-color": "#4a5a6a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1.5 },
+      },
+
+      // ── KALININGRAD STATIC LABEL (z<8): repositioned east of the city point ──
+      {
+        id: "kaliningrad-label", type: "symbol", source: "kaliningrad-label",
+        maxzoom: 8,
+        layout: {
+          "text-field": ["get", "name"],
+          "text-font": ["Noto Sans Medium"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 4, 13, 7, 17],
+          "text-max-width": 8,
           "text-transform": "uppercase",
           "text-letter-spacing": 0.15,
           "text-padding": 4,
