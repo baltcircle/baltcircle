@@ -238,7 +238,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         // Only mainline rail (Яндекс-style): service tracks (spur/yard/siding/
         // crossover) are excluded so the map isn't overloaded with yard clutter.
         id: "road-rail", type: "line", source: "pm", "source-layer": "roads", minzoom: 10,
-        filter: ["all", ["==", ["get", "kind"], "rail"], ["!", ["has", "service"]]],
+        filter: ["all", ["==", ["get", "kind"], "rail"], ["!", ["has", "service"]], ["!=", ["get", "kind_detail"], "tram"], ["!=", ["get", "kind_detail"], "light_rail"]],
         paint: {
           "line-color": COLORS.roadOutline,
           "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 14, 1.5],
@@ -358,23 +358,6 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         paint: { "text-color": "#4a5a6a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1.5 },
       },
 
-      // ── PLACE DOTS (z8+): small marker beside oblast town labels ───────────────
-      // Oblast towns (Полесск, Гурьевск, Знаменск, …) all ship as kind=locality.
-      // A dot + right-anchored label reads like the reference and lets more towns
-      // fit before collision on the z8-9 overview.
-      {
-        id: "place-dots", type: "circle", source: "pm", "source-layer": "places", minzoom: 8,
-        filter: ["in", ["get", "kind"], ["literal", ["locality", "city", "town", "village"]]],
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 2, 11, 3],
-          "circle-color": "#6b7280",
-          "circle-stroke-color": "rgba(255,255,255,0.9)",
-          "circle-stroke-width": 1,
-          "circle-opacity": ["interpolate", ["linear"], ["zoom"], 8, 0.9, 12, 0],
-          "circle-stroke-opacity": ["interpolate", ["linear"], ["zoom"], 8, 0.9, 12, 0],
-        },
-      },
-
       // ── PLACE LABELS (z8+): cities, towns, villages ───────────────────────────
       {
         id: "place-labels", type: "symbol", source: "pm", "source-layer": "places", minzoom: 8,
@@ -382,19 +365,31 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         layout: {
           "text-field": RU,
           "text-font": ["Noto Sans Regular"],
-          "text-size": ["interpolate", ["linear"], ["zoom"],
-            8,  ["match", ["get", "kind"], "city", 15, "town", 12, 11],
-            12, ["match", ["get", "kind"], "city", 20, "town", 15, 12],
+          // Base size by kind, with a +bump multiplier for five key towns
+          // (matched by their Russian name via the RU coalesce input).
+          "text-size": [
+            "*",
+            ["interpolate", ["linear"], ["zoom"],
+              8,  ["match", ["get", "kind"], "city", 15, "town", 12, 11],
+              12, ["match", ["get", "kind"], "city", 20, "town", 15, 12],
+            ],
+            ["match", RU,
+              ["Калининград", "Пионерский", "Зеленоградск", "Светлогорск", "Янтарный"], 1.25,
+              1,
+            ],
           ],
-          // Right-anchored so the text sits beside the dot at overview zoom, then
-          // re-centres once the dot fades out (z12+).
-          "text-anchor": ["step", ["zoom"], "left", 12, "center"],
-          "text-offset": ["step", ["zoom"], ["literal", [0.5, 0]], 12, ["literal", [0, 0]]],
+          "text-anchor": "center",
+          "text-offset": ["literal", [0, 0]],
           "text-max-width": 8,
           "text-padding": 1.5,
           "symbol-sort-key": ["-", ["coalesce", ["get", "population_rank"], 0]],
         },
-        paint: { "text-color": "#2d3a4a", "text-halo-color": "rgba(255,255,255,0.9)", "text-halo-width": 1.5 },
+        paint: {
+          "text-color": COLORS.roadOutline,
+          // Districts (neighbourhood/suburb) are rendered more transparent than
+          // street names so the hierarchy reads clearly.
+          "text-opacity": ["match", ["get", "kind"], ["neighbourhood", "suburb"], 0.55, 1],
+        },
       },
     ],
   };
