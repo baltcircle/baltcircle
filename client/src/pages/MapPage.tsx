@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "wouter";
 import type { Bike, MapObject, Parking, Ride } from "@shared/schema";
 import { MapLibreMap } from "@/components/MapLibreMap";
@@ -154,26 +155,29 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — fills the entire screen INCLUDING the iOS safe-area (status
-       * bar / notch). We force the container up by `env(safe-area-inset-top)`
-       * and extend its height by the same amount so the map canvas is drawn
-       * physically under the status bar. `100vh` alone is unreliable across
-       * iOS Safari versions; the explicit offset + calc height always wins.
-       * MapLibreMap's ResizeObserver picks up the new canvas size on mount. */}
-      <MapLibreMap
-        parkings={parkingsQ.data ?? []}
-        mapObjects={mapObjectsQ.data ?? []}
-        ride={activeRide}
-        height="100vh"
-        showLabels={false}
-        center={geoCenter}
-        className="fixed left-0 right-0 z-0"
-        style={{
-          // Pull the map physically UP into the iOS safe-area (status bar).
-          // `fixed` alone still starts at the visual viewport top on iOS PWA.
-          top: "calc(env(safe-area-inset-top) * -1)",
-        }}
-      />
+      {/* Map — rendered via portal directly into <body> so no ancestor
+       * (AppShell flex container, map-page overflow-hidden, or any WebKit
+       * containing block quirk) can clip it. Pinned to (0,0) with 100vw ×
+       * 100vh so it physically covers the iOS safe-area (status bar). */}
+      {createPortal(
+        <MapLibreMap
+          parkings={parkingsQ.data ?? []}
+          mapObjects={mapObjectsQ.data ?? []}
+          ride={activeRide}
+          height="100vh"
+          showLabels={false}
+          center={geoCenter}
+          className="z-0"
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+          }}
+        />,
+        document.body,
+      )}
 
       {/* Top bar — logo left, theme + burger right */}
       <div
