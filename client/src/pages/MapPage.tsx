@@ -153,8 +153,44 @@ export function MapPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userLoading, bikesQ.data, isRegistered]);
 
+  // Debug overlay for diagnosing the top-strip issue on iOS PWA.
+  // Reads env(safe-area-inset-top) via a hidden probe and every viewport size.
+  const [diag, setDiag] = useState<string>("");
+  useEffect(() => {
+    const probe = document.createElement("div");
+    probe.style.cssText = "position:fixed;top:0;left:0;padding-top:env(safe-area-inset-top);visibility:hidden;pointer-events:none;";
+    document.body.appendChild(probe);
+    const read = () => {
+      const safeTop = parseFloat(getComputedStyle(probe).paddingTop) || 0;
+      const nav = navigator as unknown as { standalone?: boolean };
+      const standalone = nav.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
+      const vv = window.visualViewport;
+      const scrH = window.screen?.height ?? 0;
+      setDiag(
+        `safe-top=${safeTop.toFixed(1)} | innerH=${window.innerHeight} | screenH=${scrH} | vvH=${vv ? Math.round(vv.height) : "-"} | standalone=${standalone}`,
+      );
+    };
+    read();
+    window.addEventListener("resize", read);
+    window.visualViewport?.addEventListener("resize", read);
+    return () => {
+      window.removeEventListener("resize", read);
+      window.visualViewport?.removeEventListener("resize", read);
+      probe.remove();
+    };
+  }, []);
+
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
+      {/* DEBUG: shows the actual iOS/Safari viewport metrics on the device.
+       * Remove once the safe-area layout is confirmed. */}
+      <div
+        className="fixed left-1/2 -translate-x-1/2 z-[100] px-2 py-1 rounded bg-black/70 text-white text-[10px] font-mono pointer-events-none"
+        style={{ top: "max(0.25rem, env(safe-area-inset-top))" }}
+        data-testid="map-diag-overlay"
+      >
+        {diag}
+      </div>
       {/* Map — rendered via portal directly into <body> and sized to the
        * FULL device screen height (from window.screen.height, exposed as
        * --screen-height by useAppViewport). This covers the iOS Safari top
