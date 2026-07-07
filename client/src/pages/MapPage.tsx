@@ -154,11 +154,11 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — fills the entire screen incl. the iOS safe-area (status bar).
-       * `h-full`/`100%` and `100svh`/`100dvh` all exclude the top
-       * safe-area inset, leaving a strip of body backdrop above the map even
-       * with `fixed inset-0`. `100vh` on iOS = full layout viewport INCLUDING
-       * safe-area, so we pin the map explicitly to (0,0) with 100vw × 100vh.
+      {/* Map — fills the entire screen INCLUDING the iOS safe-area (status
+       * bar / notch). We force the container up by `env(safe-area-inset-top)`
+       * and extend its height by the same amount so the map canvas is drawn
+       * physically under the status bar. `100vh` alone is unreliable across
+       * iOS Safari versions; the explicit offset + calc height always wins.
        * MapLibreMap's ResizeObserver picks up the new canvas size on mount. */}
       <MapLibreMap
         parkings={parkingsQ.data ?? []}
@@ -167,7 +167,12 @@ export function MapPage() {
         height="100vh"
         showLabels={false}
         center={geoCenter}
-        className="fixed left-0 top-0 z-0"
+        className="fixed left-0 right-0 z-0"
+        style={{
+          // Pull the map physically UP into the iOS safe-area (status bar).
+          // `fixed` alone still starts at the visual viewport top on iOS PWA.
+          top: "calc(env(safe-area-inset-top) * -1)",
+        }}
       />
 
       {/* Top bar — logo left, theme + burger right */}
