@@ -154,18 +154,20 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — fills the entire screen, bleeding under the status bar /
-       * safe-area so there is no dark strip at the top. `fixed inset-0` pins
-       * it to the whole visual viewport regardless of the shell's flex layout;
-       * z-0 keeps it below the floating controls (z-20+). */}
+      {/* Map — fills the entire screen incl. the iOS safe-area (status bar).
+       * `h-full`/`100%` and `100svh`/`100dvh` all exclude the top
+       * safe-area inset, leaving a strip of body backdrop above the map even
+       * with `fixed inset-0`. `100vh` on iOS = full layout viewport INCLUDING
+       * safe-area, so we pin the map explicitly to (0,0) with 100vw × 100vh.
+       * MapLibreMap's ResizeObserver picks up the new canvas size on mount. */}
       <MapLibreMap
         parkings={parkingsQ.data ?? []}
         mapObjects={mapObjectsQ.data ?? []}
         ride={activeRide}
-        height="100%"
+        height="100vh"
         showLabels={false}
         center={geoCenter}
-        className="fixed inset-0 z-0 w-full h-full"
+        className="fixed left-0 top-0 z-0"
       />
 
       {/* Top bar — logo left, theme + burger right */}

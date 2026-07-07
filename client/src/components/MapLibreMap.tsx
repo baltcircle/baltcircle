@@ -836,5 +836,5 @@ export function MapLibreMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, ride, activeRides, show.rides]);
 
-  return <div ref={containerRef} className={className} style={{ height }} />;
+  return <div ref={containerRef} className={className} style={{ width: "100%", height }} />;
 }
