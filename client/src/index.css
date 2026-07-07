@@ -237,6 +237,14 @@
     overflow: hidden;
     overscroll-behavior: none;
     position: relative;
+  }
+  /* Safety backdrop: if the fixed map fails to cover the full device screen
+   * (iOS Safari top bar, PWA safe-area), the visible strip should read as the
+   * map's land tile tone rather than default white — no jarring header. */
+  html.route-locked {
+    background-color: #e8e0d0 !important;
+  }
+  body.route-locked {
     background-color: transparent !important;
   }
   /* Dark theme: force the hardcoded light text utilities (text-white,

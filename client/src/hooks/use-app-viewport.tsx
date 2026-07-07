@@ -23,6 +23,18 @@ export function useAppViewport(enabled: boolean) {
     const apply = () => {
       const h = vv?.height ?? window.innerHeight;
       root.style.setProperty("--app-height", `${Math.round(h)}px`);
+      // --screen-height: the FULL device screen (including any browser chrome
+      // and iOS safe-area top/bottom). Used by the map layer to cover
+      // status-bar / URL-bar areas that `100vh`/`100dvh`/`100svh` and
+      // visualViewport all under-report on iOS Safari + PWA. `screen.height`
+      // returns physical CSS pixels of the whole display in portrait; when the
+      // page is scrollable this reliably exceeds every viewport metric.
+      const screenH = Math.max(
+        window.screen?.height ?? 0,
+        window.innerHeight,
+        h,
+      );
+      root.style.setProperty("--screen-height", `${Math.round(screenH)}px`);
     };
 
     apply();
@@ -45,6 +57,7 @@ export function useAppViewport(enabled: boolean) {
       root.classList.remove("route-locked");
       document.body.classList.remove("route-locked");
       root.style.removeProperty("--app-height");
+      root.style.removeProperty("--screen-height");
     };
   }, [enabled]);
 }
