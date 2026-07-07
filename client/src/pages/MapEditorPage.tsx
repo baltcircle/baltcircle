@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import type { MapObject, Parking } from "@shared/schema";
-import { YandexMap } from "@/components/YandexMap";
+import { MapLibreMap } from "@/components/MapLibreMap";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -175,11 +175,11 @@ export function MapEditorPage() {
 
       <div className="grid lg:grid-cols-[1fr_360px] gap-4 lg:gap-6">
         <div>
-          <YandexMap
-            bikes={[]}
+          <MapLibreMap
             parkings={mapParkings}
             mapObjects={previewObjects}
             height="64vh"
+            className="relative w-full overflow-hidden rounded-xl border border-card-border bg-card"
             onMapClick={(coords) => setDraft((d) => [...d, coords])}
             onCenterGetter={(fn) => { centerGetterRef.current = fn; }}
           />

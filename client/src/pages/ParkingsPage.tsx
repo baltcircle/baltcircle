@@ -4,7 +4,7 @@ import type { Parking, ParkingStatus } from "@shared/schema";
 import { realToMap, mapToReal } from "@shared/geo";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { YandexMap } from "@/components/YandexMap";
+import { MapLibreMap } from "@/components/MapLibreMap";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -450,9 +450,10 @@ export function ParkingsPage() {
 
           <div className="grid md:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <YandexMap
+              <MapLibreMap
                 parkings={mapParkings}
                 height="42vh"
+                className="relative w-full overflow-hidden rounded-xl border border-card-border bg-card"
                 onMapClick={setCoordsFromReal}
                 onCenterGetter={(fn) => { centerGetterRef.current = fn; }}
               />

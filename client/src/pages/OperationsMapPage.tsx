@@ -5,7 +5,7 @@ import type { Bike, Parking, AdminRide, Ticket, MapObject } from "@shared/schema
 import { TICKET_CLOSED_STATUSES } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { YandexMap, type MapLayers } from "@/components/YandexMap";
+import { MapLibreMap, type MapLayers } from "@/components/MapLibreMap";
 import { fmtDate, fmtRub } from "@/lib/format";
 import {
   Bike as BikeIcon, MapPin, Route, Wrench, RefreshCw, X,
@@ -142,7 +142,7 @@ export function OperationsMapPage() {
 
       <div className="grid lg:grid-cols-[1fr_320px] gap-4 lg:gap-6">
         <div className="space-y-3">
-          <YandexMap
+          <MapLibreMap
             bikes={bikes}
             parkings={parkings}
             activeRides={activeRides}
@@ -150,6 +150,7 @@ export function OperationsMapPage() {
             mapObjects={activeObjects}
             layers={layers}
             height="64vh"
+            className="relative w-full overflow-hidden rounded-xl border border-card-border bg-card"
             selectedBikeId={selection?.kind === "bike" ? selection.id : null}
             onSelectBike={(id) => setSelection({ kind: "bike", id })}
             onSelectParking={(id) => setSelection({ kind: "parking", id })}

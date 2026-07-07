@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Bike, Parking, ZoneRow, Ride } from "@shared/schema";
-import { YandexMap } from "./YandexMap";
+import type { Parking, Ride } from "@shared/schema";
+import { MapLibreMap } from "./MapLibreMap";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
@@ -14,8 +14,6 @@ import { useToast } from "@/hooks/use-toast";
 export function ActiveRidePanel({ ride }: { ride: Ride }) {
   const toast = useToast();
   const parkings = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
-  const zones = useQuery<ZoneRow[]>({ queryKey: ["/api/zones"] });
-  const bikes = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
   const [now, setNow] = useState(Date.now());
   // Rider's real GPS position, once granted. Falls back to the bike's last
   // known coordinates from the ride track when geolocation is unavailable.
@@ -130,13 +128,12 @@ export function ActiveRidePanel({ ride }: { ride: Ride }) {
       </header>
 
       <div className="grid lg:grid-cols-[1fr_360px] gap-5">
-        <YandexMap
-          bikes={bikes.data ?? []}
+        <MapLibreMap
           parkings={parkings.data ?? []}
-          zones={zones.data ?? []}
           ride={ride}
           center={mapCenter}
           height="60vh"
+          className="relative w-full overflow-hidden rounded-xl border border-card-border bg-card"
           showLabels={false}
         />
 

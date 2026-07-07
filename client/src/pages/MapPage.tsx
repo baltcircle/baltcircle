@@ -154,7 +154,10 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — fills the entire screen */}
+      {/* Map — fills the entire screen, bleeding under the status bar /
+       * safe-area so there is no dark strip at the top. `fixed inset-0` pins
+       * it to the whole visual viewport regardless of the shell's flex layout;
+       * z-0 keeps it below the floating controls (z-20+). */}
       <MapLibreMap
         parkings={parkingsQ.data ?? []}
         mapObjects={mapObjectsQ.data ?? []}
@@ -162,7 +165,7 @@ export function MapPage() {
         height="100%"
         showLabels={false}
         center={geoCenter}
-        className="absolute inset-0 w-full h-full"
+        className="fixed inset-0 z-0 w-full h-full"
       />
 
       {/* Top bar — logo left, theme + burger right */}

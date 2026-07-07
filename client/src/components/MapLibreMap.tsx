@@ -1,9 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Protocol } from "pmtiles";
-import type { MapObject, Parking, Ride } from "@shared/schema";
-import { REAL_CENTER } from "@shared/geo";
+import type { Bike, MapObject, Parking, Ride, Ticket } from "@shared/schema";
+import { REAL_CENTER, mapToReal } from "@shared/geo";
 
 // maplibre-gl is bundled by Vite, so its web-worker is emitted same-origin and
 // loaded automatically — no CDN, no cross-origin Worker, no setWorkerUrl hacks.
@@ -16,14 +16,116 @@ function ensurePMTilesProtocol() {
   __pmRegistered = true;
 }
 
+/** Which optional overlay layers are drawn. Every flag defaults to visible so
+ *  the customer map and editors are unaffected; the admin operations map flips
+ *  these from its layer toggles. Mirrors the old YandexMap MapLayers contract. */
+export interface MapLayers {
+  parkings?: boolean;
+  bikes?: boolean;
+  rides?: boolean;
+  tickets?: boolean;
+  objects?: boolean;
+}
+
 interface MapLibreMapProps {
   parkings?: Parking[];
   mapObjects?: MapObject[];
   ride?: Ride | null;
+  /** Fleet bikes drawn as coloured dots (admin operations map). */
+  bikes?: Bike[];
+  /** Active rides drawn as start markers + track lines (admin operations map). */
+  activeRides?: Ride[];
+  /** Open service tickets, drawn at their bike's position (admin operations map). */
+  tickets?: Ticket[];
+  /** Per-layer visibility. Omitted layers render as before (visible). */
+  layers?: MapLayers;
+  selectedBikeId?: string | null;
+  onSelectBike?: (id: string) => void;
+  onSelectParking?: (id: string) => void;
+  onSelectRide?: (id: number) => void;
+  onSelectTicket?: (id: number) => void;
+  /** Disables map gestures when false (static preview). */
+  interactive?: boolean;
+  /** Map click returns [lat, lng] — enables the editor draw mode. */
+  onMapClick?: (coords: [number, number]) => void;
+  /** Receives a getter for the current map centre as [lat, lng] (editor). */
+  onCenterGetter?: (getCenter: () => [number, number]) => void;
   height?: string;
   showLabels?: boolean;
   center?: [number, number] | null;
   className?: string;
+}
+
+// Overlay marker colours (resolved HEX — swap here to re-theme markers).
+const MARKER_COLORS = {
+  bikeAvailable:  "#26a884",
+  bikeRented:     "#1d6f8e",
+  bikeMaintenance:"#d64545",
+  bikeReserved:   "#e0972a",
+  bikeDefault:    "#8a8f96",
+  parkingActive:  "#1d6f8e",
+  parkingInactive:"#8a8f96",
+  ride:           "#1d6f8e",
+  ticketHigh:     "#d64545",
+  ticketLow:      "#e0972a",
+} as const;
+
+function bikeMarkerColor(status: string): string {
+  switch (status) {
+    case "available":   return MARKER_COLORS.bikeAvailable;
+    case "rented":      return MARKER_COLORS.bikeRented;
+    case "maintenance": return MARKER_COLORS.bikeMaintenance;
+    case "reserved":    return MARKER_COLORS.bikeReserved;
+    default:            return MARKER_COLORS.bikeDefault;
+  }
+}
+
+function ticketMarkerColor(priority: string): string {
+  return priority === "critical" || priority === "high"
+    ? MARKER_COLORS.ticketHigh
+    : MARKER_COLORS.ticketLow;
+}
+
+/** Build a small circular DOM marker element (bikes/rides/tickets). */
+function dotMarkerEl(color: string, opts: { ring?: boolean; size?: number; clickable?: boolean } = {}): HTMLDivElement {
+  const size = opts.size ?? 16;
+  const el = document.createElement("div");
+  el.style.width = `${size}px`;
+  el.style.height = `${size}px`;
+  el.style.borderRadius = "50%";
+  el.style.background = color;
+  el.style.border = opts.ring ? "3px solid #fff" : "2px solid #fff";
+  el.style.boxShadow = "0 1px 4px rgba(0,0,0,0.35)";
+  el.style.boxSizing = "border-box";
+  el.style.cursor = opts.clickable ? "pointer" : "default";
+  return el;
+}
+
+/** Build a "P" parking marker element. */
+function parkingMarkerEl(inactive: boolean, clickable: boolean): HTMLDivElement {
+  const el = document.createElement("div");
+  el.style.minWidth = "22px";
+  el.style.height = "22px";
+  el.style.padding = "0 4px";
+  el.style.display = "flex";
+  el.style.alignItems = "center";
+  el.style.justifyContent = "center";
+  el.style.borderRadius = "6px";
+  el.style.background = inactive ? MARKER_COLORS.parkingInactive : MARKER_COLORS.parkingActive;
+  el.style.color = "#fff";
+  el.style.font = "600 12px/1 system-ui, sans-serif";
+  el.style.border = "2px solid #fff";
+  el.style.boxShadow = "0 1px 4px rgba(0,0,0,0.35)";
+  el.style.opacity = inactive ? "0.75" : "1";
+  el.style.cursor = clickable ? "pointer" : "default";
+  el.textContent = "P";
+  el.title = inactive ? "Парковка · неактивна" : "Парковка";
+  return el;
+}
+
+/** Fill colour for a saved zone polygon, derived from its stroke colour. */
+function fillFromColor(color: string): string {
+  return `${color}22`; // ~13% alpha
 }
 
 // NOTE: Kaliningrad oblast contour and land-mask hack removed in Protomaps migration.
@@ -93,6 +195,10 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
           }],
         },
       },
+      // Operator-drawn routes/zones (from the visual map editor) + live ride
+      // tracks. Populated at runtime via setData; empty at init.
+      "saved-objects": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      "ride-tracks":   { type: "geojson", data: { type: "FeatureCollection", features: [] } },
     },
     layers: [
       // Sea = background; the real `earth` land polygon (Protomaps) draws on top at every zoom.
@@ -386,6 +492,33 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       },
 
       // ── PLACE LABELS (z8+): cities, towns, villages ───────────────────────────
+      // ── OPERATOR OBJECTS (routes/zones) + RIDE TRACKS ─────────────────────────
+      // GeoJSON overlays drawn above the base map. Zone fills sit lowest, then
+      // zone/route outlines, then ride tracks. Colours come per-feature from the
+      // saved object's `color` (data-driven).
+      {
+        id: "saved-zone-fill", type: "fill", source: "saved-objects",
+        filter: ["==", ["get", "kind"], "zone"],
+        paint: { "fill-color": ["get", "fillColor"], "fill-opacity": 1 },
+      },
+      {
+        id: "saved-zone-line", type: "line", source: "saved-objects",
+        filter: ["==", ["get", "kind"], "zone"],
+        layout: { "line-join": "round" },
+        paint: { "line-color": ["get", "color"], "line-width": 2 },
+      },
+      {
+        id: "saved-route-line", type: "line", source: "saved-objects",
+        filter: ["==", ["get", "kind"], "route"],
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: { "line-color": ["get", "color"], "line-width": 5, "line-opacity": 0.95 },
+      },
+      {
+        id: "ride-track-line", type: "line", source: "ride-tracks",
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: { "line-color": MARKER_COLORS.ride, "line-width": 4, "line-opacity": 0.9 },
+      },
+
       {
         id: "place-labels", type: "symbol", source: "pm", "source-layer": "places", minzoom: 8,
         filter: ["in", ["get", "kind"], ["literal", ["locality", "city", "town", "village", "neighbourhood", "suburb"]]],
@@ -441,11 +574,40 @@ const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
 
 // ── COMPONENT ─────────────────────────────────────────────────────────────────
 export function MapLibreMap({
-  parkings = [], mapObjects = [], ride, height = "100%",
-  showLabels = false, center, className,
+  parkings = [], mapObjects = [], ride = null,
+  bikes = [], activeRides = [], tickets = [], layers = {},
+  selectedBikeId, onSelectBike, onSelectParking, onSelectRide, onSelectTicket,
+  interactive = true, onMapClick, onCenterGetter,
+  height = "100%", showLabels = false, center, className,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef       = useRef<any>(null);
+  // HTML markers (bikes/parkings/ride starts/tickets) are managed imperatively;
+  // routes/zones/tracks go through GeoJSON sources. Kept in a ref so the render
+  // effect can clear the previous batch before drawing the next.
+  const markersRef   = useRef<any[]>([]);
+  // Signals the overlay effects that the map instance + sources exist. Data that
+  // resolves before map init would otherwise render into a null map and stay blank.
+  const readyRef     = useRef(false);
+  const [ready, setReady] = useState(false);
+
+  // Latest callbacks kept in refs so the one-time init effect always calls the
+  // current handler without re-subscribing map events on every render.
+  const onMapClickRef      = useRef(onMapClick);      onMapClickRef.current = onMapClick;
+  const onCenterGetterRef  = useRef(onCenterGetter);  onCenterGetterRef.current = onCenterGetter;
+  const onSelectBikeRef    = useRef(onSelectBike);    onSelectBikeRef.current = onSelectBike;
+  const onSelectParkingRef = useRef(onSelectParking); onSelectParkingRef.current = onSelectParking;
+  const onSelectRideRef    = useRef(onSelectRide);    onSelectRideRef.current = onSelectRide;
+  const onSelectTicketRef  = useRef(onSelectTicket);  onSelectTicketRef.current = onSelectTicket;
+
+  // A layer renders unless its flag is explicitly false (default: visible).
+  const show = {
+    parkings: layers.parkings !== false,
+    bikes:    layers.bikes    !== false,
+    rides:    layers.rides    !== false,
+    tickets:  layers.tickets  !== false,
+    objects:  layers.objects  !== false,
+  };
 
   useEffect(() => {
     const el = containerRef.current;
@@ -463,14 +625,37 @@ export function MapLibreMap({
       const map = new maplibregl.Map({
         container: el,
         style: buildStyle(tileSource, minzoom, maxzoom) as any,
-        center: DEFAULT_CENTER,
+        center: center ? [center[1], center[0]] : DEFAULT_CENTER,
         zoom: 10,
         maxBounds: MAX_BOUNDS,
         attributionControl: false,
         trackResize: true,
+        interactive,
       });
       map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
-      map.once("load", () => map.resize());
+      // Static previews (interactive=false): also hard-disable gestures so a
+      // wrapping scroll container isn't hijacked by the map.
+      if (!interactive) {
+        map.scrollZoom.disable();
+        map.dragPan.disable();
+        map.doubleClickZoom.disable();
+        map.touchZoomRotate.disable();
+        map.keyboard.disable();
+      }
+      // Map clicks feed the editor draw mode with real [lat, lng].
+      map.on("click", (e: any) => {
+        onMapClickRef.current?.([e.lngLat.lat, e.lngLat.lng]);
+      });
+      map.once("load", () => {
+        map.resize();
+        readyRef.current = true;
+        // Hand the editor a getter for the live centre as [lat, lng].
+        onCenterGetterRef.current?.(() => {
+          const c = map.getCenter();
+          return [c.lat, c.lng] as [number, number];
+        });
+        if (!cancelled) setReady(true);
+      });
       mapRef.current = map;
     };
 
@@ -516,13 +701,140 @@ export function MapLibreMap({
 
     boot();
 
-    return () => { cancelled = true; ro.disconnect(); };
+    return () => {
+      cancelled = true;
+      ro.disconnect();
+      readyRef.current = false;
+      for (const m of markersRef.current) { try { m.remove(); } catch { /* ignore */ } }
+      markersRef.current = [];
+      try { mapRef.current?.remove(); } catch { /* ignore */ }
+      mapRef.current = null;
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!mapRef.current || !center) return;
     mapRef.current.flyTo({ center: [center[1], center[0]], zoom: 14, duration: 1000 });
   }, [center]);
+
+  // ── HTML markers: parkings, bikes, active-ride starts, tickets ──────────────
+  // Coordinate note: bikes/parkings are stored in abstract space; mapToReal(lng,lat)
+  // returns real [lat, lng], and MapLibre markers take [lng, lat] — so we swap.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+
+    for (const m of markersRef.current) { try { m.remove(); } catch { /* ignore */ } }
+    markersRef.current = [];
+
+    const addMarker = (lngLat: [number, number], el: HTMLElement, onClick?: () => void) => {
+      if (interactive && onClick) el.addEventListener("click", (ev) => { ev.stopPropagation(); onClick(); });
+      const marker = new maplibregl.Marker({ element: el }).setLngLat(lngLat).addTo(map);
+      markersRef.current.push(marker);
+    };
+
+    // Parkings
+    if (show.parkings) {
+      for (const p of parkings) {
+        const inactive = p.status === "inactive";
+        const [lat, lng] = mapToReal(p.lng, p.lat);
+        const el = parkingMarkerEl(inactive, interactive && !!onSelectParkingRef.current);
+        el.title = inactive ? `${p.name} · неактивна` : p.name;
+        addMarker([lng, lat], el, () => onSelectParkingRef.current?.(p.id));
+      }
+    }
+
+    // Bikes
+    if (show.bikes) {
+      for (const b of bikes) {
+        const isSel = b.id === selectedBikeId;
+        const [lat, lng] = mapToReal(b.lng, b.lat);
+        const el = dotMarkerEl(bikeMarkerColor(b.status), { ring: isSel, size: isSel ? 20 : 16, clickable: interactive && !!onSelectBikeRef.current });
+        el.title = `${b.id} · ${b.model} · ${b.battery}%`;
+        addMarker([lng, lat], el, () => onSelectBikeRef.current?.(b.id));
+      }
+    }
+
+    // Active rides — start markers (tracks are drawn via the ride-tracks source).
+    if (show.rides) {
+      for (const r of activeRides) {
+        const [lat, lng] = mapToReal(r.startLng, r.startLat);
+        const el = dotMarkerEl(MARKER_COLORS.ride, { size: 14, clickable: interactive && !!onSelectRideRef.current });
+        el.title = `Поездка #${r.id} · велосипед ${r.bikeId}`;
+        addMarker([lng, lat], el, () => onSelectRideRef.current?.(r.id));
+      }
+    }
+
+    // Open / high-priority tickets at their bike's position.
+    if (show.tickets) {
+      const bikeById = new Map(bikes.map((b) => [b.id, b] as const));
+      for (const t of tickets) {
+        const bike = bikeById.get(t.bikeId);
+        if (!bike) continue;
+        const [lat, lng] = mapToReal(bike.lng, bike.lat);
+        const el = dotMarkerEl(ticketMarkerColor(t.priority), { size: 13, clickable: interactive && !!onSelectTicketRef.current });
+        el.title = `Тикет #${t.id} · ${t.bikeId} · ${t.title || t.kind}`;
+        addMarker([lng, lat], el, () => onSelectTicketRef.current?.(t.id));
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, bikes, parkings, activeRides, tickets, selectedBikeId, interactive,
+      show.parkings, show.bikes, show.rides, show.tickets]);
+
+  // ── GeoJSON overlays: operator objects (routes/zones) ───────────────────────
+  // Editor points are already real [lat, lng]; GeoJSON needs [lng, lat].
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const src = map.getSource("saved-objects");
+    if (!src) return;
+
+    const features: any[] = [];
+    if (show.objects) {
+      for (const obj of mapObjects) {
+        let pts: [number, number][];
+        try { pts = JSON.parse(obj.points) as [number, number][]; } catch { continue; }
+        if (!Array.isArray(pts) || pts.length < 2) continue;
+        const ring = pts.map(([lat, lng]) => [lng, lat]);
+        const props = { kind: obj.kind, color: obj.color, fillColor: fillFromColor(obj.color), name: obj.name };
+        if (obj.kind === "zone") {
+          const closed = [...ring];
+          const [f0, f1] = closed[0]; const [l0, l1] = closed[closed.length - 1];
+          if (f0 !== l0 || f1 !== l1) closed.push(closed[0]); // GeoJSON polygons must close
+          features.push({ type: "Feature", properties: props, geometry: { type: "Polygon", coordinates: [closed] } });
+        } else {
+          features.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: ring } });
+        }
+      }
+    }
+    src.setData({ type: "FeatureCollection", features });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, mapObjects, show.objects]);
+
+  // ── GeoJSON overlays: ride tracks (customer single ride + admin active rides) ─
+  // Track points are [[x, y, t], ...] in abstract space; mapToReal(x,y) → [lat,lng],
+  // GeoJSON needs [lng, lat].
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const src = map.getSource("ride-tracks");
+    if (!src) return;
+
+    const features: any[] = [];
+    const addTrack = (raw: string | null | undefined) => {
+      if (!raw) return;
+      let pts: [number, number, number][];
+      try { pts = JSON.parse(raw) as [number, number, number][]; } catch { return; }
+      const coords = pts.map(([x, y]) => { const [lat, lng] = mapToReal(x, y); return [lng, lat]; });
+      if (coords.length > 1) features.push({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } });
+    };
+    if (show.rides) {
+      if (ride) addTrack(ride.track);
+      for (const r of activeRides) addTrack(r.track);
+    }
+    src.setData({ type: "FeatureCollection", features });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, ride, activeRides, show.rides]);
 
   return <div ref={containerRef} className={className} style={{ height }} />;
 }
