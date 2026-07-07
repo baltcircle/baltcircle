@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "wouter";
 import type { Bike, MapObject, Parking, Ride } from "@shared/schema";
 import { MapLibreMap } from "@/components/MapLibreMap";
@@ -154,19 +155,31 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — fills the entire screen, bleeding under the status bar /
-       * safe-area so there is no dark strip at the top. `fixed inset-0` pins
-       * it to the whole visual viewport regardless of the shell's flex layout;
-       * z-0 keeps it below the floating controls (z-20+). */}
-      <MapLibreMap
-        parkings={parkingsQ.data ?? []}
-        mapObjects={mapObjectsQ.data ?? []}
-        ride={activeRide}
-        height="100%"
-        showLabels={false}
-        center={geoCenter}
-        className="fixed inset-0 z-0 w-full h-full"
-      />
+      {/* Map — rendered via portal directly into <body>, then physically
+       * pulled UP into the iOS safe-area with a negative top offset equal to
+       * env(safe-area-inset-top). Height is padded by the same inset on both
+       * sides so the canvas covers the entire device screen including the
+       * status bar. This is the only reliable way in iOS PWA — 100vh / 100dvh
+       * / 100svh all disagree between WebKit versions. */}
+      {createPortal(
+        <MapLibreMap
+          parkings={parkingsQ.data ?? []}
+          mapObjects={mapObjectsQ.data ?? []}
+          ride={activeRide}
+          height="calc(100dvh + env(safe-area-inset-top) + env(safe-area-inset-bottom))"
+          showLabels={false}
+          center={geoCenter}
+          className="z-0"
+          style={{
+            position: "fixed",
+            top: "calc(env(safe-area-inset-top) * -1)",
+            left: 0,
+            right: 0,
+            width: "100vw",
+          }}
+        />,
+        document.body,
+      )}
 
       {/* Top bar — logo left, theme + burger right */}
       <div
