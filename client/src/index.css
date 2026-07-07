@@ -240,9 +240,11 @@
   }
   /* Safety backdrop: if the fixed map fails to cover the full device screen
    * (iOS Safari top bar, PWA safe-area), the visible strip should read as the
-   * map's land tile tone rather than default white — no jarring header. */
+   * map's land tile tone rather than default white — no jarring header.
+   * Value matches <meta name="theme-color"> so Safari's system chrome, PWA
+   * safe-area, and the CSS fallback all render the same pale sage tone. */
   html.route-locked {
-    background-color: #e8e0d0 !important;
+    background-color: #eef1e6 !important;
   }
   body.route-locked {
     background-color: transparent !important;

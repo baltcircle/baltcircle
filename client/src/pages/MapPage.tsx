@@ -167,13 +167,17 @@ export function MapPage() {
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
           ride={activeRide}
-          height="var(--screen-height, 100vh)"
+          // Height = full device screen + both safe-area insets, so the
+          // canvas overshoots the visible viewport in every direction.
+          height="calc(var(--screen-height, 100vh) + env(safe-area-inset-top) + env(safe-area-inset-bottom))"
           showLabels={false}
           center={geoCenter}
           className="z-0"
           style={{
             position: "fixed",
-            top: 0,
+            // Physically pull the map UP into the iOS PWA safe-area.
+            // In a normal browser env() = 0 so this is a no-op.
+            top: "calc(env(safe-area-inset-top) * -1)",
             left: 0,
             width: "100vw",
           }}
