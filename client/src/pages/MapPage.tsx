@@ -155,25 +155,27 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — rendered via portal directly into <body> so no ancestor
-       * (AppShell flex container, map-page overflow-hidden, or any WebKit
-       * containing block quirk) can clip it. Pinned to (0,0) with 100vw ×
-       * 100vh so it physically covers the iOS safe-area (status bar). */}
+      {/* Map — rendered via portal directly into <body>, then physically
+       * pulled UP into the iOS safe-area with a negative top offset equal to
+       * env(safe-area-inset-top). Height is padded by the same inset on both
+       * sides so the canvas covers the entire device screen including the
+       * status bar. This is the only reliable way in iOS PWA — 100vh / 100dvh
+       * / 100svh all disagree between WebKit versions. */}
       {createPortal(
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
           ride={activeRide}
-          height="100vh"
+          height="calc(100dvh + env(safe-area-inset-top) + env(safe-area-inset-bottom))"
           showLabels={false}
           center={geoCenter}
           className="z-0"
           style={{
             position: "fixed",
-            top: 0,
+            top: "calc(env(safe-area-inset-top) * -1)",
             left: 0,
+            right: 0,
             width: "100vw",
-            height: "100vh",
           }}
         />,
         document.body,
