@@ -155,26 +155,26 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — rendered via portal directly into <body>, then physically
-       * pulled UP into the iOS safe-area with a negative top offset equal to
-       * env(safe-area-inset-top). Height is padded by the same inset on both
-       * sides so the canvas covers the entire device screen including the
-       * status bar. This is the only reliable way in iOS PWA — 100vh / 100dvh
-       * / 100svh all disagree between WebKit versions. */}
+      {/* Map — rendered via portal directly into <body> and sized to the
+       * FULL device screen height (from window.screen.height, exposed as
+       * --screen-height by useAppViewport). This covers the iOS Safari top
+       * status area / URL bar and the PWA safe-area, which 100vh / 100dvh /
+       * 100svh / visualViewport all under-report on WebKit. Extra height is
+       * clipped by the browser — what matters is that no part of the screen
+       * is left uncovered. */}
       {createPortal(
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
           ride={activeRide}
-          height="calc(100dvh + env(safe-area-inset-top) + env(safe-area-inset-bottom))"
+          height="var(--screen-height, 100vh)"
           showLabels={false}
           center={geoCenter}
           className="z-0"
           style={{
             position: "fixed",
-            top: "calc(env(safe-area-inset-top) * -1)",
+            top: 0,
             left: 0,
-            right: 0,
             width: "100vw",
           }}
         />,
