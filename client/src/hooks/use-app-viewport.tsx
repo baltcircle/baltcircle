@@ -21,23 +21,8 @@ export function useAppViewport(enabled: boolean) {
     const vv = window.visualViewport;
 
     const apply = () => {
-      const innerH = vv?.height ?? window.innerHeight;
-      root.style.setProperty("--app-height", `${Math.round(innerH)}px`);
-
-      // JS-computed safe-area insets from screen.height - innerHeight.
-      // iOS Safari (not PWA) returns env(safe-area-inset-bottom) = 0 even when
-      // the home-indicator zone reserves ~34px of screen chrome. We compute
-      // the missing bottom inset ourselves so the map can physically extend
-      // past visualViewport into the home-indicator zone.
-      const screenH = window.screen?.height ?? innerH;
-      const missing = Math.max(0, screenH - innerH);
-      // Heuristic: iPhones with home indicator have ~34px of chrome BELOW the
-      // visible viewport; if there's more missing than that, the rest is the
-      // top safe-area (notch/Dynamic Island).
-      const bot = Math.min(missing, 34);
-      const top = Math.max(0, missing - bot);
-      root.style.setProperty("--map-inset-top", `${top}px`);
-      root.style.setProperty("--map-inset-bottom", `${bot}px`);
+      const h = vv?.height ?? window.innerHeight;
+      root.style.setProperty("--app-height", `${Math.round(h)}px`);
     };
 
     apply();
@@ -60,8 +45,6 @@ export function useAppViewport(enabled: boolean) {
       root.classList.remove("route-locked");
       document.body.classList.remove("route-locked");
       root.style.removeProperty("--app-height");
-      root.style.removeProperty("--map-inset-top");
-      root.style.removeProperty("--map-inset-bottom");
     };
   }, [enabled]);
 }
