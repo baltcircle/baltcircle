@@ -21,7 +21,16 @@ export function useAppViewport(enabled: boolean) {
     const vv = window.visualViewport;
 
     const apply = () => {
-      const h = vv?.height ?? window.innerHeight;
+      // Берём МАКСИМУМ из доступных высот, чтобы AppShell тянулся до низа
+      // физического экрана iOS Safari, а не обрывался на URL-баре (visualViewport.height).
+      // window.screen.height — физический экран, innerHeight — лайаут-вьюпорт, vv.height —
+      // визуальный. Берём max — это всегда высота всего экрана, без учёта chrome браузера.
+      const h = Math.max(
+        window.screen?.height ?? 0,
+        window.innerHeight,
+        vv?.height ?? 0,
+        document.documentElement.clientHeight,
+      );
       root.style.setProperty("--app-height", `${Math.round(h)}px`);
     };
 
