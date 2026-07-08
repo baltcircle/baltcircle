@@ -224,16 +224,30 @@
   .font-extrabold{ font-weight: 600 !important; }  /* was 800 */
   /* Customer map route: pin to the visible viewport and kill page scroll /
    * rubber-band overscroll. Scoped via .route-locked so /profile, /tariffs,
-   * /rides and /admin/* keep normal document scrolling. */
+   * /rides and /admin/* keep normal document scrolling.
+   *
+   * NO background here: the map is rendered as a portal directly in <body>
+   * with a negative-top offset that covers the iOS safe-area, so any body
+   * background would only leak through if the map failed to load. Keep
+   * html/body transparent so the fixed map canvas is the only thing seen.
+   */
   html.route-locked,
   body.route-locked {
     height: 100%;
     overflow: hidden;
     overscroll-behavior: none;
     position: relative;
-    /* Не красим body никаким цветом — канвас MapLibre растянут
-     * на physical screen height (--app-height) и сам закрывает всю
-     * область экрана включая safe-area зоны. */
+  }
+  /* Safety backdrop: if the fixed map fails to cover the full device screen
+   * (iOS Safari top bar, PWA safe-area), the visible strip should read as the
+   * map's land tile tone rather than default white — no jarring header.
+   * Value matches <meta name="theme-color"> so Safari's system chrome, PWA
+   * safe-area, and the CSS fallback all render the same pale sage tone. */
+  html.route-locked {
+    background-color: #eef1e6 !important;
+  }
+  body.route-locked {
+    background-color: transparent !important;
   }
   /* Dark theme: force the hardcoded light text utilities (text-white,
    * text-zinc-100/50, text-gray-100/50) to the brand beige #D7CDB0 so ALL

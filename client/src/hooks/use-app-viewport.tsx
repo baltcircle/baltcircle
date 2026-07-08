@@ -21,17 +21,20 @@ export function useAppViewport(enabled: boolean) {
     const vv = window.visualViewport;
 
     const apply = () => {
-      // Берём МАКСИМУМ из доступных высот, чтобы AppShell тянулся до низа
-      // физического экрана iOS Safari, а не обрывался на URL-баре (visualViewport.height).
-      // window.screen.height — физический экран, innerHeight — лайаут-вьюпорт, vv.height —
-      // визуальный. Берём max — это всегда высота всего экрана, без учёта chrome браузера.
-      const h = Math.max(
+      const h = vv?.height ?? window.innerHeight;
+      root.style.setProperty("--app-height", `${Math.round(h)}px`);
+      // --screen-height: the FULL device screen (including any browser chrome
+      // and iOS safe-area top/bottom). Used by the map layer to cover
+      // status-bar / URL-bar areas that `100vh`/`100dvh`/`100svh` and
+      // visualViewport all under-report on iOS Safari + PWA. `screen.height`
+      // returns physical CSS pixels of the whole display in portrait; when the
+      // page is scrollable this reliably exceeds every viewport metric.
+      const screenH = Math.max(
         window.screen?.height ?? 0,
         window.innerHeight,
-        vv?.height ?? 0,
-        document.documentElement.clientHeight,
+        h,
       );
-      root.style.setProperty("--app-height", `${Math.round(h)}px`);
+      root.style.setProperty("--screen-height", `${Math.round(screenH)}px`);
     };
 
     apply();
@@ -54,6 +57,7 @@ export function useAppViewport(enabled: boolean) {
       root.classList.remove("route-locked");
       document.body.classList.remove("route-locked");
       root.style.removeProperty("--app-height");
+      root.style.removeProperty("--screen-height");
     };
   }, [enabled]);
 }

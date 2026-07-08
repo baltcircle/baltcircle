@@ -54,6 +54,8 @@ interface MapLibreMapProps {
   showLabels?: boolean;
   center?: [number, number] | null;
   className?: string;
+  /** Extra inline styles merged with the size box. Used for safe-area offsets. */
+  style?: React.CSSProperties;
 }
 
 // Overlay marker colours (resolved HEX — swap here to re-theme markers).
@@ -570,12 +572,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
   };
 };
 
-// REAL_CENTER (54.945, 20.275) сидит в Акватории севернее Аммониевой косы —
-// при zoom=10 на портретном экране верхняя половина вьюа — открытое море,
-// пользователь видит голубой фон. Сдвигаем центр в глубь побережья (район между
-// Пионерским и Зеленоградском) и увеличиваем стартовый zoom, чтобы суша заполнила экран.
-const DEFAULT_CENTER: [number, number] = [20.35, 54.87]; // (lng, lat)
-const DEFAULT_ZOOM = 11;
+const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
 
 // ── COMPONENT ─────────────────────────────────────────────────────────────────
 export function MapLibreMap({
@@ -583,7 +580,7 @@ export function MapLibreMap({
   bikes = [], activeRides = [], tickets = [], layers = {},
   selectedBikeId, onSelectBike, onSelectParking, onSelectRide, onSelectTicket,
   interactive = true, onMapClick, onCenterGetter,
-  height = "100%", showLabels = false, center, className,
+  height = "100%", showLabels = false, center, className, style,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef       = useRef<any>(null);
@@ -631,7 +628,7 @@ export function MapLibreMap({
         container: el,
         style: buildStyle(tileSource, minzoom, maxzoom) as any,
         center: center ? [center[1], center[0]] : DEFAULT_CENTER,
-        zoom: DEFAULT_ZOOM,
+        zoom: 10,
         maxBounds: MAX_BOUNDS,
         attributionControl: false,
         trackResize: true,
@@ -841,5 +838,5 @@ export function MapLibreMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, ride, activeRides, show.rides]);
 
-  return <div ref={containerRef} className={className} style={{ height }} />;
+  return <div ref={containerRef} className={className} style={{ width: "100%", height, ...style }} />;
 }
