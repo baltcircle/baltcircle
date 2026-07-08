@@ -238,13 +238,19 @@
     overscroll-behavior: none;
     position: relative;
   }
-  /* Safety backdrop: if the fixed map fails to cover the full device screen
-   * (iOS Safari top bar, PWA safe-area), the visible strip should read as the
-   * map's land tile tone rather than default white — no jarring header.
-   * Value matches <meta name="theme-color"> so Safari's system chrome, PWA
-   * safe-area, and the CSS fallback all render the same pale sage tone. */
+  /* Safety backdrop for the strip iOS Safari (non-standalone) leaves ABOVE
+   * visualViewport top: position:fixed elements are anchored to the visual
+   * viewport, so they can never physically cover the status-bar area. The
+   * only way to hide the strip is to make its background match the map at
+   * that location. On the customer map the initial center (Zelenogradsk,
+   * 54.945 / 20.275, zoom 10) always renders the Baltic Sea north of the
+   * coast, i.e. the very top of the visible map is water. Match the water
+   * tile color exactly (COLORS.water in MapLibreMap.tsx = #9fc9e0) so the
+   * strip visually blends with the sea and the seam disappears.
+   *
+   * Body stays transparent — user policy: never paint <body>. */
   html.route-locked {
-    background-color: #eef1e6 !important;
+    background-color: #9fc9e0 !important;
   }
   body.route-locked {
     background-color: transparent !important;
