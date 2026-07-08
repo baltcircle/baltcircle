@@ -76,10 +76,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ? { height: "var(--app-height, 100svh)" }
           : undefined
       }
-      className={`flex flex-col lg:flex-row bg-background text-foreground ${
+      className={`flex flex-col lg:flex-row text-foreground ${
         isCustomerMap
           ? "h-[100svh] [@supports(height:100dvh)]:h-[100dvh] overflow-hidden"
-          : "min-h-screen"
+          : "min-h-screen bg-background"
       }`}
     >
       {/* Sidebar — desktop */}
