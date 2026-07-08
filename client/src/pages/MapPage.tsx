@@ -217,17 +217,19 @@ export function MapPage() {
         aria-label="Моё местоположение"
         data-testid="home-geolocate-button"
         className="fixed right-4 z-20 w-12 h-12 rounded-full bg-card/90 text-card-foreground backdrop-blur-sm shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
-        style={{ bottom: "calc(max(1.5rem, env(safe-area-inset-bottom, 0px)) + 4rem + 1rem)" }}
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 3.5rem + 1rem + 1rem)" }}
       >
         <MapPin className="w-5 h-5" />
       </button>
 
       {/* Bottom action area — floats over the map.
-       * fixed относительно visualViewport, чтобы iOS гарантированно показывал кнопку
-       * над URL-баром. z-40 держит её над drawer backdrop (z-30). */}
+       * Кнопка с fixed bottom:0 (прилегает к низу viewport) без отступа, чтобы не было
+       * прозрачной полосы body-фона между кнопкой и URL-баром на iOS. safe-area-inset-bottom
+       * учитывается в высоте через padding-bottom внутри wrapper — при наличии home-индикатора
+       * (iPhone без рамки) кнопка не под ним, а выше; на десктопе/iOS без safe-area padding=0. */}
       <div
-        className="fixed left-4 right-4 z-40"
-        style={{ bottom: "max(1.5rem, env(safe-area-inset-bottom, 0px))" }}
+        className="fixed left-0 right-0 bottom-0 z-40 px-4 pt-4"
+        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
       >
         {activeRide ? (
           /* Active ride card */
