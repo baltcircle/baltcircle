@@ -153,53 +153,8 @@ export function MapPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userLoading, bikesQ.data, isRegistered]);
 
-  // Diagnostic overlay: read env(safe-area-inset-*), map container size,
-  // and CSS var --map-inset-* to figure out why the bottom strip persists.
-  const [diag, setDiag] = useState<string>("");
-  useEffect(() => {
-    const probe = document.createElement("div");
-    probe.style.cssText =
-      "position:fixed;top:0;left:0;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);visibility:hidden;pointer-events:none;";
-    document.body.appendChild(probe);
-    const read = () => {
-      const cs = getComputedStyle(probe);
-      const envT = parseFloat(cs.paddingTop) || 0;
-      const envB = parseFloat(cs.paddingBottom) || 0;
-      const root = getComputedStyle(document.documentElement);
-      const varT = root.getPropertyValue("--map-inset-top").trim();
-      const varB = root.getPropertyValue("--map-inset-bottom").trim();
-      const mapEl = document.querySelector<HTMLElement>(
-        '[data-testid="maplibre-portal-canvas"]',
-      );
-      const mapH = mapEl?.offsetHeight ?? 0;
-      const mapTop = mapEl?.getBoundingClientRect().top ?? 0;
-      const mapBot = mapEl?.getBoundingClientRect().bottom ?? 0;
-      const scrH = window.screen?.height ?? 0;
-      setDiag(
-        `envT=${envT.toFixed(0)} envB=${envB.toFixed(0)} | varT=${varT} varB=${varB} | mapH=${mapH} top=${mapTop.toFixed(0)} bot=${mapBot.toFixed(0)} | innerH=${window.innerHeight} scrH=${scrH}`,
-      );
-    };
-    read();
-    const t = setTimeout(read, 500);
-    window.addEventListener("resize", read);
-    window.visualViewport?.addEventListener("resize", read);
-    return () => {
-      clearTimeout(t);
-      window.removeEventListener("resize", read);
-      window.visualViewport?.removeEventListener("resize", read);
-      probe.remove();
-    };
-  }, []);
-
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* DEBUG overlay */}
-      <div
-        className="fixed left-1/2 -translate-x-1/2 z-[100] px-2 py-1 rounded bg-black/80 text-white text-[9px] font-mono pointer-events-none max-w-[95%] text-center"
-        style={{ top: "max(0.25rem, env(safe-area-inset-top))" }}
-      >
-        {diag}
-      </div>
       {/* Map — portal into <body>, physically overshoots viewport in every
        * direction to cover iOS PWA status-bar / home-indicator strips that
        * env(safe-area-inset-*) reports as 0. --map-inset-top /
