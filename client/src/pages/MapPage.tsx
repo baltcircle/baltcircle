@@ -154,6 +154,30 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
+      {/* DEBUG overlay — remove after diagnostics. Shows real safe-area
+       * env() values + JS-measured screen vs viewport delta so we know
+       * exactly what iOS reports below the map. */}
+      <div
+        id="map-debug-overlay"
+        style={{
+          position: "fixed",
+          left: 8,
+          bottom: 8,
+          zIndex: 99999,
+          background: "rgba(0,0,0,0.75)",
+          color: "#0f0",
+          font: "11px/1.3 monospace",
+          padding: "6px 8px",
+          borderRadius: 6,
+          pointerEvents: "none",
+          maxWidth: "90vw",
+        }}
+      >
+        <div>envT=<span data-k="envT">?</span> envB=<span data-k="envB">?</span></div>
+        <div>varT=<span data-k="varT">?</span> varB=<span data-k="varB">?</span></div>
+        <div>innerH=<span data-k="innerH">?</span> scrH=<span data-k="scrH">?</span></div>
+        <div>standalone=<span data-k="sa">?</span></div>
+      </div>
       {/* Map — fills the entire physical screen (top + bottom safe-area
        * included). `position: fixed` with negative `top` / `bottom` extends
        * the canvas past visualViewport so iOS home-indicator zone and status
