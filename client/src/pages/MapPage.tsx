@@ -187,7 +187,10 @@ export function MapPage() {
         parkings={parkingsQ.data ?? []}
         mapObjects={mapObjectsQ.data ?? []}
         ride={activeRide}
-        height="calc(100vh + max(env(safe-area-inset-top), var(--map-inset-top, 0px)) + max(env(safe-area-inset-bottom), var(--map-inset-bottom, 0px)))"
+        // Высота = screen.height + envT, т.к. карта сдвинута вверх на envT.
+        // Нижний край карты = -envT + (screen + envT) = screen — т.е. достаёт
+        // до самого низа физического экрана включая home-indicator zone.
+        height="calc(var(--map-screen-height, 100dvh) + max(env(safe-area-inset-top), var(--map-inset-top, 0px)))"
         showLabels={false}
         center={geoCenter}
         className="z-0"

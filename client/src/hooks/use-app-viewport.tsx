@@ -38,6 +38,9 @@ export function useAppViewport(enabled: boolean) {
       const top = Math.max(0, missing - bot);
       root.style.setProperty("--map-inset-top", `${top}px`);
       root.style.setProperty("--map-inset-bottom", `${bot}px`);
+      // Реальная физическая высота экрана — надёжнее чем 100vh + env(),
+      // потому что в iOS PWA 100vh неоднозначен (819 vs 793).
+      root.style.setProperty("--map-screen-height", `${screenH}px`);
 
       // DEBUG: fill overlay. Uses hidden probes to read real env() values.
       const overlay = document.getElementById("map-debug-overlay");
@@ -95,6 +98,7 @@ export function useAppViewport(enabled: boolean) {
       root.style.removeProperty("--app-height");
       root.style.removeProperty("--map-inset-top");
       root.style.removeProperty("--map-inset-bottom");
+      root.style.removeProperty("--map-screen-height");
     };
   }, [enabled]);
 }
