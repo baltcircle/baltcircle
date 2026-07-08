@@ -1,4 +1,5 @@
 import { Link, useLocation } from "wouter";
+import { useEffect } from "react";
 import { Logo } from "./Logo";
 import { useTheme } from "@/lib/theme";
 import { useAppViewport } from "@/hooks/use-app-viewport";
@@ -67,6 +68,43 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const OVERLAY_PREFIXES = ["/settings", "/rides", "/payment-methods", "/support", "/safety", "/tariffs", "/rent", "/payment-result"];
   const isCustomerMap = loc === "/" || OVERLAY_PREFIXES.some(p => loc === p || loc.startsWith(p + "/"));
   useAppViewport(isCustomerMap);
+
+  // On customer-map routes paint <html>/<body> with the map water tone so iOS
+  // safe-area zones (status bar + home indicator) look like a continuation of
+  // the map instead of the dark app background. Also drive <meta theme-color>
+  // so iOS Safari status bar and URL bar match the water tone.
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    let metaTag = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement | null;
+    let created = false;
+    if (!metaTag) {
+      metaTag = document.createElement("meta");
+      metaTag.name = "theme-color";
+      document.head.appendChild(metaTag);
+      created = true;
+    }
+    const prevTheme = metaTag.content;
+
+    if (isCustomerMap) {
+      html.classList.add("route-locked");
+      body.classList.add("route-locked");
+      // Read the computed --map-water HSL triplet and set theme-color to match.
+      const water = getComputedStyle(html).getPropertyValue("--map-water").trim();
+      if (water) metaTag.content = `hsl(${water})`;
+    } else {
+      html.classList.remove("route-locked");
+      body.classList.remove("route-locked");
+      metaTag.content = "";
+    }
+
+    return () => {
+      html.classList.remove("route-locked");
+      body.classList.remove("route-locked");
+      if (created) metaTag?.remove();
+      else if (metaTag) metaTag.content = prevTheme;
+    };
+  }, [isCustomerMap]);
 
   return (
     <div
