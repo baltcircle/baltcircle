@@ -240,6 +240,22 @@
      * Swappable by HEX: retune --map-water below. */
     background-color: hsl(var(--map-water)) !important;
   }
+
+  /* iOS PWA: home-indicator zone (нижние ~34px) в standalone-режиме
+   * резервируется как chrome, куда fixed-элементы не рисуются. Перекрываем
+   * эту полосу черным псевдоэлементом так чтобы она слилась с iOS чёрной рамкой
+   * экрана iPhone, а home-indicator остался виден как белая полоска. */
+  body.route-locked::after {
+    content: "";
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: env(safe-area-inset-bottom);
+    background-color: #000;
+    z-index: 9999;
+    pointer-events: none;
+  }
   /* Dark theme: force the hardcoded light text utilities (text-white,
    * text-zinc-100/50, text-gray-100/50) to the brand beige #D7CDB0 so ALL
    * dark-mode text matches the light theme's beige. Change the color here to
