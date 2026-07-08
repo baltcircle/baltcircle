@@ -244,7 +244,12 @@
    * Value matches <meta name="theme-color"> so Safari's system chrome, PWA
    * safe-area, and the CSS fallback all render the same pale sage tone. */
   html.route-locked {
-    background-color: #eef1e6 !important;
+    /* Colour of the land tiles in the base map style. iOS ALWAYS repaints
+     * the home-indicator strip using html/body background, ignoring any
+     * fixed-positioned canvas above it — so this is the ONLY way to make
+     * the bottom safe-area visually blend with the map. Retune if the map
+     * style changes. */
+    background-color: #dfefdb !important;
   }
   body.route-locked {
     background-color: transparent !important;
