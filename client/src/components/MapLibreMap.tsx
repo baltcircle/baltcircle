@@ -570,7 +570,12 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
   };
 };
 
-const DEFAULT_CENTER: [number, number] = [REAL_CENTER[1], REAL_CENTER[0]];
+// REAL_CENTER (54.945, 20.275) сидит в Акватории севернее Аммониевой косы —
+// при zoom=10 на портретном экране верхняя половина вьюа — открытое море,
+// пользователь видит голубой фон. Сдвигаем центр в глубь побережья (район между
+// Пионерским и Зеленоградском) и увеличиваем стартовый zoom, чтобы суша заполнила экран.
+const DEFAULT_CENTER: [number, number] = [20.35, 54.87]; // (lng, lat)
+const DEFAULT_ZOOM = 11;
 
 // ── COMPONENT ─────────────────────────────────────────────────────────────────
 export function MapLibreMap({
@@ -626,7 +631,7 @@ export function MapLibreMap({
         container: el,
         style: buildStyle(tileSource, minzoom, maxzoom) as any,
         center: center ? [center[1], center[0]] : DEFAULT_CENTER,
-        zoom: 10,
+        zoom: DEFAULT_ZOOM,
         maxBounds: MAX_BOUNDS,
         attributionControl: false,
         trackResize: true,
