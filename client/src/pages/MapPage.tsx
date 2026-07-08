@@ -154,19 +154,30 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — fills the entire screen, bleeding under the status bar /
-       * safe-area so there is no dark strip at the top. `fixed inset-0` pins
-       * it to the whole visual viewport regardless of the shell's flex layout;
-       * z-0 keeps it below the floating controls (z-20+). */}
-      <MapLibreMap
-        parkings={parkingsQ.data ?? []}
-        mapObjects={mapObjectsQ.data ?? []}
-        ride={activeRide}
-        height="100%"
-        showLabels={false}
-        center={geoCenter}
-        className="fixed inset-0 z-0 w-full h-full"
-      />
+      {/* Map — заливает весь экран целиком, включая зону под URL-баром iOS Safari.
+       * `position:fixed` на iOS клипается к visualViewport (без URL-бара),
+       * поэтому здесь закрепляем карту через 100lvh (Large Viewport Height) — это
+       * максимальная высота viewport включая зону, перекрываемую chrome браузера.
+       * Контейнеру даём width:100vw / height:100lvh через style, чтобы
+       * MapLibre видел полный размер при resize. z-0 держит её под контролами (z-20+). */}
+      <div
+        className="fixed inset-0 z-0"
+        style={{
+          width: "100vw",
+          height: "100lvh",
+          // fallback для браузеров без lvh: dvh всё равно лучше vh
+        }}
+      >
+        <MapLibreMap
+          parkings={parkingsQ.data ?? []}
+          mapObjects={mapObjectsQ.data ?? []}
+          ride={activeRide}
+          height="100%"
+          showLabels={false}
+          center={geoCenter}
+          className="w-full h-full"
+        />
+      </div>
 
       {/* Top bar — logo left, theme + burger right */}
       <div
@@ -204,25 +215,26 @@ export function MapPage() {
         </div>
       </div>
 
-      {/* Geolocation button — bottom right, above scan button */}
+      {/* Geolocation button — bottom right, above scan button.
+       * Позиционируется через fixed+bottom относительно visualViewport (без зоны URL-бара),
+       * чтобы кнопка всегда была видна пользователю, а не под URL-баром. */}
       <button
         type="button"
         onClick={handleGeolocate}
         aria-label="Моё местоположение"
         data-testid="home-geolocate-button"
-        className="absolute right-4 z-20 w-12 h-12 rounded-full bg-card/90 text-card-foreground backdrop-blur-sm shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
-        style={{ bottom: "calc(max(1.5rem, env(safe-area-inset-bottom)) + 4rem + 1rem)" }}
+        className="fixed right-4 z-20 w-12 h-12 rounded-full bg-card/90 text-card-foreground backdrop-blur-sm shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
+        style={{ bottom: "calc(max(1.5rem, env(safe-area-inset-bottom, 0px)) + 4rem + 1rem)" }}
       >
         <MapPin className="w-5 h-5" />
       </button>
 
       {/* Bottom action area — floats over the map.
-       * z-40 keeps it above the drawer backdrop (z-30) so the Scan button
-       * shows its true bg-primary colour and is not dimmed to look darker
-       * than the menu panel (which is also z-40, same #1D1E5D). */}
+       * fixed относительно visualViewport, чтобы iOS гарантированно показывал кнопку
+       * над URL-баром. z-40 держит её над drawer backdrop (z-30). */}
       <div
-        className="absolute left-4 right-4 z-40"
-        style={{ bottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
+        className="fixed left-4 right-4 z-40"
+        style={{ bottom: "max(1.5rem, env(safe-area-inset-bottom, 0px))" }}
       >
         {activeRide ? (
           /* Active ride card */
