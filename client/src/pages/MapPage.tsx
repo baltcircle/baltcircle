@@ -163,13 +163,13 @@ export function MapPage() {
         parkings={parkingsQ.data ?? []}
         mapObjects={mapObjectsQ.data ?? []}
         ride={activeRide}
-        height="calc(100vh + env(safe-area-inset-top) + env(safe-area-inset-bottom))"
+        height="calc(100vh + max(env(safe-area-inset-top), var(--map-inset-top, 0px)) + max(env(safe-area-inset-bottom), var(--map-inset-bottom, 0px)))"
         showLabels={false}
         center={geoCenter}
         className="z-0"
         style={{
           position: "fixed",
-          top: "calc(env(safe-area-inset-top) * -1)",
+          top: "calc(max(env(safe-area-inset-top), var(--map-inset-top, 0px)) * -1)",
           left: 0,
           width: "100vw",
         }}
