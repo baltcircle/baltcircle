@@ -155,31 +155,38 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — rendered via portal directly into <body> and sized to the
-       * FULL device screen height (from window.screen.height, exposed as
-       * --screen-height by useAppViewport). This covers the iOS Safari top
-       * status area / URL bar and the PWA safe-area, which 100vh / 100dvh /
-       * 100svh / visualViewport all under-report on WebKit. Extra height is
-       * clipped by the browser — what matters is that no part of the screen
-       * is left uncovered. */}
+      {/* Map — rendered via portal directly into <body> and stretched to
+       * the FULL layout viewport including the area behind Safari's URL-bar
+       * chrome. Key rules:
+       *   • position:fixed inset:0 anchors to layout viewport, which with
+       *     <meta viewport-fit=cover> equals the physical screen.
+       *   • height uses 100lvh (large viewport height) as the primary size
+       *     — in iOS Safari 15.4+ this is the layout viewport at maximum
+       *     chrome retraction, guaranteeing coverage under the URL bar.
+       *   • Fallbacks: --screen-height (JS-measured window.screen.height)
+       *     and 100vh for older engines.
+       *   • Negative top-inset pulls the canvas UP into the PWA safe-area,
+       *     bottom-inset extends it DOWN under the home-indicator zone.
+       */}
       {createPortal(
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
           ride={activeRide}
-          // Height = full device screen + both safe-area insets, so the
-          // canvas overshoots the visible viewport in every direction.
-          height="calc(var(--screen-height, 100vh) + env(safe-area-inset-top) + env(safe-area-inset-bottom))"
+          height="calc(100lvh + env(safe-area-inset-top) + env(safe-area-inset-bottom))"
           showLabels={false}
           center={geoCenter}
           className="z-0"
           style={{
             position: "fixed",
-            // Physically pull the map UP into the iOS PWA safe-area.
-            // In a normal browser env() = 0 so this is a no-op.
             top: "calc(env(safe-area-inset-top) * -1)",
             left: 0,
+            right: 0,
             width: "100vw",
+            // Fallback for engines without lvh support: use the JS-measured
+            // full screen height. Both properties are applied; the browser
+            // picks whichever it understands last.
+            minHeight: "calc(var(--screen-height, 100vh) + env(safe-area-inset-top) + env(safe-area-inset-bottom))",
           }}
         />,
         document.body,
