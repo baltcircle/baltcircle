@@ -76,13 +76,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ? { height: "var(--app-height, 100svh)" }
           : undefined
       }
-      className={`flex flex-col lg:flex-row text-foreground ${
+      className={`flex flex-col lg:flex-row bg-background text-foreground ${
         isCustomerMap
-          ? // Transparent on the customer map so the body backdrop
-            // (--map-water via .route-locked) shows through the iOS safe-area
-            // instead of the dark app --background painting a strip at the top.
-            "bg-transparent h-[100svh] [@supports(height:100dvh)]:h-[100dvh] overflow-hidden"
-          : "bg-background min-h-screen"
+          ? "h-[100svh] [@supports(height:100dvh)]:h-[100dvh] overflow-hidden"
+          : "min-h-screen"
       }`}
     >
       {/* Sidebar — desktop */}

@@ -12,22 +12,9 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <!-- theme-color = map water tone (#9fc9e0) so any browser-painted chrome
-         (Android URL bar / iOS Safari top bar / status area) matches the map,
-         not the dark app bg. Split light/dark so the strip looks the same in
-         both themes (dark theme also uses the light water so the bar reads
-         as “map continues here” rather than a dark header). Swappable by HEX. -->
-    <meta name="theme-color" content="#dfefdb" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#dfefdb" media="(prefers-color-scheme: dark)" />
-
-    <!-- PWA manifest — required by iOS Safari to activate env(safe-area-inset-*)
-         and let the WebView draw under the status bar / home indicator when
-         launched from the home screen. Without a manifest iOS clips the
-         WebView to visualViewport and returns env() = 0 even when
-         apple-mobile-web-app-status-bar-style=black-translucent is set. -->
-    <link rel="manifest" href="/manifest.webmanifest" />
-
-    <!-- iOS home-screen icon (same source as SVG favicon above). -->
-    <link rel="apple-touch-icon" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='96' fill='%231d6a85'/%3E%3Cpath d='M360 256a80 80 0 1 1-48-73.6' stroke='white' stroke-width='22' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='192' cy='304' r='38' stroke='white' stroke-width='19' fill='none'/%3E%3Ccircle cx='336' cy='304' r='38' stroke='white' stroke-width='19' fill='none'/%3E%3Cpath d='M192 304 L256 208 L320 304 M224 208 H288 M336 304 L304 208' stroke='white' stroke-width='18' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+         (Android URL bar / status area) matches the map, not the dark app bg.
+         Swappable by HEX. -->
+    <meta name="theme-color" content="#9fc9e0" />
     <title>TakeRide — Велошеринг побережья</title>
     <meta name="description" content="TakeRide — велошеринг Балтийского побережья: Зеленоградск, Пионерский, Светлогорск. Карта, велодорожки, аренда по QR, маршруты и аналитика." />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231d6a85'/%3E%3Cpath d='M22.5 16a5 5 0 1 1-3-4.6' stroke='white' stroke-width='1.4' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='19' r='2.4' stroke='white' stroke-width='1.2' fill='none'/%3E%3Ccircle cx='21' cy='19' r='2.4' stroke='white' stroke-width='1.2' fill='none'/%3E%3Cpath d='M12 19 L16 13 L20 19 M14 13 H18 M21 19 L19 13' stroke='white' stroke-width='1.1' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />

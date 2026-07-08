@@ -1,6 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
 import { Link } from "wouter";
 import type { Bike, MapObject, Parking, Ride } from "@shared/schema";
 import { MapLibreMap } from "@/components/MapLibreMap";
@@ -155,32 +154,19 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — portal into <body>, physically overshoots viewport in every
-       * direction to cover iOS PWA status-bar / home-indicator strips that
-       * env(safe-area-inset-*) reports as 0. --map-inset-top /
-       * --map-inset-bottom are computed from window.screen.height vs
-       * window.innerHeight in useAppViewport. */}
-      {createPortal(
-        <MapLibreMap
-          parkings={parkingsQ.data ?? []}
-          mapObjects={mapObjectsQ.data ?? []}
-          ride={activeRide}
-          // Take the LARGER of (JS-computed inset, native env inset). With the
-          // PWA manifest, iOS now returns real env(safe-area-inset-*); without
-          // manifest we fall back to our own screen.height math.
-          height="calc(100vh + max(env(safe-area-inset-top), var(--map-inset-top, 0px)) + max(env(safe-area-inset-bottom), var(--map-inset-bottom, 0px)))"
-          showLabels={false}
-          center={geoCenter}
-          className="z-0"
-          style={{
-            position: "fixed",
-            top: "calc(max(env(safe-area-inset-top), var(--map-inset-top, 0px)) * -1)",
-            left: 0,
-            width: "100vw",
-          }}
-        />,
-        document.body,
-      )}
+      {/* Map — fills the entire screen, bleeding under the status bar /
+       * safe-area so there is no dark strip at the top. `fixed inset-0` pins
+       * it to the whole visual viewport regardless of the shell's flex layout;
+       * z-0 keeps it below the floating controls (z-20+). */}
+      <MapLibreMap
+        parkings={parkingsQ.data ?? []}
+        mapObjects={mapObjectsQ.data ?? []}
+        ride={activeRide}
+        height="100%"
+        showLabels={false}
+        center={geoCenter}
+        className="fixed inset-0 z-0 w-full h-full"
+      />
 
       {/* Top bar — logo left, theme + burger right */}
       <div
