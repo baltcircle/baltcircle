@@ -1,0 +1,26 @@
+{
+  "name": "TakeRide — Велошеринг побережья",
+  "short_name": "TakeRide",
+  "description": "Велошеринг Балтийского побережья: карта, аренда по QR, маршруты.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "fullscreen"],
+  "orientation": "portrait",
+  "background_color": "#eef1e6",
+  "theme_color": "#eef1e6",
+  "icons": [
+    {
+      "src": "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='96' fill='%231d6a85'/%3E%3Cpath d='M360 256a80 80 0 1 1-48-73.6' stroke='white' stroke-width='22' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='192' cy='304' r='38' stroke='white' stroke-width='19' fill='none'/%3E%3Ccircle cx='336' cy='304' r='38' stroke='white' stroke-width='19' fill='none'/%3E%3Cpath d='M192 304 L256 208 L320 304 M224 208 H288 M336 304 L304 208' stroke='white' stroke-width='18' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' fill='%231d6a85'/%3E%3Cpath d='M360 256a80 80 0 1 1-48-73.6' stroke='white' stroke-width='22' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='192' cy='304' r='38' stroke='white' stroke-width='19' fill='none'/%3E%3Ccircle cx='336' cy='304' r='38' stroke='white' stroke-width='19' fill='none'/%3E%3Cpath d='M192 304 L256 208 L320 304 M224 208 H288 M336 304 L304 208' stroke='white' stroke-width='18' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
