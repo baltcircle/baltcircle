@@ -231,14 +231,9 @@
     overflow: hidden;
     overscroll-behavior: none;
     position: relative;
-    /* Paint the whole device viewport (incl. the top safe-area / notch inset)
-     * with the map's water tone instead of the dark app background. On iOS the
-     * fixed map layer is driven off visualViewport.height, which excludes the
-     * top safe-area inset — leaving a dark strip of body background above the
-     * map. Matching this backdrop to the map water makes that inset read as a
-     * seamless continuation of the map instead of a dark band.
-     * Swappable by HEX: retune --map-water below. */
-    background-color: hsl(var(--map-water)) !important;
+    /* Не красим body никаким цветом — канвас MapLibre растянут
+     * на physical screen height (--app-height) и сам закрывает всю
+     * область экрана включая safe-area зоны. */
   }
   /* Dark theme: force the hardcoded light text utilities (text-white,
    * text-zinc-100/50, text-gray-100/50) to the brand beige #D7CDB0 so ALL
