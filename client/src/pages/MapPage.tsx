@@ -154,18 +154,25 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — fills the entire screen, bleeding under the status bar /
-       * safe-area so there is no dark strip at the top. `fixed inset-0` pins
-       * it to the whole visual viewport regardless of the shell's flex layout;
-       * z-0 keeps it below the floating controls (z-20+). */}
+      {/* Map — fills the entire physical screen (top + bottom safe-area
+       * included). `position: fixed` with negative `top` / `bottom` extends
+       * the canvas past visualViewport so iOS home-indicator zone and status
+       * bar both draw map tiles instead of body background. z-0 keeps it
+       * below floating controls (z-20+). */}
       <MapLibreMap
         parkings={parkingsQ.data ?? []}
         mapObjects={mapObjectsQ.data ?? []}
         ride={activeRide}
-        height="100%"
+        height="calc(100vh + env(safe-area-inset-top) + env(safe-area-inset-bottom))"
         showLabels={false}
         center={geoCenter}
-        className="fixed inset-0 z-0 w-full h-full"
+        className="z-0"
+        style={{
+          position: "fixed",
+          top: "calc(env(safe-area-inset-top) * -1)",
+          left: 0,
+          width: "100vw",
+        }}
       />
 
       {/* Top bar — logo left, theme + burger right */}

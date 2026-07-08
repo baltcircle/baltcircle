@@ -54,6 +54,9 @@ interface MapLibreMapProps {
   showLabels?: boolean;
   center?: [number, number] | null;
   className?: string;
+  /** Inline style, merged with container height. Enables per-page positioning
+   *  (e.g. fixed + negative top to overshoot iOS safe-area). */
+  style?: React.CSSProperties;
 }
 
 // Overlay marker colours (resolved HEX — swap here to re-theme markers).
@@ -578,7 +581,7 @@ export function MapLibreMap({
   bikes = [], activeRides = [], tickets = [], layers = {},
   selectedBikeId, onSelectBike, onSelectParking, onSelectRide, onSelectTicket,
   interactive = true, onMapClick, onCenterGetter,
-  height = "100%", showLabels = false, center, className,
+  height = "100%", showLabels = false, center, className, style,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef       = useRef<any>(null);
@@ -836,5 +839,5 @@ export function MapLibreMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, ride, activeRides, show.rides]);
 
-  return <div ref={containerRef} className={className} style={{ height }} />;
+  return <div ref={containerRef} className={className} style={{ height, ...style }} />;
 }
