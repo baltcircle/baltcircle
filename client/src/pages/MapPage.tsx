@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
+
 import { Link } from "wouter";
 import type { Bike, MapObject, Parking, Ride } from "@shared/schema";
 import { MapLibreMap } from "@/components/MapLibreMap";
@@ -59,28 +60,6 @@ export function MapPage() {
   // Geolocation: center map on user position
   const [geoCenter, setGeoCenter] = useState<[number, number] | null>(null);
 
-  // iOS Safari клипает position:fixed к visualViewport (без URL-бара) — 100vh/100lvh тоже
-  // не всегда дотягивает до низа экрана. Замеряем максимальный доступный h в JS и даём
-  // карте явные пиксели — это обходит клип Safari.
-  const mapWrapRef = useRef<HTMLDivElement>(null);
-  const [mapWrapHeight, setMapWrapHeight] = useState<string>("100vh");
-  useEffect(() => {
-    const compute = () => {
-      const h = Math.max(
-        window.innerHeight,
-        window.screen?.height ?? 0,
-        document.documentElement.clientHeight,
-      );
-      setMapWrapHeight(`${h}px`);
-    };
-    compute();
-    window.addEventListener("resize", compute);
-    window.addEventListener("orientationchange", compute);
-    return () => {
-      window.removeEventListener("resize", compute);
-      window.removeEventListener("orientationchange", compute);
-    };
-  }, []);
   const handleGeolocate = () => {
     navigator.geolocation.getCurrentPosition(
       (pos) => setGeoCenter([pos.coords.latitude, pos.coords.longitude]),
@@ -177,15 +156,11 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — заливает весь экран. Ключевой нюанс iOS Safari: position:fixed
-       * клипается к visualViewport (без URL-бара), поэтому через fixed карта физически
-       * не достаёт до низа экрана. Решение: position:fixed с height:100vh + негативный
-       * bottom, плюс window.screen.height в JS если vh не пробивает. */}
-      <div
-        ref={mapWrapRef}
-        className="fixed left-0 right-0 top-0 z-0 overflow-hidden"
-        style={{ height: mapWrapHeight }}
-      >
+      {/* Map — заливает весь layout viewport целиком (inset:0). На iOS Safari fixed
+       * привязан к layout viewport (не visualViewport), поэтому inset:0 закрашивает
+       * ВСЮ область экрана: и верхнюю safe-area, и полосу под URL-баром. Никакого
+       * height в px больше не нужно — layout viewport и есть physical screen. */}
+      <div className="fixed inset-0 z-0 overflow-hidden">
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
