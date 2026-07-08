@@ -155,38 +155,39 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — rendered via portal directly into <body> and stretched to
-       * the FULL layout viewport including the area behind Safari's URL-bar
-       * chrome. Key rules:
-       *   • position:fixed inset:0 anchors to layout viewport, which with
-       *     <meta viewport-fit=cover> equals the physical screen.
-       *   • height uses 100lvh (large viewport height) as the primary size
-       *     — in iOS Safari 15.4+ this is the layout viewport at maximum
-       *     chrome retraction, guaranteeing coverage under the URL bar.
-       *   • Fallbacks: --screen-height (JS-measured window.screen.height)
-       *     and 100vh for older engines.
-       *   • Negative top-inset pulls the canvas UP into the PWA safe-area,
-       *     bottom-inset extends it DOWN under the home-indicator zone.
+      {/* Map — rendered via portal into <body> with position:absolute.
+       *
+       * WHY absolute, not fixed:
+       *   iOS Safari clips position:fixed to visualViewport (the visible
+       *   region above the URL bar). Even with height:100lvh a fixed
+       *   element renders only up to the URL-bar top edge, leaving a strip
+       *   between the map and the URL bar (see whoosh comparison).
+       *   position:absolute is anchored to its containing block — <body>,
+       *   which we sized to 100lvh in index.css (route-locked). So the
+       *   map's bottom edge sits at the physical bottom of the screen,
+       *   under the Safari URL bar, exactly like whoosh-bike.ru.
+       *
+       * Height / offsets:
+       *   • Negative top-inset pulls the canvas up into the PWA safe-area.
+       *   • Extra +60px overshoot handles iOS Safari's late layout on
+       *     first paint (Peter McClung / dev.to trick).
+       *   • inset:0 keeps left/right/bottom pinned regardless of viewport.
        */}
       {createPortal(
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
           ride={activeRide}
-          height="calc(100lvh + env(safe-area-inset-top) + env(safe-area-inset-bottom))"
+          height="calc(100lvh + env(safe-area-inset-top) + env(safe-area-inset-bottom) + 60px)"
           showLabels={false}
           center={geoCenter}
           className="z-0"
           style={{
-            position: "fixed",
+            position: "absolute",
             top: "calc(env(safe-area-inset-top) * -1)",
             left: 0,
             right: 0,
             width: "100vw",
-            // Fallback for engines without lvh support: use the JS-measured
-            // full screen height. Both properties are applied; the browser
-            // picks whichever it understands last.
-            minHeight: "calc(var(--screen-height, 100vh) + env(safe-area-inset-top) + env(safe-area-inset-bottom))",
           }}
         />,
         document.body,

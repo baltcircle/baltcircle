@@ -233,7 +233,12 @@
    */
   html.route-locked,
   body.route-locked {
-    height: 100%;
+    /* Layout viewport size, not visualViewport. Using 100lvh forces the
+     * document to occupy the full physical screen height (including the
+     * area behind Safari's URL bar). overflow:hidden kills scrolling and
+     * rubber-band; overscroll-behavior:none prevents pull-to-refresh. */
+    min-height: 100lvh;
+    height: 100lvh;
     overflow: hidden;
     overscroll-behavior: none;
     position: relative;
