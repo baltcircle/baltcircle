@@ -162,10 +162,11 @@ export function MapPage() {
         parkings={parkingsQ.data ?? []}
         mapObjects={mapObjectsQ.data ?? []}
         ride={activeRide}
-        height="100%"
+        height="calc(100% + env(safe-area-inset-bottom))"
         showLabels={false}
         center={geoCenter}
-        className="fixed inset-0 z-0 w-full h-full"
+        className="fixed left-0 right-0 top-0 z-0 w-full"
+        style={{ bottom: "calc(env(safe-area-inset-bottom) * -1)" }}
       />
 
       {/* Top bar — logo left, theme + burger right */}
