@@ -3,13 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
-    <!-- Standalone (Add to Home Screen) status-bar handling. `black-translucent`
-         lets the WebView bleed UNDER the iOS status bar so the map (fixed
-         inset-0) fills to the very top of the screen instead of leaving a dark
-         header strip in the safe-area. Floating logo/burger already offset with
-         env(safe-area-inset-top), so they stay clear of the clock/battery. -->
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- iOS PWA standalone mode DISABLED: в standalone iOS резервирует
+         ~34px под home-indicator и красит эту зону background_color, из-за
+         чего появлялась голубая полоса снизу. Без capable-мета иконка на
+         рабочем столе открывает сайт в обычном Safari — без резерва зон,
+         полос нет. Android PWA (mobile-web-app-capable) тоже отключён для
+         единообразия. -->
+    <!-- <meta name="apple-mobile-web-app-capable" content="yes" /> -->
+    <!-- <meta name="mobile-web-app-capable" content="yes" /> -->
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <!-- theme-color = map water tone (#9fc9e0) so any browser-painted chrome
          (Android URL bar / status area) matches the map, not the dark app bg.
