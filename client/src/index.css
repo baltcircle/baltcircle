@@ -224,35 +224,21 @@
   .font-extrabold{ font-weight: 600 !important; }  /* was 800 */
   /* Customer map route: pin to the visible viewport and kill page scroll /
    * rubber-band overscroll. Scoped via .route-locked so /profile, /tariffs,
-   * /rides and /admin/* keep normal document scrolling.
-   *
-   * NO background here: the map is rendered as a portal directly in <body>
-   * with a negative-top offset that covers the iOS safe-area, so any body
-   * background would only leak through if the map failed to load. Keep
-   * html/body transparent so the fixed map canvas is the only thing seen.
-   */
+   * /rides and /admin/* keep normal document scrolling. */
   html.route-locked,
   body.route-locked {
     height: 100%;
     overflow: hidden;
     overscroll-behavior: none;
     position: relative;
-  }
-  /* Safety backdrop: if the fixed map fails to cover the full device screen
-   * (iOS Safari top bar, PWA safe-area), the visible strip should read as the
-   * map's land tile tone rather than default white — no jarring header.
-   * Value matches <meta name="theme-color"> so Safari's system chrome, PWA
-   * safe-area, and the CSS fallback all render the same pale sage tone. */
-  html.route-locked {
-    /* Colour of the land tiles in the base map style. iOS ALWAYS repaints
-     * the home-indicator strip using html/body background, ignoring any
-     * fixed-positioned canvas above it — so this is the ONLY way to make
-     * the bottom safe-area visually blend with the map. Retune if the map
-     * style changes. */
-    background-color: #dfefdb !important;
-  }
-  body.route-locked {
-    background-color: transparent !important;
+    /* Paint the whole device viewport (incl. the top safe-area / notch inset)
+     * with the map's water tone instead of the dark app background. On iOS the
+     * fixed map layer is driven off visualViewport.height, which excludes the
+     * top safe-area inset — leaving a dark strip of body background above the
+     * map. Matching this backdrop to the map water makes that inset read as a
+     * seamless continuation of the map instead of a dark band.
+     * Swappable by HEX: retune --map-water below. */
+    background-color: hsl(var(--map-water)) !important;
   }
   /* Dark theme: force the hardcoded light text utilities (text-white,
    * text-zinc-100/50, text-gray-100/50) to the brand beige #D7CDB0 so ALL
