@@ -58,6 +58,29 @@ export function MapPage() {
 
   // Geolocation: center map on user position
   const [geoCenter, setGeoCenter] = useState<[number, number] | null>(null);
+
+  // iOS Safari клипает position:fixed к visualViewport (без URL-бара) — 100vh/100lvh тоже
+  // не всегда дотягивает до низа экрана. Замеряем максимальный доступный h в JS и даём
+  // карте явные пиксели — это обходит клип Safari.
+  const mapWrapRef = useRef<HTMLDivElement>(null);
+  const [mapWrapHeight, setMapWrapHeight] = useState<string>("100vh");
+  useEffect(() => {
+    const compute = () => {
+      const h = Math.max(
+        window.innerHeight,
+        window.screen?.height ?? 0,
+        document.documentElement.clientHeight,
+      );
+      setMapWrapHeight(`${h}px`);
+    };
+    compute();
+    window.addEventListener("resize", compute);
+    window.addEventListener("orientationchange", compute);
+    return () => {
+      window.removeEventListener("resize", compute);
+      window.removeEventListener("orientationchange", compute);
+    };
+  }, []);
   const handleGeolocate = () => {
     navigator.geolocation.getCurrentPosition(
       (pos) => setGeoCenter([pos.coords.latitude, pos.coords.longitude]),
@@ -154,19 +177,14 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — заливает весь экран целиком, включая зону под URL-баром iOS Safari.
-       * `position:fixed` на iOS клипается к visualViewport (без URL-бара),
-       * поэтому здесь закрепляем карту через 100lvh (Large Viewport Height) — это
-       * максимальная высота viewport включая зону, перекрываемую chrome браузера.
-       * Контейнеру даём width:100vw / height:100lvh через style, чтобы
-       * MapLibre видел полный размер при resize. z-0 держит её под контролами (z-20+). */}
+      {/* Map — заливает весь экран. Ключевой нюанс iOS Safari: position:fixed
+       * клипается к visualViewport (без URL-бара), поэтому через fixed карта физически
+       * не достаёт до низа экрана. Решение: position:fixed с height:100vh + негативный
+       * bottom, плюс window.screen.height в JS если vh не пробивает. */}
       <div
-        className="fixed inset-0 z-0"
-        style={{
-          width: "100vw",
-          height: "100lvh",
-          // fallback для браузеров без lvh: dvh всё равно лучше vh
-        }}
+        ref={mapWrapRef}
+        className="fixed left-0 right-0 top-0 z-0 overflow-hidden"
+        style={{ height: mapWrapHeight }}
       >
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
