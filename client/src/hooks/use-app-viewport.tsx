@@ -38,6 +38,39 @@ export function useAppViewport(enabled: boolean) {
       const top = Math.max(0, missing - bot);
       root.style.setProperty("--map-inset-top", `${top}px`);
       root.style.setProperty("--map-inset-bottom", `${bot}px`);
+
+      // DEBUG: fill overlay. Uses hidden probes to read real env() values.
+      const overlay = document.getElementById("map-debug-overlay");
+      if (overlay) {
+        // Create/reuse hidden probes measuring env(safe-area-inset-*).
+        let probeT = document.getElementById("env-probe-t") as HTMLElement | null;
+        let probeB = document.getElementById("env-probe-b") as HTMLElement | null;
+        if (!probeT) {
+          probeT = document.createElement("div");
+          probeT.id = "env-probe-t";
+          probeT.style.cssText = "position:fixed;top:0;left:0;width:0;height:env(safe-area-inset-top);pointer-events:none;visibility:hidden;";
+          document.body.appendChild(probeT);
+        }
+        if (!probeB) {
+          probeB = document.createElement("div");
+          probeB.id = "env-probe-b";
+          probeB.style.cssText = "position:fixed;bottom:0;left:0;width:0;height:env(safe-area-inset-bottom);pointer-events:none;visibility:hidden;";
+          document.body.appendChild(probeB);
+        }
+        const envT = Math.round(probeT.getBoundingClientRect().height);
+        const envB = Math.round(probeB.getBoundingClientRect().height);
+        const set = (k: string, v: string) => {
+          const el = overlay.querySelector(`[data-k="${k}"]`);
+          if (el) el.textContent = v;
+        };
+        set("envT", `${envT}`);
+        set("envB", `${envB}`);
+        set("varT", `${top}px`);
+        set("varB", `${bot}px`);
+        set("innerH", `${Math.round(innerH)}`);
+        set("scrH", `${screenH}`);
+        set("sa", String((window.navigator as any).standalone === true));
+      }
     };
 
     apply();
