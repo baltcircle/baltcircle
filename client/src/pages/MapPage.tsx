@@ -176,6 +176,7 @@ export function MapPage() {
         <div>envT=<span data-k="envT">?</span> envB=<span data-k="envB">?</span></div>
         <div>varT=<span data-k="varT">?</span> varB=<span data-k="varB">?</span></div>
         <div>innerH=<span data-k="innerH">?</span> scrH=<span data-k="scrH">?</span></div>
+        <div>mapH=<span data-k="mapH">?</span> top=<span data-k="mapTop">?</span> bot=<span data-k="mapBot">?</span></div>
         <div>standalone=<span data-k="sa">?</span></div>
       </div>
       {/* Map — fills the entire physical screen (top + bottom safe-area
