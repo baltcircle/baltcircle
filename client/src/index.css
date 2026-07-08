@@ -222,23 +222,26 @@
   .font-semibold { font-weight: 400 !important; }  /* was 600 */
   .font-bold     { font-weight: 500 !important; }  /* was 700 */
   .font-extrabold{ font-weight: 600 !important; }  /* was 800 */
-  /* Customer map route: pin to the visible viewport and kill page scroll /
-   * rubber-band overscroll. Scoped via .route-locked so /profile, /tariffs,
-   * /rides and /admin/* keep normal document scrolling. */
+  /* Customer map route: pin to the FULL device viewport (не visualViewport)
+   * чтобы html/body физически доставали до низа экрана в iOS Safari (а не обрывались
+   * на URL-баре). За URL-баром Safari всё равно рисует chrome-цвет (theme-color),
+   * но когда URL-бар скрывается, виден будет наш body. Scoped via .route-locked
+   * чтобы /profile, /tariffs, /rides, /admin/* сохранили нормальный документ-скролл. */
   html.route-locked,
   body.route-locked {
-    height: 100%;
+    /* 100vh = large viewport height (с учётом URL-бара), 100lvh — более точный fallback.
+     * Оба выше чем 100% на iOS Safari. */
+    height: 100vh;
+    height: 100lvh;
+    min-height: 100vh;
+    min-height: 100lvh;
     overflow: hidden;
     overscroll-behavior: none;
     position: relative;
-    /* Paint the whole device viewport (incl. the top safe-area / notch inset)
-     * with the map's water tone instead of the dark app background. On iOS the
-     * fixed map layer is driven off visualViewport.height, which excludes the
-     * top safe-area inset — leaving a dark strip of body background above the
-     * map. Matching this backdrop to the map water makes that inset read as a
-     * seamless continuation of the map instead of a dark band.
-     * Swappable by HEX: retune --map-water below. */
-    background-color: hsl(var(--map-water)) !important;
+    /* Body-фон = цвет бренд-primary (тёмно-синий #1D1E5D в dark, тёмно-бирюзовый #61B5C4 в light).
+     * Если iOS покажет body-фон в зоне за картой — это будет выглядеть как естественное
+     * продолжение нижней панели (bg-primary), а не как чужеродная голубая полоса. */
+    background-color: hsl(var(--primary)) !important;
   }
   /* Dark theme: force the hardcoded light text utilities (text-white,
    * text-zinc-100/50, text-gray-100/50) to the brand beige #D7CDB0 so ALL
