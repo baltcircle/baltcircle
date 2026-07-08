@@ -215,26 +215,31 @@ export function MapPage() {
         </div>
       </div>
 
-      {/* Geolocation button — bottom right, above scan button.
-       * Позиционируется через fixed+bottom относительно visualViewport (без зоны URL-бара),
-       * чтобы кнопка всегда была видна пользователю, а не под URL-баром. */}
+      {/* Geolocation button — bottom right, над панелью Сканировать.
+       * fixed относительно visualViewport — всегда в поле зрения. */}
       <button
         type="button"
         onClick={handleGeolocate}
         aria-label="Моё местоположение"
         data-testid="home-geolocate-button"
-        className="fixed right-4 z-20 w-12 h-12 rounded-full bg-card/90 text-card-foreground backdrop-blur-sm shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
-        style={{ bottom: "calc(max(1.5rem, env(safe-area-inset-bottom, 0px)) + 4rem + 1rem)" }}
+        className="fixed right-4 z-30 w-12 h-12 rounded-full bg-card/90 text-card-foreground backdrop-blur-sm shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 6.5rem)" }}
       >
         <MapPin className="w-5 h-5" />
       </button>
 
-      {/* Bottom action area — floats over the map.
-       * fixed относительно visualViewport, чтобы iOS гарантированно показывал кнопку
-       * над URL-баром. z-40 держит её над drawer backdrop (z-30). */}
+      {/* Нижняя активная панель — КАСАЕТСЯ НИЗА ЭКРАНА (bottom: 0),
+       * чтобы под ней физически не было пустого голубого body-фона. Содержимое самой кнопки
+       * отступает от низа на safe-area-inset-bottom (чтобы не залезать под home-indicator). Фон
+       * панели заливает всю область до края. z-40 — над drawer backdrop (z-30). */}
       <div
-        className="fixed left-4 right-4 z-40"
-        style={{ bottom: "max(1.5rem, env(safe-area-inset-bottom, 0px))" }}
+        className="fixed left-0 right-0 bottom-0 z-40 bg-primary"
+        style={{
+          paddingLeft: "1rem",
+          paddingRight: "1rem",
+          paddingTop: "1rem",
+          paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)",
+        }}
       >
         {activeRide ? (
           /* Active ride card */
@@ -281,13 +286,13 @@ export function MapPage() {
             </div>
           </div>
         ) : (
-          /* Scan button */
+          /* Scan button — во всю ширину панели, контрастный цвет к панели (primary-foreground). */
           <button
             type="button"
             onClick={() => goRent(false)}
             aria-label={isRegistered ? "Сканировать QR" : "Сканировать QR (нужна регистрация)"}
             data-testid="home-primary-scan"
-            className="w-full h-14 rounded-full bg-primary hover:opacity-90 text-primary-foreground font-medium text-lg flex items-center justify-between px-6 shadow-lg active:scale-[0.98] transition-all"
+            className="w-full h-14 rounded-full bg-primary-foreground text-primary hover:opacity-90 font-medium text-lg flex items-center justify-between px-6 shadow-lg active:scale-[0.98] transition-all"
           >
             <span>Сканировать</span>
             <QrCode className="w-6 h-6" />
