@@ -154,53 +154,18 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* DEBUG overlay — remove after diagnostics. Shows real safe-area
-       * env() values + JS-measured screen vs viewport delta so we know
-       * exactly what iOS reports below the map. */}
-      <div
-        id="map-debug-overlay"
-        style={{
-          position: "fixed",
-          left: 8,
-          bottom: 8,
-          zIndex: 99999,
-          background: "rgba(0,0,0,0.75)",
-          color: "#0f0",
-          font: "11px/1.3 monospace",
-          padding: "6px 8px",
-          borderRadius: 6,
-          pointerEvents: "none",
-          maxWidth: "90vw",
-        }}
-      >
-        <div>envT=<span data-k="envT">?</span> envB=<span data-k="envB">?</span></div>
-        <div>varT=<span data-k="varT">?</span> varB=<span data-k="varB">?</span></div>
-        <div>innerH=<span data-k="innerH">?</span> scrH=<span data-k="scrH">?</span></div>
-        <div>mapH=<span data-k="mapH">?</span> top=<span data-k="mapTop">?</span> bot=<span data-k="mapBot">?</span></div>
-        <div>standalone=<span data-k="sa">?</span></div>
-      </div>
-      {/* Map — fills the entire physical screen (top + bottom safe-area
-       * included). `position: fixed` with negative `top` / `bottom` extends
-       * the canvas past visualViewport so iOS home-indicator zone and status
-       * bar both draw map tiles instead of body background. z-0 keeps it
-       * below floating controls (z-20+). */}
+      {/* Map — fills the entire screen, bleeding under the status bar /
+       * safe-area so there is no dark strip at the top. `fixed inset-0` pins
+       * it to the whole visual viewport regardless of the shell's flex layout;
+       * z-0 keeps it below the floating controls (z-20+). */}
       <MapLibreMap
         parkings={parkingsQ.data ?? []}
         mapObjects={mapObjectsQ.data ?? []}
         ride={activeRide}
-        // Высота = screen.height + envT, т.к. карта сдвинута вверх на envT.
-        // Нижний край карты = -envT + (screen + envT) = screen — т.е. достаёт
-        // до самого низа физического экрана включая home-indicator zone.
-        height="calc(var(--map-screen-height, 100dvh) + max(env(safe-area-inset-top), var(--map-inset-top, 0px)))"
+        height="100%"
         showLabels={false}
         center={geoCenter}
-        className="z-0"
-        style={{
-          position: "fixed",
-          top: "calc(max(env(safe-area-inset-top), var(--map-inset-top, 0px)) * -1)",
-          left: 0,
-          width: "100vw",
-        }}
+        className="fixed inset-0 z-0 w-full h-full"
       />
 
       {/* Top bar — logo left, theme + burger right */}
