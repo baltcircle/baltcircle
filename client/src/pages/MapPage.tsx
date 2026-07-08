@@ -153,67 +153,25 @@ export function MapPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userLoading, bikesQ.data, isRegistered]);
 
-  // Debug overlay for diagnosing the top-strip issue on iOS PWA.
-  // Reads env(safe-area-inset-top) via a hidden probe and every viewport size.
-  const [diag, setDiag] = useState<string>("");
-  useEffect(() => {
-    const probe = document.createElement("div");
-    probe.style.cssText = "position:fixed;top:0;left:0;padding-top:env(safe-area-inset-top);visibility:hidden;pointer-events:none;";
-    document.body.appendChild(probe);
-    const read = () => {
-      const safeTop = parseFloat(getComputedStyle(probe).paddingTop) || 0;
-      const nav = navigator as unknown as { standalone?: boolean };
-      const standalone = nav.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
-      const vv = window.visualViewport;
-      const scrH = window.screen?.height ?? 0;
-      setDiag(
-        `safe-top=${safeTop.toFixed(1)} | innerH=${window.innerHeight} | screenH=${scrH} | vvH=${vv ? Math.round(vv.height) : "-"} | standalone=${standalone}`,
-      );
-    };
-    read();
-    window.addEventListener("resize", read);
-    window.visualViewport?.addEventListener("resize", read);
-    return () => {
-      window.removeEventListener("resize", read);
-      window.visualViewport?.removeEventListener("resize", read);
-      probe.remove();
-    };
-  }, []);
-
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* DEBUG: shows the actual iOS/Safari viewport metrics on the device.
-       * Remove once the safe-area layout is confirmed. */}
-      <div
-        className="fixed left-1/2 -translate-x-1/2 z-[100] px-2 py-1 rounded bg-black/70 text-white text-[10px] font-mono pointer-events-none"
-        style={{ top: "max(0.25rem, env(safe-area-inset-top))" }}
-        data-testid="map-diag-overlay"
-      >
-        {diag}
-      </div>
-      {/* Map — rendered via portal directly into <body> and sized to the
-       * FULL device screen height (from window.screen.height, exposed as
-       * --screen-height by useAppViewport). This covers the iOS Safari top
-       * status area / URL bar and the PWA safe-area, which 100vh / 100dvh /
-       * 100svh / visualViewport all under-report on WebKit. Extra height is
-       * clipped by the browser — what matters is that no part of the screen
-       * is left uncovered. */}
+      {/* Map — portal into <body>, physically overshoots viewport in every
+       * direction to cover iOS PWA status-bar / home-indicator strips that
+       * env(safe-area-inset-*) reports as 0. --map-inset-top /
+       * --map-inset-bottom are computed from window.screen.height vs
+       * window.innerHeight in useAppViewport. */}
       {createPortal(
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
           ride={activeRide}
-          // Height = full device screen + both safe-area insets, so the
-          // canvas overshoots the visible viewport in every direction.
-          height="calc(var(--screen-height, 100vh) + env(safe-area-inset-top) + env(safe-area-inset-bottom))"
+          height="calc(100vh + var(--map-inset-top, 0px) + var(--map-inset-bottom, 0px))"
           showLabels={false}
           center={geoCenter}
           className="z-0"
           style={{
             position: "fixed",
-            // Physically pull the map UP into the iOS PWA safe-area.
-            // In a normal browser env() = 0 so this is a no-op.
-            top: "calc(env(safe-area-inset-top) * -1)",
+            top: "calc(var(--map-inset-top, 0px) * -1)",
             left: 0,
             width: "100vw",
           }}
