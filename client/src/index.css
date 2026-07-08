@@ -238,15 +238,19 @@
     overscroll-behavior: none;
     position: relative;
   }
-  /* Safety backdrop for the strip iOS Safari (non-standalone) leaves ABOVE
-   * visualViewport top: position:fixed elements are anchored to the visual
-   * viewport, so they can never physically cover the status-bar area. The
-   * only way to hide the strip is to make its background match the map at
-   * that location. On the customer map the initial center (Zelenogradsk,
-   * 54.945 / 20.275, zoom 10) always renders the Baltic Sea north of the
-   * coast, i.e. the very top of the visible map is water. Match the water
-   * tile color exactly (COLORS.water in MapLibreMap.tsx = #9fc9e0) so the
-   * strip visually blends with the sea and the seam disappears.
+  /* Water backdrop for BOTH:
+   *   1) iOS Safari (non-standalone) status-bar strip — lives ABOVE
+   *      visualViewport top; position:fixed elements can never cover it.
+   *      Safari samples html background-color at scrollY=0 for tinting.
+   *   2) iOS PWA (standalone) top status-bar area + bottom home-indicator
+   *      safe-area zones — painted from html background.
+   *   3) Normal browser bottom URL-bar tint (Safari 26+) — sampled from
+   *      html background at scrollY=0 as well.
+   *
+   * Value = COLORS.water in MapLibreMap.tsx (#9fc9e0). The customer map
+   * initial center (Zelenogradsk 54.945/20.275, zoom 10) always shows the
+   * Baltic Sea at the top of the visible area, so the water-colored strips
+   * blend seamlessly with the map.
    *
    * Body stays transparent — user policy: never paint <body>. */
   html.route-locked {
