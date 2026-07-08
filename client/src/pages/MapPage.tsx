@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
-
+import { createPortal } from "react-dom";
 import { Link } from "wouter";
 import type { Bike, MapObject, Parking, Ride } from "@shared/schema";
 import { MapLibreMap } from "@/components/MapLibreMap";
@@ -59,7 +59,6 @@ export function MapPage() {
 
   // Geolocation: center map on user position
   const [geoCenter, setGeoCenter] = useState<[number, number] | null>(null);
-
   const handleGeolocate = () => {
     navigator.geolocation.getCurrentPosition(
       (pos) => setGeoCenter([pos.coords.latitude, pos.coords.longitude]),
@@ -154,29 +153,73 @@ export function MapPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userLoading, bikesQ.data, isRegistered]);
 
+  // Debug overlay for diagnosing the top-strip issue on iOS PWA.
+  // Reads env(safe-area-inset-top) via a hidden probe and every viewport size.
+  const [diag, setDiag] = useState<string>("");
+  useEffect(() => {
+    const probe = document.createElement("div");
+    probe.style.cssText = "position:fixed;top:0;left:0;padding-top:env(safe-area-inset-top);visibility:hidden;pointer-events:none;";
+    document.body.appendChild(probe);
+    const read = () => {
+      const safeTop = parseFloat(getComputedStyle(probe).paddingTop) || 0;
+      const nav = navigator as unknown as { standalone?: boolean };
+      const standalone = nav.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
+      const vv = window.visualViewport;
+      const scrH = window.screen?.height ?? 0;
+      setDiag(
+        `safe-top=${safeTop.toFixed(1)} | innerH=${window.innerHeight} | screenH=${scrH} | vvH=${vv ? Math.round(vv.height) : "-"} | standalone=${standalone}`,
+      );
+    };
+    read();
+    window.addEventListener("resize", read);
+    window.visualViewport?.addEventListener("resize", read);
+    return () => {
+      window.removeEventListener("resize", read);
+      window.visualViewport?.removeEventListener("resize", read);
+      probe.remove();
+    };
+  }, []);
+
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — тянется на физическую высоту экрана через --app-height.
-       * На iOS Safari `position: fixed; inset: 0` привязывается к visualViewport
-       * (без URL-бара) — канвас MapLibre получается на 50-94px короче экрана,
-       * ниже видна голая body-подложка. Явная высота через --app-height
-       * (max(screen, innerH, vv.h)) заставляет контейнер и сам canvas
-       * расшириться до physical screen, покрывая всю нижнюю safe-area
-       * home-indicator зону. */}
+      {/* DEBUG: shows the actual iOS/Safari viewport metrics on the device.
+       * Remove once the safe-area layout is confirmed. */}
       <div
-        className="fixed top-0 left-0 right-0 z-0 overflow-hidden"
-        style={{ height: "var(--app-height, 100svh)" }}
+        className="fixed left-1/2 -translate-x-1/2 z-[100] px-2 py-1 rounded bg-black/70 text-white text-[10px] font-mono pointer-events-none"
+        style={{ top: "max(0.25rem, env(safe-area-inset-top))" }}
+        data-testid="map-diag-overlay"
       >
+        {diag}
+      </div>
+      {/* Map — rendered via portal directly into <body> and sized to the
+       * FULL device screen height (from window.screen.height, exposed as
+       * --screen-height by useAppViewport). This covers the iOS Safari top
+       * status area / URL bar and the PWA safe-area, which 100vh / 100dvh /
+       * 100svh / visualViewport all under-report on WebKit. Extra height is
+       * clipped by the browser — what matters is that no part of the screen
+       * is left uncovered. */}
+      {createPortal(
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
           ride={activeRide}
-          height="100%"
+          // Height = full device screen + both safe-area insets, so the
+          // canvas overshoots the visible viewport in every direction.
+          height="calc(var(--screen-height, 100vh) + env(safe-area-inset-top) + env(safe-area-inset-bottom))"
           showLabels={false}
           center={geoCenter}
-          className="w-full h-full"
-        />
-      </div>
+          className="z-0"
+          style={{
+            position: "fixed",
+            // Physically pull the map UP into the iOS PWA safe-area.
+            // In a normal browser env() = 0 so this is a no-op.
+            top: "calc(env(safe-area-inset-top) * -1)",
+            left: 0,
+            width: "100vw",
+          }}
+        />,
+        document.body,
+      )}
 
       {/* Top bar — logo left, theme + burger right */}
       <div
@@ -214,26 +257,25 @@ export function MapPage() {
         </div>
       </div>
 
-      {/* Geolocation button — bottom right, above scan button.
-       * Позиционируется через fixed+bottom относительно visualViewport (без зоны URL-бара),
-       * чтобы кнопка всегда была видна пользователю, а не под URL-баром. */}
+      {/* Geolocation button — bottom right, above scan button */}
       <button
         type="button"
         onClick={handleGeolocate}
         aria-label="Моё местоположение"
         data-testid="home-geolocate-button"
-        className="fixed right-4 z-20 w-12 h-12 rounded-full bg-card/90 text-card-foreground backdrop-blur-sm shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem + 3.5rem + 1rem)" }}
+        className="absolute right-4 z-20 w-12 h-12 rounded-full bg-card/90 text-card-foreground backdrop-blur-sm shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
+        style={{ bottom: "calc(max(1.5rem, env(safe-area-inset-bottom)) + 4rem + 1rem)" }}
       >
         <MapPin className="w-5 h-5" />
       </button>
 
       {/* Bottom action area — floats over the map.
-       * Кнопка плавает над картой с отступом от нижнего края (учитывая safe-area),
-       * карта под ней просвечивает. Пространство ниже кнопки — тоже карта (fixed inset:0). */}
+       * z-40 keeps it above the drawer backdrop (z-30) so the Scan button
+       * shows its true bg-primary colour and is not dimmed to look darker
+       * than the menu panel (which is also z-40, same #1D1E5D). */}
       <div
-        className="fixed left-4 right-4 z-40"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }}
+        className="absolute left-4 right-4 z-40"
+        style={{ bottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
       >
         {activeRide ? (
           /* Active ride card */
