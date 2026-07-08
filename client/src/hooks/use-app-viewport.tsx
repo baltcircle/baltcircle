@@ -73,6 +73,17 @@ export function useAppViewport(enabled: boolean) {
         set("innerH", `${Math.round(innerH)}`);
         set("scrH", `${screenH}`);
         set("sa", String((window.navigator as any).standalone === true));
+
+        // Реальный bounding-box карты (первый canvas MapLibre).
+        const mapEl = document.querySelector(".maplibregl-map") as HTMLElement | null;
+        if (mapEl) {
+          const r = mapEl.getBoundingClientRect();
+          set("mapH", `${Math.round(r.height)}`);
+          const topEl = overlay.querySelector('[data-k="mapTop"]');
+          const botEl = overlay.querySelector('[data-k="mapBot"]');
+          if (topEl) topEl.textContent = `${Math.round(r.top)}`;
+          if (botEl) botEl.textContent = `${Math.round(r.bottom)}`;
+        }
       }
     };
 
