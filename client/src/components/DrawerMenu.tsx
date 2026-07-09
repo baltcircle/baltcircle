@@ -78,21 +78,17 @@ export function DrawerMenu({ open, onClose }: Props) {
         onClick={onClose}
       />
 
-      {/* Drawer panel — плавающая карточка с отступами от краёв экрана и
-         закруглёнными углами. Отступы учитывают safe-area. */}
+      {/* Drawer panel */}
       <div
-        className={`fixed z-40 flex flex-col bg-sidebar text-sidebar-foreground shadow-2xl rounded-3xl overflow-hidden transform transition-transform duration-300 ease-in-out ${
-          open ? "translate-x-0" : "translate-x-[calc(100%+1rem)]"
+        className={`fixed top-0 right-0 h-full w-80 bg-sidebar text-sidebar-foreground shadow-2xl z-40 flex flex-col transform transition-transform duration-300 ease-in-out ${
+          open ? "translate-x-0" : "translate-x-full"
         }`}
-        style={{
-          top: "max(1rem, env(safe-area-inset-top))",
-          bottom: "max(1rem, env(safe-area-inset-bottom))",
-          right: "max(0.75rem, env(safe-area-inset-right))",
-          width: "min(20rem, calc(100vw - 1.5rem))",
-        }}
       >
         {/* Close button */}
-        <div className="flex justify-end px-4 pt-4">
+        <div
+          className="flex justify-end px-4"
+          style={{ paddingTop: "max(1rem, env(safe-area-inset-top))" }}
+        >
           <button
             onClick={onClose}
             className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors"
