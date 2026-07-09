@@ -70,11 +70,16 @@ export function DrawerMenu({ open, onClose }: Props) {
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop — НЕ покрывает safe-area зоны, чтобы Safari не тинтил
+         URL bar / status bar тёмным при вычислении цвета по контенту. */}
       <div
-        className={`fixed inset-0 bg-black/40 z-30 transition-opacity duration-300 ${
+        className={`fixed left-0 right-0 bg-black/40 z-30 transition-opacity duration-300 ${
           open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
+        style={{
+          top: "env(safe-area-inset-top)",
+          bottom: "env(safe-area-inset-bottom)",
+        }}
         onClick={onClose}
       />
 
