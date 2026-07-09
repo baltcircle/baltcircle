@@ -340,9 +340,9 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
           "highway", 0.28,
           "major_road", 0.24,
           "medium_road", 0.11,
-          "minor_road", 0.045,
-          "path", 0.035,
-          0.045,
+          "minor_road", 0.09,
+          "path", 0.07,
+          0.09,
         ];
         return [
           {
