@@ -1,150 +1,63 @@
 import { Link } from "wouter";
 import { OverlayShell } from "@/components/OverlayShell";
-import {
-  ArrowLeft, ShieldCheck, HardHat, TrafficCone, Gauge, ParkingSquare,
-  Moon, Lock, KeyRound, Database, Scale, ChevronRight,
-} from "lucide-react";
+import { INFO_CATEGORIES } from "@/lib/info";
+import { Scale, ChevronRight } from "lucide-react";
 
-interface Topic {
-  icon: typeof ShieldCheck;
-  title: string;
-  text: string;
-}
-
-const RIDING_RULES: Topic[] = [
-  {
-    icon: HardHat,
-    title: "Шлем и экипировка",
-    text:
-      "Используйте шлем и при возможности защиту для рук и коленей. Светоотражающие элементы делают вас заметнее для водителей.",
-  },
-  {
-    icon: TrafficCone,
-    title: "Правила дорожного движения",
-    text:
-      "Двигайтесь по велодорожкам, соблюдайте сигналы светофора и уступайте дорогу пешеходам. Не выезжайте на встречную полосу.",
-  },
-  {
-    icon: Gauge,
-    title: "Скорость",
-    text:
-      "Держите безопасную скорость, особенно на поворотах, спусках и в местах скопления людей. Тормозите заранее.",
-  },
-  {
-    icon: ParkingSquare,
-    title: "Парковка",
-    text:
-      "Оставляйте транспорт в разрешённых зонах, не загораживая проходы, въезды и пути для пешеходов. Завершайте аренду в приложении.",
-  },
-  {
-    icon: Moon,
-    title: "Поездки в тёмное время",
-    text:
-      "Включайте фонарь, выбирайте освещённые маршруты и снижайте скорость. В дождь и гололёд будьте особенно осторожны.",
-  },
-];
-
-const PRIVACY_TOPICS: Topic[] = [
-  {
-    icon: Lock,
-    title: "Телефон и почта",
-    text:
-      "Номер телефона и адрес почты используются только для входа, уведомлений и поддержки. Мы не передаём их третьим лицам для рекламы.",
-  },
-  {
-    icon: KeyRound,
-    title: "Платёжные данные",
-    text:
-      "Реквизиты карт обрабатываются платёжными сервисами. Никому не сообщайте коды из SMS и push — сотрудники сервиса их не запрашивают.",
-  },
-  {
-    icon: Database,
-    title: "Хранение и защита данных",
-    text:
-      "Данные передаются по защищённому соединению и доступны ограниченному кругу сотрудников. Вы можете запросить удаление аккаунта.",
-  },
-];
-
+// Хаб «Информация». Три пункта: две информационные категории (Безопасная
+// поездка, Конфиденциальность и данные) — обе живут под /safety/<category>
+// и рендерятся InfoSectionPage / InfoDocPage. Третий пункт — «Правовые
+// документы» — ведёт на существующий /legal с юридически обязывающими
+// текстами (LegalIndexPage / LegalDocPage).
 export function SafetyPage() {
   return (
     <OverlayShell title="Информация">
-      <div className="px-4 py-2 max-w-2xl mx-auto" data-testid="page-safety">
-      <div className="mx-auto max-w-md px-5 pt-2 pb-12">
-        <Section
-          icon={ShieldCheck}
-          title="Безопасная поездка"
-          intro="Базовые правила, чтобы поездка была безопасной для вас и окружающих."
-          topics={RIDING_RULES}
-          testId="section-riding-rules"
-        />
+      <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-safety">
+        <p className="text-sm text-muted-foreground mb-4 px-1">
+          Правила безопасной езды, работа с персональными данными и юридические документы TakeRide.
+        </p>
 
-        <Section
-          icon={Lock}
-          title="Конфиденциальность и данные"
-          intro="Как мы защищаем ваши персональные и платёжные данные."
-          topics={PRIVACY_TOPICS}
-          testId="section-privacy"
-        />
+        <nav className="rounded-2xl border border-card-border bg-card overflow-hidden divide-y divide-card-border">
+          {INFO_CATEGORIES.map((cat) => {
+            const Icon = cat.icon;
+            return (
+              <Link
+                key={cat.slug}
+                href={`/safety/${cat.slug}`}
+                data-testid={`link-info-${cat.slug}`}
+                className="flex items-center gap-3 px-4 py-4 hover-elevate"
+              >
+                <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
+                  <Icon className="w-5 h-5" />
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block font-light">{cat.title}</span>
+                  <span className="block text-xs text-muted-foreground mt-0.5">
+                    {cat.description}
+                  </span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+              </Link>
+            );
+          })}
 
-        {/* Legal documents */}
-        <Link
-          href="/legal"
-          data-testid="link-info-legal"
-          className="flex items-center gap-3 rounded-2xl border border-card-border bg-card p-4 hover-elevate"
-        >
-          <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
-            <Scale className="w-5 h-5" />
-          </span>
-          <span className="flex-1 min-w-0">
-            <span className="block font-light">Правовые документы</span>
-            <span className="block text-xs text-muted-foreground mt-0.5">
-              Соглашение, правила проката, конфиденциальность, оплата
+          <Link
+            href="/legal"
+            data-testid="link-info-legal"
+            className="flex items-center gap-3 px-4 py-4 hover-elevate"
+          >
+            <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
+              <Scale className="w-5 h-5" />
             </span>
-          </span>
-          <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-        </Link>
-      </div>
+            <span className="flex-1 min-w-0">
+              <span className="block font-light">Правовые документы</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                Соглашение, правила проката, конфиденциальность, оплата
+              </span>
+            </span>
+            <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+          </Link>
+        </nav>
       </div>
     </OverlayShell>
-  );
-}
-
-function Section({
-  icon: Icon, title, intro, topics, testId,
-}: {
-  icon: typeof ShieldCheck;
-  title: string;
-  intro: string;
-  topics: Topic[];
-  testId: string;
-}) {
-  return (
-    <section className="mb-7" data-testid={testId}>
-      <div className="flex items-center gap-2 mb-2 px-1">
-        <Icon className="w-4 h-4 text-muted-foreground" />
-        <h2 className="font-display text-lg font-light">{title}</h2>
-      </div>
-      <p className="text-sm text-muted-foreground mb-3 px-1">{intro}</p>
-      <div className="space-y-3">
-        {topics.map((t) => (
-          <TopicCard key={t.title} topic={t} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function TopicCard({ topic }: { topic: Topic }) {
-  const Icon = topic.icon;
-  return (
-    <div className="rounded-2xl border border-card-border bg-card p-4 flex gap-3">
-      <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
-        <Icon className="w-5 h-5" />
-      </span>
-      <div className="min-w-0">
-        <div className="font-light">{topic.title}</div>
-        <p className="text-sm text-muted-foreground mt-0.5 leading-relaxed">{topic.text}</p>
-      </div>
-    </div>
   );
 }

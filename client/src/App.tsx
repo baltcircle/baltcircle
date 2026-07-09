@@ -22,6 +22,8 @@ import { SafetyPage } from "@/pages/SafetyPage";
 // this code, and the heavy chart/map-editor deps ride along in their own chunks.
 const LegalIndexPage = lazy(() => import("@/pages/LegalIndexPage").then((m) => ({ default: m.LegalIndexPage })));
 const LegalDocPage = lazy(() => import("@/pages/LegalDocPage").then((m) => ({ default: m.LegalDocPage })));
+const InfoSectionPage = lazy(() => import("@/pages/InfoSectionPage").then((m) => ({ default: m.InfoSectionPage })));
+const InfoDocPage = lazy(() => import("@/pages/InfoDocPage").then((m) => ({ default: m.InfoDocPage })));
 const AdminPage = lazy(() => import("@/pages/AdminPage").then((m) => ({ default: m.AdminPage })));
 const RidesAdminPage = lazy(() => import("@/pages/RidesAdminPage").then((m) => ({ default: m.RidesAdminPage })));
 const BikesPage = lazy(() => import("@/pages/BikesPage").then((m) => ({ default: m.BikesPage })));
@@ -80,6 +82,8 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
         <Route path="/payment-methods" component={PaymentMethodsPage} />
         <Route path="/support" component={SupportPage} />
         <Route path="/safety" component={SafetyPage} />
+        <Route path="/safety/:section/:slug">{(params) => <InfoDocPage section={params.section} slug={params.slug} />}</Route>
+        <Route path="/safety/:section">{(params) => <InfoSectionPage section={params.section} />}</Route>
         <Route path="/tariffs" component={TariffsPage} />
         <Route path="/rent" component={RentPage} />
         <Route path="/payment-result" component={PaymentResultPage} />
@@ -154,6 +158,8 @@ function AppRouter() {
       <Route path="/settings"><></></Route>
       <Route path="/support"><></></Route>
       <Route path="/safety"><></></Route>
+      <Route path="/safety/:section"><></></Route>
+      <Route path="/safety/:section/:slug"><></></Route>
 
       {/* Legal documents */}
       <Route path="/legal" component={LegalIndexPage} />
