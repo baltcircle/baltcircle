@@ -305,20 +305,24 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       // `zoom` must sit directly inside a top-level interpolate, so the outline
       // width is a separate interpolate (= inner width + 2px), not arithmetic.
       ...(() => {
-        // Interior width by kind/zoom. Minor roads are clearly thinner than the
-        // trunk network at every zoom (Google/Яндекс/2ГИС style hierarchy).
+        // Interior width by kind/zoom. Three-tier hierarchy per user request:
+        //   1) highway (motorway/trunk) — областные подходы + окружная/кольцевая,
+        //      НЕ трогаем, сохраняем прежние ширины.
+        //   2) major_road (primary/secondary) — крупные проспекты внутри кольцевой
+        //      (Московский, Ленинский, Советский, Победы, ...). Уменьшены.
+        //   3) medium_road / minor_road / path — ещё меньше, самые тонкие.
         const ROAD_W: any = ["interpolate", ["linear"], ["zoom"],
-          8,  ["match", ["get", "kind"], "highway", 1.2, "major_road", 0.9, 0.4],
-          12, ["match", ["get", "kind"], "highway", 4.5, "major_road", 3, "minor_road", 1, "path", 0.6, 1],
-          14, ["match", ["get", "kind"], "highway", 8, "major_road", 5.5, "minor_road", 2, "path", 1, 2],
-          16, ["match", ["get", "kind"], "highway", 12, "major_road", 8, "minor_road", 4, "path", 1.5, 3],
+          8,  ["match", ["get", "kind"], "highway", 1.2, "major_road", 0.55, 0.3],
+          12, ["match", ["get", "kind"], "highway", 4.5, "major_road", 1.8, "medium_road", 0.7, "minor_road", 0.55, "path", 0.4, 0.55],
+          14, ["match", ["get", "kind"], "highway", 8, "major_road", 3.2, "medium_road", 1.3, "minor_road", 1.1, "path", 0.7, 1.1],
+          16, ["match", ["get", "kind"], "highway", 12, "major_road", 4.8, "medium_road", 2.4, "minor_road", 2, "path", 1.1, 2],
         ];
         // Outline = interior + ~2px border (own interpolate; zoom must be top-level).
         const ROAD_W_OUT: any = ["interpolate", ["linear"], ["zoom"],
-          8,  ["match", ["get", "kind"], "highway", 3.2, "major_road", 2.9, 2.4],
-          12, ["match", ["get", "kind"], "highway", 6.5, "major_road", 5, "minor_road", 2.6, "path", 2, 2.6],
-          14, ["match", ["get", "kind"], "highway", 10, "major_road", 7.5, "minor_road", 3.6, "path", 2.4, 3.6],
-          16, ["match", ["get", "kind"], "highway", 14, "major_road", 10, "minor_road", 5.6, "path", 3, 4.6],
+          8,  ["match", ["get", "kind"], "highway", 3.2, "major_road", 2.55, 2.3],
+          12, ["match", ["get", "kind"], "highway", 6.5, "major_road", 3.8, "medium_road", 2.3, "minor_road", 2.15, "path", 1.8, 2.15],
+          14, ["match", ["get", "kind"], "highway", 10, "major_road", 5.2, "medium_road", 2.9, "minor_road", 2.7, "path", 2.1, 2.7],
+          16, ["match", ["get", "kind"], "highway", 14, "major_road", 6.8, "medium_road", 4, "minor_road", 3.6, "path", 2.5, 3.6],
         ];
         // Zoom-gated visibility (matches reference maps): trunk roads from z8,
         // minor roads only once the user zooms into a district (z13), paths z14.
@@ -326,6 +330,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         // drawn on the oblast overview — lighter load.
         const ROAD_FILTER: any = ["any",
           ["in", ["get", "kind"], ["literal", ["highway", "major_road"]]],
+          ["all", ["==", ["get", "kind"], "medium_road"], [">=", ["zoom"], 12]],
           ["all", ["==", ["get", "kind"], "minor_road"], [">=", ["zoom"], 13]],
           ["all", ["==", ["get", "kind"], "path"], [">=", ["zoom"], 14]],
         ];
