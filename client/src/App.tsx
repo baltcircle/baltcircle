@@ -18,12 +18,16 @@ import { PaymentResultPage } from "@/pages/PaymentResultPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SupportPage } from "@/pages/SupportPage";
 import { SafetyPage } from "@/pages/SafetyPage";
+import { InfoSectionPage } from "@/pages/InfoSectionPage";
+import { InfoDocPage } from "@/pages/InfoDocPage";
 // Admin/operator pages and legal docs are code-split: a rider never downloads
 // this code, and the heavy chart/map-editor deps ride along in their own chunks.
+// Info pages (/safety/*) НЕ lazy — они крошечные (~1.4 kB каждая) и делят
+// один info.tsx с текстами; lazy давал видимую задержку и flash-fallback
+// на КАЖДОМ переходе внутри раздела «Информация» (карта скрывалась и появлялся
+// спиннер), потому что ближайший Suspense вверх по дереву — на весь AppRouter.
 const LegalIndexPage = lazy(() => import("@/pages/LegalIndexPage").then((m) => ({ default: m.LegalIndexPage })));
 const LegalDocPage = lazy(() => import("@/pages/LegalDocPage").then((m) => ({ default: m.LegalDocPage })));
-const InfoSectionPage = lazy(() => import("@/pages/InfoSectionPage").then((m) => ({ default: m.InfoSectionPage })));
-const InfoDocPage = lazy(() => import("@/pages/InfoDocPage").then((m) => ({ default: m.InfoDocPage })));
 const AdminPage = lazy(() => import("@/pages/AdminPage").then((m) => ({ default: m.AdminPage })));
 const RidesAdminPage = lazy(() => import("@/pages/RidesAdminPage").then((m) => ({ default: m.RidesAdminPage })));
 const BikesPage = lazy(() => import("@/pages/BikesPage").then((m) => ({ default: m.BikesPage })));
