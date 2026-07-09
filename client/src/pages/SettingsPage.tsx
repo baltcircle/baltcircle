@@ -1,31 +1,18 @@
 import { useEffect, useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useTheme } from "@/lib/theme";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { CURRENT_USER_KEY } from "@/hooks/use-current-user";
-import type { Ride, User as UserType } from "@shared/schema";
+import type { User as UserType } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { PhoneChangeModal } from "@/components/PhoneChangeModal";
-import { fmtDistance } from "@/lib/format";
 import { ArrowLeft, ChevronRight, Sun, Moon, Bell } from "lucide-react";
 
 export function SettingsPage() {
   const toast = useToast();
   const { user, isRegistered } = useCurrentUser();
   const { mode, setMode } = useTheme();
-  const userId = user?.id ?? "";
-
-  const ridesQ = useQuery<Ride[]>({
-    queryKey: ["/api/rides", { userId, limit: 100 }],
-    queryFn: async () => {
-      const res = await apiRequest("GET", `/api/rides?userId=${encodeURIComponent(userId)}&limit=100`);
-      return res.json();
-    },
-    enabled: isRegistered && !!userId,
-  });
-  const rides = ridesQ.data ?? [];
-  const totalMeters = rides.reduce((sum, r) => sum + (r.distanceM ?? 0), 0);
 
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
@@ -82,18 +69,6 @@ export function SettingsPage() {
 
       {/* Content — flex-1, no overflow */}
       <div className="flex-1 flex flex-col px-4 pb-4 gap-3 min-h-0">
-
-        {/* Stats */}
-        <div className="flex gap-8 px-1 py-1 shrink-0">
-          <div>
-            <p className="text-xl font-semibold text-gray-900 dark:text-white tabular-nums">{fmtDistance(totalMeters)}</p>
-            <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">История поездок</p>
-          </div>
-          <div>
-            <p className="text-xl font-semibold text-gray-900 dark:text-white tabular-nums">{rides.length}</p>
-            <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">Поездок</p>
-          </div>
-        </div>
 
         {/* User data */}
         <div className="rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800 shrink-0">
