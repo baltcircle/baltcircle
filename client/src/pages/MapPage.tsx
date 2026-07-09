@@ -154,16 +154,16 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — тянется на физическую высоту экрана через --app-height.
-       * На iOS Safari `position: fixed; inset: 0` привязывается к visualViewport
-       * (без URL-бара) — канвас MapLibre получается на 50-94px короче экрана,
-       * ниже видна голая body-подложка. Явная высота через --app-height
-       * (max(screen, innerH, vv.h)) заставляет контейнер и сам canvas
-       * расшириться до physical screen, покрывая всю нижнюю safe-area
-       * home-indicator зону. */}
+      {/* Map — обрезана до safe-area, чтобы не залезала под status bar
+       * и home-indicator. Полосы safe-area закрашены html.route-locked
+       * (цвет воды), поэтому визуально сливаются с картой, но сама карта
+       * (тайлы, дороги, POI) начинается после safe-inset. */}
       <div
-        className="fixed top-0 left-0 right-0 z-0 overflow-hidden"
-        style={{ height: "var(--app-height, 100svh)" }}
+        className="fixed left-0 right-0 z-0 overflow-hidden"
+        style={{
+          top: "env(safe-area-inset-top)",
+          bottom: "env(safe-area-inset-bottom)",
+        }}
       >
         <MapLibreMap
           parkings={parkingsQ.data ?? []}

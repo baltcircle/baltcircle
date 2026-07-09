@@ -84,16 +84,20 @@ export function DrawerMenu({ open, onClose }: Props) {
         onClick={onClose}
       />
 
-      {/* Drawer panel */}
+      {/* Drawer panel — ограничен до safe-area (сверху и снизу),
+       * чтобы не залезать под status bar и home-indicator. */}
       <div
-        className={`fixed top-0 right-0 h-full w-80 bg-sidebar text-sidebar-foreground shadow-2xl z-40 flex flex-col transform transition-transform duration-300 ease-in-out ${
+        className={`fixed right-0 w-80 bg-sidebar text-sidebar-foreground shadow-2xl z-40 flex flex-col transform transition-transform duration-300 ease-in-out ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
+        style={{
+          top: "env(safe-area-inset-top)",
+          bottom: "env(safe-area-inset-bottom)",
+        }}
       >
         {/* Close button */}
         <div
-          className="flex justify-end px-4"
-          style={{ paddingTop: "max(1rem, env(safe-area-inset-top))" }}
+          className="flex justify-end px-4 pt-4"
         >
           <button
             onClick={onClose}
@@ -170,8 +174,8 @@ export function DrawerMenu({ open, onClose }: Props) {
         {/* Divider */}
         <div className="mx-4 mt-3 mb-2 h-px bg-sidebar-foreground/15" />
 
-        {/* Nav items */}
-        <nav className="flex-1 overflow-y-auto px-4">
+        {/* Nav items — паддинг снизу чтобы последний пункт не прилипал к краю */}
+        <nav className="flex-1 overflow-y-auto px-4 pb-4">
           <MenuItem href="/payment-methods" icon={Wallet}      label="Способы оплаты" />
           <MenuItem href="/rides"           icon={Route}       label="История"         />
           <MenuItem href="/safety"          icon={ShieldCheck} label="Информация"      />
