@@ -192,7 +192,7 @@ export function MapPage() {
           onClick={() => setDrawerOpen(true)}
           aria-label="Открыть меню"
           data-testid="home-menu-button"
-          className="w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
+          className="w-12 h-12 rounded-full bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
         >
           <Menu className="w-5 h-5" />
         </button>
@@ -206,7 +206,7 @@ export function MapPage() {
         onClick={handleGeolocate}
         aria-label="Моё местоположение"
         data-testid="home-geolocate-button"
-        className="fixed right-4 z-20 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
+        className="fixed right-4 z-20 w-12 h-12 rounded-full bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
         style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem + 3.5rem + 1rem)" }}
       >
         <MapPin className="w-5 h-5" />
@@ -270,7 +270,7 @@ export function MapPage() {
             onClick={() => goRent(false)}
             aria-label={isRegistered ? "Сканировать QR" : "Сканировать QR (нужна регистрация)"}
             data-testid="home-primary-scan"
-            className="w-full h-14 rounded-full bg-primary hover:opacity-90 text-primary-foreground font-medium text-lg flex items-center justify-between px-6 shadow-lg active:scale-[0.98] transition-all"
+            className="w-full h-14 rounded-full bg-primary hover:opacity-90 text-black font-medium text-lg flex items-center justify-between px-6 shadow-lg active:scale-[0.98] transition-all"
           >
             <span>Сканировать</span>
             <QrCode className="w-6 h-6" />
