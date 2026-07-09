@@ -130,13 +130,21 @@ function AppRouter() {
       {/* Overlay customer pages — rendered as fixed layer on top of map with slide-up/down animation */}
       <OverlayRouter loc={loc} isOverlay={isOverlay} />
 
+    {/* QR deep link: a scanned bike URL (".../bike/BC-001") lands here, is
+        stashed, and redirects to the map which auto-opens the rental flow.
+        Вне Suspense: BikeDeepLink синхронный, а Suspense-fallback перекрывал бы
+        MapPage белым экраном пока грузятся lazy-чанки. */}
+    <Switch>
+      <Route path="/bike/:id">{(params) => <BikeDeepLink id={params.id} />}</Route>
+      <Route><></></Route>
+    </Switch>
+
     <Suspense fallback={<PageFallback />}>
     <Switch>
       {/* Customer / rider interface */}
       <Route path="/"><></></Route>
-      {/* QR deep link: a scanned bike URL (".../bike/BC-001") lands here, is
-          stashed, and redirects to the map which auto-opens the rental flow. */}
-      <Route path="/bike/:id">{(params) => <BikeDeepLink id={params.id} />}</Route>
+      {/* /bike/:id уже обработан выше в BikeDeepLink; здесь нужен пустой матч чтобы NotFound не сработал. */}
+      <Route path="/bike/:id"><></></Route>
       <Route path="/rent"><></></Route>
       <Route path="/tariffs"><></></Route>
       <Route path="/rides"><></></Route>

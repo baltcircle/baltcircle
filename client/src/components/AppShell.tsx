@@ -65,7 +65,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // (admin, profile, tariffs, …) keep the default min-h-screen scroll behaviour.
   // All customer pages (map + overlays) share the same full-viewport, no-scroll shell
   const OVERLAY_PREFIXES = ["/settings", "/rides", "/payment-methods", "/support", "/safety", "/tariffs", "/rent", "/payment-result"];
-  const isCustomerMap = loc === "/" || OVERLAY_PREFIXES.some(p => loc === p || loc.startsWith(p + "/"));
+  // /bike/:id — QR deep-link из внешнего сканера; UI совпадает с customer map,
+  // пока BikeDeepLink синхронно редиректит на "/". Без этого AppShell не даёт
+  // карте высоты и пользователь видит белый экран.
+  const isCustomerMap = loc === "/" || loc.startsWith("/bike/") || OVERLAY_PREFIXES.some(p => loc === p || loc.startsWith(p + "/"));
   useAppViewport(isCustomerMap);
 
   return (
