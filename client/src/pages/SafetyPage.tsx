@@ -67,9 +67,9 @@ const PRIVACY_TOPICS: Topic[] = [
 
 export function SafetyPage() {
   return (
-    <OverlayShell title="Безопасность">
-      <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-safety">
-      <div className="mx-auto max-w-md px-5 pt-6 pb-12">
+    <OverlayShell title="Информация">
+      <div className="px-4 py-2 max-w-2xl mx-auto" data-testid="page-safety">
+      <div className="mx-auto max-w-md px-5 pt-2 pb-12">
         <Section
           icon={ShieldCheck}
           title="Безопасная поездка"
