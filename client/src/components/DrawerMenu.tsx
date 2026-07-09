@@ -125,15 +125,19 @@ export function DrawerMenu({ open, onClose }: Props) {
 
           {/* Stats */}
           <div className="flex gap-6 mt-4">
-            <div>
-              <Route className="w-6 h-6 text-primary mb-1" strokeWidth={2.5} />
-              <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums">{totalKm}</p>
-              <p className="text-xs text-sidebar-foreground/70 uppercase tracking-wide mt-0.5">Километры</p>
+            <div className="flex items-center gap-2">
+              <Route className="w-7 h-7 text-primary shrink-0" strokeWidth={2.5} />
+              <div>
+                <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums leading-none">{totalKm}</p>
+                <p className="text-xs text-sidebar-foreground/70 uppercase tracking-wide mt-1">Километры</p>
+              </div>
             </div>
-            <div>
-              <Bike className="w-6 h-6 text-primary mb-1" strokeWidth={2.5} />
-              <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums">{rides.length}</p>
-              <p className="text-xs text-sidebar-foreground/70 uppercase tracking-wide mt-0.5">Поездки</p>
+            <div className="flex items-center gap-2">
+              <Bike className="w-7 h-7 text-primary shrink-0" strokeWidth={2.5} />
+              <div>
+                <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums leading-none">{rides.length}</p>
+                <p className="text-xs text-sidebar-foreground/70 uppercase tracking-wide mt-1">Поездки</p>
+              </div>
             </div>
           </div>
         </Link>

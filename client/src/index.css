@@ -30,47 +30,49 @@
    * strong contrast on the teal surfaces (buttons/menu keep beige text via
    * --primary-foreground / --sidebar-foreground). Change these HSL values to
    * retune the whole light palette. */
-  --background: 189 46% 62%;      /* lighter #61B5C4 base */
-  --foreground: 200 55% 14%;      /* #10242f — dark navy-teal text for contrast */
-  --border: 189 46% 47%;          /* darker #61B5C4 divider */
-  --map-water: 204 55% 75%;       /* #9fc9e0 — map sea tone (safe-area backdrop) */
+  /* Monochrome light theme — UI чёрно-белый. Голубым остается только --primary
+   * (кнопки, иконки в бургере) и лого через --brand-sea/foam. */
+  --background: 0 0% 100%;         /* white */
+  --foreground: 0 0% 8%;           /* near-black text */
+  --border: 0 0% 88%;              /* light gray divider */
+  --map-water: 204 55% 75%;        /* #9fc9e0 — map sea tone (safe-area backdrop) */
 
-  --card: 189 46% 57%;            /* #61B5C4 — card surface (matches menu) */
-  --card-foreground: 200 55% 14%; /* #10242f — dark text on teal card */
-  --card-border: 189 46% 47%;     /* darker #61B5C4 */
+  --card: 0 0% 100%;               /* white */
+  --card-foreground: 0 0% 8%;      /* near-black */
+  --card-border: 0 0% 88%;         /* light gray */
 
-  /* Sidebar uses the brand primary tone in light mode. Text is dark navy-teal
-   * #10242f (same as content) so the whole light theme is one look. */
-  --sidebar: 189 46% 57%;                       /* #61B5C4 */
-  --sidebar-foreground: 200 55% 14%;            /* #10242f — dark text */
-  --sidebar-border: 189 46% 47%;                /* darker #61B5C4 */
-  --sidebar-primary: 36 60% 90%;
-  --sidebar-primary-foreground: 200 70% 22%;
-  --sidebar-accent: 189 46% 47%;                /* darker #61B5C4 */
-  --sidebar-accent-foreground: 200 55% 14%;     /* #10242f — dark text */
-  --sidebar-ring: 200 55% 14%;                  /* #10242f — dark */
+  /* Sidebar (drawer menu) — белый фон, чёрный текст */
+  --sidebar: 0 0% 100%;                         /* white */
+  --sidebar-foreground: 0 0% 8%;                /* near-black */
+  --sidebar-border: 0 0% 88%;                   /* light gray */
+  --sidebar-primary: 189 46% 57%;               /* keep brand teal accent */
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 0 0% 94%;                   /* very light gray hover */
+  --sidebar-accent-foreground: 0 0% 8%;
+  --sidebar-ring: 0 0% 20%;
 
-  --popover: 189 46% 57%;         /* #61B5C4 popover surface */
-  --popover-foreground: 200 55% 14%; /* #10242f — dark text */
-  --popover-border: 189 46% 47%;  /* darker #61B5C4 */
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 8%;
+  --popover-border: 0 0% 88%;
 
-  --primary: 189 46% 57%;             /* #61B5C4  — light theme primary */
-  --primary-foreground: 200 55% 14%;  /* #10242f  — dark button text on primary */
+  /* Primary голубой — единственный цветной акцент в UI. */
+  --primary: 189 46% 57%;             /* #61B5C4 — teal */
+  --primary-foreground: 0 0% 100%;    /* white text on teal button */
 
-  --secondary: 189 46% 52%;       /* slightly deeper #61B5C4 */
-  --secondary-foreground: 200 55% 14%; /* #10242f — dark text */
+  --secondary: 0 0% 96%;              /* very light gray */
+  --secondary-foreground: 0 0% 8%;
 
-  --muted: 189 46% 52%;           /* deeper #61B5C4 hover/muted surface */
-  --muted-foreground: 200 40% 26%; /* #274050 — dark muted text for contrast */
+  --muted: 0 0% 94%;                  /* light gray */
+  --muted-foreground: 0 0% 40%;       /* mid gray */
 
-  --accent: 189 46% 52%;
-  --accent-foreground: 200 55% 14%; /* #10242f — dark text */
+  --accent: 0 0% 94%;
+  --accent-foreground: 0 0% 8%;
 
   --destructive: 0 68% 45%;
   --destructive-foreground: 0 0% 100%;
 
-  --input: 32 22% 80%;
-  --ring: 189 46% 57%;                /* #61B5C4 */
+  --input: 0 0% 92%;
+  --ring: 189 46% 57%;                /* teal focus ring */
 
   --chart-1: 197 65% 38%;
   --chart-2: 32 56% 56%;
@@ -132,46 +134,46 @@
    * (map, menu, inner tabs) shares one tone. Surfaces above the base are
    * progressively lighter blues for contrast. Change these HSL values to
    * retune the entire dark palette. */
-  --background: 239 52% 18%;          /* #16174a — slightly darker #1D1E5D base */
-  --foreground: 45 33% 77%;           /* #D7CDB0 — beige text (dark theme) */
-  --border: 239 40% 34%;              /* lighter #1D1E5D divider */
+  /* Monochrome dark theme — чёрный фон, белый текст. Primary остаётся голубым. */
+  --background: 0 0% 8%;              /* near-black */
+  --foreground: 0 0% 96%;             /* near-white */
+  --border: 0 0% 20%;                 /* dark gray divider */
   --map-water: 204 55% 75%;           /* #9fc9e0 — map sea tone (safe-area backdrop) */
 
-  --card: 239 52% 24%;                /* #1D1E5D — card surface (matches menu) */
-  --card-foreground: 45 33% 77%;      /* #D7CDB0 */
-  --card-border: 239 40% 34%;         /* lighter #1D1E5D */
+  --card: 0 0% 12%;                   /* very dark gray */
+  --card-foreground: 0 0% 96%;
+  --card-border: 0 0% 20%;
 
-  /* Sidebar uses the brand primary tone in dark mode */
-  --sidebar: 239 52% 24%;                       /* #1D1E5D */
-  --sidebar-foreground: 45 33% 77%;             /* #D7CDB0 */
-  --sidebar-border: 239 52% 34%;                /* lighter #1D1E5D */
-  --sidebar-primary: 36 56% 70%;
-  --sidebar-primary-foreground: 200 50% 12%;
-  --sidebar-accent: 239 52% 34%;                /* lighter #1D1E5D */
-  --sidebar-accent-foreground: 45 33% 77%;      /* #D7CDB0 */
-  --sidebar-ring: 239 52% 44%;                  /* lighter #1D1E5D */
+  --sidebar: 0 0% 10%;                          /* very dark gray */
+  --sidebar-foreground: 0 0% 96%;
+  --sidebar-border: 0 0% 20%;
+  --sidebar-primary: 189 46% 57%;               /* teal accent */
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 0 0% 16%;
+  --sidebar-accent-foreground: 0 0% 96%;
+  --sidebar-ring: 0 0% 60%;
 
-  --popover: 239 52% 22%;             /* #1D1E5D popover surface */
-  --popover-foreground: 45 33% 77%;   /* #D7CDB0 */
-  --popover-border: 239 40% 34%;      /* lighter #1D1E5D */
+  --popover: 0 0% 12%;
+  --popover-foreground: 0 0% 96%;
+  --popover-border: 0 0% 20%;
 
-  --primary: 239 52% 24%;             /* #1D1E5D  — dark theme primary */
-  --primary-foreground: 45 33% 77%;   /* #D7CDB0  — beige text on primary */
+  --primary: 189 46% 57%;             /* teal — same as light */
+  --primary-foreground: 0 0% 100%;
 
-  --secondary: 239 45% 28%;           /* lighter #1D1E5D */
-  --secondary-foreground: 45 33% 77%; /* #D7CDB0 */
+  --secondary: 0 0% 16%;
+  --secondary-foreground: 0 0% 96%;
 
-  --muted: 239 45% 28%;               /* lighter #1D1E5D hover/muted surface */
-  --muted-foreground: 45 20% 62%;     /* dimmer #D7CDB0 for secondary text */
+  --muted: 0 0% 18%;
+  --muted-foreground: 0 0% 60%;
 
-  --accent: 36 56% 60%;
-  --accent-foreground: 200 50% 10%;
+  --accent: 0 0% 18%;
+  --accent-foreground: 0 0% 96%;
 
   --destructive: 0 70% 55%;
   --destructive-foreground: 0 0% 100%;
 
-  --input: 200 22% 26%;
-  --ring: 239 52% 44%;                /* lighter #1D1E5D */
+  --input: 0 0% 18%;
+  --ring: 189 46% 57%;                /* teal focus ring */
 
   --chart-1: 192 70% 58%;
   --chart-2: 36 56% 62%;

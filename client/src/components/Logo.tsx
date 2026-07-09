@@ -21,7 +21,7 @@ export function Logo({ compact = false, className = "" }: { compact?: boolean; c
     );
   }
   return (
-    <div className={"flex items-center gap-3 " + className} data-testid="logo-full">
+    <div className={"flex items-center " + className} data-testid="logo-full">
       <svg viewBox="0 0 48 48" className="w-9 h-9 shrink-0">
         <circle cx="24" cy="24" r="22" fill="hsl(var(--brand-sea))" />
         <g stroke="hsl(var(--brand-foam))" strokeWidth="1.4" fill="none" strokeLinecap="round">
@@ -32,10 +32,6 @@ export function Logo({ compact = false, className = "" }: { compact?: boolean; c
           <circle cx="24" cy="19" r="0.8" fill="hsl(var(--brand-foam))" stroke="none" />
         </g>
       </svg>
-      <div className="flex flex-col leading-none">
-        <span className="text-[10px] uppercase tracking-[0.32em] text-current/70 font-light">Take</span>
-        <span className="font-display text-lg font-light tracking-tight">Ride</span>
-      </div>
     </div>
   );
 }
