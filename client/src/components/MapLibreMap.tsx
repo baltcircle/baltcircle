@@ -341,7 +341,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         return [
           {
             id: "road-outline", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
-            filter: ["all", ROAD_FILTER, ["==", ["get", "kind"], "highway"]],
+            filter: ["all", ROAD_FILTER, ["in", ["get", "kind"], ["literal", ["highway", "major_road"]]]],
             layout: { "line-cap": "round", "line-join": "round" },
             paint: { "line-color": COLORS.roadOutline, "line-width": ROAD_W_OUT, "line-opacity": OUT_OPACITY },
           },
