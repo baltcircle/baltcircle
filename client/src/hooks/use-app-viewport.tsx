@@ -32,6 +32,17 @@ export function useAppViewport(enabled: boolean) {
         document.documentElement.clientHeight,
       );
       root.style.setProperty("--app-height", `${Math.round(h)}px`);
+
+      // Реально видимая высота (без URL-бара / нижней chrome-панели Safari).
+      // Используется для overlay-элементов (drawer, модалки), которые должны
+      // умещаться в текущий visualViewport, а не залезать под URL-бар.
+      const visible = vv?.height ?? window.innerHeight;
+      root.style.setProperty("--visible-height", `${Math.round(visible)}px`);
+
+      // Сдвиг visualViewport относительно layout viewport сверху
+      // (обычно 0, но > 0 если появляется top-URL-bar на Android).
+      const offsetTop = vv?.offsetTop ?? 0;
+      root.style.setProperty("--visible-top", `${Math.round(offsetTop)}px`);
     };
 
     apply();
@@ -54,6 +65,8 @@ export function useAppViewport(enabled: boolean) {
       root.classList.remove("route-locked");
       document.body.classList.remove("route-locked");
       root.style.removeProperty("--app-height");
+      root.style.removeProperty("--visible-height");
+      root.style.removeProperty("--visible-top");
     };
   }, [enabled]);
 }

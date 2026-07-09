@@ -71,28 +71,29 @@ export function DrawerMenu({ open, onClose }: Props) {
 
   return (
     <>
-      {/* Backdrop — НЕ покрывает safe-area зоны, чтобы Safari не тинтил
-         URL bar / status bar тёмным при вычислении цвета по контенту. */}
+      {/* Backdrop — привязан к visualViewport, не покрывает safe-area зоны,
+         чтобы Safari не тинтил URL bar / status bar тёмным. */}
       <div
         className={`fixed left-0 right-0 bg-black/40 z-30 transition-opacity duration-300 ${
           open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
         style={{
-          top: "env(safe-area-inset-top)",
-          bottom: "env(safe-area-inset-bottom)",
+          top: "calc(var(--visible-top, 0px) + env(safe-area-inset-top))",
+          height: "calc(var(--visible-height, 100dvh) - env(safe-area-inset-top) - env(safe-area-inset-bottom))",
         }}
         onClick={onClose}
       />
 
-      {/* Drawer panel — ограничен до safe-area (сверху и снизу),
-       * чтобы не залезать под status bar и home-indicator. */}
+      {/* Drawer panel — привязан к реально видимой части viewport
+       * (visualViewport.height) через --visible-height, чтобы низ панели
+       * не уходил под URL-бар Safari и home-indicator. */}
       <div
         className={`fixed right-0 w-80 bg-sidebar text-sidebar-foreground shadow-2xl z-40 flex flex-col transform transition-transform duration-300 ease-in-out ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
         style={{
-          top: "env(safe-area-inset-top)",
-          bottom: "env(safe-area-inset-bottom)",
+          top: "calc(var(--visible-top, 0px) + env(safe-area-inset-top))",
+          height: "calc(var(--visible-height, 100dvh) - env(safe-area-inset-top) - env(safe-area-inset-bottom))",
         }}
       >
         {/* Close button */}
