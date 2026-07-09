@@ -12,7 +12,10 @@ export default defineConfig({
     },
   },
   root: path.resolve(import.meta.dirname, "client"),
-  base: "./",
+  // "/" — absolute asset URLs. "./" ломается на nested deep-linkах
+  // (например /bike/BC-001): браузер резолвит ./assets/... как
+  // /bike/assets/... сервер отдаёт SPA-fallback index.html → MIME mismatch → белый экран.
+  base: "/",
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
