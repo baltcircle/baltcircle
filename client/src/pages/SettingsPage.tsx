@@ -54,7 +54,7 @@ export function SettingsPage() {
     >
       {/* Header */}
       <div
-        className="flex items-center justify-center px-4 pb-3 shrink-0 bg-gray-50 dark:bg-zinc-900"
+        className="flex items-center justify-center px-4 pb-3 shrink-0 bg-gray-50 dark:bg-zinc-900 border-b border-gray-200 dark:border-zinc-800"
         style={{ paddingTop: "max(1.25rem, env(safe-area-inset-top))" }}
       >
         <button
@@ -68,7 +68,7 @@ export function SettingsPage() {
       </div>
 
       {/* Content — flex-1, no overflow */}
-      <div className="flex-1 flex flex-col px-4 pb-4 gap-3 min-h-0">
+      <div className="flex-1 flex flex-col px-4 pt-6 pb-4 gap-3 min-h-0">
 
         {/* User data */}
         <div className="rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800 shrink-0">
