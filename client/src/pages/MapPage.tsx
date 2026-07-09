@@ -11,12 +11,11 @@ import { DrawerMenu } from "@/components/DrawerMenu";
 import { Logo } from "@/components/Logo";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
-import { useTheme } from "@/lib/theme";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDuration } from "@/lib/format";
 import { PENDING_BIKE_KEY } from "@/lib/pending-bike";
-import { QrCode, Lock, Clock, ChevronRight, Menu, MapPin, Sun, Moon } from "lucide-react";
+import { QrCode, Lock, Clock, ChevronRight, Menu, MapPin } from "lucide-react";
 
 const INTRO_SHOWN_KEY = "bc.registration.intro.shown";
 
@@ -31,7 +30,6 @@ export function MapPage() {
   // Live active-ride updates via SSE (replaces the old 4s poll).
   useActiveRideStream();
   const { isRegistered, isLoading: userLoading } = useCurrentUser();
-  const { theme, toggle } = useTheme();
 
   const activeRide = activeQ.data ?? null;
 
@@ -178,7 +176,7 @@ export function MapPage() {
         />
       </div>
 
-      {/* Top bar — logo left, theme + burger right */}
+      {/* Top bar — logo left, burger right */}
       <div
         className="absolute left-0 right-0 z-20 flex items-center justify-between px-4"
         style={{ top: "max(1rem, env(safe-area-inset-top))" }}
@@ -189,29 +187,15 @@ export function MapPage() {
           <Logo className="text-card-foreground h-8" />
         </div>
 
-        {/* Right controls: theme toggle + hamburger */}
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={toggle}
-            aria-label={theme === "dark" ? "Светлая тема" : "Тёмная тема"}
-            className="w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
-          >
-            {theme === "dark"
-              ? <Sun className="w-5 h-5" />
-              : <Moon className="w-5 h-5" />}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setDrawerOpen(true)}
-            aria-label="Открыть меню"
-            data-testid="home-menu-button"
-            className="w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setDrawerOpen(true)}
+          aria-label="Открыть меню"
+          data-testid="home-menu-button"
+          className="w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
       </div>
 
       {/* Geolocation button — bottom right, above scan button.

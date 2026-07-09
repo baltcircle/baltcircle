@@ -11,7 +11,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { fmtDate } from "@/lib/format";
-import { LifeBuoy, Mail, Phone, Send, MessageCircle } from "lucide-react";
+import { Mail, Phone, Send, MessageCircle } from "lucide-react";
 
 const TICKETS_KEY = ["/api/support/tickets"];
 
@@ -74,16 +74,6 @@ export function SupportPage() {
   return (
     <OverlayShell title="Помощь">
       <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-support">
-      <header className="mb-6">
-        <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Поддержка</div>
-        <h1 className="font-display text-2xl lg:text-3xl font-light mt-1 flex items-center gap-2">
-          <LifeBuoy className="w-6 h-6" /> Помощь
-        </h1>
-        <p className="text-muted-foreground text-sm mt-1 max-w-prose">
-          Ответы на частые вопросы и форма обращения в поддержку.
-        </p>
-      </header>
-
       {/* Contacts */}
       <Card className="p-5 mb-5" data-testid="card-support-contacts">
         <div className="text-sm font-medium mb-3">Контакты</div>

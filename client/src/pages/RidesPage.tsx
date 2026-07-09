@@ -26,11 +26,6 @@ export function RidesPage() {
   return (
     <OverlayShell title="История поездок">
       <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-rides">
-      <header className="mb-6">
-        <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">История</div>
-        <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Ваши поездки</h1>
-      </header>
-
       {rides.length === 0 && (
         <Card className="p-10 text-center text-muted-foreground" data-testid="empty-rides">
           <Route className="w-10 h-10 mx-auto opacity-40 mb-3" />

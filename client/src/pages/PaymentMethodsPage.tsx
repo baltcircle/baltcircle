@@ -386,11 +386,6 @@ export function PaymentMethodsPage() {
   return (
     <OverlayShell title="Способы оплаты">
       <div className="px-4 py-6 max-w-md mx-auto" data-testid="page-payment-methods">
-        <header className="mb-5">
-          <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Оплата</div>
-          <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Способы оплаты</h1>
-        </header>
-
         {/* Linked methods — profile-style rows */}
         <div
           className="rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800"

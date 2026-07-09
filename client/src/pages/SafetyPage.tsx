@@ -70,23 +70,6 @@ export function SafetyPage() {
     <OverlayShell title="Безопасность">
       <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-safety">
       <div className="mx-auto max-w-md px-5 pt-6 pb-12">
-        <header className="mb-6 flex items-center gap-3">
-          <Link
-            href="/profile"
-            data-testid="link-safety-back"
-            aria-label="Назад в профиль"
-            className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground hover-elevate shrink-0"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Link>
-          <div>
-            <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
-              TakeRide
-            </div>
-            <h1 className="font-display text-2xl font-light leading-tight">Информация</h1>
-          </div>
-        </header>
-
         <Section
           icon={ShieldCheck}
           title="Безопасная поездка"
