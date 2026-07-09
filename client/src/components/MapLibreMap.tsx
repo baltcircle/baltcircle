@@ -334,13 +334,14 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
           ["all", ["==", ["get", "kind"], "minor_road"], [">=", ["zoom"], 13]],
           ["all", ["==", ["get", "kind"], "path"], [">=", ["zoom"], 14]],
         ];
-        // Semi-transparent dark outline so roads read softly (not heavy black
-        // borders); fully opaque land-coloured interior keeps the road body crisp.
+        // Outline только для highway (областные + окружная). Все остальные (major/medium/
+        // minor/path) рисуем без контура — в цвет land, чтобы были белыми линиями
+        // без тёмной обводки (убирает паутину).
         const OUT_OPACITY = 0.28;
         return [
           {
             id: "road-outline", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
-            filter: ROAD_FILTER,
+            filter: ["all", ROAD_FILTER, ["==", ["get", "kind"], "highway"]],
             layout: { "line-cap": "round", "line-join": "round" },
             paint: { "line-color": COLORS.roadOutline, "line-width": ROAD_W_OUT, "line-opacity": OUT_OPACITY },
           },
