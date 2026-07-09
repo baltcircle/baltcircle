@@ -23,10 +23,9 @@ interface OverlayShellProps {
 
 export function OverlayShell({ title, subtitle, children }: OverlayShellProps) {
   return (
-    <div
-      className="flex flex-col bg-background text-foreground"
-      style={{ height: "var(--app-height, 100svh)" }}
-    >
+    // Высота задаётся родительским AppShell (через --visible-height),
+    // бьём на 100% этой высоты, чтобы контент не уходил под URL-бар.
+    <div className="flex flex-col bg-background text-foreground h-full">
       {/* Header */}
       <div
         className="relative flex items-center justify-center shrink-0 border-b border-border bg-background"

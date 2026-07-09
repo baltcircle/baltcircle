@@ -69,6 +69,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // пока BikeDeepLink синхронно редиректит на "/". Без этого AppShell не даёт
   // карте высоты и пользователь видит белый экран.
   const isCustomerMap = loc === "/" || loc.startsWith("/bike/") || OVERLAY_PREFIXES.some(p => loc === p || loc.startsWith(p + "/"));
+  // Карта (map или QR deep-link) в отличие от overlay-страниц: её shell тянется
+  // на весь физический экран, overlay — только в видимую часть.
+  const isMap = loc === "/" || loc.startsWith("/bike/");
   useAppViewport(isCustomerMap);
 
   return (
@@ -76,7 +79,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       data-testid="app-shell"
       style={
         isCustomerMap
-          ? { height: "var(--app-height, 100svh)" }
+          ? {
+              // Карта ("/") тянется до низа физического экрана (--app-height),
+              // чтобы safe-area полосы были в цвет воды. Overlay-страницы
+              // (settings/rides/payment/support/safety/tariffs/rent) — только в
+              // видимую часть viewport, чтобы контент не уходил под URL-бар.
+              height: isMap ? "var(--app-height, 100svh)" : "var(--visible-height, 100dvh)",
+              marginTop: isMap ? undefined : "var(--visible-top, 0px)",
+            }
           : undefined
       }
       className={`flex flex-col lg:flex-row text-foreground ${

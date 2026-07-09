@@ -48,8 +48,7 @@ export function SettingsPage() {
   return (
     // Full viewport, no scroll, uniform background
     <div
-      className="flex flex-col bg-gray-50 dark:bg-zinc-900"
-      style={{ height: "var(--app-height, 100svh)" }}
+      className="flex flex-col bg-gray-50 dark:bg-zinc-900 h-full"
       data-testid="page-settings"
     >
       {/* Header */}
