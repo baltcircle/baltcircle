@@ -346,10 +346,18 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
             paint: { "line-color": COLORS.roadOutline, "line-width": ROAD_W_OUT, "line-opacity": OUT_OPACITY },
           },
           {
-            id: "road-inner", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
-            filter: ROAD_FILTER,
+            // highway — hollow в цвет land (внутри контура).
+            id: "road-inner-highway", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
+            filter: ["all", ROAD_FILTER, ["==", ["get", "kind"], "highway"]],
             layout: { "line-cap": "round", "line-join": "round" },
             paint: { "line-color": COLORS.land, "line-width": ROAD_W },
+          },
+          {
+            // major/medium/minor/path — без контура, светло-серые линии.
+            id: "road-inner", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
+            filter: ["all", ROAD_FILTER, ["!=", ["get", "kind"], "highway"]],
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: { "line-color": "#c9c7c1", "line-width": ROAD_W },
           },
         ];
       })(),
