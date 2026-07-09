@@ -1,4 +1,5 @@
-import { X, User, LifeBuoy, Wallet, Route, ShieldCheck, UserCircle, Shield, ChevronRight, CreditCard } from "lucide-react";
+import { X, User, LifeBuoy, Wallet, Route, ShieldCheck, UserCircle, Shield, ChevronRight, CreditCard, Bike } from "lucide-react";
+import { Logo } from "@/components/Logo";
 import { Link } from "wouter";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useQuery } from "@tanstack/react-query";
@@ -108,13 +109,16 @@ export function DrawerMenu({ open, onClose }: Props) {
           className="mx-4 mt-2 block rounded-2xl hover:bg-black/10 transition-colors px-2 py-2"
         >
           <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <h2 className="text-2xl font-semibold text-sidebar-foreground leading-tight truncate">
-                {user?.name ?? "Гость"}
-              </h2>
-              {user?.phone && (
-                <p className="text-sm text-sidebar-foreground/70 mt-0.5">{user.phone}</p>
-              )}
+            <div className="flex items-center gap-3 min-w-0">
+              <Logo className="text-sidebar-foreground h-8 shrink-0" />
+              <div className="min-w-0">
+                <h2 className="text-2xl font-semibold text-sidebar-foreground leading-tight truncate">
+                  {user?.name ?? "Гость"}
+                </h2>
+                {user?.phone && (
+                  <p className="text-sm text-sidebar-foreground/70 mt-0.5">{user.phone}</p>
+                )}
+              </div>
             </div>
             <ChevronRight className="w-5 h-5 text-sidebar-foreground/70 shrink-0 mt-1.5" />
           </div>
@@ -122,10 +126,12 @@ export function DrawerMenu({ open, onClose }: Props) {
           {/* Stats */}
           <div className="flex gap-6 mt-4">
             <div>
+              <Route className="w-6 h-6 text-primary mb-1" strokeWidth={2.5} />
               <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums">{totalKm}</p>
               <p className="text-xs text-sidebar-foreground/70 uppercase tracking-wide mt-0.5">Километры</p>
             </div>
             <div>
+              <Bike className="w-6 h-6 text-primary mb-1" strokeWidth={2.5} />
               <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums">{rides.length}</p>
               <p className="text-xs text-sidebar-foreground/70 uppercase tracking-wide mt-0.5">Поездки</p>
             </div>
