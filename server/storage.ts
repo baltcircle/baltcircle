@@ -6,7 +6,7 @@ import {
 import type {
   Bike, Parking, ZoneRow, Ride, AdminRide, Ticket, TicketComment, TicketWithComments, Payment, Wallet,
   MapObject, InsertMapObject, User, OtpRequest, UserRole, UpdateProfileInput,
-  PhoneChangeRequest, PaymentMethod, SupportTicket, PaymentOrder,
+  PhoneChangeRequest, PaymentMethod, SupportTicket, SupportTicketWithUser, SupportTicketStatus, PaymentOrder,
   AdminCreateBikeInput, AdminUpdateBikeInput, CreateTicketInput, UpdateTicketInput,
   AdminCreateParkingInput, AdminUpdateParkingInput,
 } from "@shared/schema";
@@ -191,6 +191,9 @@ export interface IStorage {
   // support tickets (rider help requests)
   listSupportTickets(userId: string): Promise<SupportTicket[]>;
   createSupportTicket(input: { userId: string; subject: string; message: string }): Promise<SupportTicket>;
+  // support tickets (staff/operator inbox — all riders)
+  listAllSupportTickets(): Promise<SupportTicketWithUser[]>;
+  updateSupportTicket(id: number, patch: { status?: SupportTicketStatus }): Promise<SupportTicket | undefined>;
   // bikes
   listBikes(opts?: { includeArchived?: boolean }): Promise<Bike[]>;
   getBike(id: string): Promise<Bike | undefined>;
@@ -794,6 +797,40 @@ export class DatabaseStorage implements IStorage {
     return (await db.insert(supportTickets).values({
       userId, subject: subject.trim(), message: message.trim(), status: "open", createdAt: Date.now(),
     }).returning())[0] as SupportTicket;
+  }
+
+  // Staff inbox: every rider request across the platform, newest first, with
+  // a light join on users so the operator sees who submitted the ticket.
+  async listAllSupportTickets(): Promise<SupportTicketWithUser[]> {
+    const rows = await db
+      .select({
+        id: supportTickets.id,
+        userId: supportTickets.userId,
+        subject: supportTickets.subject,
+        message: supportTickets.message,
+        status: supportTickets.status,
+        createdAt: supportTickets.createdAt,
+        userName: users.name,
+        userPhone: users.phone,
+      })
+      .from(supportTickets)
+      .leftJoin(users, eq(users.id, supportTickets.userId))
+      .orderBy(desc(supportTickets.createdAt));
+    return rows as SupportTicketWithUser[];
+  }
+
+  async updateSupportTicket(id: number, patch: { status?: SupportTicketStatus }): Promise<SupportTicket | undefined> {
+    if (!patch.status) return this.getSupportTicket(id);
+    const updated = (await db
+      .update(supportTickets)
+      .set({ status: patch.status })
+      .where(eq(supportTickets.id, id))
+      .returning())[0] as SupportTicket | undefined;
+    return updated;
+  }
+
+  private async getSupportTicket(id: number): Promise<SupportTicket | undefined> {
+    return (await db.select().from(supportTickets).where(eq(supportTickets.id, id)).limit(1))[0] as SupportTicket | undefined;
   }
 
   // Public list excludes archived (retired) bikes so they never appear on the

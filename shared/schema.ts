@@ -583,6 +583,21 @@ export const createSupportTicketSchema = z.object({
 });
 export type CreateSupportTicketInput = z.infer<typeof createSupportTicketSchema>;
 
+export const SUPPORT_TICKET_STATUSES = ["open", "resolved"] as const;
+export type SupportTicketStatus = typeof SUPPORT_TICKET_STATUSES[number];
+
+export const updateSupportTicketSchema = z.object({
+  status: z.enum(SUPPORT_TICKET_STATUSES, { required_error: "Укажите статус" }),
+});
+export type UpdateSupportTicketInput = z.infer<typeof updateSupportTicketSchema>;
+
+// Enriched shape returned by admin endpoints — bundles rider info so the
+// operator UI can render the request without extra round trips.
+export type SupportTicketWithUser = SupportTicket & {
+  userName: string | null;
+  userPhone: string | null;
+};
+
 /* ------- TYPES for API payloads ------- */
 export type TariffId = "h1" | "h2" | "h3";
 export interface TariffInfo {

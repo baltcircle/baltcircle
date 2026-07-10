@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useSearch } from "wouter";
+import { Link, useSearch } from "wouter";
 import type { Bike, Ticket, TicketComment, TicketWithComments, User } from "@shared/schema";
 import { TICKET_KINDS, TICKET_PRIORITIES, TICKET_STATUSES, TICKET_CLOSED_STATUSES } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -18,7 +18,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Wrench, MessageSquarePlus, X } from "lucide-react";
+import { Plus, Wrench, MessageSquarePlus, X, LifeBuoy } from "lucide-react";
+import type { SupportTicketWithUser } from "@shared/schema";
 import { fmtRelative } from "@/lib/format";
 
 // Russian labels for the stored ids. Legacy auto-flag kinds are mapped too so
@@ -80,10 +81,17 @@ export function MaintenancePage() {
   const search = useSearch();
   const ticketsQ = useQuery<Ticket[]>({ queryKey: ["/api/tickets"] });
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
+  // Rider help requests — the count is surfaced here so operators know when
+  // there is a support inbox waiting for them alongside mechanic tickets.
+  const { canManageStaff } = useCurrentUser();
+  const supportQ = useQuery<SupportTicketWithUser[]>({
+    queryKey: ["/api/admin/support/tickets"],
+    enabled: canManageStaff,
+  });
+  const openSupportCount = (supportQ.data ?? []).filter((t) => t.status === "open").length;
   // Staff names to suggest as assignees. Only operators/admins may read the
   // users list, so the query is gated to them; mechanics keep plain free text.
   // The input stays free text either way — this only offers autocomplete.
-  const { canManageStaff } = useCurrentUser();
   const staffQ = useQuery<User[]>({ queryKey: ["/api/admin/users"], enabled: canManageStaff });
   const assigneeOptions = useMemo(
     () =>
@@ -166,9 +174,26 @@ export function MaintenancePage() {
             {openCount} активных из {tickets.length}. Ремонт, неисправности, состояние парка.
           </p>
         </div>
-        <Button onClick={() => { setForm(emptyForm); setCreateOpen(true); }} data-testid="button-create-ticket">
-          <Plus className="w-4 h-4 mr-2" />Создать заявку
-        </Button>
+        <div className="flex items-center gap-2">
+          {canManageStaff && (
+            <Link
+              href="/admin/support"
+              data-testid="link-open-support-inbox"
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-card-border text-sm hover-elevate"
+            >
+              <LifeBuoy className="w-4 h-4" />
+              Обращения
+              {openSupportCount > 0 && (
+                <Badge variant="outline" className="ml-1 text-amber-600 dark:text-amber-400 border-amber-500/40">
+                  {openSupportCount}
+                </Badge>
+              )}
+            </Link>
+          )}
+          <Button onClick={() => { setForm(emptyForm); setCreateOpen(true); }} data-testid="button-create-ticket">
+            <Plus className="w-4 h-4 mr-2" />Создать заявку
+          </Button>
+        </div>
       </header>
 
       {/* Filters */}

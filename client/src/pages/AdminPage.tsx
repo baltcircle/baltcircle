@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Link } from "wouter";
-import type { Bike, User, Ride, Ticket, MapObject, Parking } from "@shared/schema";
+import type { Bike, User, Ride, Ticket, MapObject, Parking, SupportTicketWithUser } from "@shared/schema";
 import { TICKET_CLOSED_STATUSES } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import { fmtRelative, fmtRub } from "@/lib/format";
 import {
   Plus, Map as MapIcon, Users as UsersIcon, Wrench, BarChart3,
   Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity, ChevronRight, MapPin,
+  LifeBuoy,
 } from "lucide-react";
 
 // Active rides running longer than this are surfaced as an alert — a likely
@@ -36,6 +37,9 @@ export function AdminPage() {
   // Public endpoint returns active, non-archived parkings only — exactly the
   // count riders can see on the map.
   const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
+  // Rider help requests submitted from the /support page. Separate from
+  // mechanic tickets (/api/tickets) which describe bike issues.
+  const supportQ = useQuery<SupportTicketWithUser[]>({ queryKey: ["/api/admin/support/tickets"] });
 
   const bikes = bikesQ.data ?? [];
   const users = usersQ.data ?? [];
@@ -43,6 +47,8 @@ export function AdminPage() {
   const tickets = ticketsQ.data ?? [];
   const mapObjects = mapQ.data ?? [];
   const parkings = parkingsQ.data ?? [];
+  const supportTickets = supportQ.data ?? [];
+  const openSupport = supportTickets.filter(t => t.status !== "resolved");
 
   const m = useMemo(() => deriveMetrics({ bikes, users, rides, tickets, mapObjects, parkings }), [
     bikes, users, rides, tickets, mapObjects, parkings,
@@ -132,7 +138,8 @@ export function AdminPage() {
         <Kpi testId="dashboard-kpi-new-users" label="Новых сегодня" value={m.newUsersToday} />
         <Kpi testId="dashboard-kpi-rides-today" label="Поездок сегодня" value={m.ridesToday} />
         <Kpi testId="dashboard-kpi-active-rides" label="Активные поездки" value={m.activeRides} tone="sky" />
-        <Kpi testId="dashboard-kpi-open-tickets" label="Открытых заявок" value={m.openTickets} tone={m.openTickets > 0 ? "amber" : undefined} icon={<Wrench className="w-4 h-4" />} />
+        <Kpi testId="dashboard-kpi-open-tickets" label="Сервисные заявки" value={m.openTickets} tone={m.openTickets > 0 ? "amber" : undefined} icon={<Wrench className="w-4 h-4" />} />
+        <Kpi testId="dashboard-kpi-open-support" label="Обращения в поддержку" value={openSupport.length} tone={openSupport.length > 0 ? "amber" : undefined} icon={<LifeBuoy className="w-4 h-4" />} />
         <Kpi testId="dashboard-kpi-map-objects" label="Объектов на карте" value={m.mapObjects} icon={<MapIcon className="w-4 h-4" />} />
         <Kpi testId="dashboard-kpi-active-parkings" label="Активных парковок" value={m.activeParkings} tone={m.activeParkings === 0 ? "amber" : undefined} icon={<MapPin className="w-4 h-4" />} />
       </section>
@@ -147,6 +154,7 @@ export function AdminPage() {
           <QuickAction href="/admin/parkings" icon={<MapPin className="w-5 h-5" />} label="Парковки" testId="quick-action-parkings" />
           <QuickAction href="/admin/users" icon={<UsersIcon className="w-5 h-5" />} label="Пользователи" testId="quick-action-users" />
           <QuickAction href="/admin/maintenance" icon={<Wrench className="w-5 h-5" />} label="Сервис" testId="quick-action-maintenance" />
+          <QuickAction href="/admin/support" icon={<LifeBuoy className="w-5 h-5" />} label="Поддержка" testId="quick-action-support" />
           <QuickAction href="/admin/analytics" icon={<BarChart3 className="w-5 h-5" />} label="Аналитика" testId="quick-action-analytics" />
         </div>
       </section>
@@ -197,24 +205,47 @@ export function AdminPage() {
           )}
         </Card>
 
-        {/* ---------- Fleet summary ---------- */}
-        <Card className="p-5" data-testid="dashboard-fleet-summary">
+        {/* ---------- Support inbox summary ---------- */}
+        <Card className="p-5" data-testid="dashboard-support-inbox">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-lg font-light flex items-center gap-2">
-              <BikeIcon className="w-4 h-4 text-primary" />Флот
+              <LifeBuoy className={`w-4 h-4 ${openSupport.length ? "text-amber-500" : "text-primary"}`} />
+              Обращения в поддержку
             </h2>
-            <Link href="/admin/bikes" className="text-xs text-primary hover:underline" data-testid="link-fleet-detail">
-              Управление
-            </Link>
+            <div className="flex items-center gap-2">
+              {openSupport.length > 0 && <Badge variant="outline">{openSupport.length}</Badge>}
+              <Link href="/admin/support" className="text-xs text-primary hover:underline" data-testid="link-support-detail">
+                Все
+              </Link>
+            </div>
           </div>
-          <div className="space-y-2 text-sm">
-            <SummaryRow label="Доступно" value={m.available} tone="emerald" />
-            <SummaryRow label="В аренде" value={m.rented} tone="sky" />
-            <SummaryRow label="Бронь" value={m.reserved} />
-            <SummaryRow label="Сервис" value={m.maintenance} tone="rose" />
-            <SummaryRow label="Оффлайн" value={m.offline} />
-            <SummaryRow label="Низкий заряд (<25%)" value={m.lowBattery} tone={m.lowBattery > 0 ? "amber" : undefined} />
-          </div>
+          {supportQ.isLoading ? (
+            <div className="text-sm text-muted-foreground py-4" data-testid="dashboard-support-loading">Загружаем…</div>
+          ) : openSupport.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-4" data-testid="dashboard-support-empty">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              Открытых обращений нет.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {openSupport.slice(0, 4).map(t => (
+                <Link
+                  key={t.id}
+                  href="/admin/support"
+                  className="block rounded-lg border border-card-border p-2.5 hover-elevate"
+                  data-testid={`dashboard-support-${t.id}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-medium truncate">{t.subject}</div>
+                    <span className="text-[10px] text-muted-foreground shrink-0">{fmtRelative(t.createdAt)}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground truncate mt-0.5">
+                    {t.userName ?? t.userPhone ?? t.userId}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
         </Card>
       </div>
 
@@ -256,8 +287,26 @@ export function AdminPage() {
           )}
         </Card>
 
-        {/* ---------- Users & map summary ---------- */}
+        {/* ---------- Fleet + Users & map summary ---------- */}
         <div className="space-y-4">
+          <Card className="p-5" data-testid="dashboard-fleet-summary">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-display text-lg font-light flex items-center gap-2">
+                <BikeIcon className="w-4 h-4 text-primary" />Флот
+              </h2>
+              <Link href="/admin/bikes" className="text-xs text-primary hover:underline" data-testid="link-fleet-detail">
+                Управление
+              </Link>
+            </div>
+            <div className="space-y-2 text-sm">
+              <SummaryRow label="Доступно" value={m.available} tone="emerald" />
+              <SummaryRow label="В аренде" value={m.rented} tone="sky" />
+              <SummaryRow label="Бронь" value={m.reserved} />
+              <SummaryRow label="Сервис" value={m.maintenance} tone="rose" />
+              <SummaryRow label="Оффлайн" value={m.offline} />
+              <SummaryRow label="Низкий заряд (<25%)" value={m.lowBattery} tone={m.lowBattery > 0 ? "amber" : undefined} />
+            </div>
+          </Card>
           <Card className="p-5" data-testid="dashboard-users-summary">
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-display text-lg font-light flex items-center gap-2">
