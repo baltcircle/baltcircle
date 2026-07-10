@@ -57,6 +57,10 @@ function isOverlayPath(path: string): boolean {
 function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) {
   const [visible, setVisible] = useState(isOverlay);
   const [exiting, setExiting] = useState(false);
+  // Снэпшот URL для exit-анимации: когда уходим в карту, popstate меняет loc на "/",
+  // но оверлей ещё проигрывает slide-down. Чтобы <Switch> не опустел посередине,
+  // держим последний overlay-URL во время exit.
+  const [exitLoc, setExitLoc] = useState<string | null>(null);
 
   // On enter: show overlay. On exit via browser swipe (isOverlay → false
   // without overlay:back event): immediately hide without animation.
@@ -77,32 +81,44 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
     const handler = () => {
       if (!visible || exiting) return;
 
-      // Навигация назад: вызываем history.back() сразу, на следующем тике
-      // читаем новый URL. Если он overlay — оверлей остаётся смонтирован,
-      // внутренний <Switch> мгновенно покажет предыдущую overlay-страницу
-      // без slide-анимаций. Если новый URL не overlay — играем slide-down 300ms
-      // и потом скрываем оверлей.
-      window.history.back();
-      queueMicrotask(() => {
-        if (isOverlayPath(window.location.pathname)) return;
-        // Мы вышли в non-overlay (карта, /admin/*). isOverlay=false
-        // уже обновился через popstate, и useEffect выше собирается
-        // сделать setVisible(false). Чтобы успеть показать slide-down,
-        // отлагаем скрытие: сейчас setVisible(true) перебьёт этот useEffect
-        // и включит exit-класс, таймер через 300ms уберёт overlay.
-        setExiting(true);
-        setVisible(true);
-        setTimeout(() => {
-          setExiting(false);
-          setVisible(false);
-        }, 300);
-      });
+      // Смотрим куда пойдём назад — стоит оценить тип перехода.
+      // Если цель — overlay-маршрут (например /legal/privacy → /legal), мгновенно:
+      // overlay остаётся смонтирован, внутренний <Switch> переключится.
+      // Если цель — non-overlay (карта), СНАЧАЛА играем slide-down 300ms, и ТОЛЬКО ПОТОМ
+      // history.back(). Иначе URL уходит мгновенно, <Switch> внутри overlay пустеет,
+      // и анимируется пустой контейнер — выглядит как внезапное закрытие.
+      //
+      // wouter не отдаёт history API-ов для "peek back", поэтому эвристика:
+      // если текущий URL уже лежит внутри overlay-раздела на уровне глубже чем один
+      // сегмент (есть '/' среди под-пата), то history.back ведёт на родителя overlay.
+      const currentPath = window.location.pathname;
+      const currentMatches = OVERLAY_ROUTES.find((r) => currentPath === r || currentPath.startsWith(r + "/"));
+      const isNested = currentMatches ? currentPath.length > currentMatches.length : false;
+
+      if (isNested) {
+        // Переход внутри overlay — мгновенно.
+        window.history.back();
+        return;
+      }
+
+      // Выходим в non-overlay: сначала анимация, потом навигация.
+      setExitLoc(currentPath);
+      setExiting(true);
+      setTimeout(() => {
+        setExiting(false);
+        setVisible(false);
+        setExitLoc(null);
+        window.history.back();
+      }, 300);
     };
     window.addEventListener("overlay:back", handler);
     return () => window.removeEventListener("overlay:back", handler);
   }, [visible, exiting]);
 
   if (!visible) return null;
+
+  // Отмечаем неиспользуемую сейчас переменную (оставлена на будущее — если понадобится снэпшот).
+  void exitLoc;
 
   return (
     <div className={`fixed inset-0 z-50 ${exiting ? "animate-slide-down" : "animate-slide-up"}`}>

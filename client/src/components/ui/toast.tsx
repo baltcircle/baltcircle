@@ -23,8 +23,11 @@ const ToastViewport = React.forwardRef<
 ))
 ToastViewport.displayName = ToastPrimitives.Viewport.displayName
 
+// Мы полностью взяли контроль над swipe/dismiss-анимацией (см. useToastSwipeDismiss),
+// поэтому выключаем radix data-[swipe] транслейты и его встроенные slide-out
+// (конфликтовали с нашим inline transform → кривая анимация).
 const toastVariants = cva(
-  "group pointer-events-auto relative flex w-full items-center justify-between space-x-4 overflow-hidden rounded-2xl p-4 shadow-xl transition-all touch-pan-y data-[swipe=cancel]:translate-x-0 data-[swipe=end]:translate-x-[var(--radix-toast-swipe-end-x)] data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[swipe=end]:animate-out data-[state=closed]:fade-out-80 data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-top-full data-[state=open]:sm:slide-in-from-bottom-full",
+  "group pointer-events-auto relative flex w-full items-center justify-between space-x-4 overflow-hidden rounded-2xl p-4 shadow-xl touch-pan-y data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-top-full data-[state=open]:sm:slide-in-from-bottom-full",
   {
     variants: {
       variant: {
@@ -39,20 +42,28 @@ const toastVariants = cva(
   }
 )
 
-// Мульти-направленный swipe-to-dismiss: Radix Toast штатно умеет только одно направление.
-// Навешиваем свой touch/pointer-обработчик: при swipe влево / вверх (в дополнение к native вправо)
-// — анимируем уезд и дёргаем toast-close.
-const SWIPE_THRESHOLD = 70;
+// Swipe-to-dismiss во все четыре стороны (влево/вправо/вверх/вниз). Мы не доверяем
+// встроенному Radix (он поддерживает только одно направление и его slide-out
+// конфликтует с inline transform) — ведём всё сами: live-follow пальца + exit-анимация
+// + клик по невидимому [toast-close] в конце.
+const SWIPE_THRESHOLD = 60;
+const EXIT_MS = 220;
 
-function useMultiDirectionalSwipe() {
+function useToastSwipeDismiss() {
   const rootRef = React.useRef<HTMLLIElement | null>(null);
-  const stateRef = React.useRef<{ x: number; y: number; active: boolean; dir: "none" | "x" | "y" }>({
-    x: 0, y: 0, active: false, dir: "none",
-  });
+  const stateRef = React.useRef<{
+    x: number; y: number; active: boolean; dir: "none" | "x" | "y";
+    startedAt: number;
+  }>({ x: 0, y: 0, active: false, dir: "none", startedAt: 0 });
 
   const onPointerDown = (e: React.PointerEvent<HTMLLIElement>) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
-    stateRef.current = { x: e.clientX, y: e.clientY, active: true, dir: "none" };
+    const el = rootRef.current;
+    if (el) {
+      // На время drag снимаем transitions — тоаст должен следовать за пальцем мгновенно.
+      el.style.transition = "none";
+    }
+    stateRef.current = { x: e.clientX, y: e.clientY, active: true, dir: "none", startedAt: Date.now() };
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLLIElement>) => {
@@ -61,25 +72,20 @@ function useMultiDirectionalSwipe() {
     const dx = e.clientX - s.x;
     const dy = e.clientY - s.y;
 
-    // Определяем доминирующую ось при первом значимом сдвиге. Radix уже ведёт горизонталь
-    // (вправо) — мы вмешиваемся только для влево/вверх.
-    if (s.dir === "none" && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+    if (s.dir === "none" && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
       s.dir = Math.abs(dy) > Math.abs(dx) ? "y" : "x";
     }
 
     const el = rootRef.current;
     if (!el) return;
 
-    if (s.dir === "y" && dy < 0) {
-      // Свайп вверх — тащим тоаст за пальцем, гасим опасть.
-      el.style.transform = `translateY(${dy}px)`;
-      el.style.opacity = String(Math.max(0, 1 + dy / 200));
-    } else if (s.dir === "x" && dx < 0) {
-      // Свайп влево (radix не обрабатывает) — аналогично.
-      el.style.transform = `translateX(${dx}px)`;
-      el.style.opacity = String(Math.max(0, 1 + dx / 200));
+    if (s.dir === "x") {
+      el.style.transform = `translate3d(${dx}px, 0, 0)`;
+      el.style.opacity = String(Math.max(0, 1 - Math.abs(dx) / 240));
+    } else if (s.dir === "y") {
+      el.style.transform = `translate3d(0, ${dy}px, 0)`;
+      el.style.opacity = String(Math.max(0, 1 - Math.abs(dy) / 240));
     }
-    // Свайп вправо/вниз — отдаём Radix (он ведёт к native swipe-out).
   };
 
   const onPointerUp = (e: React.PointerEvent<HTMLLIElement>) => {
@@ -91,24 +97,33 @@ function useMultiDirectionalSwipe() {
     const el = rootRef.current;
     if (!el) return;
 
-    const dismissLeft = s.dir === "x" && dx < -SWIPE_THRESHOLD;
-    const dismissUp = s.dir === "y" && dy < -SWIPE_THRESHOLD;
+    // Квалифицируем dismiss: либо дистанция превышена, либо velocity быстрая (flick).
+    const dt = Math.max(1, Date.now() - s.startedAt);
+    const vx = dx / dt; const vy = dy / dt;
+    const isFlick = Math.abs(vx) > 0.5 || Math.abs(vy) > 0.5;
 
-    if (dismissLeft || dismissUp) {
-      // Анимируем выезд, толкаем штатный close.
-      el.style.transition = "transform 0.18s ease-out, opacity 0.18s ease-out";
-      el.style.transform = dismissLeft ? "translateX(-120%)" : "translateY(-120%)";
+    let dismiss: null | "left" | "right" | "up" | "down" = null;
+    if (s.dir === "x") {
+      if (dx < -SWIPE_THRESHOLD || (isFlick && dx < 0)) dismiss = "left";
+      else if (dx > SWIPE_THRESHOLD || (isFlick && dx > 0)) dismiss = "right";
+    } else if (s.dir === "y") {
+      if (dy < -SWIPE_THRESHOLD || (isFlick && dy < 0)) dismiss = "up";
+      else if (dy > SWIPE_THRESHOLD || (isFlick && dy > 0)) dismiss = "down";
+    }
+
+    if (dismiss) {
+      const outX = dismiss === "left" ? -window.innerWidth : dismiss === "right" ? window.innerWidth : 0;
+      const outY = dismiss === "up" ? -300 : dismiss === "down" ? 300 : 0;
+      el.style.transition = `transform ${EXIT_MS}ms cubic-bezier(0.32, 0.72, 0, 1), opacity ${EXIT_MS}ms ease-out`;
+      el.style.transform = `translate3d(${outX}px, ${outY}px, 0)`;
       el.style.opacity = "0";
       const closeBtn = el.querySelector<HTMLButtonElement>("[toast-close]");
-      window.setTimeout(() => closeBtn?.click(), 180);
+      window.setTimeout(() => closeBtn?.click(), EXIT_MS);
     } else {
-      // Не дотянул — возвращаем на место.
-      el.style.transition = "transform 0.18s ease-out, opacity 0.18s ease-out";
-      el.style.transform = "";
+      // Не дотянул — пружинисто возвращаем на место.
+      el.style.transition = "transform 0.2s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.2s ease-out";
+      el.style.transform = "translate3d(0, 0, 0)";
       el.style.opacity = "";
-      window.setTimeout(() => {
-        if (el) el.style.transition = "";
-      }, 200);
     }
     stateRef.current.dir = "none";
   };
@@ -121,7 +136,7 @@ const Toast = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof ToastPrimitives.Root> &
     VariantProps<typeof toastVariants>
 >(({ className, variant, ...props }, ref) => {
-  const swipe = useMultiDirectionalSwipe();
+  const swipe = useToastSwipeDismiss();
 
   // Прокидываем ref — и внешний клиентский, и наш внутренний для swipe.
   const setRefs = (el: HTMLLIElement | null) => {
