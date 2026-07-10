@@ -154,17 +154,13 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — обрезана до safe-area, чтобы не залезала под status bar
-       * и home-indicator. Полосы safe-area закрашены html.route-locked
-       * (цвет воды), поэтому визуально сливаются с картой, но сама карта
-       * (тайлы, дороги, POI) начинается после safe-inset. */}
-      <div
-        className="fixed left-0 right-0 z-0 overflow-hidden"
-        style={{
-          top: "env(safe-area-inset-top)",
-          bottom: "env(safe-area-inset-bottom)",
-        }}
-      >
+      {/* Map — заливает весь экран (inset:0). Карта течёт под iOS status bar
+       * и под home-indicator — так получается сплошной ландшафт без плоских полос
+       * (backdrop в тон воды всё равно отличается от тайлов — правильнее пусть
+       * карта виднеется под status bar). Сам статус-бар остаётся читаем
+       * благодаря black-translucent — iOS сам рендерит часы/батарею поверх.
+       * Кнопки (лого/бургер/гео/скан) отступают от safe-area через env(). */}
+      <div className="fixed inset-0 z-0 overflow-hidden">
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
