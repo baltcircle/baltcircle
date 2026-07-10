@@ -550,6 +550,23 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
           "circle-pitch-alignment": "map",
         },
       },
+      // Стрелка направления. Рисуется МЕЖДУ аурой и белым кольцом — видна
+      // только кончик, торчащий из-под точки (как на Apple/Google Maps).
+      // Отображается только когда hasHeading=true (в стоячем положении GPS не даёт heading).
+      {
+        id: "user-location-heading", type: "symbol", source: "user-location",
+        filter: ["==", ["get", "hasHeading"], true],
+        layout: {
+          "icon-image": "user-heading-arrow",
+          "icon-rotate": ["get", "heading"],
+          "icon-rotation-alignment": "map",
+          "icon-pitch-alignment": "map",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+          "icon-anchor": "center",
+          "icon-size": 1,
+        },
+      },
       {
         id: "user-location-halo", type: "circle", source: "user-location",
         paint: {
@@ -704,6 +721,24 @@ export function MapLibreMap({
       map.once("load", () => {
         map.resize();
         readyRef.current = true;
+        // Регистрируем иконку-стрелку для heading. Треугольник указывает вверх (0° = север),
+        // MapLibre крутит его по icon-rotate. Центр icon = центр GPS-точки; кончик
+        // торчит из-под белого кольца (r=13px), остальное скрыто под точкой.
+        if (!map.hasImage("user-heading-arrow")) {
+          const size = 40;
+          const c = document.createElement("canvas");
+          c.width = size; c.height = size;
+          const ctx = c.getContext("2d")!;
+          ctx.fillStyle = "#1f2937"; // тёмно-серый — читаемо на голубой ауре
+          ctx.beginPath();
+          ctx.moveTo(size / 2, 4);              // кончик вверху
+          ctx.lineTo(size / 2 - 7, size / 2 + 4); // левый низ
+          ctx.lineTo(size / 2 + 7, size / 2 + 4); // правый низ
+          ctx.closePath();
+          ctx.fill();
+          const img = ctx.getImageData(0, 0, size, size);
+          map.addImage("user-heading-arrow", { width: size, height: size, data: new Uint8Array(img.data.buffer) });
+        }
         // Hand the editor a getter for the live centre as [lat, lng].
         onCenterGetterRef.current?.(() => {
           const c = map.getCenter();
@@ -782,21 +817,31 @@ export function MapLibreMap({
     const map = mapRef.current;
     if (!map) return;
 
-    const updateSource = (lng: number, lat: number) => {
+    // heading от GPS приходит только когда юзер двигается (в стоячем положении = null/NaN).
+    // Храним последнее валидное значение в локальной переменной — как только человек остановился,
+    // стрелка продолжает смотреть в туже сторону, куда шёл, а не обнуляется.
+    let lastHeading: number | null = null;
+
+    const updateSource = (lng: number, lat: number, rawHeading: number | null) => {
       const src = map.getSource("user-location");
       if (!src) return;
+      // GPS speed=0 даёт heading=NaN; принимаем только числовые валидные градусы.
+      if (rawHeading !== null && Number.isFinite(rawHeading)) lastHeading = rawHeading;
       src.setData({
         type: "FeatureCollection",
         features: [{
           type: "Feature",
-          properties: {},
+          properties: {
+            hasHeading: lastHeading !== null,
+            heading: lastHeading ?? 0,
+          },
           geometry: { type: "Point", coordinates: [lng, lat] },
         }],
       });
     };
 
     const watchId = navigator.geolocation.watchPosition(
-      (pos) => updateSource(pos.coords.longitude, pos.coords.latitude),
+      (pos) => updateSource(pos.coords.longitude, pos.coords.latitude, pos.coords.heading ?? null),
       () => { /* silent fail — no dot */ },
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
     );
