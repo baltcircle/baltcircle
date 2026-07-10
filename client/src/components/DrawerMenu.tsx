@@ -25,7 +25,7 @@ function MenuItem({ href, icon: Icon, label }: Omit<MenuItemProps, "onClose">) {
       href={href}
       className="flex items-center gap-4 px-2 py-3 rounded-xl text-sidebar-foreground hover:bg-black/10 transition-colors"
     >
-      <Icon className="w-5 h-5 text-sidebar-foreground/70 shrink-0" />
+      <Icon className="w-5 h-5 text-primary shrink-0" strokeWidth={2.25} />
       <span className="flex-1 text-base text-sidebar-foreground">{label}</span>
     </Link>
   );
