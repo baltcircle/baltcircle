@@ -48,6 +48,41 @@ function extractBikeCode(raw: string): string | null {
   return null;
 }
 
+// Простая детекция iOS: любой браузер на iOS использует WebKit и ведёт себя одинаково.
+function isIOS(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !("MSStream" in window);
+}
+
+// Подсказка при permission=denied.
+// Важно: iOS Safari в обычной вкладке разрешение камеры спрашивает
+// каждую сессию (при перезагрузке, закрытии вкладки). Это ограничение WebKit —
+// его нельзя обойти кодом или привязать разрешение к аккаунту на сервере:
+// браузер всё равно спросит у пользователя, прежде чем выдать MediaStream.
+function CameraPermissionHelp() {
+  if (isIOS()) {
+    return (
+      <div className="text-[11px] leading-relaxed text-muted-foreground bg-muted/40 rounded-lg p-3 text-left space-y-1.5">
+        <div>
+          Нажмите «Повторить» и в системном окне выберите{" "}
+          <span className="font-medium text-foreground">«Разрешить»</span> (не «Один раз») —
+          Safari запомнит выбор на 30 дней.
+        </div>
+        <div>
+          Если уже отказали: Настройки iOS → Safari → Камера → Разрешить.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-[11px] leading-relaxed text-muted-foreground bg-muted/40 rounded-lg p-3 text-left">
+      Откройте настройки сайта (иконка замка в адресной строке)
+      и разрешите доступ к камере для takeride.ru.
+    </div>
+  );
+}
+
 // Canonicalize to the "BC-001" shape the bike ids use.
 function normalizeCode(raw: string): string {
   const upper = raw.toUpperCase().replace(/\s+/g, "");
@@ -59,6 +94,9 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  // Когда браузер вернул NotAllowedError — показываем более полезную
+  // подсказку со ссылкой на регулярное разрешение и (на iOS) в PWA.
+  const [permissionDenied, setPermissionDenied] = useState(false);
   // "loading" while acquiring the camera / waiting for the first frame,
   // "scanning" once frames are flowing, "error" when start failed.
   const [cameraState, setCameraState] = useState<"loading" | "scanning" | "error">("loading");
@@ -137,6 +175,7 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
   const startCamera = useCallback(async () => {
     setCameraError(null);
     setError(null);
+    setPermissionDenied(false);
     setCameraState("loading");
     handledRef.current = false;
 
@@ -144,6 +183,24 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
       setCameraState("error");
       setCameraError("Камера не поддерживается в этом браузере");
       return;
+    }
+
+    // Проверяем текущее состояние разрешения через Permissions API.
+    // Если браузер уже знает, что denied, — не вызываем getUserMedia впустую
+    // (браузер всё равно вернёт ошибку), сразу показываем подсказку и ручной ввод.
+    // Safari до 16 не поддерживает permissions.query({name:"camera"}) — ловим тихо.
+    try {
+      const status = await (navigator.permissions as Permissions | undefined)?.query({
+        name: "camera" as PermissionName,
+      });
+      if (status?.state === "denied") {
+        setCameraState("error");
+        setPermissionDenied(true);
+        setCameraError("Доступ к камере запрещён");
+        return;
+      }
+    } catch {
+      // Permissions API недоступен — продолжаем обычным путём.
     }
 
     // Tear down any prior attempt before acquiring a fresh stream.
@@ -204,7 +261,8 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
       setCameraState("error");
       const name = (err as { name?: string })?.name;
       if (name === "NotAllowedError" || name === "SecurityError") {
-        setCameraError("Доступ к камере запрещён. Разрешите доступ или введите код вручную");
+        setPermissionDenied(true);
+        setCameraError("Доступ к камере запрещён");
       } else if (name === "NotFoundError" || name === "OverconstrainedError") {
         setCameraError("Камера не найдена");
       } else {
@@ -300,6 +358,7 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
             <div className="text-xs text-destructive" data-testid="status-camera-error">
               {cameraError}
             </div>
+            {permissionDenied && <CameraPermissionHelp />}
             <Button
               type="button"
               variant="outline"
