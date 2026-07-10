@@ -8,14 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { ActiveRidePanel } from "@/components/ActiveRidePanel";
 import { RegistrationModal } from "@/components/RegistrationModal";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
 import { QrCode, Camera, MapPin, Clock, Sparkles } from "lucide-react";
 
 export function RentPage() {
-  const [loc] = useLocation();
+  const [loc, navigate] = useLocation();
   const toast = useToast();
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
   const activeQ = useQuery<Ride | null>({ queryKey: ["/api/rides/active"] });
@@ -77,9 +76,12 @@ export function RentPage() {
     }, 1400);
   }
 
-  if (activeQ.data) {
-    return <ActiveRidePanel ride={activeQ.data} />;
-  }
+  // Если активная поездка уже идёт — вся UI живёт на карте (MapPage), а не в дублющем
+  // overlay-экране. Редиректим обратно на карту с replace — не засоряем историю.
+  useEffect(() => {
+    if (activeQ.data) navigate("/", { replace: true });
+  }, [activeQ.data, navigate]);
+  if (activeQ.data) return null;
 
   const bike = bikesQ.data?.find(b => b.id === code.trim().toUpperCase());
 
