@@ -4,14 +4,13 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import type { SupportTicket } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { fmtDate } from "@/lib/format";
-import { Mail, Phone, Send, MessageCircle } from "lucide-react";
+import { Send, MessageCircle } from "lucide-react";
 
 const TICKETS_KEY = ["/api/support/tickets"];
 
@@ -23,10 +22,6 @@ const FAQ: { q: string; a: string }[] = [
   {
     q: "Как оплачивается поездка?",
     a: "Стоимость поездки списывается с привязанного способа оплаты. Привязать карту или СБП можно в разделе «Способы оплаты».",
-  },
-  {
-    q: "Как сменить номер телефона?",
-    a: "В «Настройках» нажмите «Изменить телефон» — мы отправим SMS с кодом подтверждения на новый номер.",
   },
   {
     q: "Что делать, если велосипед неисправен?",
@@ -73,100 +68,81 @@ export function SupportPage() {
 
   return (
     <OverlayShell title="Помощь">
-      <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-support">
-      {/* Contacts */}
-      <Card className="p-5 mb-5" data-testid="card-support-contacts">
-        <div className="text-sm font-medium mb-3">Контакты</div>
-        <div className="space-y-2 text-sm">
-          <a href="mailto:support@takeride.ru" className="flex items-center gap-2 hover:text-foreground text-muted-foreground" data-testid="link-support-email">
-            <Mail className="w-4 h-4" /> support@takeride.ru
-          </a>
-          <a href="tel:+78005550100" className="flex items-center gap-2 hover:text-foreground text-muted-foreground" data-testid="link-support-phone">
-            <Phone className="w-4 h-4" /> 8 800 555-01-00
-          </a>
-        </div>
-      </Card>
+      <div className="px-4 py-4 max-w-2xl mx-auto space-y-3" data-testid="page-support">
+        {/* FAQ */}
+        <Card className="p-4" data-testid="card-support-faq">
+          <div className="text-sm font-medium mb-2">Частые вопросы</div>
+          <div className="space-y-2.5">
+            {FAQ.map((item, i) => (
+              <div key={i} data-testid={`faq-item-${i}`}>
+                <div className="font-light text-sm">{item.q}</div>
+                <div className="text-xs text-muted-foreground mt-0.5 leading-snug">{item.a}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
 
-      {/* FAQ */}
-      <Card className="p-5 mb-5" data-testid="card-support-faq">
-        <div className="text-sm font-medium mb-3">Частые вопросы</div>
-        <div className="space-y-4">
-          {FAQ.map((item, i) => (
-            <div key={i} data-testid={`faq-item-${i}`}>
-              <div className="font-light">{item.q}</div>
-              <div className="text-sm text-muted-foreground mt-0.5">{item.a}</div>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {/* Contact form */}
-      <Card className="p-5 mb-5" data-testid="card-support-form">
-        <div className="text-sm font-medium mb-3 flex items-center gap-1.5">
-          <MessageCircle className="w-4 h-4" /> Написать в поддержку
-        </div>
-        {!isRegistered && (
-          <p className="text-xs text-muted-foreground mb-3" data-testid="text-support-guest">
-            Войдите, чтобы ваши обращения сохранялись и были привязаны к аккаунту.
-          </p>
-        )}
-        <form onSubmit={submit} className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="support-subject">Тема</Label>
+        {/* Compact contact form */}
+        <Card className="p-4" data-testid="card-support-form">
+          <div className="text-sm font-medium mb-2 flex items-center gap-1.5">
+            <MessageCircle className="w-4 h-4" /> Написать в поддержку
+          </div>
+          {!isRegistered && (
+            <p className="text-xs text-muted-foreground mb-2" data-testid="text-support-guest">
+              Войдите, чтобы обращения сохранялись в аккаунте.
+            </p>
+          )}
+          <form onSubmit={submit} className="space-y-2">
             <Input
               id="support-subject"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              placeholder="Кратко о проблеме"
+              placeholder="Тема"
               data-testid="input-support-subject"
+              className="h-9"
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="support-message">Сообщение</Label>
             <Textarea
               id="support-message"
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              placeholder="Опишите ваш вопрос подробнее"
-              rows={4}
+              placeholder="Опишите ваш вопрос"
+              rows={2}
               data-testid="input-support-message"
+              className="resize-none"
             />
-          </div>
-          {error && <p className="text-sm text-destructive" data-testid="text-support-error">{error}</p>}
-          <Button type="submit" className="w-full" disabled={createMut.isPending} data-testid="button-support-submit">
-            <Send className="w-4 h-4 mr-2" />
-            {createMut.isPending ? "Отправка…" : "Отправить обращение"}
-          </Button>
-        </form>
-      </Card>
+            {error && <p className="text-xs text-destructive" data-testid="text-support-error">{error}</p>}
+            <Button type="submit" size="sm" className="w-full h-9" disabled={createMut.isPending} data-testid="button-support-submit">
+              <Send className="w-3.5 h-3.5 mr-1.5" />
+              {createMut.isPending ? "Отправка…" : "Отправить"}
+            </Button>
+          </form>
+        </Card>
 
-      {/* Submitted tickets */}
-      <Card className="p-5" data-testid="card-support-tickets">
-        <div className="text-sm font-medium mb-3">Ваши обращения</div>
-        {ticketsQ.isLoading ? (
-          <div className="text-sm text-muted-foreground" data-testid="support-tickets-loading">Загрузка…</div>
-        ) : tickets.length === 0 ? (
-          <div className="text-sm text-muted-foreground" data-testid="support-tickets-empty">
-            Обращения появятся здесь после отправки.
-          </div>
-        ) : (
-          <ul className="space-y-3" data-testid="support-tickets-list">
-            {tickets.map((t) => (
-              <li key={t.id} className="rounded-md bg-muted/50 p-3" data-testid={`support-ticket-${t.id}`}>
-                <div className="flex items-center gap-2">
-                  <span className="font-light flex-1">{t.subject}</span>
-                  <span className="text-xs text-muted-foreground">{fmtDate(t.createdAt)}</span>
-                </div>
-                <div className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">{t.message}</div>
-                <div className="text-[11px] uppercase tracking-widest text-muted-foreground mt-2">
-                  {t.status === "resolved" ? "Решено" : "Открыто"}
-                </div>
-              </li>
-            ))}
-          </ul>
+        {/* Submitted tickets */}
+        {(ticketsQ.isLoading || tickets.length > 0) && (
+          <Card className="p-4" data-testid="card-support-tickets">
+            <div className="text-sm font-medium mb-2">Ваши обращения</div>
+            {ticketsQ.isLoading ? (
+              <div className="text-xs text-muted-foreground" data-testid="support-tickets-loading">Загрузка…</div>
+            ) : (
+              <ul className="space-y-2" data-testid="support-tickets-list">
+                {tickets.map((t) => (
+                  <li key={t.id} className="rounded-md bg-muted/50 p-2.5" data-testid={`support-ticket-${t.id}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="font-light text-sm flex-1 truncate">{t.subject}</span>
+                      <span className="text-[10px] text-muted-foreground shrink-0">{fmtDate(t.createdAt)}</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2 whitespace-pre-wrap">{t.message}</div>
+                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1">
+                      {t.status === "resolved" ? "Решено" : "Открыто"}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
         )}
-      </Card>
-          </div>
+      </div>
     </OverlayShell>
   );
 }
