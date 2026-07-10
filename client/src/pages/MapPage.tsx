@@ -154,13 +154,22 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
-      {/* Map — заливает весь экран (inset:0). Карта течёт под iOS status bar
-       * и под home-indicator — так получается сплошной ландшафт без плоских полос
-       * (backdrop в тон воды всё равно отличается от тайлов — правильнее пусть
-       * карта виднеется под status bar). Сам статус-бар остаётся читаем
-       * благодаря black-translucent — iOS сам рендерит часы/батарею поверх.
-       * Кнопки (лого/бургер/гео/скан) отступают от safe-area через env(). */}
-      <div className="fixed inset-0 z-0 overflow-hidden">
+      {/* Map — заливает весь физический экран, включая зоны safe-area
+       * (status bar сверху и home-indicator снизу). Карта течёт под ними,
+       * без плоских голубых полос backdrop-а. Важно: в iOS standalone (PWA)
+       * контейнер должен быть привязан к физическому экрану,
+       * поэтому вместо inset:0 (который в fixed-контексте ограничен visualViewport)
+       * явно растягиваем через negative-margin в safe-area зоны. Кнопки
+       * (лого/бургер/гео/скан) отступают от safe-area через env(). */}
+      <div
+        className="fixed inset-0 z-0 overflow-hidden"
+        style={{
+          // 100vh в iOS PWA включает зоны safe-area — это то что надо,
+          // карта будет рендерить под status bar и под home-indicator.
+          height: "100vh",
+          width: "100vw",
+        }}
+      >
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
