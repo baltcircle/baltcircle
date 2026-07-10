@@ -53,6 +53,16 @@ interface MapLibreMapProps {
   height?: string;
   showLabels?: boolean;
   center?: [number, number] | null;
+  /**
+   * Слежение за GPS-точкой в режиме активной аренды. Когда true —
+   * карта автоматически выравнивается по user location при каждом GPS update.
+   */
+  followUser?: boolean;
+  /**
+   * Каллбэк на каждый GPS update. Используется внешними компонентами
+   * (напр. трекер активной аренды) чтобы не дублировать watchPosition.
+   */
+  onUserLocation?: (lat: number, lng: number, headingDeg: number | null) => void;
   className?: string;
 }
 
@@ -649,7 +659,7 @@ export function MapLibreMap({
   parkings = [], mapObjects = [], ride = null,
   bikes = [], activeRides = [], tickets = [], layers = {},
   selectedBikeId, onSelectBike, onSelectParking, onSelectRide, onSelectTicket,
-  interactive = true, onMapClick, onCenterGetter,
+  interactive = true, onMapClick, onCenterGetter, followUser, onUserLocation,
   height = "100%", showLabels = false, center, className,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -667,6 +677,8 @@ export function MapLibreMap({
   // current handler without re-subscribing map events on every render.
   const onMapClickRef      = useRef(onMapClick);      onMapClickRef.current = onMapClick;
   const onCenterGetterRef  = useRef(onCenterGetter);  onCenterGetterRef.current = onCenterGetter;
+  const followUserRef      = useRef(followUser);      followUserRef.current      = followUser;
+  const onUserLocationRef  = useRef(onUserLocation);  onUserLocationRef.current  = onUserLocation;
   const onSelectBikeRef    = useRef(onSelectBike);    onSelectBikeRef.current = onSelectBike;
   const onSelectParkingRef = useRef(onSelectParking); onSelectParkingRef.current = onSelectParking;
   const onSelectRideRef    = useRef(onSelectRide);    onSelectRideRef.current = onSelectRide;
@@ -838,6 +850,12 @@ export function MapLibreMap({
           geometry: { type: "Point", coordinates: [lng, lat] },
         }],
       });
+      // Слежение за пользователем — мягкий easeTo (а не flyTo, чтобы карта не дёргалась).
+      if (followUserRef.current) {
+        map.easeTo({ center: [lng, lat], duration: 800, essential: true });
+      }
+      // Публикуем координаты наверх — трекер активной аренды подпишется.
+      onUserLocationRef.current?.(lat, lng, lastHeading);
     };
 
     const watchId = navigator.geolocation.watchPosition(

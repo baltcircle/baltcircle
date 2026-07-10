@@ -10,7 +10,7 @@ import { DrawerMenu } from "@/components/DrawerMenu";
 import { Logo } from "@/components/Logo";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
-import { useActiveRideSimulator } from "@/hooks/use-active-ride-simulator";
+import { useActiveRideTracker } from "@/hooks/use-active-ride-tracker";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDuration, fmtDistance, fmtRub } from "@/lib/format";
@@ -33,8 +33,9 @@ export function MapPage() {
 
   const activeRide = activeQ.data ?? null;
 
-  // Симулятор движения велика к парковке-цели (был в ActiveRidePanel, теперь на MapPage).
-  useActiveRideSimulator(activeRide, parkingsQ.data);
+  // GPS-трекер активной аренды: слушает onUserLocation от MapLibreMap и шлёт
+  // точки на /api/rides/{id}/point (тротлинг 3с + фильтр GPS-дребезга <5м).
+  const rideTracker = useActiveRideTracker(activeRide);
 
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -204,6 +205,11 @@ export function MapPage() {
           height="100%"
           showLabels={false}
           center={geoCenter}
+          followUser={!!activeRide}
+          onUserLocation={(lat, lng) => {
+            lastPosRef.current = { lat, lng };
+            if (activeRide) rideTracker.push(lat, lng);
+          }}
           className="w-full h-full"
         />
       </div>
