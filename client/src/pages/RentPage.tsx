@@ -12,7 +12,7 @@ import { ActiveRidePanel } from "@/components/ActiveRidePanel";
 import { RegistrationModal } from "@/components/RegistrationModal";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
-import { QrCode, Camera, Battery, MapPin, Clock, Sparkles } from "lucide-react";
+import { QrCode, Camera, MapPin, Clock, Sparkles } from "lucide-react";
 
 export function RentPage() {
   const [loc] = useLocation();
@@ -154,8 +154,7 @@ export function RentPage() {
                 </div>
                 <Badge>{bike.status === "available" ? "Доступен" : bike.status}</Badge>
               </div>
-              <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
-                <Mini icon={<Battery className="w-4 h-4" />} label="Замок" value={`${bike.battery}%`} />
+              <div className="grid grid-cols-1 gap-3 mt-4 text-sm">
                 <Mini icon={<MapPin className="w-4 h-4" />} label="Простой" value={`${bike.idleHours.toFixed(1)} ч`} />
               </div>
             </Card>

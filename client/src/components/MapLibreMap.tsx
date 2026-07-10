@@ -769,7 +769,8 @@ export function MapLibreMap({
         const isSel = b.id === selectedBikeId;
         const [lat, lng] = mapToReal(b.lng, b.lat);
         const el = dotMarkerEl(bikeMarkerColor(b.status), { ring: isSel, size: isSel ? 20 : 16, clickable: interactive && !!onSelectBikeRef.current });
-        el.title = `${b.id} · ${b.model} · ${b.battery}%`;
+        // Тултип на маркере без заряда замка — клиенту эта информация не нужна.
+        el.title = `${b.id} · ${b.model}`;
         addMarker([lng, lat], el, () => onSelectBikeRef.current?.(b.id));
       }
     }

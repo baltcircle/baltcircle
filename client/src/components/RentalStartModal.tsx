@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { TARIFFS } from "@shared/geo";
 import type { Tariff } from "@shared/geo";
 import {
-  Bike as BikeIcon, Battery, Check, CreditCard, QrCode, Loader2,
+  Bike as BikeIcon, Check, CreditCard, QrCode, Loader2,
   AlertCircle, ShieldAlert, MapPin, LifeBuoy,
 } from "lucide-react";
 
@@ -158,9 +158,6 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
             </div>
             <div className="flex flex-col items-end gap-2">
               <Badge>{bike.status === "available" ? "Доступен" : bike.status}</Badge>
-              <span className="text-xs text-muted-foreground flex items-center gap-1">
-                <Battery className="w-3.5 h-3.5" /> {bike.battery}%
-              </span>
             </div>
           </div>
         ) : (
