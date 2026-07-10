@@ -199,6 +199,10 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       // tracks. Populated at runtime via setData; empty at init.
       "saved-objects": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       "ride-tracks":   { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      // Blue-dot: user's current GPS position. Populated at runtime via setData
+      // when navigator.geolocation.watchPosition resolves. Empty at init so the
+      // dot doesn't render on the null island before permission is granted.
+      "user-location": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
     },
     layers: [
       // Sea = background; the real `earth` land polygon (Protomaps) draws on top at every zoom.
@@ -533,6 +537,38 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         paint: { "line-color": MARKER_COLORS.ride, "line-width": 4, "line-opacity": 0.9 },
       },
 
+      // ── USER LOCATION (голубая точка в стиле Google/Apple Maps) ─────────────
+      // Три слоя на одном GeoJSON Point: мягкая аура → белое кольцо → цветная точка.
+      // Цвет центра — брендовый --primary #61B5C4 (голубой TakeRide).
+      {
+        id: "user-location-accuracy", type: "circle", source: "user-location",
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 18, 14, 34, 18, 56],
+          "circle-color": "#61B5C4",
+          "circle-opacity": 0.18,
+          "circle-stroke-width": 0,
+          "circle-pitch-alignment": "map",
+        },
+      },
+      {
+        id: "user-location-halo", type: "circle", source: "user-location",
+        paint: {
+          "circle-radius": 13,
+          "circle-color": "#ffffff",
+          "circle-opacity": 1,
+          "circle-stroke-width": 0,
+        },
+      },
+      {
+        id: "user-location-dot", type: "circle", source: "user-location",
+        paint: {
+          "circle-radius": 8,
+          "circle-color": "#61B5C4",
+          "circle-opacity": 1,
+          "circle-stroke-width": 0,
+        },
+      },
+
       {
         id: "place-labels", type: "symbol", source: "pm", "source-layer": "places", minzoom: 8,
         filter: ["in", ["get", "kind"], ["literal", ["locality", "city", "town", "village", "neighbourhood", "suburb"]]],
@@ -735,6 +771,37 @@ export function MapLibreMap({
     if (!mapRef.current || !center) return;
     mapRef.current.flyTo({ center: [center[1], center[0]], zoom: 14, duration: 1000 });
   }, [center]);
+
+  // ── GEOLOCATION: watchPosition → update "user-location" source ───────────────
+  // Подписываемся один раз при mount (когда карта готова). Не требуем сразу —
+  // карта всё ещё рендерится без точки, и как только браузер выдаст первую точку — она
+  // появится. При deny/failure просто не рисуем — карта работает без неё.
+  useEffect(() => {
+    if (!ready) return;
+    if (typeof navigator === "undefined" || !navigator.geolocation) return;
+    const map = mapRef.current;
+    if (!map) return;
+
+    const updateSource = (lng: number, lat: number) => {
+      const src = map.getSource("user-location");
+      if (!src) return;
+      src.setData({
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          properties: {},
+          geometry: { type: "Point", coordinates: [lng, lat] },
+        }],
+      });
+    };
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => updateSource(pos.coords.longitude, pos.coords.latitude),
+      () => { /* silent fail — no dot */ },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [ready]);
 
   // ── HTML markers: parkings, bikes, active-ride starts, tickets ──────────────
   // Coordinate note: bikes/parkings are stored in abstract space; mapToReal(lng,lat)
