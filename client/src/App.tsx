@@ -12,7 +12,6 @@ import { MapPage } from "@/pages/MapPage";
 import { RentPage } from "@/pages/RentPage";
 import { TariffsPage } from "@/pages/TariffsPage";
 import { RidesPage } from "@/pages/RidesPage";
-import { ProfilePage } from "@/pages/ProfilePage";
 import { PaymentMethodsPage } from "@/pages/PaymentMethodsPage";
 import { PaymentResultPage } from "@/pages/PaymentResultPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -47,7 +46,7 @@ import NotFound from "@/pages/not-found";
 // Переход между вложенными overlay-маршрутами (напр. /safety/foo → /safety)
 // должен быть мгновенным: overlay-контейнер остаётсь смонтирован, меняется только
 // внутренний <Switch>. Анимация slide-down/up включается только когда мы выходим
-// в non-overlay маршрут (карта, /profile, /legal и т.п.).
+// в non-overlay маршрут (карта, /admin/*, /login и т.п.).
 function isOverlayPath(path: string): boolean {
   return OVERLAY_ROUTES.some((r) => path === r || path.startsWith(r + "/"));
 }
@@ -83,7 +82,7 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
       window.history.back();
       queueMicrotask(() => {
         if (isOverlayPath(window.location.pathname)) return;
-        // Мы вышли в non-overlay (карта, /profile, /legal). isOverlay=false
+        // Мы вышли в non-overlay (карта, /admin/*). isOverlay=false
         // уже обновился через popstate, и useEffect выше собирается
         // сделать setVisible(false). Чтобы успеть показать slide-down,
         // отлагаем скрытие: сейчас setVisible(true) перебьёт этот useEffect
@@ -115,6 +114,8 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
         <Route path="/tariffs" component={TariffsPage} />
         <Route path="/rent" component={RentPage} />
         <Route path="/payment-result" component={PaymentResultPage} />
+        <Route path="/legal" component={LegalIndexPage} />
+        <Route path="/legal/:slug">{(params) => <LegalDocPage slug={params.slug} />}</Route>
       </Switch>
     </div>
   );
@@ -131,6 +132,7 @@ const OVERLAY_ROUTES = [
   "/tariffs",
   "/rent",
   "/payment-result",
+  "/legal",
 ];
 
 // Minimal fallback shown while a code-split route chunk loads. Deliberately
@@ -180,7 +182,6 @@ function AppRouter() {
       <Route path="/rent"><></></Route>
       <Route path="/tariffs"><></></Route>
       <Route path="/rides"><></></Route>
-      <Route path="/profile" component={ProfilePage} />
       <Route path="/payment-methods"><></></Route>
       <Route path="/payment-result"><></></Route>
       <Route path="/settings"><></></Route>
@@ -189,9 +190,9 @@ function AppRouter() {
       <Route path="/safety/:section"><></></Route>
       <Route path="/safety/:section/:slug"><></></Route>
 
-      {/* Legal documents */}
-      <Route path="/legal" component={LegalIndexPage} />
-      <Route path="/legal/:slug">{(params) => <LegalDocPage slug={params.slug} />}</Route>
+      {/* Legal documents — rendered by OverlayRouter above */}
+      <Route path="/legal"><></></Route>
+      <Route path="/legal/:slug"><></></Route>
 
       {/* Legacy legal routes — keep existing registration links working */}
       <Route path="/privacy"><Redirect to="/legal/privacy" /></Route>

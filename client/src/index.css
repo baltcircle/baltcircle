@@ -225,8 +225,8 @@
   .font-bold     { font-weight: 500 !important; }  /* was 700 */
   .font-extrabold{ font-weight: 600 !important; }  /* was 800 */
   /* Customer map route: pin to the visible viewport and kill page scroll /
-   * rubber-band overscroll. Scoped via .route-locked so /profile, /tariffs,
-   * /rides and /admin/* keep normal document scrolling. */
+   * rubber-band overscroll. Scoped via .route-locked so /tariffs, /rides
+   * and /admin/* keep normal document scrolling. */
   html.route-locked,
   body.route-locked {
     height: 100%;

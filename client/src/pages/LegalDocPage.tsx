@@ -1,8 +1,9 @@
-import { Link } from "wouter";
-import { ArrowLeft } from "lucide-react";
+import { OverlayShell } from "@/components/OverlayShell";
 import { getLegalDoc, type LegalDoc } from "@/lib/legal";
 import NotFound from "@/pages/not-found";
 
+// Полный текст одного правового документа (/legal/:slug). Аналог InfoDocPage:
+// OverlayShell с системной шапкой + вводный header с иконкой и описанием.
 export function LegalDocPage({ slug }: { slug: string }) {
   const doc = getLegalDoc(slug);
   if (!doc) return <NotFound />;
@@ -12,24 +13,20 @@ export function LegalDocPage({ slug }: { slug: string }) {
 function LegalDoc({ doc }: { doc: LegalDoc }) {
   const Icon = doc.icon;
   return (
-    <div className="min-h-full bg-background" data-testid={`page-legal-${doc.slug}`}>
-      <div className="mx-auto max-w-2xl px-5 pt-6 pb-16">
-        <header className="mb-6 flex items-center gap-3">
-          <Link
-            href="/legal"
-            data-testid={`link-legal-${doc.slug}-back`}
-            aria-label="К списку документов"
-            className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground hover-elevate shrink-0"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Link>
-          <div>
+    <OverlayShell title={doc.title}>
+      <div className="px-4 py-6 max-w-2xl mx-auto" data-testid={`page-legal-${doc.slug}`}>
+        <header className="mb-5 flex items-center gap-3">
+          <span className="flex items-center justify-center w-11 h-11 rounded-full bg-muted text-muted-foreground shrink-0">
+            <Icon className="w-6 h-6" />
+          </span>
+          <div className="min-w-0">
             <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
-              TakeRide
+              Правовые документы
             </div>
-            <h1 className="font-display text-2xl font-light leading-tight flex items-center gap-2">
-              <Icon className="w-5 h-5 shrink-0" /> {doc.title}
-            </h1>
+            <h1 className="font-display text-xl font-light leading-tight">{doc.title}</h1>
+            {doc.description && (
+              <p className="text-xs text-muted-foreground mt-0.5">{doc.description}</p>
+            )}
           </div>
         </header>
 
@@ -64,6 +61,6 @@ function LegalDoc({ doc }: { doc: LegalDoc }) {
           )}
         </div>
       </div>
-    </div>
+    </OverlayShell>
   );
 }
