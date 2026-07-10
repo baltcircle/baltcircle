@@ -679,6 +679,9 @@ export function MapLibreMap({
   const onCenterGetterRef  = useRef(onCenterGetter);  onCenterGetterRef.current = onCenterGetter;
   const followUserRef      = useRef(followUser);      followUserRef.current      = followUser;
   const onUserLocationRef  = useRef(onUserLocation);  onUserLocationRef.current  = onUserLocation;
+  // Кэш последней GPS-точки — нужен чтобы при включении followUser мгновенно
+  // перелететь к точке, а не ждать следующего watchPosition tick (может быть 5-15 сек).
+  const lastUserPosRef     = useRef<{ lng: number; lat: number } | null>(null);
   const onSelectBikeRef    = useRef(onSelectBike);    onSelectBikeRef.current = onSelectBike;
   const onSelectParkingRef = useRef(onSelectParking); onSelectParkingRef.current = onSelectParking;
   const onSelectRideRef    = useRef(onSelectRide);    onSelectRideRef.current = onSelectRide;
@@ -850,6 +853,8 @@ export function MapLibreMap({
           geometry: { type: "Point", coordinates: [lng, lat] },
         }],
       });
+      // Кэшируем последнюю точку для мгновенного центрования при включении followUser.
+      lastUserPosRef.current = { lng, lat };
       // Слежение за пользователем — мягкий easeTo (а не flyTo, чтобы карта не дёргалась).
       if (followUserRef.current) {
         map.easeTo({ center: [lng, lat], duration: 800, essential: true });
@@ -865,6 +870,18 @@ export function MapLibreMap({
     );
     return () => navigator.geolocation.clearWatch(watchId);
   }, [ready]);
+
+  // При включении followUser (начало аренды) — мгновенно летим к GPS-точке,
+  // не дожидаясь следующего watchPosition tick.
+  useEffect(() => {
+    if (!ready) return;
+    if (!followUser) return;
+    const map = mapRef.current;
+    if (!map) return;
+    const p = lastUserPosRef.current;
+    if (!p) return; // точка ещё не пришла — первый tick сам сцентрирует.
+    map.flyTo({ center: [p.lng, p.lat], zoom: 15, duration: 800, essential: true });
+  }, [followUser, ready]);
 
   // ── HTML markers: parkings, bikes, active-ride starts, tickets ──────────────
   // Coordinate note: bikes/parkings are stored in abstract space; mapToReal(lng,lat)

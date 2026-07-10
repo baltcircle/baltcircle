@@ -23,7 +23,8 @@ export function Toaster() {
               )}
             </div>
             {action}
-            <ToastClose />
+            {/* Крестик визуально скрыт, но в DOM остаётся — swipe-логика тоаста кликает по [toast-close] для dismiss. */}
+            <ToastClose className="sr-only pointer-events-none" />
           </Toast>
         )
       })}
