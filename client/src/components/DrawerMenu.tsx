@@ -19,11 +19,10 @@ interface MenuItemProps {
   onClose: () => void;
 }
 
-function MenuItem({ href, icon: Icon, label, onClose }: MenuItemProps) {
+function MenuItem({ href, icon: Icon, label }: Omit<MenuItemProps, "onClose">) {
   return (
     <Link
       href={href}
-      onClick={onClose}
       className="flex items-center gap-4 px-2 py-3 rounded-xl text-sidebar-foreground hover:bg-black/10 transition-colors"
     >
       <Icon className="w-5 h-5 text-sidebar-foreground/70 shrink-0" />
@@ -112,7 +111,6 @@ export function DrawerMenu({ open, onClose }: Props) {
         {/* User info block — кликабельный, ведёт в /settings */}
         <Link
           href="/settings"
-          onClick={onClose}
           className="mx-4 mt-2 block rounded-2xl hover:bg-black/10 transition-colors px-2 py-2"
         >
           <div className="flex items-start justify-between gap-2">
@@ -167,7 +165,6 @@ export function DrawerMenu({ open, onClose }: Props) {
             </div>
             <Link
               href="/payment-methods"
-              onClick={onClose}
               className="mt-3 flex items-center justify-center w-full h-10 rounded-full bg-primary hover:opacity-90 text-primary-foreground text-sm font-medium transition-colors"
             >
               Добавить оплату
@@ -180,12 +177,12 @@ export function DrawerMenu({ open, onClose }: Props) {
 
         {/* Nav items — паддинг снизу чтобы последний пункт не прилипал к краю */}
         <nav className="flex-1 overflow-y-auto px-4 pb-4">
-          <MenuItem href="/payment-methods" icon={Wallet}      label="Способы оплаты" onClose={onClose} />
-          <MenuItem href="/rides"           icon={Route}       label="История"        onClose={onClose} />
-          <MenuItem href="/safety"          icon={ShieldCheck} label="Информация"     onClose={onClose} />
-          <MenuItem href="/support"         icon={LifeBuoy}    label="Помощь"         onClose={onClose} />
+          <MenuItem href="/payment-methods" icon={Wallet}      label="Способы оплаты" />
+          <MenuItem href="/rides"           icon={Route}       label="История"         />
+          <MenuItem href="/safety"          icon={ShieldCheck} label="Информация"      />
+          <MenuItem href="/support"         icon={LifeBuoy}    label="Помощь"          />
           {isStaff && (
-            <MenuItem href="/admin"         icon={Shield}      label="Операторская"   onClose={onClose} />
+            <MenuItem href="/admin"         icon={Shield}      label="Операторская"    />
           )}
         </nav>
       </div>
