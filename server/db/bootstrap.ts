@@ -421,31 +421,31 @@ async function bootstrapDemoData() {
     ).rows[0];
     const storedVersion = verRow ? parseInt(verRow.value, 10) : 0;
 
-    const coastalTowns = ["Светлогорск", "Пионерский", "Зеленоградск"];
-    const names = (await client.query<{ name: string }>("SELECT name FROM parkings")).rows;
-    const hasLegacyParkings =
-      names.length > 0 && names.some((p) => !coastalTowns.some((t) => p.name.includes(t)));
-
-    const needsReseed = storedVersion < DEMO_DATA_VERSION || hasLegacyParkings;
+    // Reseed только при явном бампе DEMO_DATA_VERSION. Прежняя эвристика
+    // hasLegacyParkings считала любую добавленную оператором парковку (напр. в
+    // Калининграде) "legacy" → на каждом рестарте выносила к операторские парковки,
+    // и все поездки/кошельки/платежи. Убираем — seed контролируется только версией.
+    const needsReseed = storedVersion < DEMO_DATA_VERSION;
     if (!needsReseed) return;
 
     await client.query("BEGIN");
-    // Clear demo rows only. Manual (seed = FALSE) bikes and their rides/tickets
-    // are preserved; the wider demo payments/wallet/zones/parkings carry no
-    // manual data and are fully cleared. serial sequences are intentionally left
-    // untouched so preserved manual-bike ride ids stay stable.
+    // Стираем ТОЛЬКО demo-строки. Ключевое изменение: все DELETE теперь
+    // фильтруют по seed=TRUE или по demo-user-id. Операторские парковки, реальные
+    // кошельки, платежи и поездки обычных юзеров — не трогаем.
+    const DEMO_USERS = ['demo', 'user-2', 'user-3', 'user-4', 'user-5'];
     await client.query(`
       DELETE FROM ticket_comments WHERE ticket_id IN (
         SELECT id FROM tickets WHERE bike_id IN (SELECT id FROM bikes WHERE seed = TRUE)
       );
-      DELETE FROM rides   WHERE bike_id IN (SELECT id FROM bikes WHERE seed = TRUE);
+      DELETE FROM rides   WHERE bike_id IN (SELECT id FROM bikes WHERE seed = TRUE)
+                               AND user_id = ANY($1::text[]);
       DELETE FROM tickets WHERE bike_id IN (SELECT id FROM bikes WHERE seed = TRUE);
-      DELETE FROM payments;
-      DELETE FROM wallet;
+      DELETE FROM payments WHERE user_id = ANY($1::text[]);
+      DELETE FROM wallet   WHERE user_id = ANY($1::text[]);
       DELETE FROM zones;
-      DELETE FROM parkings;
-      DELETE FROM bikes   WHERE seed = TRUE;
-    `);
+      DELETE FROM parkings WHERE seed = TRUE;
+      DELETE FROM bikes    WHERE seed = TRUE;
+    `, [DEMO_USERS]);
     await populateDemoData(client);
     await client.query(
       "INSERT INTO meta (key, value) VALUES ('demo_data_version', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
