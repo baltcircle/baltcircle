@@ -50,6 +50,18 @@ interface MapLibreMapProps {
   onMapClick?: (coords: [number, number]) => void;
   /** Receives a getter for the current map centre as [lat, lng] (editor). */
   onCenterGetter?: (getCenter: () => [number, number]) => void;
+  /**
+   * Live draft для редактора карты. Точки — [lat, lng]. Отрисуется как
+   * полупрозрачная линия/полигон + вершины-маркеры с номерами. Клик по вершине
+   * вызывает onVertexClick(index). Клик по первой вершине для zone удобно
+   * трактовать как «замкнуть» на уровне вызывающего кода.
+   */
+  editorDraft?: {
+    points: [number, number][];
+    kind: "route" | "zone";
+    color: string;
+    onVertexClick?: (index: number) => void;
+  } | null;
   height?: string;
   showLabels?: boolean;
   center?: [number, number] | null;
@@ -209,6 +221,8 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       // tracks. Populated at runtime via setData; empty at init.
       "saved-objects": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       "ride-tracks":   { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      // Live editor draft — pending line/polygon during drawing.
+      "editor-draft":  { type: "geojson", data: { type: "FeatureCollection", features: [] } },
       // Blue-dot: user's current GPS position. Populated at runtime via setData
       // when navigator.geolocation.watchPosition resolves. Empty at init so the
       // dot doesn't render on the null island before permission is granted.
@@ -547,6 +561,26 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
         paint: { "line-color": MARKER_COLORS.ride, "line-width": 4, "line-opacity": 0.9 },
       },
 
+      // ── EDITOR DRAFT (live drawing preview) ───────────────────────────────────
+      // Полупрозрачная заливка для zone-черновика.
+      {
+        id: "editor-draft-fill", type: "fill", source: "editor-draft",
+        filter: ["==", ["get", "kind"], "zone"],
+        paint: { "fill-color": ["get", "color"], "fill-opacity": 0.15 },
+      },
+      // Пунктирная линия черновика (и для route, и для zone до замыкания).
+      {
+        id: "editor-draft-line", type: "line", source: "editor-draft",
+        filter: ["==", ["$type"], "LineString"],
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: {
+          "line-color": ["get", "color"],
+          "line-width": 3,
+          "line-opacity": 0.9,
+          "line-dasharray": [2, 2],
+        },
+      },
+
       // ── USER LOCATION (голубая точка в стиле Google/Apple Maps) ─────────────
       // Три слоя на одном GeoJSON Point: мягкая аура → белое кольцо → цветная точка.
       // Цвет центра — брендовый --primary #61B5C4 (голубой TakeRide).
@@ -660,6 +694,7 @@ export function MapLibreMap({
   bikes = [], activeRides = [], tickets = [], layers = {},
   selectedBikeId, onSelectBike, onSelectParking, onSelectRide, onSelectTicket,
   interactive = true, onMapClick, onCenterGetter, followUser, onUserLocation,
+  editorDraft = null,
   height = "100%", showLabels = false, center, className,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -668,6 +703,9 @@ export function MapLibreMap({
   // routes/zones/tracks go through GeoJSON sources. Kept in a ref so the render
   // effect can clear the previous batch before drawing the next.
   const markersRef   = useRef<any[]>([]);
+  // Editor draft vertices — отдельный пул, чтобы не дёргать основной слой
+  // маркеров при каждом добавлении точки.
+  const draftMarkersRef = useRef<any[]>([]);
   // Signals the overlay effects that the map instance + sources exist. Data that
   // resolves before map init would otherwise render into a null map and stay blank.
   const readyRef     = useRef(false);
@@ -812,6 +850,8 @@ export function MapLibreMap({
       readyRef.current = false;
       for (const m of markersRef.current) { try { m.remove(); } catch { /* ignore */ } }
       markersRef.current = [];
+      for (const m of draftMarkersRef.current) { try { m.remove(); } catch { /* ignore */ } }
+      draftMarkersRef.current = [];
       try { mapRef.current?.remove(); } catch { /* ignore */ }
       mapRef.current = null;
     };
@@ -977,6 +1017,90 @@ export function MapLibreMap({
     src.setData({ type: "FeatureCollection", features });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, mapObjects, show.objects]);
+
+  // ── EDITOR DRAFT: линия/полигон + вершины-маркеры ─────────────────────────
+  // Точки в editorDraft хранятся как [lat, lng]; в GeoJSON идёт [lng, lat].
+  // Линия/полигон рисуется через layer, вершины — через HTML-маркеры
+  // (чтобы клик по ним был целью — так вызывающий код видит index вершины).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const src = map.getSource("editor-draft");
+    if (!src) return;
+
+    // 1) Линия/полигон
+    const features: any[] = [];
+    const pts = editorDraft?.points ?? [];
+    const color = editorDraft?.color ?? "#1d6f8e";
+    const kind = editorDraft?.kind ?? "route";
+    if (pts.length >= 2) {
+      const ring = pts.map(([lat, lng]) => [lng, lat]);
+      if (kind === "zone" && pts.length >= 3) {
+        const closed = [...ring, ring[0]];
+        features.push({
+          type: "Feature",
+          properties: { kind: "zone", color },
+          geometry: { type: "Polygon", coordinates: [closed] },
+        });
+      }
+      features.push({
+        type: "Feature",
+        properties: { kind, color },
+        geometry: { type: "LineString", coordinates: ring },
+      });
+    }
+    src.setData({ type: "FeatureCollection", features });
+
+    // 2) Вершины — HTML маркеры
+    for (const m of draftMarkersRef.current) { try { m.remove(); } catch { /* ignore */ } }
+    draftMarkersRef.current = [];
+
+    if (pts.length === 0) return;
+
+    const total = pts.length;
+    const isZone = kind === "zone";
+    pts.forEach((p, i) => {
+      const [lat, lng] = p;
+      const isFirst = i === 0;
+      const isLast = i === total - 1;
+      const el = document.createElement("div");
+      const size = isFirst ? 22 : 18;
+      el.style.width = `${size}px`;
+      el.style.height = `${size}px`;
+      el.style.borderRadius = "50%";
+      el.style.background = isFirst ? "#ffffff" : color;
+      el.style.border = isFirst ? `3px solid ${color}` : "2px solid #ffffff";
+      el.style.boxShadow = "0 2px 6px rgba(0,0,0,0.35)";
+      el.style.boxSizing = "border-box";
+      el.style.display = "flex";
+      el.style.alignItems = "center";
+      el.style.justifyContent = "center";
+      el.style.font = "600 10px/1 system-ui, sans-serif";
+      el.style.color = isFirst ? color : "#ffffff";
+      el.style.cursor = editorDraft?.onVertexClick ? "pointer" : "default";
+      // Номер вершины внутри кружка (только если символ помещается).
+      el.textContent = isFirst && isZone ? "◎" : String(i + 1);
+      if (isFirst && isZone && total >= 3) {
+        el.title = "Кликни чтобы замкнуть зону";
+        el.style.animation = "editor-pulse 1.5s ease-in-out infinite";
+      } else if (isFirst) {
+        el.title = "Первая точка";
+      } else if (isLast) {
+        el.title = `Точка ${i + 1} · последняя`;
+      } else {
+        el.title = `Точка ${i + 1}`;
+      }
+      if (editorDraft?.onVertexClick) {
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          editorDraft.onVertexClick!(i);
+        });
+      }
+      const marker = new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(map);
+      draftMarkersRef.current.push(marker);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, editorDraft?.points, editorDraft?.kind, editorDraft?.color]);
 
   // ── GeoJSON overlays: ride tracks (customer single ride + admin active rides) ─
   // Track points are [[x, y, t], ...] in abstract space; mapToReal(x,y) → [lat,lng],
