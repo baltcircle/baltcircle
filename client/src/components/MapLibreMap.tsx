@@ -571,7 +571,7 @@ const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"
       // Пунктирная линия черновика (и для route, и для zone до замыкания).
       {
         id: "editor-draft-line", type: "line", source: "editor-draft",
-        filter: ["==", ["$type"], "LineString"],
+        filter: ["==", ["geometry-type"], "LineString"],
         layout: { "line-join": "round", "line-cap": "round" },
         paint: {
           "line-color": ["get", "color"],
