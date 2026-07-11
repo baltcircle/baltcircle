@@ -1063,7 +1063,14 @@ export function MapLibreMap({
       const [lat, lng] = p;
       const isFirst = i === 0;
       const isLast = i === total - 1;
+      // Важно: MapLibre ставит transform на сам элемент маркера (translate
+      // для позиционирования). Любые свои анимации/scale — только на вложенном child,
+      // иначе keyframe перезапишет координатный transform и маркер уедет в (0,0).
+      const wrap = document.createElement("div");
+      wrap.style.pointerEvents = "auto";
       const el = document.createElement("div");
+      wrap.appendChild(el);
+
       const size = isFirst ? 22 : 18;
       el.style.width = `${size}px`;
       el.style.height = `${size}px`;
@@ -1078,25 +1085,32 @@ export function MapLibreMap({
       el.style.font = "600 10px/1 system-ui, sans-serif";
       el.style.color = isFirst ? color : "#ffffff";
       el.style.cursor = editorDraft?.onVertexClick ? "pointer" : "default";
-      // Номер вершины внутри кружка (только если символ помещается).
+      // Номер вершины внутри кружка.
       el.textContent = isFirst && isZone ? "◎" : String(i + 1);
       if (isFirst && isZone && total >= 3) {
-        el.title = "Кликни чтобы замкнуть зону";
+        wrap.title = "Кликни чтобы замкнуть зону";
+        // Анимация только на child — она не сломает координатный transform маркера.
         el.style.animation = "editor-pulse 1.5s ease-in-out infinite";
+        // Кликабельная область — когда первая точка готова к замыканию, делаем
+        // крупнее через прозрачный hit-area, чтобы палец точно попадал (особенно на мобилах).
+        el.style.outline = `12px solid transparent`;
+        el.style.outlineOffset = `0px`;
       } else if (isFirst) {
-        el.title = "Первая точка";
+        wrap.title = "Первая точка";
       } else if (isLast) {
-        el.title = `Точка ${i + 1} · последняя`;
+        wrap.title = `Точка ${i + 1} · последняя`;
       } else {
-        el.title = `Точка ${i + 1}`;
+        wrap.title = `Точка ${i + 1}`;
       }
       if (editorDraft?.onVertexClick) {
-        el.addEventListener("click", (ev) => {
+        const handler = (ev: Event) => {
           ev.stopPropagation();
           editorDraft.onVertexClick!(i);
-        });
+        };
+        wrap.addEventListener("click", handler);
+        wrap.addEventListener("touchend", handler, { passive: true });
       }
-      const marker = new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(map);
+      const marker = new maplibregl.Marker({ element: wrap }).setLngLat([lng, lat]).addTo(map);
       draftMarkersRef.current.push(marker);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
