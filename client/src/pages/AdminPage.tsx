@@ -10,8 +10,9 @@ import { fmtRelative, fmtRub } from "@/lib/format";
 import {
   Plus, Map as MapIcon, Users as UsersIcon, Wrench, BarChart3,
   Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity, ChevronRight, MapPin,
-  LifeBuoy,
+  LifeBuoy, MessageSquare,
 } from "lucide-react";
+import { useSupportUnread } from "@/hooks/use-support-unread";
 
 // Active rides running longer than this are surfaced as an alert — a likely
 // abandoned/forgotten rental or a lock that never reported its end.
@@ -49,6 +50,9 @@ export function AdminPage() {
   const parkings = parkingsQ.data ?? [];
   const supportTickets = supportQ.data ?? [];
   const openSupport = supportTickets.filter(t => t.status !== "resolved");
+
+  // Непрочитанные чаты + звуковое уведомление при новом сообщении от пользователя.
+  const support = useSupportUnread();
 
   const m = useMemo(() => deriveMetrics({ bikes, users, rides, tickets, mapObjects, parkings }), [
     bikes, users, rides, tickets, mapObjects, parkings,
@@ -154,7 +158,7 @@ export function AdminPage() {
           <QuickAction href="/admin/parkings" icon={<MapPin className="w-5 h-5" />} label="Парковки" testId="quick-action-parkings" />
           <QuickAction href="/admin/users" icon={<UsersIcon className="w-5 h-5" />} label="Пользователи" testId="quick-action-users" />
           <QuickAction href="/admin/maintenance" icon={<Wrench className="w-5 h-5" />} label="Сервис" testId="quick-action-maintenance" />
-          <QuickAction href="/admin/support" icon={<LifeBuoy className="w-5 h-5" />} label="Поддержка" testId="quick-action-support" />
+          <QuickAction href="/admin/support" icon={<LifeBuoy className="w-5 h-5" />} label="Поддержка" testId="quick-action-support" badge={support.unreadTotal} />
           <QuickAction href="/admin/analytics" icon={<BarChart3 className="w-5 h-5" />} label="Аналитика" testId="quick-action-analytics" />
         </div>
       </section>
@@ -209,13 +213,18 @@ export function AdminPage() {
         <Card className="p-5" data-testid="dashboard-support-inbox">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-lg font-light flex items-center gap-2">
-              <LifeBuoy className={`w-4 h-4 ${openSupport.length ? "text-amber-500" : "text-primary"}`} />
-              Обращения в поддержку
+              <LifeBuoy className={`w-4 h-4 ${(openSupport.length || support.unreadTotal) ? "text-amber-500" : "text-primary"}`} />
+              Поддержка
             </h2>
             <div className="flex items-center gap-2">
-              {openSupport.length > 0 && <Badge variant="outline">{openSupport.length}</Badge>}
+              {support.unreadTotal > 0 && (
+                <Badge className="bg-red-500 text-white hover:bg-red-500" data-testid="dashboard-support-unread-badge">
+                  <MessageSquare className="w-3 h-3 mr-1" />
+                  {support.unreadTotal > 99 ? "99+" : support.unreadTotal} новых
+                </Badge>
+              )}
               <Link href="/admin/support" className="text-xs text-primary hover:underline" data-testid="link-support-detail">
-                Все
+                Чаты
               </Link>
             </div>
           </div>
@@ -543,12 +552,21 @@ function Kpi({ label, value, testId, tone, icon }: {
   );
 }
 
-function QuickAction({ href, icon, label, testId }: {
-  href: string; icon: React.ReactNode; label: string; testId: string;
+function QuickAction({ href, icon, label, testId, badge }: {
+  href: string; icon: React.ReactNode; label: string; testId: string; badge?: number;
 }) {
+  const show = typeof badge === "number" && badge > 0;
   return (
     <Link href={href} data-testid={testId}>
-      <Card className="p-4 h-full flex flex-col items-center justify-center gap-2 text-center hover-elevate cursor-pointer">
+      <Card className="p-4 h-full flex flex-col items-center justify-center gap-2 text-center hover-elevate cursor-pointer relative">
+        {show && (
+          <span
+            className="absolute top-1.5 right-1.5 min-w-[20px] h-5 px-1 inline-flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-semibold shadow-sm"
+            data-testid={`${testId}-badge`}
+          >
+            {badge! > 99 ? "99+" : badge}
+          </span>
+        )}
         <span className="text-primary">{icon}</span>
         <span className="text-xs font-medium leading-tight">{label}</span>
       </Card>

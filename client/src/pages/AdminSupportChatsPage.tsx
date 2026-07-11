@@ -7,6 +7,7 @@ import type {
 } from "@shared/schema";
 import { apiRequest, queryClient, API_BASE } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useSupportUnread } from "@/hooks/use-support-unread";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,21 +50,14 @@ async function fileToBase64(file: File): Promise<string> {
 export function AdminSupportChatsPage() {
   const inboxQ = useQuery<AdminSupportConversationRow[]>({
     queryKey: INBOX_KEY,
-    refetchInterval: 30_000,
   });
   const rows = inboxQ.data ?? [];
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
 
-  // SSE inbox — обновление списка при новых сообщениях
-  useEffect(() => {
-    const es = new EventSource(`${API_BASE}/api/admin/support/inbox/stream`, { withCredentials: true });
-    es.onmessage = () => {
-      queryClient.invalidateQueries({ queryKey: INBOX_KEY });
-    };
-    return () => es.close();
-  }, []);
+  // Звуковое уведомление + inbox SSE + polling в одном месте.
+  useSupportUnread();
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
