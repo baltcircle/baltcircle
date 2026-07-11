@@ -1118,6 +1118,36 @@ export function MapLibreMap({
           el.style.animation = "none";
           el.style.transform = "scale(1.1)";
         });
+        // Live-обновление GeoJSON source во время перетаскивания: точка
+        // не отрывается от линии/полигона. Важно: меняем ТОЛЬКО source,
+        // без вызова onVertexDrag — иначе React пересоздаст маркеры
+        // через useEffect и drag прервётся.
+        marker.on("drag", () => {
+          const ll = marker.getLngLat();
+          const dragSrc = map.getSource("editor-draft") as maplibregl.GeoJSONSource | undefined;
+          if (!dragSrc) return;
+          // pts — из замыкания (текущий черновик); i — индекс этой вершины.
+          const nextPts: [number, number][] = pts.map((pp, idx) =>
+            idx === i ? [ll.lat, ll.lng] as [number, number] : pp,
+          );
+          const nextFeatures: any[] = [];
+          if (nextPts.length >= 2) {
+            const nextRing = nextPts.map(([la, ln]) => [ln, la]);
+            if (kind === "zone" && nextPts.length >= 3) {
+              nextFeatures.push({
+                type: "Feature",
+                properties: { kind: "zone", color },
+                geometry: { type: "Polygon", coordinates: [[...nextRing, nextRing[0]]] },
+              });
+            }
+            nextFeatures.push({
+              type: "Feature",
+              properties: { kind, color },
+              geometry: { type: "LineString", coordinates: nextRing },
+            });
+          }
+          dragSrc.setData({ type: "FeatureCollection", features: nextFeatures });
+        });
         marker.on("dragend", () => {
           const ll = marker.getLngLat();
           el.style.transform = "";

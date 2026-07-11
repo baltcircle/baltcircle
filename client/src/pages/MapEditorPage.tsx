@@ -23,6 +23,8 @@ import {
   Check,
   CircleDot,
   Info,
+  Pencil,
+  X,
 } from "lucide-react";
 
 const ADMIN_OBJECTS_KEY = ["/api/admin/map-objects"] as const;
@@ -60,13 +62,18 @@ export function MapEditorPage() {
   const [color, setColor] = useState(TYPE_OPTIONS[0].color);
   const [draft, setDraft] = useState<[number, number][]>([]);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
   const activeType = TYPE_OPTIONS.find((o) => o.id === type) ?? TYPE_OPTIONS[0];
   const minPoints = activeType.kind === "zone" ? 3 : 2;
   const canSave = draft.length >= minPoints && name.trim().length > 0;
 
-  // Public map отображает только активные + текущий черновик.
-  const previewObjects = useMemo(() => (objectsQ.data ?? []).filter((o) => o.active), [objectsQ.data]);
+  // Public map отображает только активные; если что-то редактируется — его
+  // старую геометрию скрываем, чтобы не дублировать черновик.
+  const previewObjects = useMemo(
+    () => (objectsQ.data ?? []).filter((o) => o.active && o.id !== editingId),
+    [objectsQ.data, editingId],
+  );
   const mapParkings = useMemo(() => (parkingsQ.data ?? []).filter((p) => !p.archivedAt), [parkingsQ.data]);
 
   // Undo по Ctrl/⌘+Z.
@@ -83,21 +90,26 @@ export function MapEditorPage() {
 
   const saveM = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/map-objects", {
+      const payload = {
         name: name.trim(),
         type,
         kind: activeType.kind,
         color,
         points: draft,
-      });
+      };
+      const res = editingId !== null
+        ? await apiRequest("PATCH", `/api/map-objects/${editingId}`, payload)
+        : await apiRequest("POST", "/api/map-objects", payload);
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ADMIN_OBJECTS_KEY });
       queryClient.invalidateQueries({ queryKey: ["/api/map-objects"] });
+      const wasEditing = editingId !== null;
       setDraft([]);
       setName("");
-      toast({ title: "Объект сохранён" });
+      setEditingId(null);
+      toast({ title: wasEditing ? "Изменения сохранены" : "Объект сохранён" });
     },
     onError: (e: Error) => toast({ title: "Не удалось сохранить", description: e.message, variant: "destructive" }),
   });
@@ -152,6 +164,22 @@ export function MapEditorPage() {
     if (draft.length > 0 && opt.kind !== activeType.kind) {
       toast({ title: "Тип изменён", description: "Черновик сохранён; учтите: минимальное число точек могло измениться." });
     }
+  }
+
+  function startEdit(o: MapObject) {
+    if (draft.length > 0 && !window.confirm("Отменить текущий черновик и начать редактирование?")) return;
+    setEditingId(o.id);
+    setType(o.type as ObjType);
+    setColor(o.color);
+    setName(o.name);
+    setDraft((o.points as [number, number][]).slice());
+    setPanelOpen(false);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setDraft([]);
+    setName("");
   }
 
   function handleVertexClick(index: number) {
@@ -228,6 +256,15 @@ export function MapEditorPage() {
 
       {/* ── Нижний плавающий тулбар: рисование ─────────────────────────────── */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 w-[min(760px,calc(100%-24px))]">
+        {editingId !== null && (
+          <div className="mb-2 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs shadow-lg flex items-center gap-2" data-testid="editor-editing-badge">
+            <Pencil className="w-3 h-3" />
+            <span className="truncate">Редактирование: {name || `#${editingId}`}</span>
+            <button onClick={cancelEdit} className="ml-auto opacity-80 hover:opacity-100 flex items-center gap-1 shrink-0" title="Отменить">
+              <X className="w-3 h-3" />Отмена
+            </button>
+          </div>
+        )}
         <Card className="px-3 py-3 shadow-lg backdrop-blur bg-background/95">
           <div className="flex items-center gap-2 mb-3">
             <div
@@ -274,12 +311,12 @@ export function MapEditorPage() {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setDraft([])}
-                disabled={draft.length === 0}
+                onClick={editingId !== null ? cancelEdit : () => setDraft([])}
+                disabled={draft.length === 0 && editingId === null}
                 data-testid="editor-clear"
-                title="Очистить черновик"
+                title={editingId !== null ? "Отменить редактирование" : "Очистить черновик"}
               >
-                <Eraser className="w-4 h-4" />
+                {editingId !== null ? <X className="w-4 h-4" /> : <Eraser className="w-4 h-4" />}
               </Button>
               <Button
                 type="button"
@@ -290,7 +327,7 @@ export function MapEditorPage() {
                 className="min-w-[110px]"
               >
                 <Save className="w-4 h-4 mr-1.5" />
-                {saveM.isPending ? "Сохр…" : "Сохранить"}
+                {saveM.isPending ? "Сохр…" : (editingId !== null ? "Обновить" : "Сохранить")}
               </Button>
             </div>
           </div>
@@ -339,6 +376,17 @@ export function MapEditorPage() {
                       скрыт
                     </Badge>
                   )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0"
+                    onClick={() => startEdit(o)}
+                    data-testid={`editor-edit-${o.id}`}
+                    aria-label="Редактировать объект"
+                    title="Редактировать"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"

@@ -305,9 +305,15 @@ export const insertMapObjectSchema = z.object({
 });
 export type InsertMapObject = z.infer<typeof insertMapObjectSchema>;
 
-// Admin: toggle a map object's active state (controls public-map visibility).
+// Admin: patch a map object. Every field is optional; supplying `points`
+// (with kind/color/name) lets the editor overwrite geometry in place.
 export const updateMapObjectSchema = z.object({
-  active: z.boolean(),
+  name: z.string().min(1).max(120).optional(),
+  type: z.enum(["route", "operating", "slow", "forbidden"]).optional(),
+  kind: z.enum(["route", "zone"]).optional(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  points: z.array(z.tuple([z.number(), z.number()])).min(2).optional(),
+  active: z.boolean().optional(),
 });
 export type UpdateMapObjectInput = z.infer<typeof updateMapObjectSchema>;
 

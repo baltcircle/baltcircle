@@ -53,7 +53,7 @@ export function registerMapRoutes(app: Express): void {
   app.patch("/api/map-objects/:id", requireRoleWhenConfigured(), async (req, res) => {
     const parsed = updateMapObjectSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-    const obj = await storage.setMapObjectActive(Number(req.params.id), parsed.data.active);
+    const obj = await storage.updateMapObject(Number(req.params.id), parsed.data);
     if (!obj) return res.status(404).json({ error: "Объект не найден" });
     res.json(obj);
   });

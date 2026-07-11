@@ -245,6 +245,14 @@ export interface IStorage {
   listMapObjects(opts?: { activeOnly?: boolean }): Promise<MapObject[]>;
   createMapObject(input: InsertMapObject): Promise<MapObject>;
   setMapObjectActive(id: number, active: boolean): Promise<MapObject | undefined>;
+  updateMapObject(id: number, patch: Partial<{
+    name: string;
+    type: "route" | "operating" | "slow" | "forbidden";
+    kind: "route" | "zone";
+    color: string;
+    points: [number, number][];
+    active: boolean;
+  }>): Promise<MapObject | undefined>;
   deleteMapObject(id: number): Promise<boolean>;
   // analytics
   analytics(): Promise<any>;
@@ -1547,7 +1555,28 @@ export class DatabaseStorage implements IStorage {
   }
 
   async setMapObjectActive(id: number, active: boolean) {
-    await db.update(mapObjects).set({ active } as any).where(eq(mapObjects.id, id));
+    return this.updateMapObject(id, { active });
+  }
+
+  async updateMapObject(id: number, patch: Partial<{
+    name: string;
+    type: "route" | "operating" | "slow" | "forbidden";
+    kind: "route" | "zone";
+    color: string;
+    points: [number, number][];
+    active: boolean;
+  }>) {
+    const set: Record<string, unknown> = {};
+    if (patch.name !== undefined) set.name = patch.name;
+    if (patch.type !== undefined) set.type = patch.type;
+    if (patch.kind !== undefined) set.kind = patch.kind;
+    if (patch.color !== undefined) set.color = patch.color;
+    if (patch.points !== undefined) set.points = JSON.stringify(patch.points);
+    if (patch.active !== undefined) set.active = patch.active;
+    if (Object.keys(set).length === 0) {
+      return (await db.select().from(mapObjects).where(eq(mapObjects.id, id)).limit(1))[0] as MapObject | undefined;
+    }
+    await db.update(mapObjects).set(set as any).where(eq(mapObjects.id, id));
     return (await db.select().from(mapObjects).where(eq(mapObjects.id, id)).limit(1))[0] as MapObject | undefined;
   }
 
