@@ -115,7 +115,7 @@ export function DrawerMenu({ open, onClose }: Props) {
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-3 min-w-0">
-              <Logo compact className="h-9 w-9 shrink-0" />
+              <Logo compact className="h-9 w-auto shrink-0" />
               <div className="min-w-0">
                 <h2 className="text-2xl font-semibold text-sidebar-foreground leading-tight truncate">
                   {user?.name ?? "Гость"}
