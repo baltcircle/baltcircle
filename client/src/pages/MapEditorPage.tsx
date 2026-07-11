@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MapObject, Parking } from "@shared/schema";
 import { MapLibreMap } from "@/components/MapLibreMap";
 import { Card } from "@/components/ui/card";
@@ -16,7 +16,6 @@ import {
   Route as RouteIcon,
   Hexagon,
   Undo2,
-  Crosshair,
   Eye,
   EyeOff,
   ChevronRight,
@@ -61,7 +60,6 @@ export function MapEditorPage() {
   const [color, setColor] = useState(TYPE_OPTIONS[0].color);
   const [draft, setDraft] = useState<[number, number][]>([]);
   const [panelOpen, setPanelOpen] = useState(true);
-  const centerGetterRef = useRef<(() => [number, number]) | null>(null);
 
   const activeType = TYPE_OPTIONS.find((o) => o.id === type) ?? TYPE_OPTIONS[0];
   const minPoints = activeType.kind === "zone" ? 3 : 2;
@@ -146,15 +144,6 @@ export function MapEditorPage() {
     saveM.mutate();
   }
 
-  function addCenterPoint() {
-    const getCenter = centerGetterRef.current;
-    if (!getCenter) {
-      toast({ title: "Карта ещё не готова", variant: "destructive" });
-      return;
-    }
-    setDraft((d) => [...d, getCenter()]);
-  }
-
   function chooseType(id: ObjType) {
     const opt = TYPE_OPTIONS.find((o) => o.id === id)!;
     setType(id);
@@ -196,12 +185,13 @@ export function MapEditorPage() {
         height="100%"
         className="absolute inset-0"
         onMapClick={(coords) => setDraft((d) => [...d, coords])}
-        onCenterGetter={(fn) => { centerGetterRef.current = fn; }}
         editorDraft={{
           points: draft,
           kind: activeType.kind,
           color,
           onVertexClick: handleVertexClick,
+          onVertexDrag: (index, coords) =>
+            setDraft((d) => d.map((p, i) => (i === index ? coords : p))),
         }}
       />
 
@@ -279,16 +269,6 @@ export function MapEditorPage() {
                 title="Отменить последнюю точку (Ctrl/⌘+Z)"
               >
                 <Undo2 className="w-4 h-4" />
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addCenterPoint}
-                data-testid="editor-add-center"
-                title="Добавить точку в центре карты"
-              >
-                <Crosshair className="w-4 h-4" />
               </Button>
               <Button
                 type="button"
@@ -440,14 +420,10 @@ function HintBlock({ kind }: { kind: Kind }) {
         <Info className="w-3 h-3" /> Как рисовать
       </div>
       <div>• Клик по карте — добавить точку</div>
+      <div>• Перетащи вершину — переместить точку</div>
       {kind === "zone" ? (
-        <>
-          <div>• Первая точка отмечена ◎ — клик по ней замыкает зону</div>
-          <div>• Полигон замыкается автоматически с 3 точек</div>
-        </>
-      ) : (
-        <div>• Клик по последней точке — удалить её</div>
-      )}
+        <div>• Клик по первой точке ◎ — замкнуть зону и сохранить</div>
+      ) : null}
       <div>• Клик по любой вершине — убрать её из линии</div>
       <div>• Ctrl/⌘+Z — отменить последнюю точку</div>
     </div>

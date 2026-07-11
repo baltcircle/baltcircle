@@ -61,6 +61,8 @@ interface MapLibreMapProps {
     kind: "route" | "zone";
     color: string;
     onVertexClick?: (index: number) => void;
+    /** Перетаскивание вершины. coords — [lat, lng]. */
+    onVertexDrag?: (index: number, coords: [number, number]) => void;
   } | null;
   height?: string;
   showLabels?: boolean;
@@ -1084,7 +1086,7 @@ export function MapLibreMap({
       el.style.justifyContent = "center";
       el.style.font = "600 10px/1 system-ui, sans-serif";
       el.style.color = isFirst ? color : "#ffffff";
-      el.style.cursor = editorDraft?.onVertexClick ? "pointer" : "default";
+      el.style.cursor = editorDraft?.onVertexDrag ? "grab" : (editorDraft?.onVertexClick ? "pointer" : "default");
       // Номер вершины внутри кружка.
       el.textContent = isFirst && isZone ? "◎" : String(i + 1);
       if (isFirst && isZone && total >= 3) {
@@ -1102,15 +1104,39 @@ export function MapLibreMap({
       } else {
         wrap.title = `Точка ${i + 1}`;
       }
+      // Drag включаем только если вызывающий код подписался на onVertexDrag.
+      const marker = new maplibregl.Marker({
+        element: wrap,
+        draggable: !!editorDraft?.onVertexDrag,
+      }).setLngLat([lng, lat]).addTo(map);
+
+      // Флаг чтобы click не срабатывал после перетаскивания.
+      let dragged = false;
+      if (editorDraft?.onVertexDrag) {
+        marker.on("dragstart", () => {
+          dragged = true;
+          el.style.animation = "none";
+          el.style.transform = "scale(1.1)";
+        });
+        marker.on("dragend", () => {
+          const ll = marker.getLngLat();
+          el.style.transform = "";
+          editorDraft.onVertexDrag!(i, [ll.lat, ll.lng]);
+          // dragged флаг снимется через microtask в click-хандлере, но маркер всё равно будет
+          // пересоздан useEffect'ом после апдейта points.
+        });
+      }
+
       if (editorDraft?.onVertexClick) {
         const handler = (ev: Event) => {
           ev.stopPropagation();
+          if (dragged) { dragged = false; return; }
           editorDraft.onVertexClick!(i);
         };
         wrap.addEventListener("click", handler);
         wrap.addEventListener("touchend", handler, { passive: true });
       }
-      const marker = new maplibregl.Marker({ element: wrap }).setLngLat([lng, lat]).addTo(map);
+
       draftMarkersRef.current.push(marker);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
