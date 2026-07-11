@@ -8,23 +8,32 @@ import logoMark from "@/assets/logo-mark.png";
 export function Logo({ compact = false, className = "" }: { compact?: boolean; className?: string }) {
   if (compact) {
     return (
-      <img
-        src={logoMark}
-        alt="TakeRide"
-        className={"object-contain " + className}
+      <span
+        className={
+          "inline-flex items-center justify-center rounded-full bg-primary shrink-0 " +
+          className
+        }
         data-testid="logo-mark"
-        draggable={false}
-      />
+      >
+        <img
+          src={logoMark}
+          alt="TakeRide"
+          className="h-[70%] w-[70%] object-contain"
+          draggable={false}
+        />
+      </span>
     );
   }
   return (
     <div className={"flex items-center gap-3 " + className} data-testid="logo-full">
-      <img
-        src={logoMark}
-        alt="TakeRide"
-        className="h-9 w-auto shrink-0 object-contain"
-        draggable={false}
-      />
+      <span className="inline-flex items-center justify-center rounded-full bg-primary h-10 w-10 shrink-0">
+        <img
+          src={logoMark}
+          alt="TakeRide"
+          className="h-[70%] w-[70%] object-contain"
+          draggable={false}
+        />
+      </span>
       <div className="flex flex-col leading-none">
         <span className="text-[10px] uppercase tracking-[0.32em] text-current/70 font-light">Take</span>
         <span className="font-display text-lg font-light tracking-tight">Ride</span>
