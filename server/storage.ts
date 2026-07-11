@@ -1,6 +1,7 @@
 import {
   bikes, parkings, zones, rides, tickets, ticketComments, payments, wallet, mapObjects, users,
   otpRequests, phoneChangeRequests, paymentMethods, supportTickets, paymentOrders,
+  supportConversations, supportMessages,
   TICKET_CLOSED_STATUSES,
 } from "@shared/schema";
 import type {
@@ -9,6 +10,7 @@ import type {
   PhoneChangeRequest, PaymentMethod, SupportTicket, SupportTicketWithUser, SupportTicketStatus, PaymentOrder,
   AdminCreateBikeInput, AdminUpdateBikeInput, CreateTicketInput, UpdateTicketInput,
   AdminCreateParkingInput, AdminUpdateParkingInput,
+  SupportConversation, SupportMessage, SupportMessageRole, AdminSupportConversationRow,
 } from "@shared/schema";
 import { CONSENT_VERSION } from "@shared/schema";
 import { randomUUID, createHmac, randomInt, timingSafeEqual } from "node:crypto";
@@ -17,7 +19,7 @@ import {
   TARIFFS, tariffPriceKopecks,
 } from "@shared/geo";
 import { computeOverage, finalRideCost } from "@shared/billing";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, gt, and, asc } from "drizzle-orm";
 import { EventEmitter } from "node:events";
 // db client + schema bootstrap + migrations + demo seed run on import of this module.
 // bootstrapReady MUST be awaited before serving requests (server entrypoint does this).
@@ -194,6 +196,13 @@ export interface IStorage {
   // support tickets (staff/operator inbox — all riders)
   listAllSupportTickets(): Promise<SupportTicketWithUser[]>;
   updateSupportTicket(id: number, patch: { status?: SupportTicketStatus }): Promise<SupportTicket | undefined>;
+  // support chat (continuous conversation per rider)
+  ensureSupportConversation(userId: string): Promise<SupportConversation>;
+  listSupportMessages(conversationId: number, opts?: { afterId?: number; limit?: number }): Promise<SupportMessage[]>;
+  appendSupportMessage(input: { conversationId: number; senderRole: SupportMessageRole; senderId: string | null; body: string; attachmentUrl?: string | null; attachmentMime?: string | null }): Promise<SupportMessage>;
+  markSupportRead(conversationId: number, reader: "user" | "operator"): Promise<void>;
+  listAllSupportConversations(): Promise<AdminSupportConversationRow[]>;
+  getSupportConversation(id: number): Promise<SupportConversation | undefined>;
   // bikes
   listBikes(opts?: { includeArchived?: boolean }): Promise<Bike[]>;
   getBike(id: string): Promise<Bike | undefined>;
@@ -831,6 +840,109 @@ export class DatabaseStorage implements IStorage {
 
   private async getSupportTicket(id: number): Promise<SupportTicket | undefined> {
     return (await db.select().from(supportTickets).where(eq(supportTickets.id, id)).limit(1))[0] as SupportTicket | undefined;
+  }
+
+  // -------------------- SUPPORT CHAT (единый чат на пользователя) --------------------
+
+  /** Get or lazily create a conversation for the given rider. */
+  async ensureSupportConversation(userId: string): Promise<SupportConversation> {
+    const existing = (await db.select().from(supportConversations)
+      .where(eq(supportConversations.userId, userId)).limit(1))[0] as SupportConversation | undefined;
+    if (existing) return existing;
+    return (await db.insert(supportConversations).values({
+      userId, createdAt: Date.now(), userUnreadCount: 0, operatorUnreadCount: 0,
+    }).returning())[0] as SupportConversation;
+  }
+
+  /** Retrieve chat history for a conversation, oldest first (chronological). */
+  async listSupportMessages(conversationId: number, opts?: { afterId?: number; limit?: number }): Promise<SupportMessage[]> {
+    const conds: any[] = [eq(supportMessages.conversationId, conversationId)];
+    if (opts?.afterId && Number.isFinite(opts.afterId)) {
+      conds.push(gt(supportMessages.id, opts.afterId));
+    }
+    const limit = Math.min(Math.max(opts?.limit ?? 200, 1), 500);
+    return (await db.select().from(supportMessages)
+      .where(conds.length > 1 ? and(...conds) : conds[0])
+      .orderBy(asc(supportMessages.id))
+      .limit(limit)) as SupportMessage[];
+  }
+
+  /** Append a message, bump last_message_at, increment recipient's unread counter. */
+  async appendSupportMessage(input: {
+    conversationId: number;
+    senderRole: SupportMessageRole;
+    senderId: string | null;
+    body: string;
+    attachmentUrl?: string | null;
+    attachmentMime?: string | null;
+  }): Promise<SupportMessage> {
+    const now = Date.now();
+    const inserted = (await db.insert(supportMessages).values({
+      conversationId: input.conversationId,
+      senderRole: input.senderRole,
+      senderId: input.senderId,
+      body: (input.body ?? "").trim(),
+      attachmentUrl: input.attachmentUrl ?? null,
+      attachmentMime: input.attachmentMime ?? null,
+      createdAt: now,
+    }).returning())[0] as SupportMessage;
+
+    // Бампаем счётчик непрочитанного у противоположной стороны + last_message_at
+    if (input.senderRole === "user") {
+      await db.execute(sql`
+        UPDATE support_conversations
+        SET last_message_at = ${now}, operator_unread_count = operator_unread_count + 1
+        WHERE id = ${input.conversationId}
+      `);
+    } else if (input.senderRole === "operator") {
+      await db.execute(sql`
+        UPDATE support_conversations
+        SET last_message_at = ${now}, user_unread_count = user_unread_count + 1
+        WHERE id = ${input.conversationId}
+      `);
+    } else {
+      await db.execute(sql`
+        UPDATE support_conversations
+        SET last_message_at = ${now}
+        WHERE id = ${input.conversationId}
+      `);
+    }
+    return inserted;
+  }
+
+  /** Zero-out unread counter for the reader side. */
+  async markSupportRead(conversationId: number, reader: "user" | "operator"): Promise<void> {
+    const col = reader === "user" ? "user_unread_count" : "operator_unread_count";
+    await db.execute(sql.raw(
+      `UPDATE support_conversations SET ${col} = 0 WHERE id = ${Number(conversationId)}`
+    ));
+  }
+
+  /** Admin inbox: all conversations, newest activity first, joined with rider profile. */
+  async listAllSupportConversations(): Promise<AdminSupportConversationRow[]> {
+    const rows = await db.execute(sql`
+      SELECT
+        c.id, c.user_id AS "userId", c.last_message_at AS "lastMessageAt",
+        c.user_unread_count AS "userUnreadCount",
+        c.operator_unread_count AS "operatorUnreadCount",
+        c.created_at AS "createdAt",
+        u.name AS "userName", u.phone AS "userPhone",
+        (
+          SELECT COALESCE(NULLIF(m.body, ''), CASE WHEN m.attachment_url IS NOT NULL THEN '[вложение]' ELSE NULL END)
+          FROM support_messages m
+          WHERE m.conversation_id = c.id
+          ORDER BY m.id DESC LIMIT 1
+        ) AS "lastMessagePreview"
+      FROM support_conversations c
+      LEFT JOIN users u ON u.id = c.user_id
+      ORDER BY COALESCE(c.last_message_at, c.created_at) DESC
+    `);
+    return (rows as any).rows as AdminSupportConversationRow[];
+  }
+
+  async getSupportConversation(id: number): Promise<SupportConversation | undefined> {
+    return (await db.select().from(supportConversations)
+      .where(eq(supportConversations.id, id)).limit(1))[0] as SupportConversation | undefined;
   }
 
   // Public list excludes archived (retired) bikes so they never appear on the

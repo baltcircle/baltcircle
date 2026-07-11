@@ -37,6 +37,7 @@ const UsersPage = lazy(() => import("@/pages/UsersPage").then((m) => ({ default:
 const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })));
 const MaintenancePage = lazy(() => import("@/pages/MaintenancePage").then((m) => ({ default: m.MaintenancePage })));
 const SupportInboxPage = lazy(() => import("@/pages/SupportInboxPage").then((m) => ({ default: m.SupportInboxPage })));
+const AdminSupportChatsPage = lazy(() => import("@/pages/AdminSupportChatsPage").then((m) => ({ default: m.AdminSupportChatsPage })));
 const MapEditorPage = lazy(() => import("@/pages/MapEditorPage").then((m) => ({ default: m.MapEditorPage })));
 const ParkingsPage = lazy(() => import("@/pages/ParkingsPage").then((m) => ({ default: m.ParkingsPage })));
 const OperationsMapPage = lazy(() => import("@/pages/OperationsMapPage").then((m) => ({ default: m.OperationsMapPage })));
@@ -229,7 +230,8 @@ function AppRouter() {
       <Route path="/admin/parkings"><AdminGuard roles={["operator", "admin"]}><ParkingsPage /></AdminGuard></Route>
       <Route path="/admin/analytics"><AdminGuard roles={["operator", "admin"]}><AnalyticsPage /></AdminGuard></Route>
       <Route path="/admin/maintenance"><AdminGuard roles={["mechanic", "operator", "admin"]}><MaintenancePage /></AdminGuard></Route>
-      <Route path="/admin/support"><AdminGuard roles={["operator", "admin"]}><SupportInboxPage /></AdminGuard></Route>
+      <Route path="/admin/support"><AdminGuard roles={["operator", "admin"]}><AdminSupportChatsPage /></AdminGuard></Route>
+      <Route path="/admin/support/tickets"><AdminGuard roles={["operator", "admin"]}><SupportInboxPage /></AdminGuard></Route>
 
       {/* Legacy admin deep-links — redirect to the namespaced routes */}
       <Route path="/analytics"><Redirect to="/admin/analytics" /></Route>

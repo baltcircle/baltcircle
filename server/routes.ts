@@ -3,6 +3,7 @@ import type { Server } from "node:http";
 import { registerAuthRoutes } from "./http/auth";
 import { registerPaymentRoutes } from "./http/payments";
 import { registerSupportTicketRoutes } from "./http/tickets";
+import { registerSupportChatRoutes } from "./http/support";
 import { registerAdminUserRoutes } from "./http/admin";
 import { registerCatalogRoutes } from "./http/catalog";
 import { registerRideRoutes } from "./http/rides";
@@ -20,6 +21,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerAuthRoutes(app);
   registerPaymentRoutes(app);
   registerSupportTicketRoutes(app);
+  registerSupportChatRoutes(app);
   registerAdminUserRoutes(app);
   registerCatalogRoutes(app);
   registerRideRoutes(app);

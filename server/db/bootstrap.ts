@@ -239,6 +239,25 @@ CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS support_conversations (
+  id SERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL UNIQUE,
+  last_message_at BIGINT,
+  user_unread_count INTEGER NOT NULL DEFAULT 0,
+  operator_unread_count INTEGER NOT NULL DEFAULT 0,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS support_messages (
+  id SERIAL PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES support_conversations(id) ON DELETE CASCADE,
+  sender_role TEXT NOT NULL,
+  sender_id TEXT,
+  body TEXT NOT NULL DEFAULT '',
+  attachment_url TEXT,
+  attachment_mime TEXT,
+  read_at BIGINT,
+  created_at BIGINT NOT NULL
+);
 `);
 }
 
@@ -264,6 +283,9 @@ CREATE INDEX IF NOT EXISTS idx_payments_user ON payments (user_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_bike ON tickets (bike_id);
 CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket ON ticket_comments (ticket_id);
 CREATE INDEX IF NOT EXISTS idx_support_tickets_user ON support_tickets (user_id);
+CREATE INDEX IF NOT EXISTS idx_support_conv_user ON support_conversations (user_id);
+CREATE INDEX IF NOT EXISTS idx_support_conv_last ON support_conversations (last_message_at DESC);
+CREATE INDEX IF NOT EXISTS idx_support_msg_conv ON support_messages (conversation_id, id DESC);
 `);
 }
 

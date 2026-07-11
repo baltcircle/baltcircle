@@ -69,3 +69,7 @@ services:
       # App data now lives in managed PostgreSQL (DATABASE_URL); no local DB
       # volume needed. OSM tiles are served from a read-only host bind mount.
       - /home/yc-user/osm:/app/osm:ro
+      # Вложения чата поддержки (фото от клиентов). MVP: локальный
+      # bind mount — при рестарте контейнера файлы сохраняются.
+      # Позже будет заменено на Yandex Object Storage.
+      - /home/yc-user/uploads:/app/uploads

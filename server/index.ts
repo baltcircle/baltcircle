@@ -7,6 +7,8 @@ import { pool, bootstrapReady } from "./storage";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
+import path from "node:path";
+import fs from "node:fs";
 
 const app = express();
 const httpServer = createServer(app);
@@ -72,6 +74,7 @@ declare module "http" {
 
 app.use(
   express.json({
+    limit: "12mb", // вложения в support-чат шлются base64 в body (лимит файла ~8 МБ + overhead)
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
@@ -122,6 +125,19 @@ app.use((req, res, next) => {
   // request (routes touch storage on the first hit). bootstrapReady resolves
   // once the async bootstrap in server/db/bootstrap.ts has completed.
   await bootstrapReady;
+
+  // Статика вложений чата поддержки. Локальный диск MVP; при переезде на
+  // Yandex Object Storage — URL-ы абсолютные, блок можно будет убрать.
+  const uploadsDir = process.env.UPLOADS_DIR ?? path.resolve(process.cwd(), "uploads");
+  try { fs.mkdirSync(uploadsDir, { recursive: true }); } catch { /* ignore */ }
+  app.use("/uploads", express.static(uploadsDir, {
+    maxAge: "7d",
+    fallthrough: false,
+    setHeaders: (res) => {
+      res.setHeader("Cache-Control", "private, max-age=604800, immutable");
+    },
+  }));
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

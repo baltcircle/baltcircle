@@ -591,6 +591,54 @@ export const updateSupportTicketSchema = z.object({
 });
 export type UpdateSupportTicketInput = z.infer<typeof updateSupportTicketSchema>;
 
+/* ------- SUPPORT CHAT (single continuous conversation per rider) ------- */
+// Один непрерывный чат с поддержкой на пользователя. Все сообщения (текст
+// или вложение) складываются в support_messages; support_conversations хранит
+// метаданные (последнее сообщение, счётчики непрочитанного).
+export const supportConversations = pgTable("support_conversations", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull().unique(),
+  lastMessageAt: bigint("last_message_at", { mode: "number" }),
+  userUnreadCount: integer("user_unread_count").notNull().default(0),
+  operatorUnreadCount: integer("operator_unread_count").notNull().default(0),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export type SupportConversation = typeof supportConversations.$inferSelect;
+
+export const SUPPORT_MESSAGE_ROLES = ["user", "operator", "system"] as const;
+export type SupportMessageRole = typeof SUPPORT_MESSAGE_ROLES[number];
+
+export const supportMessages = pgTable("support_messages", {
+  id: serial("id").primaryKey(),
+  conversationId: integer("conversation_id").notNull(),
+  senderRole: text("sender_role").notNull(),
+  senderId: text("sender_id"),
+  body: text("body").notNull().default(""),
+  attachmentUrl: text("attachment_url"),
+  attachmentMime: text("attachment_mime"),
+  readAt: bigint("read_at", { mode: "number" }),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export type SupportMessage = typeof supportMessages.$inferSelect;
+
+export const sendSupportMessageSchema = z
+  .object({
+    body: z.string().trim().max(4000, "Слишком длинное сообщение").optional().default(""),
+    attachmentUrl: z.string().trim().max(1024).optional(),
+    attachmentMime: z.string().trim().max(120).optional(),
+  })
+  .refine((v) => (v.body?.length ?? 0) > 0 || !!v.attachmentUrl, {
+    message: "Пустое сообщение",
+  });
+export type SendSupportMessageInput = z.infer<typeof sendSupportMessageSchema>;
+
+// Enriched conversation shape для админки — с профилем клиента.
+export type AdminSupportConversationRow = SupportConversation & {
+  userName: string | null;
+  userPhone: string | null;
+  lastMessagePreview: string | null;
+};
+
 // Enriched shape returned by admin endpoints — bundles rider info so the
 // operator UI can render the request without extra round trips.
 export type SupportTicketWithUser = SupportTicket & {
