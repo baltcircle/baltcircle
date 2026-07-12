@@ -1122,7 +1122,7 @@ export function MapLibreMap({
         } else {
           // Смягчение углов: вокруг каждой вершины 2 контрольные точки,
           // line-join: round в стиле скругляет переход.
-          const smooth = obj.kind === "route" ? smoothCorners(ring, 0.3) : ring;
+          const smooth = obj.kind === "route" ? smoothCorners(ring, 0.1) : ring;
           features.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: smooth } });
         }
       }
