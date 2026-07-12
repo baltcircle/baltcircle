@@ -190,18 +190,17 @@ export function MapPage() {
        * явно растягиваем через negative-margin в safe-area зоны. Кнопки
        * (лого/бургер/гео/скан) отступают от safe-area через env(). */}
       <div
-        className="fixed z-0 overflow-hidden"
+        className="fixed left-0 right-0 z-0 overflow-hidden"
         style={{
-          // Жёстко прибиваем контейнер к четырём краям физического экрана.
-          // top/left/right/bottom:0 в fixed-контексте PWA standalone тянутся
-          // до реальных границ экрана, включая зону home-indicator снизу —
-          // поэтому голубой фон html (#9fc9e0) больше не просвечивает.
-          // 100dvh как страховка на случай динамического viewport.
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: "100dvh",
+          // Карта должна физически заходить В зону home-indicator, а не
+          // обрываться на её верхе. На iOS PWA standalone fixed bottom:0 упирается
+          // в ВЕРХ safe-area, поэтому растягиваем контейнер ниже: height +=
+          // safe-area-inset-bottom, bottom = -safe-area-inset-bottom. Канвас MapLibre
+          // тогда покрывает весь экран до низа — голубой фон html больше
+          // не просвечивает. Сверху аналогично заходим в status bar.
+          top: "calc(-1 * env(safe-area-inset-top, 0px))",
+          bottom: "calc(-1 * env(safe-area-inset-bottom, 0px))",
+          height: "calc(100dvh + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))",
           width: "100vw",
         }}
       >
