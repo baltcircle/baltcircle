@@ -190,11 +190,18 @@ export function MapPage() {
        * явно растягиваем через negative-margin в safe-area зоны. Кнопки
        * (лого/бургер/гео/скан) отступают от safe-area через env(). */}
       <div
-        className="fixed inset-0 z-0 overflow-hidden"
+        className="fixed z-0 overflow-hidden"
         style={{
-          // 100vh в iOS PWA включает зоны safe-area — это то что надо,
-          // карта будет рендерить под status bar и под home-indicator.
-          height: "100vh",
+          // Жёстко прибиваем контейнер к четырём краям физического экрана.
+          // top/left/right/bottom:0 в fixed-контексте PWA standalone тянутся
+          // до реальных границ экрана, включая зону home-indicator снизу —
+          // поэтому голубой фон html (#9fc9e0) больше не просвечивает.
+          // 100dvh как страховка на случай динамического viewport.
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: "100dvh",
           width: "100vw",
         }}
       >
@@ -245,7 +252,7 @@ export function MapPage() {
         aria-label="Моё местоположение"
         data-testid="home-geolocate-button"
         className="fixed right-4 z-20 w-12 h-12 rounded-full bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem + 3.5rem + 1rem)" }}
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 0.5rem + 3.5rem + 0.75rem)" }}
       >
         <MapPin className="w-5 h-5" />
       </button>
@@ -255,7 +262,7 @@ export function MapPage() {
        * карта под ней просвечивает. Пространство ниже кнопки — тоже карта (fixed inset:0). */}
       <div
         className="fixed left-4 right-4 z-40"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }}
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 0.5rem)" }}
       >
         {activeRide ? (
           /* Active ride card */
