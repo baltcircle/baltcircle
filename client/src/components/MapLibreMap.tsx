@@ -165,10 +165,29 @@ function coercePoints(raw: unknown): [number, number][] {
   return [];
 }
 
-// Centripetal Catmull-Rom spline: проходит через все исходные точки (вершины
-// не срезаются), между ними интерполирует гладкой кривой. alpha=0.5 (centripetal)
-// предотвращает петли и острые выбросы. segments=8 — число промежуточных точек
-// в каждом сегменте (компромисс качество/перформанс).
+// Смягчение углов без срезания вершин: вокруг каждой внутренней точки вставляем
+// 2 контрольные точки на соседних сегментах (в процентах от длины), а саму вершину
+// убираем. MapLibre с line-join: round рисует округлый переход между ними —
+// угол визуально скругляется, но направление вершины сохраняется. Никакой
+// экстраполяции — выбросы невозможны. radius в долях от сегмента (0..0.5).
+function smoothCorners(coords: number[][], radius = 0.15): number[][] {
+  if (coords.length < 3) return coords;
+  const r = Math.min(0.49, Math.max(0, radius));
+  const out: number[][] = [coords[0]];
+  for (let i = 1; i < coords.length - 1; i++) {
+    const [ax, ay] = coords[i - 1];
+    const [bx, by] = coords[i];
+    const [cx, cy] = coords[i + 1];
+    // Контрольная точка ПЕРЕД вершиной — в доле (1-r) от a к b.
+    out.push([ax + (bx - ax) * (1 - r), ay + (by - ay) * (1 - r)]);
+    // Контрольная точка ПОСЛЕ вершины — в доле r от b к c.
+    out.push([bx + (cx - bx) * r, by + (cy - by) * r]);
+  }
+  out.push(coords[coords.length - 1]);
+  return out;
+}
+
+// (Легаси) Centripetal Catmull-Rom — оставлено на будущее, не используется.
 function catmullRomSmooth(coords: number[][], segments = 8, alpha = 0.5): number[][] {
   if (coords.length < 3) return coords;
 
@@ -1101,9 +1120,10 @@ export function MapLibreMap({
           if (f0 !== l0 || f1 !== l1) closed.push(closed[0]); // GeoJSON polygons must close
           features.push({ type: "Feature", properties: props, geometry: { type: "Polygon", coordinates: [closed] } });
         } else {
-          // Сглаживание временно отключено — spline выбрасывал линию
-          // через всю карту. line-join: round на слоях уже даёт мягкие стыки.
-          features.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: ring } });
+          // Смягчение углов: вокруг каждой вершины 2 контрольные точки,
+          // line-join: round в стиле скругляет переход.
+          const smooth = obj.kind === "route" ? smoothCorners(ring, 0.15) : ring;
+          features.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: smooth } });
         }
       }
     }
