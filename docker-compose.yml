@@ -72,6 +72,10 @@ services:
       YANDEX_CLIENT_SECRET: ${YANDEX_CLIENT_SECRET:-}
       VK_APP_ID: ${VK_APP_ID:-}
       VK_SECURE_KEY: ${VK_SECURE_KEY:-}
+      # Web Push VAPID keys. Пустые — push выключен (endpoints отвечают 503).
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_CONTACT: ${VAPID_CONTACT:-mailto:no-reply@takeride.ru}
     ports:
       - "5000:5000"
     extra_hosts:

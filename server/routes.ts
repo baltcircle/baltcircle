@@ -11,6 +11,7 @@ import { registerWalletRoutes } from "./http/wallet";
 import { registerServiceTicketRoutes } from "./http/service";
 import { registerMapRoutes } from "./http/map";
 import { registerTileRoutes } from "./http/tiles";
+import { registerPushRoutes } from "./http/push";
 
 // Thin aggregator: the API is split into per-domain route modules under
 // server/http/*, each exporting a register<Domain>Routes(app) function that
@@ -28,6 +29,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerWalletRoutes(app);
   registerServiceTicketRoutes(app);
   registerMapRoutes(app);
+  registerPushRoutes(app);
   registerTileRoutes(app);
   return httpServer;
 }

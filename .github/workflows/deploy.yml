@@ -143,6 +143,9 @@ jobs:
           YANDEX_CLIENT_SECRET: ${{ secrets.YANDEX_CLIENT_SECRET }}
           VK_APP_ID: ${{ secrets.VK_APP_ID }}
           VK_SECURE_KEY: ${{ secrets.VK_SECURE_KEY }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_CONTACT: ${{ secrets.VAPID_CONTACT }}
         run: |
           set -e
           docker compose up -d --build --force-recreate

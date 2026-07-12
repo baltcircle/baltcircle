@@ -193,6 +193,16 @@ CREATE TABLE IF NOT EXISTS oauth_identities (
   display_name TEXT,
   created_at BIGINT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id SERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  endpoint TEXT NOT NULL,
+  p256dh TEXT NOT NULL,
+  auth_key TEXT NOT NULL,
+  user_agent TEXT,
+  created_at BIGINT NOT NULL,
+  last_success_at BIGINT
+);
 CREATE TABLE IF NOT EXISTS payment_methods (
   id SERIAL PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -307,6 +317,8 @@ CREATE INDEX IF NOT EXISTS idx_support_conv_last ON support_conversations (last_
 CREATE INDEX IF NOT EXISTS idx_support_msg_conv ON support_messages (conversation_id, id DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_provider_subject ON oauth_identities (provider, subject);
 CREATE INDEX IF NOT EXISTS idx_oauth_user ON oauth_identities (user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_push_endpoint ON push_subscriptions (endpoint);
+CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions (user_id);
 `);
 }
 

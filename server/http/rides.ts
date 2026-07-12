@@ -31,6 +31,7 @@ import {
   maskPan, cardBrand,
 } from "./../payments/tbank-handlers";
 import { log } from "./../index";
+import { sendToUserAsync } from "./../push";
 import {
   riderId, isStaffSession, canManageRide, actorName, clientIp,
   requireRole, requireAuth, requireRoleWhenConfigured,
@@ -171,8 +172,20 @@ export function registerRideRoutes(app: Express): void {
   // cost, frees the bike and charges the wallet) but, unlike the rider endpoint,
   // an operator may end a ride that isn't their own. 404 if not active.
   app.post("/api/admin/rides/:id/end", requireRole("operator", "admin"), async (req, res) => {
-    const r = await storage.endRide(Number(req.params.id));
+    const rideId = Number(req.params.id);
+    const before = await storage.getRide(rideId);
+    const r = await storage.endRide(rideId);
     if (!r) return res.status(404).json({ error: "Поездка не активна" });
+    // Уведомляем клиента — его поездку завершил оператор.
+    if (before?.userId) {
+      sendToUserAsync(before.userId, {
+        title: "Поездка завершена",
+        body: "Оператор завершил вашу поездку. Подробности в истории.",
+        url: "/rides",
+        tag: `ride:${rideId}`,
+        data: { kind: "ride-ended-by-operator", rideId },
+      });
+    }
     res.json(r);
   });
 }

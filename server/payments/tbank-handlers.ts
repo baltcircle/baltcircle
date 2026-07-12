@@ -9,6 +9,7 @@ import {
 } from "../tbank";
 import type { TbankConfig } from "../tbank";
 import { log } from "../index";
+import { sendToUserAsync } from "../push";
 
 // Start (or reuse) a prepaid ride for a ride-payment order that has just been
 // PAID, guarding against a double-start. Shared by the synchronous saved-card
@@ -208,11 +209,25 @@ export async function handleRidePaymentNotification(
     // failure the helper already marks the order paid with the reason; the
     // webhook just acks (no client to notify here).
     await startRideForPaidOrder(order, paymentId);
+    sendToUserAsync(order.userId, {
+      title: "Поездка началась",
+      body: `Велосипед ${order.bikeId} — тариф ${order.tariffId.toUpperCase()}. Счастливого пути!`,
+      url: "/",
+      tag: `ride:${order.orderId}`,
+      data: { kind: "ride-start", orderId: order.orderId },
+    });
   } else if (outcome === "failed") {
     await storage.updateRidePaymentOrder(order.id, {
       status: "failed",
       paymentId: paymentId || order.paymentId,
       ...bindingErrorPatch(body),
+    });
+    sendToUserAsync(order.userId, {
+      title: "Оплата отклонена",
+      body: "Не удалось списать средства за поездку. Проверьте карту и попробуйте ещё раз.",
+      url: "/payment-methods",
+      tag: `ride:${order.orderId}`,
+      data: { kind: "ride-payment-failed", orderId: order.orderId },
     });
   }
   // Otherwise an intermediate state — leave pending; a later CONFIRMED resolves it.

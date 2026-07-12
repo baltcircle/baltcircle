@@ -7,6 +7,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { sendSupportMessageSchema } from "@shared/schema";
 import { riderId, requireAuth, requireRole, actorName } from "./context";
+import { sendToUserAsync } from "../push";
 
 // -------- SSE fan-out для поддержки --------
 // Event name = conversation_id (число как строка) → пуш идёт только владельцу
@@ -180,6 +181,16 @@ export function registerSupportChatRoutes(app: Express): void {
     void opName;
     supportEvents.emit(String(id), msg);
     supportEvents.emit("inbox", { conversationId: id });
+    // Web Push клиенту-владельцу разговора. Fire-and-forget.
+    const preview = (parsed.data.body ?? "").trim();
+    const previewShort = preview.length > 140 ? preview.slice(0, 137) + "…" : preview;
+    sendToUserAsync(conv.userId, {
+      title: "Поддержка TakeRide",
+      body: previewShort || (parsed.data.attachmentUrl ? "📎 Вложение" : "Новое сообщение"),
+      url: "/support",
+      tag: `support:${id}`,
+      data: { kind: "support", conversationId: id },
+    });
     res.status(201).json(msg);
   });
 

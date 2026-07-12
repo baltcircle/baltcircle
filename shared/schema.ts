@@ -201,6 +201,35 @@ export type OauthIdentity = typeof oauthIdentities.$inferSelect;
 export const OAUTH_PROVIDERS = ["yandex", "vk"] as const;
 export type OauthProvider = typeof OAUTH_PROVIDERS[number];
 
+/* ------- WEB PUSH SUBSCRIPTIONS ------- */
+// Один пользователь может иметь несколько подписок (разные устройства/браузеры).
+// Идентифицируем подписку по endpoint (URL push-сервиса FCM/APNs/Mozilla).
+export const pushSubscriptions = pgTable("push_subscriptions", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  endpoint: text("endpoint").notNull(),         // уникальный URL push-сервиса
+  p256dh: text("p256dh").notNull(),             // публичный ключ клиента (base64url)
+  authKey: text("auth_key").notNull(),          // auth secret (base64url)
+  userAgent: text("user_agent"),                // для отладки, необязательно
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  lastSuccessAt: bigint("last_success_at", { mode: "number" }),
+});
+export type PushSubscription = typeof pushSubscriptions.$inferSelect;
+
+export const pushSubscribeSchema = z.object({
+  endpoint: z.string().url(),
+  keys: z.object({
+    p256dh: z.string().min(1),
+    auth: z.string().min(1),
+  }),
+  userAgent: z.string().optional(),
+});
+export type PushSubscribeBody = z.infer<typeof pushSubscribeSchema>;
+
+export const pushUnsubscribeSchema = z.object({
+  endpoint: z.string().url(),
+});
+
 /* ------- BIKES ------- */
 export const bikes = pgTable("bikes", {
   id: text("id").primaryKey(),               // e.g. "BC-014"
