@@ -165,24 +165,46 @@ function coercePoints(raw: unknown): [number, number][] {
   return [];
 }
 
-// Chaikin corner-cutting: каждый сегмент заменяется двумя точками (1/4 и 3/4),
-// что сглаживает углы. Концы линии сохраняются. iterations=3 — оптимально
-// для GPS-маршрутов (ветви 8x от исходных сегментов).
-function chaikinSmooth(coords: number[][], iterations = 3): number[][] {
+// Centripetal Catmull-Rom spline: проходит через все исходные точки (вершины
+// не срезаются), между ними интерполирует гладкой кривой. alpha=0.5 (centripetal)
+// предотвращает петли и острые выбросы. segments=8 — число промежуточных точек
+// в каждом сегменте (компромисс качество/перформанс).
+function catmullRomSmooth(coords: number[][], segments = 8, alpha = 0.5): number[][] {
   if (coords.length < 3) return coords;
-  let curr = coords.slice();
-  for (let it = 0; it < iterations; it++) {
-    const next: number[][] = [curr[0]];
-    for (let i = 0; i < curr.length - 1; i++) {
-      const [x0, y0] = curr[i];
-      const [x1, y1] = curr[i + 1];
-      next.push([x0 * 0.75 + x1 * 0.25, y0 * 0.75 + y1 * 0.25]);
-      next.push([x0 * 0.25 + x1 * 0.75, y0 * 0.25 + y1 * 0.75]);
+  const out: number[][] = [];
+  // Фантомные контрольные точки на концах, чтобы крайние сегменты тоже
+  // были плавными. Копируем первую/последнюю — кривая стартует/финиширует в них.
+  const pts = [coords[0], ...coords, coords[coords.length - 1]];
+  const tj = (ti: number, [xi, yi]: number[], [xj, yj]: number[]) => {
+    const dx = xj - xi, dy = yj - yi;
+    return ti + Math.pow(Math.hypot(dx, dy), alpha);
+  };
+  for (let i = 0; i < pts.length - 3; i++) {
+    const p0 = pts[i], p1 = pts[i + 1], p2 = pts[i + 2], p3 = pts[i + 3];
+    const t0 = 0;
+    const t1 = tj(t0, p0, p1);
+    const t2 = tj(t1, p1, p2);
+    const t3 = tj(t2, p2, p3);
+    for (let s = 0; s < segments; s++) {
+      const t = t1 + (s / segments) * (t2 - t1);
+      // Стандартная Barry-Goldman параметризация Catmull-Rom.
+      const a1x = ((t1 - t) * p0[0] + (t - t0) * p1[0]) / (t1 - t0);
+      const a1y = ((t1 - t) * p0[1] + (t - t0) * p1[1]) / (t1 - t0);
+      const a2x = ((t2 - t) * p1[0] + (t - t1) * p2[0]) / (t2 - t1);
+      const a2y = ((t2 - t) * p1[1] + (t - t1) * p2[1]) / (t2 - t1);
+      const a3x = ((t3 - t) * p2[0] + (t - t2) * p3[0]) / (t3 - t2);
+      const a3y = ((t3 - t) * p2[1] + (t - t2) * p3[1]) / (t3 - t2);
+      const b1x = ((t2 - t) * a1x + (t - t0) * a2x) / (t2 - t0);
+      const b1y = ((t2 - t) * a1y + (t - t0) * a2y) / (t2 - t0);
+      const b2x = ((t3 - t) * a2x + (t - t1) * a3x) / (t3 - t1);
+      const b2y = ((t3 - t) * a2y + (t - t1) * a3y) / (t3 - t1);
+      const cx = ((t2 - t) * b1x + (t - t1) * b2x) / (t2 - t1);
+      const cy = ((t2 - t) * b1y + (t - t1) * b2y) / (t2 - t1);
+      out.push([cx, cy]);
     }
-    next.push(curr[curr.length - 1]);
-    curr = next;
   }
-  return curr;
+  out.push(coords[coords.length - 1]);
+  return out;
 }
 
 // NOTE: Kaliningrad oblast contour and land-mask hack removed in Protomaps migration.
@@ -1048,7 +1070,7 @@ export function MapLibreMap({
           // черновик-геометрия в preview-блоке editor'а). Сами точки
           // в БД остаются исходными — если потом захочешь редактировать,
           // вершины грузятся без искажений.
-          const smooth = obj.kind === "route" ? chaikinSmooth(ring, 1) : ring;
+          const smooth = obj.kind === "route" ? catmullRomSmooth(ring, 8) : ring;
           features.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: smooth } });
         }
       }
