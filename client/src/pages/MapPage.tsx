@@ -190,7 +190,13 @@ export function MapPage() {
        * явно растягиваем через negative-margin в safe-area зоны. Кнопки
        * (лого/бургер/гео/скан) отступают от safe-area через env(). */}
       <div
-        className="absolute inset-0 z-0 overflow-hidden"
+        className="fixed inset-0 z-0 overflow-hidden"
+        style={{
+          // 100vh в iOS PWA включает зоны safe-area — это то что надо,
+          // карта будет рендерить под status bar и под home-indicator.
+          height: "100vh",
+          width: "100vw",
+        }}
       >
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
@@ -211,7 +217,7 @@ export function MapPage() {
       {/* Top bar — logo left, burger right */}
       <div
         className="absolute left-0 right-0 z-20 flex items-center justify-between px-4"
-        style={{ top: "max(calc(env(safe-area-inset-top, 0px) + 1rem), 1rem)" }}
+        style={{ top: "max(1rem, env(safe-area-inset-top))" }}
       >
         {/* Logo — top left. Uses the theme card surface so it follows the
          * palette (teal in light, blue in dark) instead of a white pill. */}
@@ -238,8 +244,8 @@ export function MapPage() {
         onClick={handleGeolocate}
         aria-label="Моё местоположение"
         data-testid="home-geolocate-button"
-        className="absolute right-4 z-20 w-12 h-12 rounded-full bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 0.5rem + 3.5rem + 0.75rem)" }}
+        className="fixed right-4 z-20 w-12 h-12 rounded-full bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem + 3.5rem + 1rem)" }}
       >
         <MapPin className="w-5 h-5" />
       </button>
@@ -248,8 +254,8 @@ export function MapPage() {
        * Кнопка плавает над картой с отступом от нижнего края (учитывая safe-area),
        * карта под ней просвечивает. Пространство ниже кнопки — тоже карта (fixed inset:0). */}
       <div
-        className="absolute left-4 right-4 z-40"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 0.5rem)" }}
+        className="fixed left-4 right-4 z-40"
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }}
       >
         {activeRide ? (
           /* Active ride card */

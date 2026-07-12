@@ -3,19 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
-    <!-- PWA standalone mode. Связка мет и manifest.webmanifest:
-         - Иконка на главном экране iOS/Android запускает приложение в standalone
-           (без Safari-интерфейса) — разрешение камеры сохраняется между сессиями.
-         - background_color в манифесте — #9fc9e0 (цвет воды карты),
-           тот же что у html.route-locked. Зона home-indicator красится
-           этим цветом и визуальо сливается с картой.
-         - status-bar-style: black-translucent — WebView тянется ПОД
-           iOS status bar, карта заливает весь экран, кнопки отступают
-           через env(safe-area-inset-top) — часы/батарея всегда читаемы. -->
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- iOS PWA standalone режим ОТКЛЮЧЁН (метод коммита #54):
+         в standalone iOS резервирует ~34px под home-indicator и красит эту
+         зону background_color — именно отсюда голубая полоса снизу.
+         Без capable-мет иконка на рабочем столе открывает сайт в обычном
+         Safari, без резерва safe-area зон — полос нет. -->
+    <!-- <meta name="apple-mobile-web-app-capable" content="yes" /> -->
+    <!-- <meta name="mobile-web-app-capable" content="yes" /> -->
     <meta name="apple-mobile-web-app-title" content="TakeRide" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" /> -->
     <!-- Фиксированный theme-color для URL bar / status bar в мобильном Safari.
          Safari 15+ учитывает эту мету и НЕ подбирает цвет автоматически по
          пикселям контента (иначе overlay drawer менял бы цвет полос). -->
