@@ -168,11 +168,21 @@ export function MapEditorPage() {
 
   function startEdit(o: MapObject) {
     if (draft.length > 0 && !window.confirm("Отменить текущий черновик и начать редактирование?")) return;
+    // points может прийти строкой из легаси-кэша — парсим безопасно.
+    let pts: [number, number][] = [];
+    if (Array.isArray(o.points)) pts = o.points as [number, number][];
+    else if (typeof o.points === "string") {
+      try { const p = JSON.parse(o.points); if (Array.isArray(p)) pts = p; } catch { /* noop */ }
+    }
+    if (pts.length === 0) {
+      toast({ title: "Не удалось открыть для редактирования", description: "Объект повреждён или пуст", variant: "destructive" });
+      return;
+    }
     setEditingId(o.id);
     setType(o.type as ObjType);
     setColor(o.color);
     setName(o.name);
-    setDraft((o.points as [number, number][]).slice());
+    setDraft(pts.slice());
     setPanelOpen(false);
   }
 

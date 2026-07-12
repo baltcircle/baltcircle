@@ -260,6 +260,16 @@ export interface IStorage {
   adminAnalytics(range: { from: number; to: number }): Promise<any>;
 }
 
+// map_objects.points хранится как JSON-строка — парсим перед отдачей
+// клиенту, чтобы везде API возвращал [number, number][], а не string.
+function hydrateMapObject<T extends { points: unknown }>(row: T): T {
+  if (typeof (row as any).points === "string") {
+    try { (row as any).points = JSON.parse((row as any).points); }
+    catch { (row as any).points = []; }
+  }
+  return row;
+}
+
 export class DatabaseStorage implements IStorage {
   // ---------- Bikes read cache ----------
   // The public bike list drives the map and is polled/streamed by every
@@ -1539,11 +1549,12 @@ export class DatabaseStorage implements IStorage {
 
   async listMapObjects(opts?: { activeOnly?: boolean }) {
     const rows = (await db.select().from(mapObjects).orderBy(desc(mapObjects.createdAt))) as MapObject[];
-    return opts?.activeOnly ? rows.filter((o) => o.active) : rows;
+    const parsed = rows.map(hydrateMapObject);
+    return opts?.activeOnly ? parsed.filter((o) => o.active) : parsed;
   }
 
   async createMapObject(input: InsertMapObject) {
-    return (await db.insert(mapObjects).values({
+    const row = (await db.insert(mapObjects).values({
       name: input.name,
       type: input.type,
       kind: input.kind,
@@ -1552,6 +1563,7 @@ export class DatabaseStorage implements IStorage {
       active: input.active,
       createdAt: Date.now(),
     }).returning())[0] as MapObject;
+    return hydrateMapObject(row);
   }
 
   async setMapObjectActive(id: number, active: boolean) {
@@ -1574,10 +1586,12 @@ export class DatabaseStorage implements IStorage {
     if (patch.points !== undefined) set.points = JSON.stringify(patch.points);
     if (patch.active !== undefined) set.active = patch.active;
     if (Object.keys(set).length === 0) {
-      return (await db.select().from(mapObjects).where(eq(mapObjects.id, id)).limit(1))[0] as MapObject | undefined;
+      const row = (await db.select().from(mapObjects).where(eq(mapObjects.id, id)).limit(1))[0] as MapObject | undefined;
+      return row ? hydrateMapObject(row) : undefined;
     }
     await db.update(mapObjects).set(set as any).where(eq(mapObjects.id, id));
-    return (await db.select().from(mapObjects).where(eq(mapObjects.id, id)).limit(1))[0] as MapObject | undefined;
+    const row = (await db.select().from(mapObjects).where(eq(mapObjects.id, id)).limit(1))[0] as MapObject | undefined;
+    return row ? hydrateMapObject(row) : undefined;
   }
 
   async deleteMapObject(id: number) {

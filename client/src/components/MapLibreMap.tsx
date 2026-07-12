@@ -152,6 +152,39 @@ function fillFromColor(color: string): string {
   return `${color}22`; // ~13% alpha
 }
 
+// map_objects.points может прийти как array (после hydrate на сервере)
+// или как JSON-строка (легаси-кэш / старые версии). Страхуемся.
+function coercePoints(raw: unknown): [number, number][] {
+  if (Array.isArray(raw)) return raw as [number, number][];
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed as [number, number][] : [];
+    } catch { return []; }
+  }
+  return [];
+}
+
+// Chaikin corner-cutting: каждый сегмент заменяется двумя точками (1/4 и 3/4),
+// что сглаживает углы. Концы линии сохраняются. iterations=3 — оптимально
+// для GPS-маршрутов (ветви 8x от исходных сегментов).
+function chaikinSmooth(coords: number[][], iterations = 3): number[][] {
+  if (coords.length < 3) return coords;
+  let curr = coords.slice();
+  for (let it = 0; it < iterations; it++) {
+    const next: number[][] = [curr[0]];
+    for (let i = 0; i < curr.length - 1; i++) {
+      const [x0, y0] = curr[i];
+      const [x1, y1] = curr[i + 1];
+      next.push([x0 * 0.75 + x1 * 0.25, y0 * 0.75 + y1 * 0.25]);
+      next.push([x0 * 0.25 + x1 * 0.75, y0 * 0.25 + y1 * 0.75]);
+    }
+    next.push(curr[curr.length - 1]);
+    curr = next;
+  }
+  return curr;
+}
+
 // NOTE: Kaliningrad oblast contour and land-mask hack removed in Protomaps migration.
 // Protomaps has a real `earth` land layer — no synthetic mask needed.
 
@@ -1001,8 +1034,7 @@ export function MapLibreMap({
     const features: any[] = [];
     if (show.objects) {
       for (const obj of mapObjects) {
-        let pts: [number, number][];
-        try { pts = JSON.parse(obj.points) as [number, number][]; } catch { continue; }
+        const pts = coercePoints(obj.points);
         if (!Array.isArray(pts) || pts.length < 2) continue;
         const ring = pts.map(([lat, lng]) => [lng, lat]);
         const props = { kind: obj.kind, color: obj.color, fillColor: fillFromColor(obj.color), name: obj.name };
@@ -1012,7 +1044,12 @@ export function MapLibreMap({
           if (f0 !== l0 || f1 !== l1) closed.push(closed[0]); // GeoJSON polygons must close
           features.push({ type: "Feature", properties: props, geometry: { type: "Polygon", coordinates: [closed] } });
         } else {
-          features.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: ring } });
+          // Маршрут сглаживаем в финальном превью (публичная карта и
+          // черновик-геометрия в preview-блоке editor'а). Сами точки
+          // в БД остаются исходными — если потом захочешь редактировать,
+          // вершины грузятся без искажений.
+          const smooth = obj.kind === "route" ? chaikinSmooth(ring, 3) : ring;
+          features.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: smooth } });
         }
       }
     }
