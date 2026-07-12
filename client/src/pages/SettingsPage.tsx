@@ -1,16 +1,14 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useTheme } from "@/lib/theme";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { CURRENT_USER_KEY } from "@/hooks/use-current-user";
-import type { User as UserType, OauthIdentity, OauthProvider } from "@shared/schema";
+import type { User as UserType } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { PhoneChangeModal } from "@/components/PhoneChangeModal";
 import { EmailChangeModal } from "@/components/EmailChangeModal";
-import { ArrowLeft, ChevronRight, Sun, Moon, Bell, Mail } from "lucide-react";
-
-const OAUTH_KEY = ["/api/users/me/oauth"] as const;
+import { ArrowLeft, ChevronRight, Sun, Moon, Bell } from "lucide-react";
 
 export function SettingsPage() {
   const toast = useToast();
@@ -29,36 +27,6 @@ export function SettingsPage() {
     }
   }, [user]);
 
-  // React to /settings?oauth=... redirect from OAuth callbacks. We only show
-  // toasts here and let the query below refresh the list of linked identities.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const state = params.get("oauth");
-    const provider = params.get("provider");
-    if (!state) return;
-    const name = provider === "yandex" ? "Yandex" : provider === "vk" ? "VK" : "аккаунт";
-    if (state === "linked") toast.toast({ title: `${name} привязан` });
-    else if (state === "signed-in") toast.toast({ title: `Вход через ${name}` });
-    else if (state === "error") {
-      const reason = params.get("reason");
-      toast.toast({
-        title: `Не удалось связать ${name}`,
-        description: reason === "conflict"
-          ? "Этот аккаунт уже привязан к другому пользователю."
-          : "Попробуйте ещё раз.",
-        variant: "destructive",
-      });
-    }
-    // Clean the URL so the toast doesn't fire again on remount.
-    const url = new URL(window.location.href);
-    url.searchParams.delete("oauth");
-    url.searchParams.delete("provider");
-    url.searchParams.delete("reason");
-    window.history.replaceState({}, "", url.toString());
-    queryClient.invalidateQueries({ queryKey: OAUTH_KEY });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const saveMut = useMutation<UserType, Error, { name: string }>({
     mutationFn: async (patch) => {
       const res = await apiRequest("PATCH", "/api/users/me", patch);
@@ -74,31 +42,6 @@ export function SettingsPage() {
       toast.toast({ title: "Ошибка", description: err?.message, variant: "destructive" });
     },
   });
-
-  const oauthQuery = useQuery<OauthIdentity[]>({
-    queryKey: OAUTH_KEY,
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/users/me/oauth");
-      return res.json();
-    },
-    enabled: isRegistered,
-  });
-
-  const unlinkOauthMut = useMutation<void, Error, OauthProvider>({
-    mutationFn: async (provider) => {
-      await apiRequest("POST", `/api/users/me/oauth/${provider}/unlink`, {});
-    },
-    onSuccess: (_, provider) => {
-      queryClient.invalidateQueries({ queryKey: OAUTH_KEY });
-      toast.toast({ title: `${provider === "yandex" ? "Yandex" : "VK"} отвязан` });
-    },
-    onError: (err) => {
-      toast.toast({ title: "Ошибка", description: err?.message, variant: "destructive" });
-    },
-  });
-
-  const linkedYandex = oauthQuery.data?.find((i) => i.provider === "yandex");
-  const linkedVk = oauthQuery.data?.find((i) => i.provider === "vk");
 
   return (
     // Full viewport, no scroll, uniform background
@@ -176,31 +119,6 @@ export function SettingsPage() {
           </button>
         </div>
 
-        {/* Linked accounts */}
-        {isRegistered && (
-          <div className="rounded-2xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 overflow-hidden shrink-0">
-            <p className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-widest text-gray-400 dark:text-zinc-500">Привязанные аккаунты</p>
-
-            <LinkedRow
-              title="Yandex ID"
-              subtitle={linkedYandex ? (linkedYandex.email || linkedYandex.displayName || "Привязан") : "Не привязан"}
-              linked={!!linkedYandex}
-              onLink={() => { window.location.href = "/api/auth/yandex/start"; }}
-              onUnlink={() => unlinkOauthMut.mutate("yandex")}
-              disabled={unlinkOauthMut.isPending}
-              divider
-            />
-            <LinkedRow
-              title="VK ID"
-              subtitle={linkedVk ? (linkedVk.email || linkedVk.displayName || "Привязан") : "Не привязан"}
-              linked={!!linkedVk}
-              onLink={() => { window.location.href = "/api/auth/vk/start"; }}
-              onUnlink={() => unlinkOauthMut.mutate("vk")}
-              disabled={unlinkOauthMut.isPending}
-            />
-          </div>
-        )}
-
         {/* Push notifications */}
         <div className="rounded-2xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 overflow-hidden shrink-0">
           <p className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-widest text-gray-400 dark:text-zinc-500">Скидки и новости</p>
@@ -266,45 +184,6 @@ export function SettingsPage() {
 
       <PhoneChangeModal open={phoneModalOpen} onOpenChange={setPhoneModalOpen} />
       <EmailChangeModal open={emailModalOpen} onOpenChange={setEmailModalOpen} />
-    </div>
-  );
-}
-
-interface LinkedRowProps {
-  title: string;
-  subtitle: string;
-  linked: boolean;
-  onLink: () => void;
-  onUnlink: () => void;
-  disabled?: boolean;
-  divider?: boolean;
-}
-
-function LinkedRow({ title, subtitle, linked, onLink, onUnlink, disabled, divider }: LinkedRowProps) {
-  return (
-    <div className={`px-4 py-3 flex items-center justify-between ${divider ? "border-b border-gray-100 dark:border-zinc-700" : ""}`}>
-      <div className="min-w-0 pr-3">
-        <p className="text-base font-semibold text-gray-900 dark:text-white">{title}</p>
-        <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5 truncate">{subtitle}</p>
-      </div>
-      {linked ? (
-        <button
-          type="button"
-          onClick={onUnlink}
-          disabled={disabled}
-          className="text-sm font-medium text-red-500 hover:text-red-600 disabled:opacity-50"
-        >
-          Отвязать
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={onLink}
-          className="text-sm font-medium text-primary hover:opacity-80"
-        >
-          Привязать
-        </button>
-      )}
     </div>
   );
 }
