@@ -61,6 +61,17 @@ services:
       # Public origin used to build Success/Fail/Notification URLs; defaults to
       # https://takeride.ru inside the app when empty.
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
+      # RuSender (transactional email for OTP verification). Without both
+      # API key and key ID the server falls back to logging the code.
+      RUSENDER_API_KEY: ${RUSENDER_API_KEY:-}
+      RUSENDER_KEY_ID: ${RUSENDER_KEY_ID:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-}
+      # OAuth (Yandex ID / VK ID). Endpoints return 503 when unset.
+      YANDEX_CLIENT_ID: ${YANDEX_CLIENT_ID:-}
+      YANDEX_CLIENT_SECRET: ${YANDEX_CLIENT_SECRET:-}
+      VK_APP_ID: ${VK_APP_ID:-}
+      VK_SECURE_KEY: ${VK_SECURE_KEY:-}
     ports:
       - "5000:5000"
     extra_hosts:

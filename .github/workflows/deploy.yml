@@ -135,6 +135,14 @@ jobs:
           TBANK_PASSWORD: ${{ secrets.TBANK_PASSWORD }}
           TBANK_API_BASE: ${{ secrets.TBANK_API_BASE }}
           PUBLIC_APP_URL: ${{ secrets.PUBLIC_APP_URL }}
+          RUSENDER_API_KEY: ${{ secrets.RUSENDER_API_KEY }}
+          RUSENDER_KEY_ID: ${{ secrets.RUSENDER_KEY_ID }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_FROM_NAME: ${{ secrets.EMAIL_FROM_NAME }}
+          YANDEX_CLIENT_ID: ${{ secrets.YANDEX_CLIENT_ID }}
+          YANDEX_CLIENT_SECRET: ${{ secrets.YANDEX_CLIENT_SECRET }}
+          VK_APP_ID: ${{ secrets.VK_APP_ID }}
+          VK_SECURE_KEY: ${{ secrets.VK_SECURE_KEY }}
         run: |
           set -e
           docker compose up -d --build --force-recreate

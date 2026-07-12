@@ -63,6 +63,9 @@ app.use(
 declare module "express-session" {
   interface SessionData {
     userId?: string;
+    // OAuth CSRF state — per provider we remember the `state` value we sent to
+    // the authorize endpoint, verified in the callback before exchanging code.
+    oauthState?: { yandex?: string; vk?: string; vkCodeVerifier?: string };
   }
 }
 

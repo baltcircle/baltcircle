@@ -11,6 +11,7 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   phone: text("phone").notNull(),            // normalized to digits with optional leading +
   email: text("email"),                      // optional, rider-supplied; validated on update
+  emailVerifiedAt: bigint("email_verified_at", { mode: "number" }), // unix ms when email OTP was successfully verified; null = unverified
   role: text("role").notNull().default("rider"), // rider | mechanic | operator | admin
   consentAcceptedAt: bigint("consent_accepted_at", { mode: "number" }), // unix ms when consent was accepted
   consentVersion: text("consent_version"),   // e.g. "v1-2026-06-07"
@@ -46,17 +47,15 @@ export type AdminSetBlockedInput = z.infer<typeof adminSetBlockedSchema>;
 // copy) whenever the terms change so we can tell who accepted which version.
 export const CONSENT_VERSION = "v1-2026-06-07";
 
-// Profile self-service update: a rider may change their display name and email.
-// Phone is intentionally excluded here — changing it must go through SMS OTP.
+// Profile self-service update: a rider may change their display name.
+// Phone AND email are intentionally excluded here — changing either must go
+// through their own OTP verification flow (phone via SMS, email via RuSender).
 export const updateProfileSchema = z.object({
   name: z
     .string()
     .trim()
     .min(2, "Имя должно содержать минимум 2 символа")
     .max(80, "Имя слишком длинное")
-    .optional(),
-  email: z
-    .union([z.string().trim().email("Введите корректный email").max(120), z.literal("")])
     .optional(),
 });
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
@@ -145,6 +144,62 @@ export const phoneChangeVerifySchema = z.object({
     .regex(/^\d{4}$/, "Код состоит из 4 цифр"),
 });
 export type PhoneChangeVerifyInput = z.infer<typeof phoneChangeVerifySchema>;
+
+/* ------- EMAIL CHANGE (email OTP for an existing account) ------- */
+// Mirrors phone_change_requests: one pending email verification per user. A
+// 4-digit code is sent to the target address via RuSender; only its HMAC is
+// stored. On success we set users.email + users.emailVerifiedAt. Used for both
+// "link email to existing account" and "change existing verified email".
+export const emailChangeRequests = pgTable("email_change_requests", {
+  userId: text("user_id").primaryKey(),      // the rider changing their address
+  newEmail: text("new_email").notNull(),     // lower-cased, validated target email
+  codeHash: text("code_hash").notNull(),     // HMAC-SHA256 of the OTP, never plaintext
+  expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  lastSentAt: bigint("last_sent_at", { mode: "number" }).notNull(),
+  consumed: boolean("consumed").notNull().default(false),
+});
+export type EmailChangeRequest = typeof emailChangeRequests.$inferSelect;
+
+// Step 1: request a code to a new email address.
+export const emailChangeStartSchema = z.object({
+  email: z
+    .string({ required_error: "Введите email" })
+    .trim()
+    .toLowerCase()
+    .email("Введите корректный email")
+    .max(120, "Слишком длинный email"),
+});
+export type EmailChangeStartInput = z.infer<typeof emailChangeStartSchema>;
+
+// Step 2: verify the code sent by email.
+export const emailChangeVerifySchema = z.object({
+  code: z
+    .string({ required_error: "Введите код из письма" })
+    .trim()
+    .regex(/^\d{4}$/, "Код состоит из 4 цифр"),
+});
+export type EmailChangeVerifyInput = z.infer<typeof emailChangeVerifySchema>;
+
+/* ------- OAUTH IDENTITIES (Yandex ID / VK ID) ------- */
+// A single rider may have multiple linked OAuth identities. Provider + subject
+// (the provider's stable user id) is the unique key. We never persist access
+// or refresh tokens — only the identity mapping and a snapshot of the
+// provider-side email/name for support/audit. Linking assigns an OAuth identity
+// to an already-authenticated user; if a first-time OAuth login arrives without
+// a session, we fall back to matching by verified email.
+export const oauthIdentities = pgTable("oauth_identities", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  provider: text("provider").notNull(),      // "yandex" | "vk"
+  subject: text("subject").notNull(),        // provider's stable user id (string)
+  email: text("email"),                      // provider-reported email at link time (may be null for VK)
+  displayName: text("display_name"),         // provider-reported name at link time
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export type OauthIdentity = typeof oauthIdentities.$inferSelect;
+export const OAUTH_PROVIDERS = ["yandex", "vk"] as const;
+export type OauthProvider = typeof OAUTH_PROVIDERS[number];
 
 /* ------- BIKES ------- */
 export const bikes = pgTable("bikes", {

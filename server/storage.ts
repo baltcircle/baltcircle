@@ -1,13 +1,15 @@
 import {
   bikes, parkings, zones, rides, tickets, ticketComments, payments, wallet, mapObjects, users,
-  otpRequests, phoneChangeRequests, paymentMethods, supportTickets, paymentOrders,
+  otpRequests, phoneChangeRequests, emailChangeRequests, oauthIdentities,
+  paymentMethods, supportTickets, paymentOrders,
   supportConversations, supportMessages,
   TICKET_CLOSED_STATUSES,
 } from "@shared/schema";
 import type {
   Bike, Parking, ZoneRow, Ride, AdminRide, Ticket, TicketComment, TicketWithComments, Payment, Wallet,
   MapObject, InsertMapObject, User, OtpRequest, UserRole, UpdateProfileInput,
-  PhoneChangeRequest, PaymentMethod, SupportTicket, SupportTicketWithUser, SupportTicketStatus, PaymentOrder,
+  PhoneChangeRequest, EmailChangeRequest, OauthIdentity, OauthProvider,
+  PaymentMethod, SupportTicket, SupportTicketWithUser, SupportTicketStatus, PaymentOrder,
   AdminCreateBikeInput, AdminUpdateBikeInput, CreateTicketInput, UpdateTicketInput,
   AdminCreateParkingInput, AdminUpdateParkingInput,
   SupportConversation, SupportMessage, SupportMessageRole, AdminSupportConversationRow,
@@ -307,18 +309,15 @@ export class DatabaseStorage implements IStorage {
     return this.withResolvedRole(u);
   }
 
-  // Self-service profile update for the current user. Only name/email are
-  // mutable here; phone changes must go through SMS OTP (not this endpoint).
+  // Self-service profile update for the current user. Only the display name is
+  // mutable here; phone changes go through SMS OTP and email changes go
+  // through email OTP (RuSender). Neither is accepted on this endpoint.
   async updateProfile(id: string, patch: UpdateProfileInput) {
     const existing = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0] as User | undefined;
     if (!existing) return { error: "Пользователь не найден" };
 
     const set: Partial<User> = { updatedAt: Date.now() };
     if (patch.name !== undefined) set.name = patch.name.trim();
-    if (patch.email !== undefined) {
-      const email = patch.email.trim();
-      set.email = email.length > 0 ? email : null;
-    }
     await db.update(users).set(set as any).where(eq(users.id, id));
     return { user: (await this.getUser(id))! };
   }
@@ -581,6 +580,161 @@ export class DatabaseStorage implements IStorage {
     await db.update(phoneChangeRequests).set({ consumed: true }).where(eq(phoneChangeRequests.userId, userId));
     await db.update(users).set({ phone: req.newPhone, updatedAt: Date.now() } as any).where(eq(users.id, userId));
     return { user: (await this.getUser(userId))! };
+  }
+
+  // ---------- Email change (RuSender OTP) ----------
+  // Mirrors the phone-change flow: step 1 sends a 4-digit code by email; step 2
+  // verifies it and applies `users.email` + `users.emailVerifiedAt`. The profile
+  // PATCH endpoint no longer accepts email — this is the only path.
+  async startEmailChange({ userId, email }: { userId: string; email: string }) {
+    const user = await this.getUser(userId);
+    if (!user) return { error: "Пользователь не найден" };
+
+    const newEmail = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+      return { error: "Введите корректный email" };
+    }
+    if (newEmail === (user.email || "").toLowerCase() && user.emailVerifiedAt) {
+      return { error: "Этот email уже подтверждён" };
+    }
+
+    // Don't allow merging into another verified account's email.
+    const taken = (await db.select().from(users).where(eq(users.email, newEmail)).limit(1))[0] as User | undefined;
+    if (taken && taken.id !== userId && taken.emailVerifiedAt) {
+      return { error: "Этот email уже используется другим аккаунтом" };
+    }
+
+    const now = Date.now();
+    const existing = (await db.select().from(emailChangeRequests)
+      .where(eq(emailChangeRequests.userId, userId)).limit(1))[0] as EmailChangeRequest | undefined;
+    if (existing && !existing.consumed) {
+      const sinceLast = now - existing.lastSentAt;
+      if (sinceLast < OTP_RESEND_LOCK_MS) {
+        const retryAfterSec = Math.ceil((OTP_RESEND_LOCK_MS - sinceLast) / 1000);
+        return { error: `Повторная отправка кода будет доступна через ${retryAfterSec} с`, retryAfterSec };
+      }
+    }
+
+    const code = generateOtp();
+    const codeHash = hashOtp(newEmail, code);
+    const expiresAt = now + OTP_TTL_MS;
+    await db.insert(emailChangeRequests)
+      .values({ userId, newEmail, codeHash, expiresAt, attempts: 0, lastSentAt: now, consumed: false })
+      .onConflictDoUpdate({
+        target: emailChangeRequests.userId,
+        set: { newEmail, codeHash, expiresAt, attempts: 0, lastSentAt: now, consumed: false },
+      });
+
+    return { ok: true as const, email: newEmail, code, resendInSec: OTP_RESEND_LOCK_MS / 1000 };
+  }
+
+  async verifyEmailChange({ userId, code }: { userId: string; code: string }) {
+    const req = (await db.select().from(emailChangeRequests)
+      .where(eq(emailChangeRequests.userId, userId)).limit(1))[0] as EmailChangeRequest | undefined;
+    if (!req || req.consumed) return { error: "Запросите код подтверждения заново" };
+    if (Date.now() > req.expiresAt) return { error: "Срок действия кода истёк. Запросите новый код" };
+    if (req.attempts >= OTP_MAX_ATTEMPTS) return { error: "Слишком много попыток. Запросите новый код" };
+
+    const provided = hashOtp(req.newEmail, code.trim());
+    if (!safeEqualHex(provided, req.codeHash)) {
+      const attempts = req.attempts + 1;
+      await db.update(emailChangeRequests).set({ attempts }).where(eq(emailChangeRequests.userId, userId));
+      const left = OTP_MAX_ATTEMPTS - attempts;
+      return {
+        error: left > 0 ? `Неверный код. Осталось попыток: ${left}` : "Слишком много попыток. Запросите новый код",
+      };
+    }
+
+    // Re-check the email is still free (race with another account).
+    const taken = (await db.select().from(users).where(eq(users.email, req.newEmail)).limit(1))[0] as User | undefined;
+    if (taken && taken.id !== userId && taken.emailVerifiedAt) {
+      return { error: "Этот email уже используется другим аккаунтом" };
+    }
+
+    const now = Date.now();
+    await db.update(emailChangeRequests).set({ consumed: true }).where(eq(emailChangeRequests.userId, userId));
+    await db.update(users)
+      .set({ email: req.newEmail, emailVerifiedAt: now, updatedAt: now } as any)
+      .where(eq(users.id, userId));
+    return { user: (await this.getUser(userId))! };
+  }
+
+  // Clear the rider's email. Only allowed when they have another way to log in
+  // (phone always exists), so we don't check that here. Also clears the pending
+  // change request if any.
+  async unlinkEmail(userId: string) {
+    const user = await this.getUser(userId);
+    if (!user) return { error: "Пользователь не найден" };
+    const now = Date.now();
+    await db.delete(emailChangeRequests).where(eq(emailChangeRequests.userId, userId));
+    await db.update(users)
+      .set({ email: null, emailVerifiedAt: null, updatedAt: now } as any)
+      .where(eq(users.id, userId));
+    return { user: (await this.getUser(userId))! };
+  }
+
+  // ---------- OAuth identities (Yandex ID / VK ID) ----------
+  async listOauthIdentities(userId: string): Promise<OauthIdentity[]> {
+    return (await db.select().from(oauthIdentities)
+      .where(eq(oauthIdentities.userId, userId))
+      .orderBy(desc(oauthIdentities.createdAt))) as OauthIdentity[];
+  }
+
+  // UPSERT — a given (provider, subject) can only ever map to one user. If the
+  // identity already exists for THIS user we refresh the snapshot; if it exists
+  // for a DIFFERENT user we reject rather than silently reassign.
+  async linkOauthIdentity(params: {
+    userId: string; provider: OauthProvider; subject: string;
+    email?: string | null; displayName?: string | null;
+  }) {
+    const { userId, provider, subject } = params;
+    const email = params.email ?? null;
+    const displayName = params.displayName ?? null;
+
+    const existing = (await db.select().from(oauthIdentities)
+      .where(and(eq(oauthIdentities.provider, provider), eq(oauthIdentities.subject, subject)))
+      .limit(1))[0] as OauthIdentity | undefined;
+
+    if (existing && existing.userId !== userId) {
+      return { error: "Этот аккаунт уже привязан к другому пользователю" };
+    }
+    if (existing) {
+      await db.update(oauthIdentities)
+        .set({ email, displayName } as any)
+        .where(eq(oauthIdentities.id, existing.id));
+      return { ok: true as const, identity: { ...existing, email, displayName } };
+    }
+
+    const row = (await db.insert(oauthIdentities).values({
+      userId, provider, subject, email, displayName, createdAt: Date.now(),
+    }).returning())[0] as OauthIdentity;
+    return { ok: true as const, identity: row };
+  }
+
+  async unlinkOauthIdentity(userId: string, provider: OauthProvider) {
+    await db.delete(oauthIdentities)
+      .where(and(eq(oauthIdentities.userId, userId), eq(oauthIdentities.provider, provider)));
+    return { ok: true as const };
+  }
+
+  // For unauthenticated OAuth callbacks: look up an existing user by identity,
+  // falling back to verified-email match. Returns null when no match — in that
+  // case OAuth cannot be used to create a session because we require a phone.
+  async findUserByOauth(provider: OauthProvider, subject: string, email?: string | null): Promise<User | null> {
+    const identity = (await db.select().from(oauthIdentities)
+      .where(and(eq(oauthIdentities.provider, provider), eq(oauthIdentities.subject, subject)))
+      .limit(1))[0] as OauthIdentity | undefined;
+    if (identity) {
+      return (await this.getUser(identity.userId)) ?? null;
+    }
+    if (email) {
+      const normalized = email.trim().toLowerCase();
+      const byEmail = (await db.select().from(users).where(eq(users.email, normalized)).limit(1))[0] as User | undefined;
+      if (byEmail && byEmail.emailVerifiedAt) {
+        return byEmail;
+      }
+    }
+    return null;
   }
 
   // ---------- Payment methods (MVP metadata only) ----------

@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   phone TEXT NOT NULL,
   email TEXT,
+  email_verified_at BIGINT,
   role TEXT NOT NULL DEFAULT 'rider',
   consent_accepted_at BIGINT,
   consent_version TEXT,
@@ -173,6 +174,24 @@ CREATE TABLE IF NOT EXISTS phone_change_requests (
   attempts INTEGER NOT NULL DEFAULT 0,
   last_sent_at BIGINT NOT NULL,
   consumed BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE TABLE IF NOT EXISTS email_change_requests (
+  user_id TEXT PRIMARY KEY,
+  new_email TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_sent_at BIGINT NOT NULL,
+  consumed BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE TABLE IF NOT EXISTS oauth_identities (
+  id SERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  email TEXT,
+  display_name TEXT,
+  created_at BIGINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS payment_methods (
   id SERIAL PRIMARY KEY,
@@ -286,6 +305,18 @@ CREATE INDEX IF NOT EXISTS idx_support_tickets_user ON support_tickets (user_id)
 CREATE INDEX IF NOT EXISTS idx_support_conv_user ON support_conversations (user_id);
 CREATE INDEX IF NOT EXISTS idx_support_conv_last ON support_conversations (last_message_at DESC);
 CREATE INDEX IF NOT EXISTS idx_support_msg_conv ON support_messages (conversation_id, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_provider_subject ON oauth_identities (provider, subject);
+CREATE INDEX IF NOT EXISTS idx_oauth_user ON oauth_identities (user_id);
+`);
+}
+
+// ---------- Column migrations for existing databases ----------
+// `CREATE TABLE IF NOT EXISTS` doesn't add columns to a pre-existing table, so
+// any new column must be applied here with `ALTER TABLE ... ADD COLUMN IF NOT
+// EXISTS`. Idempotent — safe to run on every boot.
+async function runMigrations() {
+  await pool.query(`
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at BIGINT;
 `);
 }
 
@@ -491,6 +522,7 @@ async function bootstrapDemoData() {
 // must `await bootstrapReady`.
 export const bootstrapReady: Promise<void> = (async () => {
   await createSchema();
+  await runMigrations();
   await createIndexes();
   await bootstrapDemoData();
 })();
