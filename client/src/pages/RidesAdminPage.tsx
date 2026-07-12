@@ -19,6 +19,10 @@ import { fmtDate, fmtRub, fmtDuration, fmtTariff } from "@/lib/format";
 
 const RIDES_KEY = ["/api/admin/rides"];
 
+// Seed-юзеры из bootstrap.ts (populateDemoData). Скрываем их поездки из
+// админ-истории, чтобы показывать только реальные аренды.
+const DEMO_USER_IDS = new Set(["demo", "user-2", "user-3", "user-4", "user-5"]);
+
 type RideTab = "active" | "completed" | "all";
 
 const TABS: { id: RideTab; label: string; testId: string }[] = [
@@ -54,7 +58,10 @@ export function RidesAdminPage() {
     },
   });
 
-  const rides = ridesQ.data ?? [];
+  const rides = useMemo(
+    () => (ridesQ.data ?? []).filter((r) => !DEMO_USER_IDS.has(r.userId)),
+    [ridesQ.data],
+  );
 
   const counts = useMemo(() => ({
     active: rides.filter((r) => r.status === "active").length,
