@@ -1048,7 +1048,7 @@ export function MapLibreMap({
           // черновик-геометрия в preview-блоке editor'а). Сами точки
           // в БД остаются исходными — если потом захочешь редактировать,
           // вершины грузятся без искажений.
-          const smooth = obj.kind === "route" ? chaikinSmooth(ring, 3) : ring;
+          const smooth = obj.kind === "route" ? chaikinSmooth(ring, 1) : ring;
           features.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: smooth } });
         }
       }
