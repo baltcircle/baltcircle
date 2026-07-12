@@ -82,7 +82,7 @@ export function useSupportUnread(): UseSupportUnreadResult {
   }, [enabled]);
 
   const rows = q.data ?? [];
-  const unreadTotal = rows.reduce((s, r) => s + (r.unreadOperator ?? 0), 0);
+  const unreadTotal = rows.reduce((s, r) => s + (r.operatorUnreadCount ?? 0), 0);
   const activeChats = rows.length;
 
   return { unreadTotal, activeChats, isLoading: q.isLoading };

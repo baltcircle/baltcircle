@@ -68,7 +68,7 @@ export function AdminSupportChatsPage() {
     });
   }, [rows, query]);
 
-  const totalUnread = rows.reduce((s, r) => s + (r.unreadOperator ?? 0), 0);
+  const totalUnread = rows.reduce((s, r) => s + (r.operatorUnreadCount ?? 0), 0);
 
   // Автовыбор первого при загрузке
   useEffect(() => {
@@ -114,7 +114,7 @@ export function AdminSupportChatsPage() {
             ) : (
               filtered.map((r) => {
                 const active = r.id === selectedId;
-                const unread = r.unreadOperator ?? 0;
+                const unread = r.operatorUnreadCount ?? 0;
                 return (
                   <button
                     key={r.id}
@@ -143,7 +143,7 @@ export function AdminSupportChatsPage() {
                       </div>
                     )}
                     <div className="text-[10px] text-muted-foreground mt-1">
-                      {fmtRelative(r.lastMessageAt)}
+                      {r.lastMessageAt != null ? fmtRelative(r.lastMessageAt) : ""}
                     </div>
                   </button>
                 );
