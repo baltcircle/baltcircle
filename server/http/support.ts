@@ -185,7 +185,7 @@ export function registerSupportChatRoutes(app: Express): void {
     const preview = (parsed.data.body ?? "").trim();
     const previewShort = preview.length > 140 ? preview.slice(0, 137) + "…" : preview;
     sendToUserAsync(conv.userId, {
-      title: "Поддержка TakeRide",
+      title: "Поддержка",
       body: previewShort || (parsed.data.attachmentUrl ? "📎 Вложение" : "Новое сообщение"),
       url: "/support",
       tag: `support:${id}`,
