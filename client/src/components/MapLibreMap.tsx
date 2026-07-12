@@ -171,23 +171,50 @@ function coercePoints(raw: unknown): [number, number][] {
 // в каждом сегменте (компромисс качество/перформанс).
 function catmullRomSmooth(coords: number[][], segments = 8, alpha = 0.5): number[][] {
   if (coords.length < 3) return coords;
+
+  // 1) Убираем дубликаты (совпавшие соседние точки) — иначе в знаменателях будет
+  //    деление на ~0, и сплайн выстрелит в бесконечность.
+  const EPS = 1e-9;
+  const clean: number[][] = [coords[0]];
+  for (let i = 1; i < coords.length; i++) {
+    const [px, py] = clean[clean.length - 1];
+    const [cx, cy] = coords[i];
+    if (Math.hypot(cx - px, cy - py) > EPS) clean.push(coords[i]);
+  }
+  if (clean.length < 3) return clean;
+
+  // 2) Фантомные точки — зеркальное отражение, чтобы кривая на концах
+  //    шла вдоль сегмента, а не куда-то в сторону.
+  const first = clean[0];
+  const second = clean[1];
+  const preLast = clean[clean.length - 2];
+  const last = clean[clean.length - 1];
+  const phantomStart = [2 * first[0] - second[0], 2 * first[1] - second[1]];
+  const phantomEnd = [2 * last[0] - preLast[0], 2 * last[1] - preLast[1]];
+  const pts = [phantomStart, ...clean, phantomEnd];
+
   const out: number[][] = [];
-  // Фантомные контрольные точки на концах, чтобы крайние сегменты тоже
-  // были плавными. Копируем первую/последнюю — кривая стартует/финиширует в них.
-  const pts = [coords[0], ...coords, coords[coords.length - 1]];
-  const tj = (ti: number, [xi, yi]: number[], [xj, yj]: number[]) => {
-    const dx = xj - xi, dy = yj - yi;
+  const tj = (ti: number, xi: number[], xj: number[]) => {
+    const dx = xj[0] - xi[0], dy = xj[1] - xi[1];
     return ti + Math.pow(Math.hypot(dx, dy), alpha);
   };
+
   for (let i = 0; i < pts.length - 3; i++) {
     const p0 = pts[i], p1 = pts[i + 1], p2 = pts[i + 2], p3 = pts[i + 3];
     const t0 = 0;
     const t1 = tj(t0, p0, p1);
     const t2 = tj(t1, p1, p2);
     const t3 = tj(t2, p2, p3);
+
+    // 3) Гард от вырожденных параметров — если сегмент слипся, просто
+    //    ставим конечные точки без интерполяции.
+    if (t1 === t0 || t2 === t1 || t3 === t2) {
+      out.push(p1);
+      continue;
+    }
+
     for (let s = 0; s < segments; s++) {
       const t = t1 + (s / segments) * (t2 - t1);
-      // Стандартная Barry-Goldman параметризация Catmull-Rom.
       const a1x = ((t1 - t) * p0[0] + (t - t0) * p1[0]) / (t1 - t0);
       const a1y = ((t1 - t) * p0[1] + (t - t0) * p1[1]) / (t1 - t0);
       const a2x = ((t2 - t) * p1[0] + (t - t1) * p2[0]) / (t2 - t1);
@@ -200,10 +227,18 @@ function catmullRomSmooth(coords: number[][], segments = 8, alpha = 0.5): number
       const b2y = ((t3 - t) * a2y + (t - t1) * a3y) / (t3 - t1);
       const cx = ((t2 - t) * b1x + (t - t1) * b2x) / (t2 - t1);
       const cy = ((t2 - t) * b1y + (t - t1) * b2y) / (t2 - t1);
-      out.push([cx, cy]);
+
+      // 4) Страховка: если всё-таки вылетело в NaN/Infinity — берём линейную
+      //    интерполяцию между p1 и p2. Сглаживания нет, но линия не улетает.
+      if (!Number.isFinite(cx) || !Number.isFinite(cy)) {
+        const lin = s / segments;
+        out.push([p1[0] + (p2[0] - p1[0]) * lin, p1[1] + (p2[1] - p1[1]) * lin]);
+      } else {
+        out.push([cx, cy]);
+      }
     }
   }
-  out.push(coords[coords.length - 1]);
+  out.push(clean[clean.length - 1]);
   return out;
 }
 
