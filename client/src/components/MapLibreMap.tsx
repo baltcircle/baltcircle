@@ -165,12 +165,15 @@ function coercePoints(raw: unknown): [number, number][] {
   return [];
 }
 
-// Смягчение углов без срезания вершин: вокруг каждой внутренней точки вставляем
-// 2 контрольные точки на соседних сегментах (в процентах от длины), а саму вершину
-// убираем. MapLibre с line-join: round рисует округлый переход между ними —
-// угол визуально скругляется, но направление вершины сохраняется. Никакой
-// экстраполяции — выбросы невозможны. radius в долях от сегмента (0..0.5).
-function smoothCorners(coords: number[][], radius = 0.15): number[][] {
+// Мягкое скругление углов квадратичной кривой Безье через вершину:
+// — берём точку в (1-r) сегмента до вершины (p1) и в r после (p2);
+// — вершина (b) не включается, но служит контрольной точкой Bézier;
+// — генерируем segments промежуточных точек вдоль B(t) = (1-t)²p1 + 2(1-t)t·b + t²p2;
+// — касательные кривой в концах совпадают с направлением входящего/выходящего
+//   сегмента — G1-непрерывность без изломов. Кривая не выходит за выпуклую оболочку
+//   {p1, b, p2}, то есть выбросы невозможны.
+// radius — доля сегмента (0..0.5); segments — число на один угол.
+function smoothCorners(coords: number[][], radius = 0.25, segments = 12): number[][] {
   if (coords.length < 3) return coords;
   const r = Math.min(0.49, Math.max(0, radius));
   const out: number[][] = [coords[0]];
@@ -178,10 +181,25 @@ function smoothCorners(coords: number[][], radius = 0.15): number[][] {
     const [ax, ay] = coords[i - 1];
     const [bx, by] = coords[i];
     const [cx, cy] = coords[i + 1];
-    // Контрольная точка ПЕРЕД вершиной — в доле (1-r) от a к b.
-    out.push([ax + (bx - ax) * (1 - r), ay + (by - ay) * (1 - r)]);
-    // Контрольная точка ПОСЛЕ вершины — в доле r от b к c.
-    out.push([bx + (cx - bx) * r, by + (cy - by) * r]);
+    const p1x = ax + (bx - ax) * (1 - r);
+    const p1y = ay + (by - ay) * (1 - r);
+    const p2x = bx + (cx - bx) * r;
+    const p2y = by + (cy - by) * r;
+    // Семплируем квадратичную Bézier: t в (0, 1). t=0 текущее out[-1]
+    // (это p1 для i>1, а для i=1 — push первой вершины выше + мы добавим p1 следом),
+    // чтобы избежать дублирования p1. t=1 — p2 (включаем).
+    if (out[out.length - 1][0] !== p1x || out[out.length - 1][1] !== p1y) {
+      out.push([p1x, p1y]);
+    }
+    for (let s = 1; s <= segments; s++) {
+      const t = s / (segments + 1);
+      const u = 1 - t;
+      out.push([
+        u * u * p1x + 2 * u * t * bx + t * t * p2x,
+        u * u * p1y + 2 * u * t * by + t * t * p2y,
+      ]);
+    }
+    out.push([p2x, p2y]);
   }
   out.push(coords[coords.length - 1]);
   return out;
@@ -1122,7 +1140,7 @@ export function MapLibreMap({
         } else {
           // Смягчение углов: вокруг каждой вершины 2 контрольные точки,
           // line-join: round в стиле скругляет переход.
-          const smooth = obj.kind === "route" ? smoothCorners(ring, 0.1) : ring;
+          const smooth = obj.kind === "route" ? smoothCorners(ring, 0.25, 12) : ring;
           features.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: smooth } });
         }
       }
