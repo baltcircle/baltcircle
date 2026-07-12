@@ -1101,12 +1101,9 @@ export function MapLibreMap({
           if (f0 !== l0 || f1 !== l1) closed.push(closed[0]); // GeoJSON polygons must close
           features.push({ type: "Feature", properties: props, geometry: { type: "Polygon", coordinates: [closed] } });
         } else {
-          // Маршрут сглаживаем в финальном превью (публичная карта и
-          // черновик-геометрия в preview-блоке editor'а). Сами точки
-          // в БД остаются исходными — если потом захочешь редактировать,
-          // вершины грузятся без искажений.
-          const smooth = obj.kind === "route" ? catmullRomSmooth(ring, 8) : ring;
-          features.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: smooth } });
+          // Сглаживание временно отключено — spline выбрасывал линию
+          // через всю карту. line-join: round на слоях уже даёт мягкие стыки.
+          features.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: ring } });
         }
       }
     }
