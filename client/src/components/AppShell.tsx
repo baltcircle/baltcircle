@@ -110,9 +110,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             top: 0,
             left: 0,
             right: 0,
-            // env() даёт высоту status bar при viewport-fit=cover; --visible-top
-            // — запасной источник от use-app-viewport. Берём максимум.
-            height: "max(env(safe-area-inset-top, 0px), var(--visible-top, 0px))",
+            // Фиксированная 60px: env(safe-area-inset-top) в Safari-режиме
+            // (без standalone) возвращает 0, поэтому жёстко задаём высоту,
+            // гарантированно перекрывающую зону iOS status bar.
+            height: "60px",
             backgroundColor: "#9fc9e0",
             zIndex: 2147483647,
             pointerEvents: "none",
