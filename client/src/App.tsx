@@ -48,6 +48,21 @@ import NotFound from "@/pages/not-found";
 const DRAWER_OPEN_KEY = "bc.drawer.open";
 const PM_ORIGIN_KEY = "bc.pm.origin";
 
+// СИНХРОННО (до первого рендера): если это возврат с T-Bank на /payment-methods
+// (в URL есть tbank-параметры) — помечаем, что оверлей НЕ должен играть slide-up.
+// Так даже первый заход (leg 1, до reboot) не «выезжает» — иначе пользователь
+// видит двойное появление страницы оплаты (пустая → reboot → с картой).
+try {
+  if (
+    window.location.pathname === "/payment-methods" &&
+    /[?&](from|Success|RequestKey|ErrorCode)=?/.test(window.location.search)
+  ) {
+    sessionStorage.setItem("bc.overlay.skipEnterAnim", "1");
+  }
+} catch {
+  /* ignore */
+}
+
 // OverlayRouter — renders customer pages as a fixed overlay on top of the map.
 // Exit animation: pages dispatch "overlay:back" event → OverlayRouter plays
 // slide-down for 300ms, then calls history.back() itself.
