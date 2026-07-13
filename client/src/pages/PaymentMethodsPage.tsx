@@ -278,7 +278,11 @@ export function PaymentMethodsPage() {
         } catch {
           /* private mode / storage disabled — reboot still fixes the trap */
         }
-        window.location.replace("/payment-methods");
+        // Сначала replace на карту (дропает все остаточные T-Bank-записи),
+        // затем push на /payment-methods — так позади страницы всегда остаётся
+        // запись карты, чтобы edge-swipe назад работал корректно.
+        window.history.replaceState(null, "", "/");
+        window.location.assign("/payment-methods");
         return;
       }
     }

@@ -56,6 +56,7 @@ function isOverlayPath(path: string): boolean {
 }
 
 function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) {
+  const [, setLocation] = useLocation();
   const [visible, setVisible] = useState(isOverlay);
   const [exiting, setExiting] = useState(false);
   // Снэпшот URL для exit-анимации: когда уходим в карту, popstate меняет loc на "/",
@@ -102,19 +103,24 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
         return;
       }
 
-      // Выходим в non-overlay: сначала анимация, потом навигация.
+      // Выходим в non-overlay (на карту): сначала анимация, потом навигация.
+      // ВАЖНО: используем wouter setLocation("/") вместо history.back().
+      // history.back() ненадёжен на /payment-methods: T-Bank-flow делает серию
+      // location.replace (bind-card → форма банка → reboot назад), из-за чего
+      // запись истории «карта» может быть затёрта, и back/edge-swipe упираются
+      // в пустой стек — экран залипает. Явная навигация на "/" всегда работает.
       setExitLoc(currentPath);
       setExiting(true);
       setTimeout(() => {
         setExiting(false);
         setVisible(false);
         setExitLoc(null);
-        window.history.back();
+        setLocation("/");
       }, 300);
     };
     window.addEventListener("overlay:back", handler);
     return () => window.removeEventListener("overlay:back", handler);
-  }, [visible, exiting]);
+  }, [visible, exiting, setLocation]);
 
   if (!visible) return null;
 
