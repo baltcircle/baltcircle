@@ -4,11 +4,16 @@ import { Link } from "wouter";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useEffect, useState } from "react";
 import type { Ride } from "@shared/schema";
 
 interface Props {
   open: boolean;
   onClose: () => void;
+  // true — меню смонтировано уже открытым (восстановлено после возврата с T-Bank).
+  // В этом случае НЕ играем slide-in: панель должна появиться сразу открытой,
+  // как будто она уже была открыта (как при выходе из обычных меню).
+  mountedOpen?: boolean;
 }
 
 interface MenuItemProps {
@@ -36,8 +41,21 @@ function MenuItem({
   );
 }
 
-export function DrawerMenu({ open, onClose }: Props) {
+export function DrawerMenu({ open, onClose, mountedOpen = false }: Props) {
   const { user, isStaff, isRegistered } = useCurrentUser();
+
+  // Если меню восстановлено открытым на первом рендере — первый кадр без
+  // transition (панель сразу на месте, без slide-in), потом включаем transition
+  // через кадр — чтобы будущее закрытие анимировалось.
+  const [animate, setAnimate] = useState(!mountedOpen);
+  useEffect(() => {
+    if (!animate) {
+      const id = requestAnimationFrame(() => setAnimate(true));
+      return () => cancelAnimationFrame(id);
+    }
+  }, [animate]);
+  const transitionCls = animate ? "transition-transform duration-300 ease-in-out" : "";
+  const backdropTransitionCls = animate ? "transition-opacity duration-300" : "";
 
   const userId = user?.id ?? "";
   const ridesQ = useQuery<Ride[]>({
@@ -57,7 +75,7 @@ export function DrawerMenu({ open, onClose }: Props) {
       {/* Backdrop — на весь экран (inset-0). Верхнюю полосу status bar
          защищает отдельный status-bar guard в AppShell (лежит поверх). */}
       <div
-        className={`fixed inset-0 bg-black/40 z-30 transition-opacity duration-300 ${
+        className={`fixed inset-0 bg-black/40 z-30 ${backdropTransitionCls} ${
           open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
         onClick={onClose}
@@ -67,7 +85,7 @@ export function DrawerMenu({ open, onClose }: Props) {
        * чтобы фон панели доходил до самого верха и низа без белых
        * зазоров. Контент внутри отступает от status bar через padding. */}
       <div
-        className={`fixed right-0 top-0 bottom-0 w-80 bg-sidebar text-sidebar-foreground shadow-2xl z-40 flex flex-col transform transition-transform duration-300 ease-in-out ${
+        className={`fixed right-0 top-0 bottom-0 w-80 bg-sidebar text-sidebar-foreground shadow-2xl z-40 flex flex-col transform ${transitionCls} ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >

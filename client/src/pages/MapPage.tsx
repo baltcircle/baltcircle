@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { fmtDuration, fmtDistance, fmtRub } from "@/lib/format";
 import { PENDING_BIKE_KEY } from "@/lib/pending-bike";
 import { QrCode, Lock, Clock, Menu, MapPin, Route, X, CreditCard } from "lucide-react";
-import { Link, useLocation } from "wouter";
+import { Link } from "wouter";
 
 const INTRO_SHOWN_KEY = "bc.registration.intro.shown";
 const PAYMENT_BANNER_KEY = "bc.payment.banner.dismissed";
@@ -62,8 +62,21 @@ export function MapPage() {
   const [rentalMulti, setRentalMulti] = useState(false);
   const [regOpen, setRegOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
-  const [location] = useLocation();
-  const [drawerOpen, setDrawerOpenState] = useState(false);
+  // Восстанавливаем открытое меню СРАЗУ при монтировании из sessionStorage-флага.
+  // После возврата с T-Bank приложение грузится с нуля на /payment-methods,
+  // MapPage монтируется под оверлеем (z-50). Если меню (z-40) сразу открыто
+  // без анимации — оно не видно под оверлеем, а когда оверлей уйдёт (slide-down)
+  // — под ним уже готовый открытый бургер (как при обычных меню, без slide-in).
+  const [drawerOpen, setDrawerOpenState] = useState(() => {
+    try {
+      return sessionStorage.getItem(DRAWER_OPEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  // Меню, восстановленное открытым на первом рендере, не должно играть slide-in
+  // (оно «уже было открыто» до ухода на T-Bank). Передаём это в DrawerMenu.
+  const drawerMountedOpen = useRef(drawerOpen);
   // Синхронизируем состояние меню с sessionStorage, чтобы оно переживало
   // полный reload (возврат в меню после привязки карты).
   const setDrawerOpen = (open: boolean) => {
@@ -75,19 +88,6 @@ export function MapPage() {
       /* private mode — меню просто не восстановится после reload */
     }
   };
-  // Открываем меню из sessionStorage-флага ТОЛЬКО когда карта активна (location==="/"),
-  // а не пока сверху ещё оверлей /payment-methods. Иначе после T-Bank reboot
-  // MapPage монтируется под оверлеем и меню мелькало бы за страницей оплаты.
-  useEffect(() => {
-    if (location !== "/") return;
-    let flagged = false;
-    try {
-      flagged = sessionStorage.getItem(DRAWER_OPEN_KEY) === "1";
-    } catch {
-      /* ignore */
-    }
-    if (flagged) setDrawerOpenState(true);
-  }, [location]);
 
   // Payment banner — показывается под кнопкой скан, если нет карты
   // и не закрыт в эту сессию (перенесён из бургер-меню).
@@ -401,7 +401,7 @@ export function MapPage() {
       </div>
 
       {/* Drawer menu */}
-      <DrawerMenu open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <DrawerMenu open={drawerOpen} onClose={() => setDrawerOpen(false)} mountedOpen={drawerMountedOpen.current} />
 
       <RegistrationModal
         open={regOpen}
