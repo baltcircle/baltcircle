@@ -1,10 +1,9 @@
-import { X, User, LifeBuoy, Wallet, Route, ShieldCheck, UserCircle, Shield, ChevronRight, CreditCard, Bike } from "lucide-react";
+import { LifeBuoy, Wallet, Route, ShieldCheck, Shield, ChevronRight, Bike } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { Link } from "wouter";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { useState } from "react";
 import type { Ride } from "@shared/schema";
 
 interface Props {
@@ -31,8 +30,6 @@ function MenuItem({ href, icon: Icon, label }: Omit<MenuItemProps, "onClose">) {
   );
 }
 
-const PAYMENT_BANNER_KEY = "bc.payment.banner.dismissed";
-
 export function DrawerMenu({ open, onClose }: Props) {
   const { user, isStaff, isRegistered } = useCurrentUser();
 
@@ -46,28 +43,8 @@ export function DrawerMenu({ open, onClose }: Props) {
     enabled: isRegistered && !!userId,
   });
 
-  const methodsQ = useQuery<any[]>({
-    queryKey: ["/api/payment-methods"],
-    enabled: isRegistered,
-  });
-
   const rides = ridesQ.data ?? [];
   const totalKm = (rides.reduce((sum, r) => sum + (r.distanceM ?? 0), 0) / 1000).toFixed(1);
-  const hasCard = (methodsQ.data?.length ?? 0) > 0;
-
-  // sessionStorage: dismissed resets on every new browser session
-  const [bannerDismissed, setBannerDismissed] = useState(
-    () => sessionStorage.getItem(PAYMENT_BANNER_KEY) === "1"
-  );
-
-  const dismissBanner = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    sessionStorage.setItem(PAYMENT_BANNER_KEY, "1");
-    setBannerDismissed(true);
-  };
-
-  const showBanner = isRegistered && !hasCard && !bannerDismissed;
 
   return (
     <>
@@ -94,7 +71,7 @@ export function DrawerMenu({ open, onClose }: Props) {
         <Link
           href="/settings"
           className="mx-4 block rounded-2xl hover:bg-black/10 transition-colors px-2 py-2"
-          style={{ marginTop: "max(env(safe-area-inset-top, 0px), 8px)" }}
+          style={{ marginTop: "max(env(safe-area-inset-top, 0px), 24px)" }}
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-3 min-w-0">
@@ -129,31 +106,6 @@ export function DrawerMenu({ open, onClose }: Props) {
             </div>
           </div>
         </Link>
-
-        {/* Payment banner — только если нет карты и не закрыт в эту сессию */}
-        {showBanner && (
-          <div className="mx-4 mt-3 rounded-2xl bg-black/10 border border-sidebar-foreground/15 px-4 py-3 relative">
-            <button
-              onClick={dismissBanner}
-              className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors"
-              aria-label="Закрыть"
-            >
-              <X className="w-4 h-4 text-sidebar-foreground/70" />
-            </button>
-            <div className="flex items-start gap-3 pr-6">
-              <CreditCard className="w-5 h-5 text-sidebar-foreground/80 shrink-0 mt-0.5" />
-              <p className="text-sm text-sidebar-foreground leading-snug">
-                Добавьте способ оплаты, чтобы начать кататься
-              </p>
-            </div>
-            <Link
-              href="/payment-methods"
-              className="mt-3 flex items-center justify-center w-full h-10 rounded-full bg-primary hover:opacity-90 text-primary-foreground text-sm font-medium transition-colors"
-            >
-              Добавить оплату
-            </Link>
-          </div>
-        )}
 
         {/* Divider */}
         <div className="mx-4 mt-3 mb-2 h-px bg-sidebar-foreground/15" />

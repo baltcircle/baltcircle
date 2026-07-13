@@ -14,9 +14,11 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDuration, fmtDistance, fmtRub } from "@/lib/format";
 import { PENDING_BIKE_KEY } from "@/lib/pending-bike";
-import { QrCode, Lock, Clock, Menu, MapPin, Route } from "lucide-react";
+import { QrCode, Lock, Clock, Menu, MapPin, Route, X, CreditCard } from "lucide-react";
+import { Link } from "wouter";
 
 const INTRO_SHOWN_KEY = "bc.registration.intro.shown";
+const PAYMENT_BANNER_KEY = "bc.payment.banner.dismissed";
 
 export function MapPage() {
   const toast = useToast();
@@ -57,6 +59,22 @@ export function MapPage() {
   const [regOpen, setRegOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Payment banner — показывается под кнопкой скан, если нет карты
+  // и не закрыт в эту сессию (перенесён из бургер-меню).
+  const methodsQ = useQuery<any[]>({
+    queryKey: ["/api/payment-methods"],
+    enabled: isRegistered,
+  });
+  const hasCard = (methodsQ.data?.length ?? 0) > 0;
+  const [paymentBannerDismissed, setPaymentBannerDismissed] = useState(
+    () => sessionStorage.getItem(PAYMENT_BANNER_KEY) === "1"
+  );
+  const dismissPaymentBanner = () => {
+    sessionStorage.setItem(PAYMENT_BANNER_KEY, "1");
+    setPaymentBannerDismissed(true);
+  };
+  const showPaymentBanner = isRegistered && !hasCard && !paymentBannerDismissed && !activeRide;
 
   // Geolocation: center map on user position.
   // Собственный watchPosition (кеширует последнюю точку) → клик по кнопке моментально
@@ -239,7 +257,7 @@ export function MapPage() {
         aria-label="Моё местоположение"
         data-testid="home-geolocate-button"
         className="fixed right-4 z-20 w-12 h-12 rounded-full bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem + 3.5rem + 1rem)" }}
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 0.25rem + 3.5rem + 1rem)" }}
       >
         <MapPin className="w-5 h-5" />
       </button>
@@ -249,7 +267,7 @@ export function MapPage() {
        * карта под ней просвечивает. Пространство ниже кнопки — тоже карта (fixed inset:0). */}
       <div
         className="fixed left-4 right-4 z-40"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }}
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 0.25rem)" }}
       >
         {activeRide ? (
           /* Active ride card */
@@ -304,17 +322,46 @@ export function MapPage() {
             </div>
           </div>
         ) : (
-          /* Scan button */
-          <button
-            type="button"
-            onClick={() => goRent(false)}
-            aria-label={isRegistered ? "Сканировать QR" : "Сканировать QR (нужна регистрация)"}
-            data-testid="home-primary-scan"
-            className="w-full h-14 rounded-full bg-primary hover:opacity-90 text-black font-medium text-lg flex items-center justify-between px-6 shadow-lg active:scale-[0.98] transition-all"
-          >
-            <span>Сканировать</span>
-            <QrCode className="w-6 h-6" />
-          </button>
+          /* Scan button + payment banner под ней */
+          <div className="flex flex-col gap-3">
+            <button
+              type="button"
+              onClick={() => goRent(false)}
+              aria-label={isRegistered ? "Сканировать QR" : "Сканировать QR (нужна регистрация)"}
+              data-testid="home-primary-scan"
+              className="w-full h-14 rounded-full bg-primary hover:opacity-90 text-black font-medium text-lg flex items-center justify-between px-6 shadow-lg active:scale-[0.98] transition-all"
+            >
+              <span>Сканировать</span>
+              <QrCode className="w-6 h-6" />
+            </button>
+
+            {/* Payment banner — под кнопкой скан. Крестик скрывает баннер,
+             * блок анкорится по нижнему краю — кнопка скан опускается на его место. */}
+            {showPaymentBanner && (
+              <div className="rounded-2xl bg-card/95 text-card-foreground backdrop-blur-sm shadow-xl px-4 py-3 relative">
+                <button
+                  type="button"
+                  onClick={dismissPaymentBanner}
+                  className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors"
+                  aria-label="Закрыть"
+                >
+                  <X className="w-4 h-4 text-card-foreground/70" />
+                </button>
+                <div className="flex items-start gap-3 pr-6">
+                  <CreditCard className="w-5 h-5 text-card-foreground/80 shrink-0 mt-0.5" />
+                  <p className="text-sm text-card-foreground leading-snug">
+                    Добавьте способ оплаты, чтобы начать кататься
+                  </p>
+                </div>
+                <Link
+                  href="/payment-methods"
+                  className="mt-3 flex items-center justify-center w-full h-10 rounded-full bg-primary hover:opacity-90 text-black text-sm font-medium transition-colors"
+                >
+                  Добавить оплату
+                </Link>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
