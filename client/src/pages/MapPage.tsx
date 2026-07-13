@@ -77,6 +77,24 @@ export function MapPage() {
   // Меню, восстановленное открытым на первом рендере, не должно играть slide-in
   // (оно «уже было открыто» до ухода на T-Bank). Передаём это в DrawerMenu.
   const drawerMountedOpen = useRef(drawerOpen);
+  // Счётчик «мгновенного открытия»: при возврате со «Способов оплаты» в бургер
+  // (событие drawer:reopen из OverlayRouter) меню должно появиться БЕЗ slide-in —
+  // оно логически «уже было открыто» до перехода. Каждый bump просит DrawerMenu
+  // отрисовать открытие первым кадром без transition.
+  const [drawerInstantTick, setDrawerInstantTick] = useState(0);
+  useEffect(() => {
+    const reopen = () => {
+      setDrawerInstantTick((n) => n + 1);
+      setDrawerOpenState(true);
+      try {
+        sessionStorage.setItem(DRAWER_OPEN_KEY, "1");
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener("drawer:reopen", reopen);
+    return () => window.removeEventListener("drawer:reopen", reopen);
+  }, []);
   // Синхронизируем состояние меню с sessionStorage, чтобы оно переживало
   // полный reload (возврат в меню после привязки карты).
   const setDrawerOpen = (open: boolean) => {
@@ -401,7 +419,7 @@ export function MapPage() {
       </div>
 
       {/* Drawer menu */}
-      <DrawerMenu open={drawerOpen} onClose={() => setDrawerOpen(false)} mountedOpen={drawerMountedOpen.current} />
+      <DrawerMenu open={drawerOpen} onClose={() => setDrawerOpen(false)} mountedOpen={drawerMountedOpen.current} instantTick={drawerInstantTick} />
 
       <RegistrationModal
         open={regOpen}

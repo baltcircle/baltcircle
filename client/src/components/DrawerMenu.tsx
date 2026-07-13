@@ -14,6 +14,10 @@ interface Props {
   // В этом случае НЕ играем slide-in: панель должна появиться сразу открытой,
   // как будто она уже была открыта (как при выходе из обычных меню).
   mountedOpen?: boolean;
+  // Счётчик «мгновенного открытия»: при каждом изменении панель появляется
+  // без slide-in (один кадр без transition). Используется при возврате со
+  // «Способов оплаты» в уже-открытый бургер.
+  instantTick?: number;
 }
 
 interface MenuItemProps {
@@ -41,7 +45,7 @@ function MenuItem({
   );
 }
 
-export function DrawerMenu({ open, onClose, mountedOpen = false }: Props) {
+export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0 }: Props) {
   const { user, isStaff, isRegistered } = useCurrentUser();
 
   // Если меню восстановлено открытым на первом рендере — первый кадр без
@@ -54,6 +58,15 @@ export function DrawerMenu({ open, onClose, mountedOpen = false }: Props) {
       return () => cancelAnimationFrame(id);
     }
   }, [animate]);
+
+  // Мгновенное открытие по триггеру (возврат со «Способов оплаты»): гасим
+  // transition на один кадр, чтобы панель не выезжала, а сразу была открыта.
+  // instantTick=0 — начальное значение, его пропускаем.
+  useEffect(() => {
+    if (instantTick > 0) {
+      setAnimate(false);
+    }
+  }, [instantTick]);
   const transitionCls = animate ? "transition-transform duration-300 ease-in-out" : "";
   const backdropTransitionCls = animate ? "transition-opacity duration-300" : "";
 

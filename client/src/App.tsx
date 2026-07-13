@@ -58,6 +58,11 @@ try {
     /[?&](from|Success|RequestKey|ErrorCode)=?/.test(window.location.search)
   ) {
     sessionStorage.setItem("bc.overlay.skipEnterAnim", "1");
+    // Возврат с T-Bank должен приземлять СРАЗУ на «Способы оплаты», без мелькания
+    // бургера под оверлеем. Гасим флаг открытого меню на первом монтировании —
+    // MapPage стартует с закрытым бургером. При нажатии «Назад» обработчик
+    // overlay:back снова откроет меню по PM_ORIGIN_KEY (origin === "drawer").
+    sessionStorage.removeItem("bc.drawer.open");
   }
 } catch {
   /* ignore */
@@ -167,8 +172,12 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
         setVisible(false);
         setExitLoc(null);
         if (currentPath === "/payment-methods") {
-          // Явная навигация на карту (устойчиво к reboot). MapPage при монтировании
-          // читает DRAWER_OPEN_KEY и откроет меню, если заходили из бургера.
+          // Явная навигация на карту. MapPage уже смонтирован (не ремаунтится),
+          // поэтому если нужно вернуться в бургер — шлём событие, MapPage
+          // откроет меню без slide-in (оно «уже было открыто» до T-Bank).
+          if (toMenu) {
+            window.dispatchEvent(new Event("drawer:reopen"));
+          }
           setLocation("/");
         } else {
           // Обычные overlay-страницы: MapPage в фоне хранит drawerOpen — history.back().
