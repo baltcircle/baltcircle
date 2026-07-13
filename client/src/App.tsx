@@ -101,6 +101,15 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
   // но оверлей ещё проигрывает slide-down. Чтобы <Switch> не опустел посередине,
   // держим последний overlay-URL во время exit.
   const [exitLoc, setExitLoc] = useState<string | null>(null);
+  // Вход (slide-up) должен проигрываться ТОЛЬКО при появлении оверлея из скрытого
+  // состояния. Пока оверлей видим, повторные рендеры (напр. навигация
+  // /payment-methods?from=tbank → /payment-methods для очистки query внутри
+  // страницы) НЕ должны заново «выезжать». Иначе после T-Bank страница сначала
+  // показывается правильно, а затем повторно проигрывает slide-up (баг).
+  const enteredRef = useRef(false);
+  useEffect(() => {
+    if (!visible) enteredRef.current = false;
+  }, [visible]);
 
   // On enter: show overlay. On exit via browser swipe (isOverlay → false
   // without overlay:back event): immediately hide without animation.
@@ -194,9 +203,16 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
   // Отмечаем неиспользуемую сейчас переменную (оставлена на будущее — если понадобится снэпшот).
   void exitLoc;
 
-  // При skipEnter первый кадр без анимации входа; после первого рендера
-  // сбрасываем флаг, чтобы exit-анимация (slide-down) при выходе работала.
-  const enterCls = exiting ? "animate-slide-down" : skipEnter ? "" : "animate-slide-up";
+  // Анимация входа (slide-up) — только ОДИН раз при появлении оверлея:
+  //  • exiting → slide-down (выход);
+  //  • skipEnter (возврат с T-Bank) → без анимации;
+  //  • уже входили (enteredRef) → без анимации (повторный рендер, напр. очистка query);
+  //  • иначе → slide-up (первое появление).
+  const playEnter = !exiting && !skipEnter && !enteredRef.current;
+  const enterCls = exiting ? "animate-slide-down" : playEnter ? "animate-slide-up" : "";
+  // Фиксируем, что вход уже состоялся (сыгран slide-up или пропущен),
+  // чтобы последующие рендеры не анимировались повторно.
+  if (!exiting) enteredRef.current = true;
 
   return (
     <div
