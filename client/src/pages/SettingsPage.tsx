@@ -108,13 +108,12 @@ export function SettingsPage() {
     >
       {/* Header */}
       <div
-        className="flex items-center justify-center px-4 pb-3 shrink-0 bg-gray-50 dark:bg-zinc-900 border-b border-gray-200 dark:border-zinc-800"
-        style={{ paddingTop: "calc(max(1.25rem, env(safe-area-inset-top)) + 0.75rem)" }}
+        className="relative flex items-center justify-center px-4 shrink-0 bg-gray-50 dark:bg-zinc-900 border-t border-b border-gray-200 dark:border-zinc-800"
+        style={{ marginTop: "calc(max(1.25rem, env(safe-area-inset-top)) + 0.75rem)", minHeight: "3.5rem" }}
       >
         <button
           onClick={() => window.dispatchEvent(new Event("overlay:back"))}
-          className="absolute left-4 flex items-center justify-center w-9 h-9 rounded-full hover:bg-gray-200 dark:hover:bg-zinc-800 transition-colors"
-          style={{ top: "calc(max(1.25rem, env(safe-area-inset-top)) + 0.75rem)" }}
+          className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center justify-center w-9 h-9 rounded-full hover:bg-gray-200 dark:hover:bg-zinc-800 transition-colors"
         >
           <ArrowLeft className="w-5 h-5 text-gray-700 dark:text-zinc-300" />
         </button>
