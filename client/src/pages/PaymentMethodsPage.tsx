@@ -278,6 +278,13 @@ export function PaymentMethodsPage() {
         } catch {
           /* private mode / storage disabled — reboot still fixes the trap */
         }
+        // После reboot оверлей не должен снова проигрывать slide-up — страница
+        // уже была открыта до T-Bank. Иначе пользователь видит второй «выезд».
+        try {
+          sessionStorage.setItem("bc.overlay.skipEnterAnim", "1");
+        } catch {
+          /* ignore */
+        }
         // Чистый reboot на /payment-methods: сбрасывает остаточные T-Bank-записи
         // истории. Именно replace (не assign+replaceState) — иначе двойная
         // навигация вызывала гонку загрузки сессии (профиль «Гость», зависший фон).

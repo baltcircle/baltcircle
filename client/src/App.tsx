@@ -64,6 +64,19 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
   const [, setLocation] = useLocation();
   const [visible, setVisible] = useState(isOverlay);
   const [exiting, setExiting] = useState(false);
+  // После T-Bank reboot оверлей монтируется заново, но slide-up играть не надо
+  // (страница уже была открыта до редиректа) — иначе второй «выезд».
+  const [skipEnter, setSkipEnter] = useState(() => {
+    try {
+      if (sessionStorage.getItem("bc.overlay.skipEnterAnim") === "1") {
+        sessionStorage.removeItem("bc.overlay.skipEnterAnim");
+        return true;
+      }
+    } catch {
+      /* ignore */
+    }
+    return false;
+  });
   // Снэпшот URL для exit-анимации: когда уходим в карту, popstate меняет loc на "/",
   // но оверлей ещё проигрывает slide-down. Чтобы <Switch> не опустел посередине,
   // держим последний overlay-URL во время exit.
@@ -157,8 +170,20 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
   // Отмечаем неиспользуемую сейчас переменную (оставлена на будущее — если понадобится снэпшот).
   void exitLoc;
 
+  // При skipEnter первый кадр без анимации входа; после первого рендера
+  // сбрасываем флаг, чтобы exit-анимация (slide-down) при выходе работала.
+  const enterCls = exiting ? "animate-slide-down" : skipEnter ? "" : "animate-slide-up";
+
   return (
-    <div className={`fixed inset-0 z-50 ${exiting ? "animate-slide-down" : "animate-slide-up"}`}>
+    <div
+      className={`fixed inset-0 z-50 ${enterCls}`}
+      ref={() => {
+        if (skipEnter) {
+          // Сброс после монтирования — через кадр, чтобы не мешать первому рендеру.
+          requestAnimationFrame(() => setSkipEnter(false));
+        }
+      }}
+    >
       <Switch>
         <Route path="/settings" component={SettingsPage} />
         <Route path="/rides" component={RidesPage} />
