@@ -898,7 +898,36 @@ export class DatabaseStorage implements IStorage {
     const set: Record<string, unknown> = { ...patch, updatedAt: Date.now() };
     delete set.id;
     await db.update(paymentMethods).set(set as any).where(eq(paymentMethods.id, id));
-    return this.getPaymentMethod(id);
+    const updated = await this.getPaymentMethod(id);
+
+    // Дедупликация: одна и та же физическая карта при повторной привязке возвращает
+    // тот же T-Bank CardId (или RebillId). Когда метод становится active с таким
+    // идентификатором — удаляем прочие методы того же пользователя с тем же
+    // CardId/RebillId, чтобы в списке не копились одинаковые карты. Централизовано
+    // здесь — покрывает все пути активации (webhook, refresh, refresh-bind).
+    if (updated && updated.status === "active" && updated.userId) {
+      const cardId = updated.cardId?.trim();
+      const rebillId = updated.rebillId?.trim();
+      if (cardId || rebillId) {
+        try {
+          const conds = [] as any[];
+          if (cardId) conds.push(sql`${paymentMethods.cardId} = ${cardId}`);
+          if (rebillId) conds.push(sql`${paymentMethods.rebillId} = ${rebillId}`);
+          const idMatch = conds.length === 1 ? conds[0] : sql`(${conds[0]} OR ${conds[1]})`;
+          await db.delete(paymentMethods).where(
+            and(
+              eq(paymentMethods.userId, updated.userId),
+              sql`${paymentMethods.id} != ${updated.id}`,
+              sql`${paymentMethods.type} = ${updated.type}`,
+              idMatch,
+            ),
+          );
+        } catch {
+          /* дедупликация best-effort — не ломаем основную активацию */
+        }
+      }
+    }
+    return updated;
   }
 
   // ---------- T-Bank ordinary ride payment orders ----------
