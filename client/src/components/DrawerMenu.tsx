@@ -71,34 +71,27 @@ export function DrawerMenu({ open, onClose }: Props) {
 
   return (
     <>
-      {/* Backdrop — привязан к visualViewport, не покрывает safe-area зоны,
-         чтобы Safari не тинтил URL bar / status bar тёмным. */}
+      {/* Backdrop — на весь экран (inset-0). Верхнюю полосу status bar
+         защищает отдельный status-bar guard в AppShell (лежит поверх). */}
       <div
-        className={`fixed left-0 right-0 bg-black/40 z-30 transition-opacity duration-300 ${
+        className={`fixed inset-0 bg-black/40 z-30 transition-opacity duration-300 ${
           open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
-        style={{
-          top: "calc(var(--visible-top, 0px) + env(safe-area-inset-top))",
-          height: "calc(var(--visible-height, 100dvh) - env(safe-area-inset-top) - env(safe-area-inset-bottom))",
-        }}
         onClick={onClose}
       />
 
-      {/* Drawer panel — привязан к реально видимой части viewport
-       * (visualViewport.height) через --visible-height, чтобы низ панели
-       * не уходил под URL-бар Safari и home-indicator. */}
+      {/* Drawer panel — растянута на ВСЮ высоту экрана (top:0, bottom:0),
+       * чтобы фон панели доходил до самого верха и низа без белых
+       * зазоров. Контент внутри отступает от status bar через padding. */}
       <div
-        className={`fixed right-0 w-80 bg-sidebar text-sidebar-foreground shadow-2xl z-40 flex flex-col transform transition-transform duration-300 ease-in-out ${
+        className={`fixed right-0 top-0 bottom-0 w-80 bg-sidebar text-sidebar-foreground shadow-2xl z-40 flex flex-col transform transition-transform duration-300 ease-in-out ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
-        style={{
-          top: "calc(var(--visible-top, 0px) + env(safe-area-inset-top))",
-          height: "calc(var(--visible-height, 100dvh) - env(safe-area-inset-top) - env(safe-area-inset-bottom))",
-        }}
       >
-        {/* Close button */}
+        {/* Close button. pt учитывает зону status bar (safe-area + гарантированные 44px). */}
         <div
-          className="flex justify-end px-4 pt-4"
+          className="flex justify-end px-4"
+          style={{ paddingTop: "max(env(safe-area-inset-top, 0px), 44px)" }}
         >
           <button
             onClick={onClose}
@@ -175,8 +168,12 @@ export function DrawerMenu({ open, onClose }: Props) {
         {/* Divider */}
         <div className="mx-4 mt-3 mb-2 h-px bg-sidebar-foreground/15" />
 
-        {/* Nav items — паддинг снизу чтобы последний пункт не прилипал к краю */}
-        <nav className="flex-1 overflow-y-auto px-4 pb-4">
+        {/* Nav items — паддинг снизу с учётом safe-area, чтобы последний
+         * пункт не уходил под панель Safari / home-indicator. */}
+        <nav
+          className="flex-1 overflow-y-auto px-4"
+          style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 1.5rem)" }}
+        >
           <MenuItem href="/payment-methods" icon={Wallet}      label="Способы оплаты" />
           <MenuItem href="/rides"           icon={Route}       label="История"         />
           <MenuItem href="/safety"          icon={ShieldCheck} label="Информация"      />
