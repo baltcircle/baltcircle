@@ -18,10 +18,16 @@ interface MenuItemProps {
   onClose: () => void;
 }
 
-function MenuItem({ href, icon: Icon, label }: Omit<MenuItemProps, "onClose">) {
+function MenuItem({
+  href,
+  icon: Icon,
+  label,
+  onClick,
+}: Omit<MenuItemProps, "onClose"> & { onClick?: () => void }) {
   return (
     <Link
       href={href}
+      onClick={onClick}
       className="flex items-center gap-4 px-2 py-3 rounded-xl text-sidebar-foreground hover:bg-black/10 transition-colors"
     >
       <Icon className="w-5 h-5 text-primary shrink-0" strokeWidth={2.25} />
@@ -116,7 +122,20 @@ export function DrawerMenu({ open, onClose }: Props) {
           className="flex-1 overflow-y-auto px-4"
           style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 1.5rem)" }}
         >
-          <MenuItem href="/payment-methods" icon={Wallet}      label="Способы оплаты" />
+          <MenuItem
+            href="/payment-methods"
+            icon={Wallet}
+            label="Способы оплаты"
+            onClick={() => {
+              // Запоминаем, что зашли из бургер-меню — кнопка «назад»
+              // вернёт в меню даже после T-Bank reboot.
+              try {
+                sessionStorage.setItem("bc.pm.origin", "drawer");
+              } catch {
+                /* ignore */
+              }
+            }}
+          />
           <MenuItem href="/rides"           icon={Route}       label="История"         />
           <MenuItem href="/safety"          icon={ShieldCheck} label="Информация"      />
           <MenuItem href="/support"         icon={LifeBuoy}    label="Помощь"          />

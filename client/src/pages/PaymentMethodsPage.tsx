@@ -278,11 +278,10 @@ export function PaymentMethodsPage() {
         } catch {
           /* private mode / storage disabled — reboot still fixes the trap */
         }
-        // Сначала replace на карту (дропает все остаточные T-Bank-записи),
-        // затем push на /payment-methods — так позади страницы всегда остаётся
-        // запись карты, чтобы edge-swipe назад работал корректно.
-        window.history.replaceState(null, "", "/");
-        window.location.assign("/payment-methods");
+        // Чистый reboot на /payment-methods: сбрасывает остаточные T-Bank-записи
+        // истории. Именно replace (не assign+replaceState) — иначе двойная
+        // навигация вызывала гонку загрузки сессии (профиль «Гость», зависший фон).
+        window.location.replace("/payment-methods");
         return;
       }
     }

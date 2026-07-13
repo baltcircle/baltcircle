@@ -369,6 +369,15 @@ export function MapPage() {
                 </div>
                 <Link
                   href="/payment-methods"
+                  onClick={() => {
+                    // Зашли с баннера на главном экране — кнопка «назад»
+                    // должна вернуть на карту, а не в меню.
+                    try {
+                      sessionStorage.setItem("bc.pm.origin", "map");
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
                   className="mt-3 flex items-center justify-center w-full h-10 rounded-full bg-primary hover:opacity-90 text-black text-sm font-medium transition-colors"
                 >
                   Добавить оплату

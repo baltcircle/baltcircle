@@ -43,6 +43,11 @@ const ParkingsPage = lazy(() => import("@/pages/ParkingsPage").then((m) => ({ de
 const OperationsMapPage = lazy(() => import("@/pages/OperationsMapPage").then((m) => ({ default: m.OperationsMapPage })));
 import NotFound from "@/pages/not-found";
 
+// Ключи sessionStorage для навигации вокруг /payment-methods.
+// Должны совпадать со значениями в MapPage.tsx / DrawerMenu.tsx.
+const DRAWER_OPEN_KEY = "bc.drawer.open";
+const PM_ORIGIN_KEY = "bc.pm.origin";
+
 // OverlayRouter — renders customer pages as a fixed overlay on top of the map.
 // Exit animation: pages dispatch "overlay:back" event → OverlayRouter plays
 // slide-down for 300ms, then calls history.back() itself.
@@ -56,6 +61,7 @@ function isOverlayPath(path: string): boolean {
 }
 
 function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) {
+  const [, setLocation] = useLocation();
   const [visible, setVisible] = useState(isOverlay);
   const [exiting, setExiting] = useState(false);
   // Снэпшот URL для exit-анимации: когда уходим в карту, popstate меняет loc на "/",
@@ -103,21 +109,48 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
       }
 
       // Выходим в non-overlay (на карту): сначала анимация, потом навигация.
-      // history.back() возвращает к MapPage, который всё время смонтирован в фоне
-      // с сохранённым drawerOpen — поэтому бургер-меню остаётся открытым,
-      // если пользователь зашёл в оверлей из меню.
+      //
+      // /payment-methods — особый случай: T-Bank-flow делает location.replace-reboot,
+      // поэтому опираться на history.back() нельзя (стек искажён).
+      // Читаем точку входа (PM_ORIGIN_KEY): "drawer" → возврат в бургер-меню,
+      // "map" (или отсутствует) → на чистую карту. Навигируем явно через wouter.
+      let toMenu = false;
+      if (currentPath === "/payment-methods") {
+        let origin: string | null = null;
+        try {
+          origin = sessionStorage.getItem(PM_ORIGIN_KEY);
+          sessionStorage.removeItem(PM_ORIGIN_KEY);
+        } catch {
+          /* ignore */
+        }
+        toMenu = origin === "drawer";
+        try {
+          if (toMenu) sessionStorage.setItem(DRAWER_OPEN_KEY, "1");
+          else sessionStorage.removeItem(DRAWER_OPEN_KEY);
+        } catch {
+          /* ignore */
+        }
+      }
+
       setExitLoc(currentPath);
       setExiting(true);
       setTimeout(() => {
         setExiting(false);
         setVisible(false);
         setExitLoc(null);
-        window.history.back();
+        if (currentPath === "/payment-methods") {
+          // Явная навигация на карту (устойчиво к reboot). MapPage при монтировании
+          // читает DRAWER_OPEN_KEY и откроет меню, если заходили из бургера.
+          setLocation("/");
+        } else {
+          // Обычные overlay-страницы: MapPage в фоне хранит drawerOpen — history.back().
+          window.history.back();
+        }
       }, 300);
     };
     window.addEventListener("overlay:back", handler);
     return () => window.removeEventListener("overlay:back", handler);
-  }, [visible, exiting]);
+  }, [visible, exiting, setLocation]);
 
   if (!visible) return null;
 
