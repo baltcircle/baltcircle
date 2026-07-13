@@ -110,10 +110,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             top: 0,
             left: 0,
             right: 0,
-            // Фиксированная 60px: env(safe-area-inset-top) в Safari-режиме
-            // (без standalone) возвращает 0, поэтому жёстко задаём высоту,
-            // гарантированно перекрывающую зону iOS status bar.
-            height: "60px",
+            // Фиксированная 50px: env(safe-area-inset-top) в Safari-режиме
+            // (без standalone) возвращает 0, поэтому жёстко задаём высоту
+            // под высоту iOS status bar.
+            height: "50px",
             backgroundColor: "#9fc9e0",
             zIndex: 2147483647,
             pointerEvents: "none",
