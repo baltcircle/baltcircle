@@ -88,23 +88,13 @@ export function DrawerMenu({ open, onClose }: Props) {
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        {/* Close button. pt учитывает зону status bar (safe-area + гарантированные 44px). */}
-        <div
-          className="flex justify-end px-4"
-          style={{ paddingTop: "max(env(safe-area-inset-top, 0px), 44px)" }}
-        >
-          <button
-            onClick={onClose}
-            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors"
-          >
-            <X className="w-5 h-5 text-sidebar-foreground/80" />
-          </button>
-        </div>
-
-        {/* User info block — кликабельный, ведёт в /settings */}
+        {/* User info block — кликабельный, ведёт в /settings.
+         * Крестик закрытия убран — меню закрывается тапом по затемнению.
+         * pt поднимает профиль к верху, но не под status bar. */}
         <Link
           href="/settings"
-          className="mx-4 mt-2 block rounded-2xl hover:bg-black/10 transition-colors px-2 py-2"
+          className="mx-4 block rounded-2xl hover:bg-black/10 transition-colors px-2 py-2"
+          style={{ marginTop: "max(env(safe-area-inset-top, 0px), 44px)" }}
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-3 min-w-0">
