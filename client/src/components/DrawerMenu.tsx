@@ -94,7 +94,7 @@ export function DrawerMenu({ open, onClose }: Props) {
         <Link
           href="/settings"
           className="mx-4 block rounded-2xl hover:bg-black/10 transition-colors px-2 py-2"
-          style={{ marginTop: "max(env(safe-area-inset-top, 0px), 44px)" }}
+          style={{ marginTop: "max(env(safe-area-inset-top, 0px), 8px)" }}
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-3 min-w-0">

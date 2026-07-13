@@ -7,7 +7,6 @@ import { RentalStartModal } from "@/components/RentalStartModal";
 import { RegistrationModal } from "@/components/RegistrationModal";
 import { QrScanModal } from "@/components/QrScanModal";
 import { DrawerMenu } from "@/components/DrawerMenu";
-import { Logo } from "@/components/Logo";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
 import { useActiveRideTracker } from "@/hooks/use-active-ride-tracker";
@@ -214,17 +213,12 @@ export function MapPage() {
         />
       </div>
 
-      {/* Top bar — logo left, burger right */}
+      {/* Top bar — только кнопка меню справа */}
       <div
-        className="absolute left-0 right-0 z-20 flex items-center justify-between px-4"
+        className="absolute left-0 right-0 z-20 flex items-center justify-end px-4"
         style={{ top: "max(1rem, env(safe-area-inset-top))" }}
       >
-        {/* Logo — top left. Uses the theme card surface so it follows the
-         * palette (teal in light, blue in dark) instead of a white pill. */}
-        <div className="rounded-2xl bg-card/90 backdrop-blur-sm shadow-lg px-3 py-2">
-          <Logo className="text-card-foreground h-8" />
-        </div>
-
+        {/* Логотип и название убраны с главного экрана — остаётся только кнопка меню. */}
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}
