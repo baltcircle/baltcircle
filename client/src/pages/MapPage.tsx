@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { fmtDuration, fmtDistance, fmtRub } from "@/lib/format";
 import { PENDING_BIKE_KEY } from "@/lib/pending-bike";
 import { QrCode, Lock, Clock, Menu, MapPin, Route, X, CreditCard } from "lucide-react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 
 const INTRO_SHOWN_KEY = "bc.registration.intro.shown";
 const PAYMENT_BANNER_KEY = "bc.payment.banner.dismissed";
@@ -62,9 +62,8 @@ export function MapPage() {
   const [rentalMulti, setRentalMulti] = useState(false);
   const [regOpen, setRegOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
-  const [drawerOpen, setDrawerOpenState] = useState(
-    () => sessionStorage.getItem(DRAWER_OPEN_KEY) === "1"
-  );
+  const [location] = useLocation();
+  const [drawerOpen, setDrawerOpenState] = useState(false);
   // Синхронизируем состояние меню с sessionStorage, чтобы оно переживало
   // полный reload (возврат в меню после привязки карты).
   const setDrawerOpen = (open: boolean) => {
@@ -76,6 +75,19 @@ export function MapPage() {
       /* private mode — меню просто не восстановится после reload */
     }
   };
+  // Открываем меню из sessionStorage-флага ТОЛЬКО когда карта активна (location==="/"),
+  // а не пока сверху ещё оверлей /payment-methods. Иначе после T-Bank reboot
+  // MapPage монтируется под оверлеем и меню мелькало бы за страницей оплаты.
+  useEffect(() => {
+    if (location !== "/") return;
+    let flagged = false;
+    try {
+      flagged = sessionStorage.getItem(DRAWER_OPEN_KEY) === "1";
+    } catch {
+      /* ignore */
+    }
+    if (flagged) setDrawerOpenState(true);
+  }, [location]);
 
   // Payment banner — показывается под кнопкой скан, если нет карты
   // и не закрыт в эту сессию (перенесён из бургер-меню).
