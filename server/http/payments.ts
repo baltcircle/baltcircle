@@ -90,6 +90,15 @@ export function registerPaymentRoutes(app: Express): void {
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
 
+    const blocking = await storage.getBlockingCard(user.id);
+    if (blocking) {
+      return res.status(409).json({
+        error: blocking.status === "pending"
+          ? "Карта уже привязывается. Дождитесь завершения."
+          : "Карта уже привязана. Сначала удалите текущую, чтобы добавить другую.",
+      });
+    }
+
     try {
       const resp = await tbankAddCard(cfg, { customerKey: user.id });
       if (!resp.Success || !resp.PaymentURL) {
@@ -129,6 +138,15 @@ export function registerPaymentRoutes(app: Express): void {
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
 
+    const blocking = await storage.getBlockingCard(user.id);
+    if (blocking) {
+      return res.status(409).json({
+        error: blocking.status === "pending"
+          ? "Карта уже привязывается. Дождитесь завершения."
+          : "Карта уже привязана. Сначала удалите текущую, чтобы добавить другую.",
+      });
+    }
+
     await bindViaVerificationPayment(cfg, user.id, res);
   });
 
@@ -145,6 +163,16 @@ export function registerPaymentRoutes(app: Express): void {
 
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
+
+    // Одна карта на райдера: если карта уже привязана (или привязывается прямо
+    // сейчас) — не запускаем новый флоу, возвращаем понятную ошибку.
+    const existing = await storage.getBlockingCard(user.id);
+    if (existing) {
+      const msg = existing.status === "pending"
+        ? "Карта уже привязывается. Дождитесь завершения."
+        : "Карта уже привязана. Сначала удалите текущую, чтобы добавить другую.";
+      return res.status(409).json({ error: msg });
+    }
 
     if (cfg.cardBindMethod === "addcard") {
       // No-charge AddCard, with automatic fallback to the 1 ₽ payment inside the

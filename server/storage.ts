@@ -179,6 +179,9 @@ export interface IStorage {
   updatePaymentMethod(id: number, patch: Partial<PaymentMethod>): Promise<PaymentMethod | undefined>;
   // The rider's saved T-Bank card usable for a recurring charge (active + RebillId)
   getActiveSavedCard(userId: string, paymentMethodId?: number): Promise<PaymentMethod | undefined>;
+  // Уже привязанная или привязываемая сейчас карта пользователя (active или pending).
+  // Используется, чтобы не давать привязать вторую карту (одна карта на райдера).
+  getBlockingCard(userId: string): Promise<PaymentMethod | undefined>;
   // T-Bank ride payment orders (hosted pay-then-start AND saved-card charge)
   createRidePaymentOrder(input: {
     orderId: string;
@@ -968,6 +971,23 @@ export class DatabaseStorage implements IStorage {
   // must belong to the rider and be active with a RebillId; otherwise the most
   // recent qualifying card is returned. Returns undefined when no usable saved
   // card exists (the caller then falls back to the hosted payment flow).
+  // Карта, которая блокирует повторную привязку:
+  //  • active — всегда (карта уже привязана);
+  //  • pending — только СВЕЖАЯ (привязка идёт прямо сейчас). Старая pending —
+  //    застрявшая привязка (webhook не дошёл) — НЕ блокирует, иначе привязка
+  //    закроется навсегда. failed не блокирует — можно пробовать снова.
+  async getBlockingCard(userId: string) {
+    const PENDING_TTL_MS = 15 * 60 * 1000; // 15 минут
+    const freshPendingSince = Date.now() - PENDING_TTL_MS;
+    return (await db.select().from(paymentMethods)
+      .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.type} = 'card' AND (
+        ${paymentMethods.status} = 'active'
+        OR (${paymentMethods.status} = 'pending' AND COALESCE(${paymentMethods.updatedAt}, ${paymentMethods.createdAt}) > ${freshPendingSince})
+      )`)
+      .orderBy(desc(paymentMethods.createdAt))
+      .limit(1))[0] as PaymentMethod | undefined;
+  }
+
   async getActiveSavedCard(userId: string, paymentMethodId?: number) {
     if (paymentMethodId != null) {
       const m = await this.getPaymentMethod(paymentMethodId);
