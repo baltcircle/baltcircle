@@ -19,6 +19,10 @@ import { Link } from "wouter";
 
 const INTRO_SHOWN_KEY = "bc.registration.intro.shown";
 const PAYMENT_BANNER_KEY = "bc.payment.banner.dismissed";
+// Флаг «бургер-меню открыто». Нужен, чтобы восстановить открытое меню
+// после полного reload MapPage — напр. T-Bank reboot на /payment-methods
+// перемонтирует страницу и теряет in-memory drawerOpen.
+const DRAWER_OPEN_KEY = "bc.drawer.open";
 
 export function MapPage() {
   const toast = useToast();
@@ -58,7 +62,20 @@ export function MapPage() {
   const [rentalMulti, setRentalMulti] = useState(false);
   const [regOpen, setRegOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerOpen, setDrawerOpenState] = useState(
+    () => sessionStorage.getItem(DRAWER_OPEN_KEY) === "1"
+  );
+  // Синхронизируем состояние меню с sessionStorage, чтобы оно переживало
+  // полный reload (возврат в меню после привязки карты).
+  const setDrawerOpen = (open: boolean) => {
+    setDrawerOpenState(open);
+    try {
+      if (open) sessionStorage.setItem(DRAWER_OPEN_KEY, "1");
+      else sessionStorage.removeItem(DRAWER_OPEN_KEY);
+    } catch {
+      /* private mode — меню просто не восстановится после reload */
+    }
+  };
 
   // Payment banner — показывается под кнопкой скан, если нет карты
   // и не закрыт в эту сессию (перенесён из бургер-меню).
