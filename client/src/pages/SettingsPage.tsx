@@ -109,7 +109,7 @@ export function SettingsPage() {
       {/* Header */}
       <div
         className="relative flex items-center justify-center px-4 shrink-0 bg-gray-50 dark:bg-zinc-900 border-t border-b border-gray-200 dark:border-zinc-800"
-        style={{ marginTop: "calc(max(1.25rem, env(safe-area-inset-top)) + 0.75rem)", minHeight: "3.5rem" }}
+        style={{ marginTop: "calc(env(safe-area-inset-top) + 0.75rem)", minHeight: "3.5rem" }}
       >
         <button
           onClick={() => window.dispatchEvent(new Event("overlay:back"))}
