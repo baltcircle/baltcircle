@@ -110,7 +110,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             top: 0,
             left: 0,
             right: 0,
-            height: "1px",
+            height: "5px",
             backgroundColor: "#9fc9e0",
             zIndex: 2147483647,
             pointerEvents: "none",
