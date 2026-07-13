@@ -95,6 +95,31 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           : "min-h-screen bg-background"
       }`}
     >
+      {/* Status-bar guard — непрозрачная полоска цвета воды в зоне iOS
+          status bar. iOS Safari тинтит status bar по цвету верхних
+          пикселей и ИГНОРИРУЕТ theme-color, когда сверху лежит
+          затемняющий overlay (бургер-меню, модалки). Эта полоска
+          лежит ПОВЕРХ всех overlay (z=2147483647) → Safari всегда видит
+          воду и не меняет цвет полосы. pointer-events:none — не блокирует
+          клики. Высота = safe-area-inset-top (0 в обычном браузере). */}
+      {isCustomerMap && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            // env() даёт высоту status bar при viewport-fit=cover; --visible-top
+            // — запасной источник от use-app-viewport. Берём максимум.
+            height: "max(env(safe-area-inset-top, 0px), var(--visible-top, 0px))",
+            backgroundColor: "#9fc9e0",
+            zIndex: 2147483647,
+            pointerEvents: "none",
+          }}
+        />
+      )}
+
       {/* Sidebar — desktop */}
       <aside
         className="hidden lg:flex lg:flex-col w-64 shrink-0 bg-sidebar text-sidebar-foreground border-r border-sidebar-border"
