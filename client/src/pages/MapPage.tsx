@@ -248,27 +248,24 @@ export function MapPage() {
         </button>
       </div>
 
-      {/* Geolocation button — bottom right, above scan button.
-       * Позиционируется через fixed+bottom относительно visualViewport (без зоны URL-бара),
-       * чтобы кнопка всегда была видна пользователю, а не под URL-баром. */}
-      <button
-        type="button"
-        onClick={handleGeolocate}
-        aria-label="Моё местоположение"
-        data-testid="home-geolocate-button"
-        className="fixed right-4 z-20 w-12 h-12 rounded-full bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 0.25rem + 3.5rem + 1rem)" }}
-      >
-        <MapPin className="w-5 h-5" />
-      </button>
-
       {/* Bottom action area — floats over the map.
-       * Кнопка плавает над картой с отступом от нижнего края (учитывая safe-area),
-       * карта под ней просвечивает. Пространство ниже кнопки — тоже карта (fixed inset:0). */}
+       * Геолокация + скан + баннер в одной вертикальной группе, анкорится по
+       * нижнему краю (safe-area). Геокнопка над сканом — двигается вместе с ним. */}
       <div
-        className="fixed left-4 right-4 z-40"
+        className="fixed left-4 right-4 z-40 flex flex-col items-stretch gap-4"
         style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 0.25rem)" }}
       >
+        {/* Geolocation button — над сканом, справа. */}
+        <button
+          type="button"
+          onClick={handleGeolocate}
+          aria-label="Моё местоположение"
+          data-testid="home-geolocate-button"
+          className="self-end w-12 h-12 rounded-full bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
+        >
+          <MapPin className="w-5 h-5" />
+        </button>
+
         {activeRide ? (
           /* Active ride card */
           <div
