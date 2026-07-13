@@ -14,6 +14,10 @@ const ToastViewport = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitives.Viewport
     ref={ref}
+    // На мобильном тосты сверху: добавляем safe-area + запас под голубой
+    // status-bar guard, чтобы уведомление не уходило под шторку. На desktop
+    // (sm+) тосты снизу — верхний отступ не мешает.
+    style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem + 1rem)" }}
     className={cn(
       "fixed top-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px]",
       className

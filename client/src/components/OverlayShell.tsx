@@ -26,20 +26,21 @@ export function OverlayShell({ title, subtitle, children }: OverlayShellProps) {
     // Высота задаётся родительским AppShell (через --visible-height),
     // бьём на 100% этой высоты, чтобы контент не уходил под URL-бар.
     <div className="flex flex-col bg-background text-foreground h-full">
-      {/* Header */}
+      {/* Header — верхний отступ учитывает safe-area ПЛЮС запас под голубой
+           status-bar guard, чтобы заголовок не прятался под шторку. */}
       <div
         className="relative flex items-center justify-center shrink-0 border-b border-border bg-background"
-        style={{ paddingTop: "env(safe-area-inset-top)", minHeight: "calc(3.5rem + env(safe-area-inset-top))" }}
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)", minHeight: "calc(3.5rem + env(safe-area-inset-top) + 0.75rem)" }}
       >
         <button
           onClick={() => window.dispatchEvent(new Event("overlay:back"))}
           className="absolute left-4 flex items-center justify-center w-9 h-9 rounded-full hover:bg-muted transition-colors"
-          style={{ top: "calc(env(safe-area-inset-top) + 0.625rem)" }}
+          style={{ top: "calc(env(safe-area-inset-top) + 0.75rem + 0.625rem)" }}
           aria-label="Назад"
         >
           <ArrowLeft className="w-5 h-5 text-foreground" />
         </button>
-        <div className="text-center" style={{ marginTop: "env(safe-area-inset-top)" }}>
+        <div className="text-center" style={{ marginTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}>
           <h1 className="text-base font-semibold text-foreground">{title}</h1>
           {subtitle && (
             <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>

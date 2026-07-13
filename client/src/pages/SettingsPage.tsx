@@ -109,12 +109,12 @@ export function SettingsPage() {
       {/* Header */}
       <div
         className="flex items-center justify-center px-4 pb-3 shrink-0 bg-gray-50 dark:bg-zinc-900 border-b border-gray-200 dark:border-zinc-800"
-        style={{ paddingTop: "max(1.25rem, env(safe-area-inset-top))" }}
+        style={{ paddingTop: "calc(max(1.25rem, env(safe-area-inset-top)) + 0.75rem)" }}
       >
         <button
           onClick={() => window.dispatchEvent(new Event("overlay:back"))}
           className="absolute left-4 flex items-center justify-center w-9 h-9 rounded-full hover:bg-gray-200 dark:hover:bg-zinc-800 transition-colors"
-          style={{ top: "max(1.25rem, env(safe-area-inset-top))" }}
+          style={{ top: "calc(max(1.25rem, env(safe-area-inset-top)) + 0.75rem)" }}
         >
           <ArrowLeft className="w-5 h-5 text-gray-700 dark:text-zinc-300" />
         </button>
