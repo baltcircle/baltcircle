@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "wouter";
 import { OverlayShell } from "@/components/OverlayShell";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { PaymentMethod } from "@shared/schema";
@@ -14,9 +15,6 @@ import { CardBrandIcon, SbpBrandIcon } from "@/components/PaymentBrandIcon";
 import { BikeQr } from "@/components/BikeQr";
 
 const METHODS_KEY = ["/api/payment-methods"];
-// sessionStorage key that carries T-Bank return query params across the clean
-// reboot we perform to escape the leftover T-Bank history stack.
-const TBANK_RETURN_KEY = "tbankReturnParams";
 
 // Human sublabel + tone for a payment-method status. Shown as the small
 // secondary line under the method label, matching the profile-row style.
@@ -47,6 +45,7 @@ interface SbpBinding {
 
 export function PaymentMethodsPage() {
   const toast = useToast();
+  const [, navigate] = useLocation();
   const { isRegistered, isLoading: userLoading } = useCurrentUser();
   const [redirecting, setRedirecting] = useState(false);
   const [sbpBinding, setSbpBinding] = useState<SbpBinding | null>(null);
@@ -263,47 +262,25 @@ export function PaymentMethodsPage() {
   useEffect(() => {
     if (handledReturn.current) return;
 
-    // Leg 1 — we still have the raw ?...&from=tbank on the URL: capture + reboot.
+    // Возврат с T-Bank: в URL есть ?...&from=tbank. РАНЬШЕ здесь был full-reload
+    // reboot (window.location.replace) — но это вторая навигация, и пользователь
+    // видел страницу оплаты ДВАЖДЫ (пустую → reboot → с картой). Теперь чистим
+    // query через wouter navigate(replace) — без перезагрузки и без десинхрона
+    // роутера (navigate сам уведомляет wouter). Страница остаётся смонтированной
+    // и обновляет список на месте — одно появление.
     const search = window.location.search;
-    if (search) {
-      const params = new URLSearchParams(search);
-      const isTbankReturn =
-        params.has("from") ||
-        params.has("Success") ||
-        params.has("RequestKey") ||
-        params.has("ErrorCode");
-      if (isTbankReturn) {
-        try {
-          sessionStorage.setItem(TBANK_RETURN_KEY, search);
-        } catch {
-          /* private mode / storage disabled — reboot still fixes the trap */
-        }
-        // После reboot оверлей не должен снова проигрывать slide-up — страница
-        // уже была открыта до T-Bank. Иначе пользователь видит второй «выезд».
-        try {
-          sessionStorage.setItem("bc.overlay.skipEnterAnim", "1");
-        } catch {
-          /* ignore */
-        }
-        // Чистый reboot на /payment-methods: сбрасывает остаточные T-Bank-записи
-        // истории. Именно replace (не assign+replaceState) — иначе двойная
-        // навигация вызывала гонку загрузки сессии (профиль «Гость», зависший фон).
-        window.location.replace("/payment-methods");
-        return;
-      }
-    }
-
-    // Leg 2 — fresh clean load after the reboot: pull the stashed params.
-    let stashed: string | null = null;
-    try {
-      stashed = sessionStorage.getItem(TBANK_RETURN_KEY);
-      if (stashed) sessionStorage.removeItem(TBANK_RETURN_KEY);
-    } catch {
-      /* ignore */
-    }
-    if (!stashed) return;
+    const params = new URLSearchParams(search);
+    const isTbankReturn =
+      params.has("from") ||
+      params.has("Success") ||
+      params.has("RequestKey") ||
+      params.has("ErrorCode");
+    if (!isTbankReturn) return;
     handledReturn.current = true;
-    const params = new URLSearchParams(stashed);
+
+    // Убираем T-Bank query из URL без перезагрузки (replace — не плодит
+    // лишнюю запись истории, свайп назад ведёт на предыдущий экран).
+    navigate("/payment-methods", { replace: true });
 
     // Only show a failure toast on an EXPLICIT rejection. The Init path returns
     // with just ?from=tbank (no Success param) and is resolved by the webhook, so
