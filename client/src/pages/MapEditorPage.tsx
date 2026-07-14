@@ -66,7 +66,16 @@ export function MapEditorPage() {
 
   const activeType = TYPE_OPTIONS.find((o) => o.id === type) ?? TYPE_OPTIONS[0];
   const minPoints = activeType.kind === "zone" ? 3 : 2;
-  const canSave = draft.length >= minPoints && name.trim().length > 0;
+  const canSave = draft.length >= minPoints;
+
+  // Имя необязательно: если пустое — генерируем понятный дефолт по типу.
+  function resolvedName() {
+    const n = name.trim();
+    if (n.length > 0) return n;
+    const label = activeType.kind === "zone" ? "Зона" : "Маршрут";
+    const stamp = new Date().toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    return `${label} · ${stamp}`;
+  }
 
   // Public map отображает только активные; если что-то редактируется — его
   // старую геометрию скрываем, чтобы не дублировать черновик.
@@ -91,7 +100,7 @@ export function MapEditorPage() {
   const saveM = useMutation({
     mutationFn: async () => {
       const payload = {
-        name: name.trim(),
+        name: resolvedName(),
         type,
         kind: activeType.kind,
         color,
@@ -139,10 +148,6 @@ export function MapEditorPage() {
 
   function handleSave() {
     if (saveM.isPending) return;
-    if (name.trim().length === 0) {
-      toast({ title: "Введите название", description: "Укажите название объекта перед сохранением.", variant: "destructive" });
-      return;
-    }
     if (draft.length < minPoints) {
       toast({
         title: "Недостаточно точек",
@@ -193,15 +198,8 @@ export function MapEditorPage() {
   }
 
   function handleVertexClick(index: number) {
-    // Клик по первой точке зоны — замыкаем и сразу сохраняем, если есть имя.
+    // Клик по первой точке зоны — замыкаем и сразу сохраняем (имя необязательно).
     if (index === 0 && activeType.kind === "zone" && draft.length >= 3) {
-      if (name.trim().length === 0) {
-        toast({
-          title: "Зона замкнута",
-          description: "Введите название и нажмите «Сохранить».",
-        });
-        return;
-      }
       handleSave();
       return;
     }
@@ -284,7 +282,7 @@ export function MapEditorPage() {
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={`Название · напр. «${activeType.kind === "zone" ? "Пляж Светлогорска" : "Пионерский → Янтарный"}»`}
+              placeholder={`Название (необязательно) · напр. «${activeType.kind === "zone" ? "Пляж Светлогорска" : "Пионерский → Янтарный"}»`}
               className="h-9 text-sm"
               data-testid="editor-name"
             />
