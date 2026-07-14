@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { OverlayShell } from "@/components/OverlayShell";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { PaymentMethod } from "@shared/schema";
@@ -576,46 +576,39 @@ export function PaymentMethodsPage() {
 // родитель (polling + postMessage) и закрывает модалку через onClose.
 function TbankBindModal({ url, onClose }: { url: string; onClose: () => void }) {
   const [loading, setLoading] = useState(true);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
-  // КРИТИЧНО: НЕ задаём src в JSX. Навигация внутри iframe через
-  // обычный src/assign ДОБАВЛЯЕТ записи в историю ВЕРХНЕГО окна
-  // (проверено: форма→гDS→return давала +N записей), и native swipe-back
-  // попадал в эти iframe-записи («тянет в привязку»). Грузим форму
-  // через contentWindow.location.replace — он НЕ пишет историю верхнего
-  // окна (DELTA=0), а внутренние 302-редиректы формы тоже не пишут.
+  // Защита от native swipe-back пока модалка открыта. iframe (и сама форма
+  // T-Bank со своими внутренними переходами) добавляет записи в историю
+  // ВЕРХНЕГО окна (проверено: +N записей), и native swipe попадал в них
+  // («тянет в привязку»). Решение, работающее и в Safari, и в Chromium: на
+  // каждый popstate СРАЗУ возвращаем сентинел обратно (ре-pushState) и
+  // закрываем модалку. Свайп не может уйти глубже, чем на сентинел.
+  // (contentWindow.location.replace НЕ используем: в Safari доступ к
+  // contentWindow свежего about:blank iframe гоночный и кидает/молчит.)
   useEffect(() => {
-    const f = iframeRef.current;
-    if (!f) return;
-    try {
-      // Первичная загрузка формы без записи в историю верхнего окна.
-      f.contentWindow?.location.replace(url);
-    } catch {
-      // Фоллбэк: если кросс-оригин блокирует доступ к contentWindow до
-      // первой загрузки — задаём src напрямую (хуже, но работает).
-      f.src = url;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url]);
-
-  // Защита от native swipe-back пока модалка открыта: даже если форма
-  // T-Bank всё же добавит записи в историю (внутренние assign/POST, которые
-  // мы не контролируем) — мы ставим сентинел и на любой popstate просто
-  // закрываем модалку, а не даём уйти вглубь iframe-записей.
-  useEffect(() => {
+    let alive = true;
+    // Запоминаем глубину истории ДО открытия, чтобы при закрытии
+    // снять ВСЕ записи, которые накидали сентинел + iframe/форма.
+    const baseLen = history.length;
     history.pushState({ bcTbankModal: true }, "");
     const onPop = () => {
-      // Любой возврат-свайп при открытой модалке = закрыть модалку.
+      if (!alive) return;
+      // Свайп/назад съел сентинел (или iframe-запись) — мгновенно
+      // восстанавливаем барьер и закрываем модалку, не давая уйти
+      // на pay.tbank.ru / вглубь iframe-записей.
+      history.pushState({ bcTbankModal: true }, "");
       onClose();
     };
     window.addEventListener("popstate", onPop);
     return () => {
+      alive = false;
       window.removeEventListener("popstate", onPop);
-      // Если сентинел ещё на вершине (закрыли кнопкой/поллингом, а не
-      // свайпом) — снимаем его, чтобы не оставлять лишнюю запись.
-      if (history.state && history.state.bcTbankModal) {
-        history.back();
-      }
+      // Откатываем ВСЕ записи, добавленные пока модалка была
+      // открыта (сентинел + внутренние переходы iframe/формы),
+      // чтобы после закрытия свайп на /payment-methods не попал на
+      // оставшиеся pay.tbank.ru-записи.
+      const extra = history.length - baseLen;
+      if (extra > 0) history.go(-extra);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -642,7 +635,8 @@ function TbankBindModal({ url, onClose }: { url: string; onClose: () => void }) 
             <X className="w-5 h-5 text-foreground" />
           </button>
         </div>
-        {/* iframe с формой T-Bank — src ставится через location.replace в useEffect */}
+        {/* iframe с формой T-Bank. src задаём атрибутом (надёжно во всех
+            браузерах). Лишние записи истории от iframe ловит сентинел выше. */}
         <div className="relative flex-1">
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center bg-background">
@@ -650,7 +644,7 @@ function TbankBindModal({ url, onClose }: { url: string; onClose: () => void }) 
             </div>
           )}
           <iframe
-            ref={iframeRef}
+            src={url}
             title="Привязка карты T-Bank"
             className="w-full h-full border-0"
             allow="payment"
