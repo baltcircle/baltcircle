@@ -278,8 +278,19 @@ export function PaymentMethodsPage() {
     if (!isTbankReturn) return;
     handledReturn.current = true;
 
-    // Убираем T-Bank query из URL без перезагрузки (replace — не плодит
-    // лишнюю запись истории, свайп назад ведёт на предыдущий экран).
+    // Чистим URL И чиним стек истории. Проблема: запуск привязки делает
+    // window.location.replace(paymentUrl) — это СТИРАЕТ запись /payment-methods
+    // из истории и заменяет URL банка. После возврата свайп назад увёл бы
+    // на pay.tbank.ru (или за пределы приложения) — «со страницы не выйти».
+    // Перестраиваем стек: текущую (запутанную) вершину → "/", затем пушим
+    // чистый /payment-methods. Теперь свайп/стрелка назад ведёт на карту ("/").
+    try {
+      window.history.replaceState(null, "", "/");
+      window.history.pushState(null, "", "/payment-methods");
+    } catch {
+      /* ignore */
+    }
+    // Синхронизируем wouter с новым URL (без новой записи истории).
     navigate("/payment-methods", { replace: true });
 
     // Only show a failure toast on an EXPLICIT rejection. The Init path returns

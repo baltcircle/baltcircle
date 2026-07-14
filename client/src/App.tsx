@@ -111,17 +111,45 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
     if (!visible) enteredRef.current = false;
   }, [visible]);
 
+  // Запоминаем последний overlay-путь, чтобы при свайпе-назад (popstate меняет
+  // loc на "/") знать, с какой страницы ушли.
+  const lastOverlayPathRef = useRef<string | null>(null);
+
   // On enter: show overlay. On exit via browser swipe (isOverlay → false
   // without overlay:back event): immediately hide without animation.
   useEffect(() => {
     if (isOverlay) {
       setVisible(true);
+      lastOverlayPathRef.current = window.location.pathname;
     } else if (!exiting) {
       // Browser swipe-back or programmatic popstate changed URL to a
       // non-overlay route — hide the overlay instantly so it doesn't
       // sit on top of the map and eat touch events. Не лезем, если в процессе
       // exit-анимации — её таймер сам скроет оверлей через 300ms.
       setVisible(false);
+
+      // Свайп назад со «Способов оплаты» (мимо overlay:back handler): если
+      // точка входа была бургер, нужно вернуться в него (а не на голую карту).
+      // После привязки карты bc.drawer.open очищен, поэтому бургер сам не
+      // откроется — шлём событие drawer:reopen (мгновенно, без slide-in).
+      if (lastOverlayPathRef.current === "/payment-methods") {
+        let origin: string | null = null;
+        try {
+          origin = sessionStorage.getItem(PM_ORIGIN_KEY);
+          sessionStorage.removeItem(PM_ORIGIN_KEY);
+        } catch {
+          /* ignore */
+        }
+        if (origin === "drawer") {
+          try {
+            sessionStorage.setItem(DRAWER_OPEN_KEY, "1");
+          } catch {
+            /* ignore */
+          }
+          window.dispatchEvent(new Event("drawer:reopen"));
+        }
+      }
+      lastOverlayPathRef.current = null;
     }
   }, [isOverlay, loc, exiting]);
 

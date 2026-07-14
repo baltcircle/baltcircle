@@ -4,7 +4,7 @@ import { Link } from "wouter";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import type { Ride } from "@shared/schema";
 
 interface Props {
@@ -52,6 +52,18 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
   // transition (панель сразу на месте, без slide-in), потом включаем transition
   // через кадр — чтобы будущее закрытие анимировалось.
   const [animate, setAnimate] = useState(!mountedOpen);
+
+  // СИНХРОННО определяем «мгновенное открытие» ПРЯМО В РЕНДЕРЕ: если
+  // instantTick изменился с прошлого рендера — этот кадр должен быть БЕЗ transition,
+  // чтобы панель уже была открыта (не выезжала). useEffect запоздал бы на кадр
+  // и slide-in успевал бы начаться — поэтому считаем синхронно.
+  const prevInstantTick = useRef(instantTick);
+  const instantNow = instantTick !== prevInstantTick.current;
+  if (instantNow) {
+    prevInstantTick.current = instantTick;
+    if (animate) setAnimate(false); // следующий рендер снова включит transition (ниже)
+  }
+
   useEffect(() => {
     if (!animate) {
       const id = requestAnimationFrame(() => setAnimate(true));
@@ -59,16 +71,10 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
     }
   }, [animate]);
 
-  // Мгновенное открытие по триггеру (возврат со «Способов оплаты»): гасим
-  // transition на один кадр, чтобы панель не выезжала, а сразу была открыта.
-  // instantTick=0 — начальное значение, его пропускаем.
-  useEffect(() => {
-    if (instantTick > 0) {
-      setAnimate(false);
-    }
-  }, [instantTick]);
-  const transitionCls = animate ? "transition-transform duration-300 ease-in-out" : "";
-  const backdropTransitionCls = animate ? "transition-opacity duration-300" : "";
+  // На кадре мгновенного открытия — transition отключён (панель сразу на месте).
+  const noTransition = !animate || instantNow;
+  const transitionCls = noTransition ? "" : "transition-transform duration-300 ease-in-out";
+  const backdropTransitionCls = noTransition ? "" : "transition-opacity duration-300";
 
   const userId = user?.id ?? "";
   const ridesQ = useQuery<Ride[]>({
