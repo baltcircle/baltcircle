@@ -10,10 +10,6 @@ export function LegalIndexPage() {
   return (
     <OverlayShell title="Правовые документы">
       <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-legal">
-        <p className="text-sm text-muted-foreground mb-4 px-1">
-          Условия использования сервиса, правила проката и обработка персональных данных.
-        </p>
-
         <nav className="rounded-2xl border border-card-border bg-card overflow-hidden divide-y divide-card-border">
           {LEGAL_DOCS.map((doc) => {
             const Icon = doc.icon;

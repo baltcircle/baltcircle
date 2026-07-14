@@ -14,8 +14,6 @@ export function InfoSectionPage({ section }: { section: string }) {
   return (
     <OverlayShell title={category.title}>
       <div className="px-4 py-6 max-w-2xl mx-auto" data-testid={`page-info-${category.slug}`}>
-        <p className="text-sm text-muted-foreground mb-4 px-1">{category.intro}</p>
-
         <nav className="rounded-2xl border border-card-border bg-card overflow-hidden divide-y divide-card-border">
           {category.docs.map((doc) => {
             const Icon = doc.icon;
