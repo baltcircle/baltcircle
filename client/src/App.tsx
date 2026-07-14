@@ -177,6 +177,13 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
         } catch {
           /* ignore */
         }
+        // ВАЖНО: открываем бургер СРАЗУ (до exit-анимации), чтобы slide-down
+        // оверлея обнажал УЖЕ ОТКРЫТЫЙ бургер (как при обычном заходе, когда
+        // MapPage уже смонтирован с открытым меню). Иначе после привязки карты
+        // (где bc.drawer.open был очищен) мелькает пустая карта → потом бургер.
+        if (toMenu) {
+          window.dispatchEvent(new Event("drawer:reopen"));
+        }
       }
 
       setExitLoc(currentPath);
@@ -186,12 +193,7 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
         setVisible(false);
         setExitLoc(null);
         if (currentPath === "/payment-methods") {
-          // Явная навигация на карту. MapPage уже смонтирован (не ремаунтится),
-          // поэтому если нужно вернуться в бургер — шлём событие, MapPage
-          // откроет меню без slide-in (оно «уже было открыто» до T-Bank).
-          if (toMenu) {
-            window.dispatchEvent(new Event("drawer:reopen"));
-          }
+          // Бургер уже открыт (выше) — остаётся лишь убрать overlay-URL.
           setLocation("/");
         } else {
           // Обычные overlay-страницы: MapPage в фоне хранит drawerOpen — history.back().
