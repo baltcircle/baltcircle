@@ -281,22 +281,23 @@ export function PaymentMethodsPage() {
     if (!isTbankReturn) return;
     handledReturn.current = true;
 
-    // Чистим URL от T-Bank query через replaceState (заменяем ТЕКУЩУЮ вершину,
-    // не плодим запись). Стек: T-Bank редиректит назад REPLACE'ом поверх своего
-    // URL, поэтому под текущей вершиной остаётся исходный вход на карту "/" —
-    // свайп/стрелка назад ведут на карту. Дополнительно пушить/replace "/" НЕ
-    // НАДО: инъекция SPA-записей без реального снапшота ломает iOS swipe-back
-    // (жест показывает пустой кэш-снимок и залипает). navigate(replace)
-    // синхронизирует wouter с чистым URL без новой записи истории.
+    // ПРОБЛЕМА (видно на видео): после привязки карты native swipe-back на iOS
+    // возвращал на pay.tbank.ru. T-Bank ведёт вкладку через цепочку навигаций
+    // (форма → 3DS → return), каждая — отдельная cross-origin запись в истории.
+    // Нативный жест обрабатывается ОС и попадает на эти tbank-записи.
+    //
+    // Решение (belt-and-suspenders):
+    // 1) navigate(replace) — чистый URL без T-Bank query, wouter синхронен.
+    // 2) replaceState("/") + pushState("/payment-methods") — гарантируем, что
+    //    НЕПОСРЕДСТВЕННО под payment-methods лежит same-origin "/" (не tbank).
+    // 3) sentinel poverh + popstate-перехват — первый же swipe остаётся в
+    //    документе и запускает контролируемый выход (как стрелка).
+    // Даже если sentinel почему-то пропущен — следующая запись "/" (карта),
+    // а не tbank. Карта — реальный same-origin документ, у него есть снапшот.
     navigate("/payment-methods", { replace: true });
-
-    // ГАРАНТИРОВАННЫЙ выход по свайпу/стрелке браузера. После T-Bank стек
-    // истории непредсказуем (банк мог редиректнуть push'ом или replace'ом),
-    // и на iOS swipe-back может залипать на кэш-снимке T-Bank. Поэтому:
-    // пушим sentinel-запись поверх /payment-methods — первый же back/swipe
-    // попадёт в неё (остаёмся в том же документе, не уходим к T-Bank), а мы
-    // перехватываем popstate и запускаем тот же контролируемый выход, что и стрелка.
     try {
+      window.history.replaceState({ bcMapHome: true }, "", "/");
+      window.history.pushState(null, "", "/payment-methods");
       window.history.pushState({ bcPmSentinel: true }, "", "/payment-methods");
     } catch {
       /* ignore */
