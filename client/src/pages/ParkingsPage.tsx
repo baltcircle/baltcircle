@@ -470,7 +470,7 @@ export function ParkingsPage() {
 
       {/* ---------- Add / edit dialog ---------- */}
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent data-testid="dialog-parking-form" className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent data-testid="dialog-parking-form" className="max-h-[92vh] overflow-y-auto w-[95vw] sm:max-w-[95vw] lg:max-w-6xl">
           <DialogHeader>
             <DialogTitle className="font-display font-light">
               {editing ? `Редактирование ${editing.id}` : "Новая парковка"}
@@ -484,7 +484,7 @@ export function ParkingsPage() {
             <div className="space-y-2">
               <MapLibreMap
                 parkings={mapParkings}
-                height="62vh"
+                height="70vh"
                 className="relative w-full overflow-hidden rounded-xl border border-card-border bg-card"
                 onMapClick={setCoordsFromReal}
               />
