@@ -369,9 +369,17 @@ async function populateDemoData(client: pg.PoolClient) {
     const battery = Math.max(45, Math.min(100, Math.round(60 + rng() * 40)));
     const idleHours = +(rng() * 6).toFixed(1);
     const lastSeen = now - Math.round(idleHours * 3600 * 1000);
+    // ON CONFLICT: на боевой БД демо-велосипеды могли остаться с seed=FALSE
+    // (легаси) → DELETE ... WHERE seed=TRUE их не чистит, INSERT падает на PK.
+    // Обновляем и проставляем seed=TRUE, чтобы будущие reseed работали.
     await client.query(
       `INSERT INTO bikes (id, model, status, battery, lat, lng, last_seen, idle_hours, flagged, parking_id, seed)
-       VALUES ($1,$2,'available',$3,$4,$5,$6,$7,FALSE,$8,TRUE)`,
+       VALUES ($1,$2,'available',$3,$4,$5,$6,$7,FALSE,$8,TRUE)
+       ON CONFLICT (id) DO UPDATE SET
+         model=EXCLUDED.model, status=EXCLUDED.status, battery=EXCLUDED.battery,
+         lat=EXCLUDED.lat, lng=EXCLUDED.lng, last_seen=EXCLUDED.last_seen,
+         idle_hours=EXCLUDED.idle_hours, flagged=EXCLUDED.flagged,
+         parking_id=EXCLUDED.parking_id, seed=TRUE`,
       [id, model, battery, y, x, lastSeen, idleHours, p.id],
     );
   }
@@ -383,7 +391,11 @@ async function populateDemoData(client: pg.PoolClient) {
     const city = p.name.split("·")[0].trim();
     await client.query(
       `INSERT INTO parkings (id, name, city, lat, lng, capacity, occupied, status, notes, archived_at, seed, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'active',NULL,NULL,TRUE,$8,NULL)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'active',NULL,NULL,TRUE,$8,NULL)
+       ON CONFLICT (id) DO UPDATE SET
+         name=EXCLUDED.name, city=EXCLUDED.city, lat=EXCLUDED.lat, lng=EXCLUDED.lng,
+         capacity=EXCLUDED.capacity, occupied=EXCLUDED.occupied, status='active',
+         archived_at=NULL, seed=TRUE`,
       [p.id, p.name, city, p.y, p.x, p.capacity, occupied, now],
     );
   }
