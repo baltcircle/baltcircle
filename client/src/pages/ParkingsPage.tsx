@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Parking, ParkingStatus } from "@shared/schema";
+import { PARKING_CITIES } from "@shared/schema";
 import { realToMap, mapToReal } from "@shared/geo";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -47,6 +48,7 @@ const FILTER_LABEL: Record<StatusFilter, string> = {
 type FormState = {
   id: string;
   name: string;
+  city: string;
   capacity: string;
   occupied: string;
   status: ParkingStatus;
@@ -57,7 +59,7 @@ type FormState = {
 };
 
 const emptyForm: FormState = {
-  id: "", name: "", capacity: "10", occupied: "0", status: "active",
+  id: "", name: "", city: "", capacity: "10", occupied: "0", status: "active",
   notes: "", x: 500, y: 350,
 };
 
@@ -86,14 +88,36 @@ export function ParkingsPage() {
       // only live (non-archived) points so archived never leak into them.
       .filter((p) => (statusFilter === "archive" ? !!p.archivedAt : !p.archivedAt))
       .filter((p) => statusFilter === "all" || statusFilter === "archive" || p.status === statusFilter)
-      .filter((p) => !q || p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q))
+      .filter((p) => !q || p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || (p.city ?? "").toLowerCase().includes(q))
       .sort((a, b) => a.id.localeCompare(b.id));
   }, [parkings, search, statusFilter]);
+
+  // Группировка по городам для таблицы: города из фикс-списка идут в его
+  // порядке, прочие (демо/легаси) — по алфавиту после, «Без города» — в конце.
+  const grouped = useMemo(() => {
+    const byCity = new Map<string, Parking[]>();
+    for (const p of filtered) {
+      const key = (p.city ?? "").trim() || "Без города";
+      (byCity.get(key) ?? byCity.set(key, []).get(key)!).push(p);
+    }
+    const order = (city: string) => {
+      const i = (PARKING_CITIES as readonly string[]).indexOf(city);
+      if (i !== -1) return [0, i, city] as const;
+      if (city === "Без города") return [2, 0, city] as const;
+      return [1, 0, city] as const;
+    };
+    return Array.from(byCity.entries()).sort(([a], [b]) => {
+      const [ga, ia, na] = order(a);
+      const [gb, ib, nb] = order(b);
+      return ga - gb || ia - ib || na.localeCompare(nb);
+    });
+  }, [filtered]);
 
   // The point currently being placed, shown live on the map as a parking marker.
   const draftParking: Parking = {
     id: editing?.id ?? "draft",
     name: form.name || "Новая парковка",
+    city: form.city,
     lat: form.y, lng: form.x,
     capacity: Number(form.capacity) || 0,
     occupied: Number(form.occupied) || 0,
@@ -186,6 +210,7 @@ export function ParkingsPage() {
     setForm({
       id: p.id,
       name: p.name,
+      city: p.city ?? "",
       capacity: String(p.capacity),
       occupied: String(p.occupied),
       status: p.status as ParkingStatus,
@@ -243,8 +268,13 @@ export function ParkingsPage() {
       setFormError("Укажите название (минимум 2 символа)");
       return;
     }
+    if (!form.city) {
+      setFormError("Выберите город");
+      return;
+    }
     const common = {
       name: form.name,
+      city: form.city,
       lat: form.y,
       lng: form.x,
       capacity,
@@ -342,7 +372,17 @@ export function ParkingsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((p) => {
+            {grouped.map(([city, rows]) => (
+              <Fragment key={`grp-${city}`}>
+                <TableRow className="bg-muted/50 hover:bg-muted/50" data-testid={`parking-city-group-${city}`}>
+                  <TableCell colSpan={6} className="py-2">
+                    <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <MapPin className="w-3.5 h-3.5" />{city}
+                      <span className="font-normal normal-case tracking-normal">· {rows.length}</span>
+                    </span>
+                  </TableCell>
+                </TableRow>
+                {rows.map((p: Parking) => {
               const r = mapToReal(p.lng, p.lat);
               const isArchived = !!p.archivedAt;
               return (
@@ -421,6 +461,8 @@ export function ParkingsPage() {
                 </TableRow>
               );
             })}
+              </Fragment>
+            ))}
             {filtered.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-muted-foreground py-12" data-testid="parkings-empty">
@@ -480,6 +522,18 @@ export function ParkingsPage() {
                   placeholder="Напр. Зеленоградск · Маяк"
                   data-testid="input-parking-name"
                 />
+              </Field>
+              <Field label="Город">
+                <Select value={form.city} onValueChange={(v) => setForm((f) => ({ ...f, city: v }))}>
+                  <SelectTrigger data-testid="select-parking-city">
+                    <SelectValue placeholder="Выберите город" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PARKING_CITIES.map((c) => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Статус">

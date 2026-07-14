@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS bikes (
 );
 CREATE TABLE IF NOT EXISTS parkings (
   id TEXT PRIMARY KEY, name TEXT NOT NULL,
+  city TEXT NOT NULL DEFAULT '',
   lat DOUBLE PRECISION NOT NULL, lng DOUBLE PRECISION NOT NULL,
   capacity INTEGER NOT NULL, occupied INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
@@ -329,6 +330,7 @@ CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions (user_id);
 async function runMigrations() {
   await pool.query(`
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at BIGINT;
+ALTER TABLE parkings ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';
 `);
 }
 
@@ -337,7 +339,7 @@ const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
 // Bump this whenever the demo geography/seed data changes so existing databases
 // get refreshed automatically on next startup (MVP demo data — safe to wipe &
 // reseed, it carries no real user data).
-const DEMO_DATA_VERSION = 4;
+const DEMO_DATA_VERSION = 5;
 
 // Demo fleet size — kept small so QR/rental + admin tables have data without
 // flooding the map/tables.
@@ -374,13 +376,15 @@ async function populateDemoData(client: pg.PoolClient) {
     );
   }
 
-  // Parkings — seeded active and marked seed = TRUE.
+  // Parkings — seeded active and marked seed = TRUE. Город берём из префикса
+  // названия («Город · Место») — для демо этого достаточно.
   for (const p of PARKINGS) {
     const occupied = Math.min(p.capacity, Math.floor(rng() * p.capacity * 0.9));
+    const city = p.name.split("·")[0].trim();
     await client.query(
-      `INSERT INTO parkings (id, name, lat, lng, capacity, occupied, status, notes, archived_at, seed, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,'active',NULL,NULL,TRUE,$7,NULL)`,
-      [p.id, p.name, p.y, p.x, p.capacity, occupied, now],
+      `INSERT INTO parkings (id, name, city, lat, lng, capacity, occupied, status, notes, archived_at, seed, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'active',NULL,NULL,TRUE,$8,NULL)`,
+      [p.id, p.name, city, p.y, p.x, p.capacity, occupied, now],
     );
   }
 

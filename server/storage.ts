@@ -1306,6 +1306,7 @@ export class DatabaseStorage implements IStorage {
     await db.insert(parkings).values({
       id,
       name: input.name.trim(),
+      city: input.city,
       lat: input.lat,
       lng: input.lng,
       capacity: input.capacity,
@@ -1325,6 +1326,7 @@ export class DatabaseStorage implements IStorage {
     if (!existing) return { error: "Парковка не найдена" };
     const set: Partial<Parking> = {};
     if (patch.name !== undefined) set.name = patch.name.trim();
+    if (patch.city !== undefined) set.city = patch.city;
     if (patch.lat !== undefined) set.lat = patch.lat;
     if (patch.lng !== undefined) set.lng = patch.lng;
     if (patch.capacity !== undefined) set.capacity = patch.capacity;

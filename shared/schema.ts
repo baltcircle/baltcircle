@@ -303,6 +303,7 @@ export type AdminUpdateBikeInput = z.infer<typeof adminUpdateBikeSchema>;
 export const parkings = pgTable("parkings", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
+  city: text("city").notNull().default(""),   // город для группировки/сортировки в операторской
   lat: doublePrecision("lat").notNull(),
   lng: doublePrecision("lng").notNull(),
   capacity: integer("capacity").notNull(),
@@ -321,6 +322,11 @@ export type Parking = typeof parkings.$inferSelect;
 export const PARKING_STATUSES = ["active", "inactive"] as const;
 export type ParkingStatus = (typeof PARKING_STATUSES)[number];
 
+// Фиксированный список городов присутствия. Добавить новый = дописать сюда
+// (значение хранится как есть, отдельной таблицы городов не заводим).
+export const PARKING_CITIES = ["Калининград", "Зеленоградск", "Пионерский", "Балтийск"] as const;
+export type ParkingCity = (typeof PARKING_CITIES)[number];
+
 // Admin: create a parking point. Coordinates are required (picked on the map or
 // typed manually). Capacity defaults to a sensible rack size; occupied starts
 // at 0 for a freshly provisioned point.
@@ -328,6 +334,7 @@ const parkingIdRegex = /^[A-Za-z0-9-]{2,40}$/;
 export const adminCreateParkingSchema = z.object({
   id: z.union([z.string().trim().regex(parkingIdRegex, "Код: латиница, цифры и дефис (2–40 символов)"), z.literal("")]).optional(),
   name: z.string().trim().min(2, "Укажите название").max(120),
+  city: z.enum(PARKING_CITIES, { errorMap: () => ({ message: "Выберите город" }) }),
   lat: z.number().finite(),
   lng: z.number().finite(),
   capacity: z.number().int().min(0).max(1000).default(10),
@@ -340,6 +347,7 @@ export type AdminCreateParkingInput = z.infer<typeof adminCreateParkingSchema>;
 // Admin: edit a parking point. All fields optional; id is immutable (path param).
 export const adminUpdateParkingSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
+  city: z.enum(PARKING_CITIES).optional(),
   lat: z.number().finite().optional(),
   lng: z.number().finite().optional(),
   capacity: z.number().int().min(0).max(1000).optional(),
