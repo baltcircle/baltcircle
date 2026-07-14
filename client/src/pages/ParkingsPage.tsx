@@ -480,8 +480,8 @@ export function ParkingsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="space-y-2">
+          <div className="grid md:grid-cols-3 gap-4">
+            <div className="space-y-2 md:col-span-2">
               <MapLibreMap
                 parkings={mapParkings}
                 height="70vh"
