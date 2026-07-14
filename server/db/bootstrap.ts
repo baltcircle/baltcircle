@@ -328,10 +328,10 @@ CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions (user_id);
 // any new column must be applied here with `ALTER TABLE ... ADD COLUMN IF NOT
 // EXISTS`. Idempotent — safe to run on every boot.
 async function runMigrations() {
-  await pool.query(`
-ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at BIGINT;
-ALTER TABLE parkings ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';
-`);
+  // Каждый ALTER — отдельным запросом: pg отправляет запрос с несколькими
+  // командами как prepared statement → «cannot insert multiple commands».
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at BIGINT;`);
+  await pool.query(`ALTER TABLE parkings ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';`);
 }
 
 const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
@@ -502,19 +502,23 @@ async function bootstrapDemoData() {
     // фильтруют по seed=TRUE или по demo-user-id. Операторские парковки, реальные
     // кошельки, платежи и поездки обычных юзеров — не трогаем.
     const DEMO_USERS = ['demo', 'user-2', 'user-3', 'user-4', 'user-5'];
+    // Каждый DELETE — отдельным запросом. Запрос с параметром ($1) и несколькими
+    // командами pg шлёт как prepared statement → «cannot insert multiple commands».
     await client.query(`
       DELETE FROM ticket_comments WHERE ticket_id IN (
         SELECT id FROM tickets WHERE bike_id IN (SELECT id FROM bikes WHERE seed = TRUE)
-      );
-      DELETE FROM rides   WHERE bike_id IN (SELECT id FROM bikes WHERE seed = TRUE)
-                               AND user_id = ANY($1::text[]);
-      DELETE FROM tickets WHERE bike_id IN (SELECT id FROM bikes WHERE seed = TRUE);
-      DELETE FROM payments WHERE user_id = ANY($1::text[]);
-      DELETE FROM wallet   WHERE user_id = ANY($1::text[]);
-      DELETE FROM zones;
-      DELETE FROM parkings WHERE seed = TRUE;
-      DELETE FROM bikes    WHERE seed = TRUE;
-    `, [DEMO_USERS]);
+      )`);
+    await client.query(
+      `DELETE FROM rides WHERE bike_id IN (SELECT id FROM bikes WHERE seed = TRUE)
+                            AND user_id = ANY($1::text[])`,
+      [DEMO_USERS],
+    );
+    await client.query(`DELETE FROM tickets WHERE bike_id IN (SELECT id FROM bikes WHERE seed = TRUE)`);
+    await client.query(`DELETE FROM payments WHERE user_id = ANY($1::text[])`, [DEMO_USERS]);
+    await client.query(`DELETE FROM wallet   WHERE user_id = ANY($1::text[])`, [DEMO_USERS]);
+    await client.query(`DELETE FROM zones`);
+    await client.query(`DELETE FROM parkings WHERE seed = TRUE`);
+    await client.query(`DELETE FROM bikes    WHERE seed = TRUE`);
     await populateDemoData(client);
     await client.query(
       "INSERT INTO meta (key, value) VALUES ('demo_data_version', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
