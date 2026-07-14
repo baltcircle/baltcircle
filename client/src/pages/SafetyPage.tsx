@@ -12,10 +12,6 @@ export function SafetyPage() {
   return (
     <OverlayShell title="Информация">
       <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-safety">
-        <p className="text-sm text-muted-foreground mb-4 px-1">
-          Правила безопасной езды, работа с персональными данными и юридические документы TakeRide.
-        </p>
-
         <nav className="rounded-2xl border border-card-border bg-card overflow-hidden divide-y divide-card-border">
           {INFO_CATEGORIES.map((cat) => {
             const Icon = cat.icon;
