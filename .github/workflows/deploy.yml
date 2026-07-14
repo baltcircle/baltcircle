@@ -185,3 +185,7 @@ jobs:
         run: |
           echo "❌ Деплой завершился с ошибкой: $(date '+%Y-%m-%d %H:%M:%S')"
           echo "Коммит: ${{ github.sha }}"
+          echo "===== docker ps ====="
+          docker ps -a --filter "name=baltcircle" || true
+          echo "===== app container logs (last 200) ====="
+          docker logs --tail 200 baltcircle-mvp 2>&1 || true
