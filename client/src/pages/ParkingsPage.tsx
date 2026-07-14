@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Parking, ParkingStatus } from "@shared/schema";
 import { PARKING_CITIES } from "@shared/schema";
@@ -21,7 +21,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Search, Plus, Pencil, Archive, Trash2, MapPin, Crosshair, RotateCcw,
+  Search, Plus, Pencil, Archive, Trash2, MapPin, RotateCcw,
 } from "lucide-react";
 
 const ADMIN_PARKINGS_KEY = ["/api/admin/parkings"] as const;
@@ -74,7 +74,6 @@ export function ParkingsPage() {
   const [editing, setEditing] = useState<Parking | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
-  const centerGetterRef = useRef<(() => [number, number]) | null>(null);
 
   const parkings = parkingsQ.data ?? [];
 
@@ -227,15 +226,6 @@ export function ParkingsPage() {
     const { x, y } = realToMap(coords[0], coords[1]);
     setForm((f) => ({ ...f, x, y }));
   };
-  const useMapCenter = () => {
-    const getCenter = centerGetterRef.current;
-    if (!getCenter) {
-      toast.toast({ title: "Карта ещё не готова", description: "Подождите загрузки карты.", variant: "destructive" });
-      return;
-    }
-    setCoordsFromReal(getCenter());
-  };
-
   // Real [lat, lng] for the manual fields, derived from the abstract coords so
   // operators see/edit human-readable values.
   const real = mapToReal(form.x, form.y);
@@ -494,14 +484,10 @@ export function ParkingsPage() {
             <div className="space-y-2">
               <MapLibreMap
                 parkings={mapParkings}
-                height="42vh"
+                height="62vh"
                 className="relative w-full overflow-hidden rounded-xl border border-card-border bg-card"
                 onMapClick={setCoordsFromReal}
-                onCenterGetter={(fn) => { centerGetterRef.current = fn; }}
               />
-              <Button type="button" variant="outline" size="sm" onClick={useMapCenter} data-testid="button-parking-center">
-                <Crosshair className="w-4 h-4 mr-2" /> Точка в центре карты
-              </Button>
             </div>
 
             <div className="space-y-3">

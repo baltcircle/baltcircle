@@ -324,7 +324,7 @@ export type ParkingStatus = (typeof PARKING_STATUSES)[number];
 
 // Фиксированный список городов присутствия. Добавить новый = дописать сюда
 // (значение хранится как есть, отдельной таблицы городов не заводим).
-export const PARKING_CITIES = ["Калининград", "Зеленоградск", "Пионерский", "Балтийск"] as const;
+export const PARKING_CITIES = ["Калининград", "Зеленоградск", "Пионерский", "Балтийск", "Светлогорск"] as const;
 export type ParkingCity = (typeof PARKING_CITIES)[number];
 
 // Admin: create a parking point. Coordinates are required (picked on the map or
