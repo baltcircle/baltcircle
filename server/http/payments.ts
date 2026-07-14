@@ -189,7 +189,7 @@ export function registerPaymentRoutes(app: Express): void {
           requestKey: typeof resp.RequestKey === "string" ? resp.RequestKey : undefined,
         });
         await storage.updatePaymentMethod(method.id, { refundStatus: "none" });
-        return res.json({ paymentUrl: resp.PaymentURL, method: "addcard" });
+        return res.json({ paymentUrl: resp.PaymentURL, method: "addcard", methodId: method.id });
       } catch (err: any) {
         return res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
       }

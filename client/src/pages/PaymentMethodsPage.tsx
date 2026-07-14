@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { useLocation } from "wouter";
+import { useEffect, useState } from "react";
 import { OverlayShell } from "@/components/OverlayShell";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { PaymentMethod } from "@shared/schema";
@@ -45,10 +44,12 @@ interface SbpBinding {
 
 export function PaymentMethodsPage() {
   const toast = useToast();
-  const [, navigate] = useLocation();
   const { isRegistered, isLoading: userLoading } = useCurrentUser();
   const [redirecting, setRedirecting] = useState(false);
   const [sbpBinding, setSbpBinding] = useState<SbpBinding | null>(null);
+  // Модальный iframe привязки карты: url — hosted-форма T-Bank, methodId — созданная
+  // pending-запись для polling. null — модалка закрыта.
+  const [tbankBind, setTbankBind] = useState<{ methodId: number; url: string } | null>(null);
 
   const methodsQ = useQuery<PaymentMethod[]>({ queryKey: METHODS_KEY });
   const methods = methodsQ.data ?? [];
@@ -68,19 +69,23 @@ export function PaymentMethodsPage() {
   const bindCardMut = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/payments/tbank/bind-card");
-      return (await res.json()) as { paymentUrl: string; amountKopecks?: number; method?: string };
+      return (await res.json()) as {
+        paymentUrl: string;
+        amountKopecks?: number;
+        method?: string;
+        methodId?: number;
+      };
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: METHODS_KEY });
-      if (data.paymentUrl) {
+      if (data.paymentUrl && typeof data.methodId === "number") {
+        // Открываем hosted-форму T-Bank в МОДАЛЬНОМ iframe (bottom-sheet).
+        // Вкладка НЕ уходит на pay.tbank.ru → история не меняется → native
+        // swipe-back не может попасть на форму T-Bank. Статус ловим polling'ом.
+        setTbankBind({ methodId: data.methodId, url: data.paymentUrl });
+      } else if (data.paymentUrl) {
+        // Фоллбэк (methodId не пришёл): старый путь через уход вкладки.
         setRedirecting(true);
-        // location.replace (NOT href): navigating to T-Bank's hosted form must
-        // REPLACE the current /payment-methods history entry, not push a new one.
-        // Otherwise the history becomes [способы оплаты → форма T-Bank → способы
-        // оплаты], and pressing Back (or swiping back) lands on the T-Bank form,
-        // which immediately redirects forward again — trapping the rider on the
-        // tab. Replacing our entry removes our half of that loop so Back goes to
-        // wherever the rider was before opening payment methods.
         window.location.replace(data.paymentUrl);
       }
     },
@@ -235,124 +240,96 @@ export function PaymentMethodsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sbpBinding?.methodId, sbpBinding?.status]);
 
-  // When T-Bank redirects the rider back to /payment-methods after the hosted
-  // form, the Success/Fail URL may carry Success / RequestKey / ErrorCode query
-  // params. We don't trust these for state changes (the notification webhook is
-  // authoritative), but we surface a failure message immediately and reconcile
-  // the pending method:
-  //   • AddCard rows (have a RequestKey) → poll GetAddCardState via /refresh.
-  //   • Init verification-payment rows (no RequestKey) → the webhook activates
-  //     them; we just re-fetch the methods list a few times so the rider sees
-  //     the webhook-updated status without a manual reload.
-  // Runs once per unique query string.
+  // Привязка карты через МОДАЛЬНЫЙ iframe (bottom-sheet), а НЕ через уход вкладки
+  // на pay.tbank.ru. Раньше форма открывалась в той же вкладке
+  // (window.location.replace) — тогда T-Bank создавал цепочку cross-origin
+  // записей в истории (форма → 3DS → return), и нативный iOS swipe-back попадал
+  // на pay.tbank.ru. Удалить cross-origin записи JS не может (проверено), поэтому
+  // единственное надёжное решение — НЕ уводить вкладку с takeride.ru вообще:
+  // история вкладки не меняется, свайпать некуда.
   //
-  // The trap and the broken navigation both came from fighting the browser
-  // history by hand (replaceState/pushState/popstate) — that desynced wouter
-  // and left leftover T-Bank entries the swipe gesture could still reach.
-  //
-  // Clean approach instead: when we DETECT a return from T-Bank (query params
-  // present), stash those params in sessionStorage and immediately do a
-  // `window.location.replace("/payment-methods")`. That is a full navigation to
-  // a clean URL that REPLACES the current entry, so every leftover T-Bank entry
-  // is physically dropped from the back stack (Back and swipe both leave
-  // cleanly), and the SPA reboots with wouter in a pristine state (so the
-  // «Способы оплаты» button never desyncs). On the fresh load we read the
-  // stashed params back and handle toast/refresh/poll normally.
-  const handledReturn = useRef(false);
-  const cleanupPopRef = useRef<(() => void) | null>(null);
-  // Снятие popstate-слушателя при размонтировании страницы.
-  useEffect(() => () => cleanupPopRef.current?.(), []);
+  // Результат привязки НЕ доверяем URL внутри iframe — авторитетен серверный
+  // webhook. Ловим двумя путями: (1) polling статуса созданной записи (methodId)
+  // каждые 2с; (2) postMessage от iframe при возврате на ?from=tbank (ускоряет
+  // закрытие). Модалка закрывается, когда карта active/failed или по таймауту.
+  const bindFrame = tbankBind; // { methodId, url } | null — состояние объявлено выше
+
+  // Ловим postMessage от iframe (index.html шлёт tbank:done при возврате).
   useEffect(() => {
-    if (handledReturn.current) return;
-
-    // Возврат с T-Bank: в URL есть ?...&from=tbank. РАНЬШЕ здесь был full-reload
-    // reboot (window.location.replace) — но это вторая навигация, и пользователь
-    // видел страницу оплаты ДВАЖДЫ (пустую → reboot → с картой). Теперь чистим
-    // query через wouter navigate(replace) — без перезагрузки и без десинхрона
-    // роутера (navigate сам уведомляет wouter). Страница остаётся смонтированной
-    // и обновляет список на месте — одно появление.
-    const search = window.location.search;
-    const params = new URLSearchParams(search);
-    const isTbankReturn =
-      params.has("from") ||
-      params.has("Success") ||
-      params.has("RequestKey") ||
-      params.has("ErrorCode");
-    if (!isTbankReturn) return;
-    handledReturn.current = true;
-
-    // ПРОБЛЕМА (видно на видео): после привязки карты native swipe-back на iOS
-    // возвращал на pay.tbank.ru. T-Bank ведёт вкладку через цепочку навигаций
-    // (форма → 3DS → return) — cross-origin записи, которые JS УДАЛИТЬ НЕ МОЖЕТ.
-    // Перезагрузка/replace их тоже НЕ чистит (проверено). Единственный
-    // надёжный способ — НЕ дать жесту выйти из текущего документа:
-    //
-    // Ставим НЕСКОЛЬКО sentinel-записей (буфер) поверх /payment-methods.
-    // При каждом popstate (свайп/стрелка) мы: а) если остались в буфере —
-    // запускаем контролируемый выход (как стрелка); б) сразу pushState обратно,
-    // чтобы буфер не исчерпался и следующий жест тоже остался в документе.
-    // Так native swipe НИКОГДА не добирается до cross-origin tbank-записей.
-
-    // Сначала чистим URL от T-Bank query на текущей вершине (без новой записи).
-    navigate("/payment-methods", { replace: true });
-    // Буфер sentinel-записей поверх текущей.
-    try {
-      window.history.pushState({ bcPmSentinel: true }, "", "/payment-methods");
-    } catch {
-      /* ignore */
-    }
-    let exited = false;
-    const onPop = () => {
-      if (exited) return;
-      // Немедленно восстанавливаем буфер — чтобы любой следующий жест
-      // тоже остался внутри документа (не ушёл к tbank), пока идёт
-      // контролируемый выход.
-      try {
-        window.history.pushState({ bcPmSentinel: true }, "", "/payment-methods");
-      } catch {
-        /* ignore */
-      }
-      exited = true;
-      window.removeEventListener("popstate", onPop);
-      // Тот же выход, что и кнопка назад: контролируемая анимация +
-      // возврат в бургер/на карту через setLocation (wouter push, не history.back).
-      window.dispatchEvent(new Event("overlay:back"));
-    };
-    window.addEventListener("popstate", onPop);
-    // Снимаем слушатель при размонтировании (выход стрелкой убирает страницу).
-    cleanupPopRef.current = () => window.removeEventListener("popstate", onPop);
-
-    // Only show a failure toast on an EXPLICIT rejection. The Init path returns
-    // with just ?from=tbank (no Success param) and is resolved by the webhook, so
-    // a missing Success must NOT be treated as a failure.
-    const hasSuccessFlag = params.has("Success");
-    const ok = (params.get("Success") || "").toLowerCase() === "true";
-    if (hasSuccessFlag && !ok) {
-      const code = params.get("ErrorCode");
-      toast.toast({
-        title: "Не удалось привязать карту",
-        description: code && code !== "0" ? `Банк вернул код ${code}.` : "Привязка карты была отклонена.",
-        variant: "destructive",
-      });
-    }
-    // Refresh the method matching the returned RequestKey to pull the
-    // authoritative AddCard status from T-Bank.
-    const reqKey = params.get("RequestKey");
-    const refreshable = reqKey ? methods.find((m) => m.requestKey === reqKey) : undefined;
-    if (refreshable) {
-      refreshMut.mutate(refreshable.id);
-    } else {
-      // Init binding (or unknown): re-fetch the list a few times so the
-      // webhook-driven status update shows up shortly after the redirect.
-      let tries = 0;
-      const poll = () => {
+    if (!bindFrame) return;
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      const d = e.data;
+      if (!d || d.type !== "tbank:done") return;
+      // Явный отказ — сразу показываем ошибку и закрываем.
+      if (d.hasSuccess && !d.success) {
+        const code = d.errorCode;
+        toast.toast({
+          title: "Не удалось привязать карту",
+          description: code && code !== "0" ? `Банк вернул код ${code}.` : "Привязка карты была отклонена.",
+          variant: "destructive",
+        });
+        setTbankBind(null);
         queryClient.invalidateQueries({ queryKey: METHODS_KEY });
-        if (++tries < 5) setTimeout(poll, 2000);
-      };
-      poll();
-    }
+        return;
+      }
+      // Успех/Init: не закрываем сразу — даём polling подтвердить статус по
+      // webhook (active), но форсируем немедленный refetch для скорости.
+      queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+    };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [methods]);
+  }, [bindFrame?.methodId]);
+
+  // Polling статуса привязываемой карты, пока открыта модалка. Как только запись
+  // становится active — закрываем модалку с успехом; failed — с ошибкой.
+  // ~2 мин максимум, затем оставляем список на авто-reconcile выше.
+  useEffect(() => {
+    if (!bindFrame) return;
+    const methodId = bindFrame.methodId;
+    let tries = 0;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        // refresh-bind опрашивает T-Bank GetState по paymentId (Init-путь);
+        // для AddCard-строк есть requestKey — обе ручки идемпотентны.
+        const res = await apiRequest("GET", `/api/payments/tbank/refresh-bind/${methodId}`).catch(
+          () => apiRequest("POST", `/api/payment-methods/${methodId}/refresh`),
+        );
+        const m = (await res.json()) as PaymentMethod;
+        if (cancelled) return;
+        if (m.status === "active") {
+          queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+          toast.toast({ title: "Карта привязана" });
+          setTbankBind(null);
+        } else if (m.status === "failed") {
+          queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+          toast.toast({
+            title: "Привязка не удалась",
+            description: methodError(m),
+            variant: "destructive",
+          });
+          setTbankBind(null);
+        }
+      } catch {
+        // Транзиентная ошибка опроса — продолжаем ждать webhook.
+      }
+    };
+    const interval = setInterval(() => {
+      if (++tries >= 60) {
+        clearInterval(interval);
+        return;
+      }
+      void poll();
+    }, 2000);
+    void poll();
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bindFrame?.methodId]);
 
   const busy =
     bindCardMut.isPending ||
@@ -577,7 +554,67 @@ export function PaymentMethodsPage() {
           onClose={() => setSbpBinding(null)}
         />
       )}
+
+      {tbankBind && (
+        <TbankBindModal
+          url={tbankBind.url}
+          onClose={() => {
+            // Закрытие вручную: дотягиваем статус (webhook/polling мог ещё не
+            // отработать) и обновляем список — авто-reconcile выше доведёт.
+            setTbankBind(null);
+            queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+          }}
+        />
+      )}
     </OverlayShell>
+  );
+}
+
+// Модальный bottom-sheet с hosted-формой T-Bank во встроенном iframe. Вкладка
+// НЕ уходит на pay.tbank.ru — форма живёт внутри iframe, история вкладки
+// не меняется, native swipe-back некуда вести. Статус привязки отслеживает
+// родитель (polling + postMessage) и закрывает модалку через onClose.
+function TbankBindModal({ url, onClose }: { url: string; onClose: () => void }) {
+  const [loading, setLoading] = useState(true);
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60"
+      data-testid="tbank-bind-modal"
+      onClick={onClose}
+    >
+      <div
+        className="w-full sm:max-w-md bg-background rounded-t-2xl sm:rounded-2xl sm:mb-4 overflow-hidden flex flex-col animate-slide-up"
+        style={{ height: "90vh", maxHeight: "90vh" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Шапка с кнопкой закрытия */}
+        <div className="relative flex items-center justify-center shrink-0 border-b border-border py-3">
+          <h2 className="text-base font-semibold text-foreground">Привязка карты</h2>
+          <button
+            onClick={onClose}
+            aria-label="Закрыть"
+            className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 rounded-full hover:bg-muted transition-colors"
+          >
+            <X className="w-5 h-5 text-foreground" />
+          </button>
+        </div>
+        {/* iframe с формой T-Bank */}
+        <div className="relative flex-1">
+          {loading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-background">
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+            </div>
+          )}
+          <iframe
+            src={url}
+            title="Привязка карты T-Bank"
+            className="w-full h-full border-0"
+            allow="payment"
+            onLoad={() => setLoading(false)}
+          />
+        </div>
+      </div>
+    </div>
   );
 }
 

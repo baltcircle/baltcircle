@@ -423,7 +423,7 @@ export async function bindViaVerificationPayment(
       // A charge is now outstanding; it will be reversed/refunded on activation.
       refundStatus: "pending",
     });
-    res.json({ paymentUrl: resp.PaymentURL, amountKopecks, method: "payment" });
+    res.json({ paymentUrl: resp.PaymentURL, amountKopecks, method: "payment", methodId: method.id });
   } catch (err: any) {
     res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
   }

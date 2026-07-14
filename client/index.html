@@ -34,6 +34,48 @@
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <!--
+      T-Bank return leg (?from=tbank) внутри iframe: форма привязки карты
+      открывается в модальном iframe поверх «Способов оплаты», вкладка НЕ уходит
+      на pay.tbank.ru. По завершении T-Bank редиректит iframe на
+      /payment-methods?from=tbank. Если мы ВНУТРИ iframe (window !== parent) —
+      не грузим SPA заново: шлём результат родителю через postMessage (он закроет
+      модалку и обновит статус), показываем короткую заглушку. Основной надёжный
+      путь подтверждения — серверный webhook + polling; postMessage лишь ускоряет
+      закрытие. Выполняется ДО загрузки бандла, чтобы не мигать приложением.
+    -->
+    <script>
+      (function () {
+        try {
+          var p = new URLSearchParams(location.search);
+          var isReturn =
+            p.has("from") || p.has("Success") || p.has("RequestKey") || p.has("ErrorCode");
+          var inFrame = window.parent && window.parent !== window;
+          if (isReturn && inFrame) {
+            var payload = {
+              type: "tbank:done",
+              success: (p.get("Success") || "").toLowerCase() === "true",
+              hasSuccess: p.has("Success"),
+              errorCode: p.get("ErrorCode") || null,
+              requestKey: p.get("RequestKey") || null,
+            };
+            try {
+              window.parent.postMessage(payload, location.origin);
+            } catch (e) {
+              /* ignore */
+            }
+            document.getElementById("root").innerHTML =
+              '<div style="font-family:-apple-system,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;color:#1d6a85;font-size:15px">Готово, закрываем…</div>';
+            return; // НЕ грузим SPA внутри iframe
+          }
+        } catch (e) {
+          /* ignore — падаем в обычную загрузку */
+        }
+        var s = document.createElement("script");
+        s.type = "module";
+        s.src = "/src/main.tsx";
+        document.body.appendChild(s);
+      })();
+    </script>
   </body>
 </html>
