@@ -144,8 +144,13 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
       const currentMatches = OVERLAY_ROUTES.find((r) => currentPath === r || currentPath.startsWith(r + "/"));
       const isNested = currentMatches ? currentPath.length > currentMatches.length : false;
 
-      if (isNested) {
-        // Переход внутри overlay — мгновенно.
+      // «Правовые документы» (/legal) — логически подраздел «Информации» (/safety):
+      // открывается только из неё, поэтому выход должен вести ОБРАТНО в /safety
+      // через history.back() (мгновенно, overlay → overlay), а не с анимацией
+      // выхода на карту (иначе slide-down обнажает бургер/карту, а затем
+      // возврат в /safety — мелькание «бургер → Информация»).
+      if (isNested || currentPath === "/legal") {
+        // Переход внутри overlay (включая выход из /legal в /safety) — мгновенно.
         window.history.back();
         return;
       }
