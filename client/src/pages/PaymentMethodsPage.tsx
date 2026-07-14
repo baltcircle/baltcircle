@@ -283,30 +283,39 @@ export function PaymentMethodsPage() {
 
     // ПРОБЛЕМА (видно на видео): после привязки карты native swipe-back на iOS
     // возвращал на pay.tbank.ru. T-Bank ведёт вкладку через цепочку навигаций
-    // (форма → 3DS → return), каждая — отдельная cross-origin запись в истории.
-    // Нативный жест обрабатывается ОС и попадает на эти tbank-записи.
+    // (форма → 3DS → return) — cross-origin записи, которые JS УДАЛИТЬ НЕ МОЖЕТ.
+    // Перезагрузка/replace их тоже НЕ чистит (проверено). Единственный
+    // надёжный способ — НЕ дать жесту выйти из текущего документа:
     //
-    // Решение (belt-and-suspenders):
-    // 1) navigate(replace) — чистый URL без T-Bank query, wouter синхронен.
-    // 2) replaceState("/") + pushState("/payment-methods") — гарантируем, что
-    //    НЕПОСРЕДСТВЕННО под payment-methods лежит same-origin "/" (не tbank).
-    // 3) sentinel poverh + popstate-перехват — первый же swipe остаётся в
-    //    документе и запускает контролируемый выход (как стрелка).
-    // Даже если sentinel почему-то пропущен — следующая запись "/" (карта),
-    // а не tbank. Карта — реальный same-origin документ, у него есть снапшот.
+    // Ставим НЕСКОЛЬКО sentinel-записей (буфер) поверх /payment-methods.
+    // При каждом popstate (свайп/стрелка) мы: а) если остались в буфере —
+    // запускаем контролируемый выход (как стрелка); б) сразу pushState обратно,
+    // чтобы буфер не исчерпался и следующий жест тоже остался в документе.
+    // Так native swipe НИКОГДА не добирается до cross-origin tbank-записей.
+
+    // Сначала чистим URL от T-Bank query на текущей вершине (без новой записи).
     navigate("/payment-methods", { replace: true });
+    // Буфер sentinel-записей поверх текущей.
     try {
-      window.history.replaceState({ bcMapHome: true }, "", "/");
-      window.history.pushState(null, "", "/payment-methods");
       window.history.pushState({ bcPmSentinel: true }, "", "/payment-methods");
     } catch {
       /* ignore */
     }
+    let exited = false;
     const onPop = () => {
+      if (exited) return;
+      // Немедленно восстанавливаем буфер — чтобы любой следующий жест
+      // тоже остался внутри документа (не ушёл к tbank), пока идёт
+      // контролируемый выход.
+      try {
+        window.history.pushState({ bcPmSentinel: true }, "", "/payment-methods");
+      } catch {
+        /* ignore */
+      }
+      exited = true;
       window.removeEventListener("popstate", onPop);
-      // Запускаем тот же выход, что и кнопка назад (App.tsx overlay:back handler):
-      // контролируемая анимация + возврат в бургер/на карту. Свайп уже съел
-      // sentinel-запись, URL снова /payment-methods — handler корректно отработает.
+      // Тот же выход, что и кнопка назад: контролируемая анимация +
+      // возврат в бургер/на карту через setLocation (wouter push, не history.back).
       window.dispatchEvent(new Event("overlay:back"));
     };
     window.addEventListener("popstate", onPop);
