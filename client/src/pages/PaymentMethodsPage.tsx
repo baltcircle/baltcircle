@@ -259,6 +259,9 @@ export function PaymentMethodsPage() {
   // «Способы оплаты» button never desyncs). On the fresh load we read the
   // stashed params back and handle toast/refresh/poll normally.
   const handledReturn = useRef(false);
+  const cleanupPopRef = useRef<(() => void) | null>(null);
+  // Снятие popstate-слушателя при размонтировании страницы.
+  useEffect(() => () => cleanupPopRef.current?.(), []);
   useEffect(() => {
     if (handledReturn.current) return;
 
@@ -278,20 +281,36 @@ export function PaymentMethodsPage() {
     if (!isTbankReturn) return;
     handledReturn.current = true;
 
-    // Чистим URL И чиним стек истории. Проблема: запуск привязки делает
-    // window.location.replace(paymentUrl) — это СТИРАЕТ запись /payment-methods
-    // из истории и заменяет URL банка. После возврата свайп назад увёл бы
-    // на pay.tbank.ru (или за пределы приложения) — «со страницы не выйти».
-    // Перестраиваем стек: текущую (запутанную) вершину → "/", затем пушим
-    // чистый /payment-methods. Теперь свайп/стрелка назад ведёт на карту ("/").
+    // Чистим URL от T-Bank query через replaceState (заменяем ТЕКУЩУЮ вершину,
+    // не плодим запись). Стек: T-Bank редиректит назад REPLACE'ом поверх своего
+    // URL, поэтому под текущей вершиной остаётся исходный вход на карту "/" —
+    // свайп/стрелка назад ведут на карту. Дополнительно пушить/replace "/" НЕ
+    // НАДО: инъекция SPA-записей без реального снапшота ломает iOS swipe-back
+    // (жест показывает пустой кэш-снимок и залипает). navigate(replace)
+    // синхронизирует wouter с чистым URL без новой записи истории.
+    navigate("/payment-methods", { replace: true });
+
+    // ГАРАНТИРОВАННЫЙ выход по свайпу/стрелке браузера. После T-Bank стек
+    // истории непредсказуем (банк мог редиректнуть push'ом или replace'ом),
+    // и на iOS swipe-back может залипать на кэш-снимке T-Bank. Поэтому:
+    // пушим sentinel-запись поверх /payment-methods — первый же back/swipe
+    // попадёт в неё (остаёмся в том же документе, не уходим к T-Bank), а мы
+    // перехватываем popstate и запускаем тот же контролируемый выход, что и стрелка.
     try {
-      window.history.replaceState(null, "", "/");
-      window.history.pushState(null, "", "/payment-methods");
+      window.history.pushState({ bcPmSentinel: true }, "", "/payment-methods");
     } catch {
       /* ignore */
     }
-    // Синхронизируем wouter с новым URL (без новой записи истории).
-    navigate("/payment-methods", { replace: true });
+    const onPop = () => {
+      window.removeEventListener("popstate", onPop);
+      // Запускаем тот же выход, что и кнопка назад (App.tsx overlay:back handler):
+      // контролируемая анимация + возврат в бургер/на карту. Свайп уже съел
+      // sentinel-запись, URL снова /payment-methods — handler корректно отработает.
+      window.dispatchEvent(new Event("overlay:back"));
+    };
+    window.addEventListener("popstate", onPop);
+    // Снимаем слушатель при размонтировании (выход стрелкой убирает страницу).
+    cleanupPopRef.current = () => window.removeEventListener("popstate", onPop);
 
     // Only show a failure toast on an EXPLICIT rejection. The Init path returns
     // with just ?from=tbank (no Success param) and is resolved by the webhook, so
