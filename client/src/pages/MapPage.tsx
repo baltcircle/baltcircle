@@ -121,7 +121,11 @@ export function MapPage() {
     sessionStorage.setItem(PAYMENT_BANNER_KEY, "1");
     setPaymentBannerDismissed(true);
   };
-  const showPaymentBanner = isRegistered && !hasCard && !paymentBannerDismissed && !activeRide;
+  // Не показываем баннер, пока способы оплаты ещё грузятся — иначе при reload
+  // он мигает (hasCard=false до ответа, затем исчезает).
+  const methodsReady = !methodsQ.isLoading && methodsQ.isFetched;
+  const showPaymentBanner =
+    isRegistered && methodsReady && !hasCard && !paymentBannerDismissed && !activeRide;
 
   // Geolocation: center map on user position.
   // Собственный watchPosition (кеширует последнюю точку) → клик по кнопке моментально
