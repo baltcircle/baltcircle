@@ -4,6 +4,7 @@ import type { Parking, ParkingStatus } from "@shared/schema";
 import { PARKING_CITIES } from "@shared/schema";
 import { realToMap, mapToReal } from "@shared/geo";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { useToast } from "@/hooks/use-toast";
 import { MapLibreMap } from "@/components/MapLibreMap";
 import { Card } from "@/components/ui/card";
@@ -66,6 +67,7 @@ const emptyForm: FormState = {
 export function ParkingsPage() {
   const toast = useToast();
   const parkingsQ = useQuery<Parking[]>({ queryKey: ADMIN_PARKINGS_KEY });
+  useFleetStream(); // «Занято» зависит от велосипедов — обновляем ливе
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -245,13 +247,8 @@ export function ParkingsPage() {
   const submitForm = () => {
     setFormError(null);
     const capacity = Number(form.capacity);
-    const occupied = Number(form.occupied);
     if (!Number.isFinite(capacity) || capacity < 0) {
       setFormError("Вместимость должна быть числом ≥ 0");
-      return;
-    }
-    if (!Number.isFinite(occupied) || occupied < 0) {
-      setFormError("Занято должно быть числом ≥ 0");
       return;
     }
     if (form.name.trim().length < 2) {
@@ -268,7 +265,7 @@ export function ParkingsPage() {
       lat: form.y,
       lng: form.x,
       capacity,
-      occupied,
+      // occupied больше не вводится вручную — считается на сервере от велосипедов.
       status: form.status,
       notes: form.notes,
     };
@@ -541,13 +538,17 @@ export function ParkingsPage() {
                 </Field>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Занято">
+                <Field label="Занято (авто)">
                   <Input
-                    type="number" min={0}
-                    value={form.occupied}
-                    onChange={(e) => setForm((f) => ({ ...f, occupied: e.target.value }))}
+                    type="number"
+                    value={editing ? String(editing.occupied) : "0"}
+                    readOnly
+                    disabled
                     data-testid="input-parking-occupied"
                   />
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Считается автоматически по велосипедам на этой парковке.
+                  </p>
                 </Field>
                 <div />
               </div>

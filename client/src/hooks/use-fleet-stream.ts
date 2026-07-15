@@ -12,6 +12,9 @@ export function useFleetStream() {
     es.onmessage = () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/bikes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
+      // «Занято» парковок считается от велосипедов → обновляем и их.
+      queryClient.invalidateQueries({ queryKey: ["/api/parkings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/parkings"] });
     };
     es.onerror = () => {}; // EventSource переподключится сам.
     return () => es.close();

@@ -1300,7 +1300,19 @@ export class DatabaseStorage implements IStorage {
     let rows = (await db.select().from(parkings)) as Parking[];
     if (!opts?.includeArchived) rows = rows.filter((p) => !p.archivedAt);
     if (!opts?.includeInactive) rows = rows.filter((p) => p.status === "active");
-    return rows;
+    // «Занято» считается динамически: число велосипедов, у которых эта
+    // парковка указана как домашняя И которые физически на месте.
+    // Арендованный/архивный велосипед стойку не занимает. Перекрывает
+    // статичное поле occupied из БД — оно больше не ведётся вручную.
+    const bikeRows = await this.listBikes({ includeArchived: false });
+    const AT_STATION = new Set(["available", "reserved", "maintenance", "offline", "storage"]);
+    const counts = new Map<string, number>();
+    for (const b of bikeRows) {
+      if (!b.parkingId) continue;
+      if (!AT_STATION.has(b.status)) continue;
+      counts.set(b.parkingId, (counts.get(b.parkingId) ?? 0) + 1);
+    }
+    return rows.map((p) => ({ ...p, occupied: counts.get(p.id) ?? 0 }));
   }
   async getParking(id: string) {
     return (await db.select().from(parkings).where(eq(parkings.id, id)).limit(1))[0] as Parking | undefined;
