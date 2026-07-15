@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { storage } from "../storage";
 import { sendSupportMessageSchema } from "@shared/schema";
+import { matchFaq, wantsOperator, BOT_FALLBACK, BOT_HANDOFF } from "@shared/support-faq";
 import { riderId, requireAuth, requireRole, actorName } from "./context";
 import { sendToUserAsync } from "../push";
 
@@ -84,17 +85,53 @@ export function registerSupportChatRoutes(app: Express): void {
     }
     const uid = riderId(req);
     const conv = await storage.ensureSupportConversation(uid);
+    const body = (parsed.data.body ?? "").trim();
+
+    // 1. Сохраняем сообщение пользователя.
     const msg = await storage.appendSupportMessage({
       conversationId: conv.id,
       senderRole: "user",
       senderId: uid,
-      body: parsed.data.body ?? "",
+      body,
       attachmentUrl: parsed.data.attachmentUrl ?? null,
       attachmentMime: parsed.data.attachmentMime ?? null,
     });
     supportEvents.emit(String(conv.id), msg);
     supportEvents.emit("inbox", { conversationId: conv.id }); // будит SSE админа
     res.status(201).json(msg);
+
+    // 2. Бот-логика — только если разговор ещё в режиме 'bot'. В human-режиме
+    //    (оператор уже подключён) бот молчит. Отвечаем асинхронно после ответа
+    //    клиенту, чтобы не задерживать отправку сообщения.
+    if (conv.mode === "human") return;
+
+    // Запрос живого оператора → переключаем на human, шлём handoff, будим инбокс.
+    if (body && wantsOperator(body)) {
+      await storage.setSupportMode(conv.id, "human");
+      const handoff = await storage.appendSupportMessage({
+        conversationId: conv.id,
+        senderRole: "system",
+        senderId: null,
+        body: BOT_HANDOFF,
+      });
+      supportEvents.emit(String(conv.id), handoff);
+      supportEvents.emit("inbox", { conversationId: conv.id, escalated: true });
+      return;
+    }
+
+    // Вложение без текста — бот не угадывает, тихо ждёт (сообщение уже у оператора
+    // в инбоксе). Отвечаем скриптом только на текстовые вопросы.
+    if (!body) return;
+
+    const faq = matchFaq(body);
+    const answer = faq ? faq.answer : BOT_FALLBACK;
+    const botMsg = await storage.appendSupportMessage({
+      conversationId: conv.id,
+      senderRole: "bot",
+      senderId: null,
+      body: answer,
+    });
+    supportEvents.emit(String(conv.id), botMsg);
   });
 
   // Пометить как прочитанное со стороны пользователя.
@@ -169,6 +206,10 @@ export function registerSupportChatRoutes(app: Express): void {
       return res.status(400).json({ error: msg });
     }
     const opName = await actorName(req);
+    // Оператор ответил вручную → выключаем бота для этого разговора.
+    if (conv.mode !== "human") {
+      await storage.setSupportMode(id, "human");
+    }
     const msg = await storage.appendSupportMessage({
       conversationId: id,
       senderRole: "operator",

@@ -696,6 +696,9 @@ export type UpdateSupportTicketInput = z.infer<typeof updateSupportTicketSchema>
 export const supportConversations = pgTable("support_conversations", {
   id: serial("id").primaryKey(),
   userId: text("user_id").notNull().unique(),
+  // 'bot' — отвечает авто-скрипт по FAQ; 'human' — подключён оператор
+  // (после запроса «оператор»). Бот больше не вмешивается в human-режиме.
+  mode: text("mode").notNull().default("bot"),
   lastMessageAt: bigint("last_message_at", { mode: "number" }),
   userUnreadCount: integer("user_unread_count").notNull().default(0),
   operatorUnreadCount: integer("operator_unread_count").notNull().default(0),
@@ -703,7 +706,7 @@ export const supportConversations = pgTable("support_conversations", {
 });
 export type SupportConversation = typeof supportConversations.$inferSelect;
 
-export const SUPPORT_MESSAGE_ROLES = ["user", "operator", "system"] as const;
+export const SUPPORT_MESSAGE_ROLES = ["user", "operator", "system", "bot"] as const;
 export type SupportMessageRole = typeof SUPPORT_MESSAGE_ROLES[number];
 
 export const supportMessages = pgTable("support_messages", {
@@ -736,6 +739,7 @@ export type AdminSupportConversationRow = SupportConversation & {
   userPhone: string | null;
   lastMessagePreview: string | null;
 };
+// mode уже входит в SupportConversation ('bot' | 'human').
 
 // Enriched shape returned by admin endpoints — bundles rider info so the
 // operator UI can render the request without extra round trips.

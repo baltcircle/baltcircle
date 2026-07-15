@@ -206,6 +206,7 @@ export interface IStorage {
   listSupportMessages(conversationId: number, opts?: { afterId?: number; limit?: number }): Promise<SupportMessage[]>;
   appendSupportMessage(input: { conversationId: number; senderRole: SupportMessageRole; senderId: string | null; body: string; attachmentUrl?: string | null; attachmentMime?: string | null }): Promise<SupportMessage>;
   markSupportRead(conversationId: number, reader: "user" | "operator"): Promise<void>;
+  setSupportMode(conversationId: number, mode: "bot" | "human"): Promise<void>;
   listAllSupportConversations(): Promise<AdminSupportConversationRow[]>;
   getSupportConversation(id: number): Promise<SupportConversation | undefined>;
   // bikes
@@ -1071,7 +1072,7 @@ export class DatabaseStorage implements IStorage {
       .where(eq(supportConversations.userId, userId)).limit(1))[0] as SupportConversation | undefined;
     if (existing) return existing;
     return (await db.insert(supportConversations).values({
-      userId, createdAt: Date.now(), userUnreadCount: 0, operatorUnreadCount: 0,
+      userId, mode: "bot", createdAt: Date.now(), userUnreadCount: 0, operatorUnreadCount: 0,
     }).returning())[0] as SupportConversation;
   }
 
@@ -1115,20 +1116,23 @@ export class DatabaseStorage implements IStorage {
         SET last_message_at = ${now}, operator_unread_count = operator_unread_count + 1
         WHERE id = ${input.conversationId}
       `);
-    } else if (input.senderRole === "operator") {
+    } else {
+      // operator / bot / system — всё это исходящие к пользователю сообщения →
+      // бампаем его счётчик непрочитанного.
       await db.execute(sql`
         UPDATE support_conversations
         SET last_message_at = ${now}, user_unread_count = user_unread_count + 1
         WHERE id = ${input.conversationId}
       `);
-    } else {
-      await db.execute(sql`
-        UPDATE support_conversations
-        SET last_message_at = ${now}
-        WHERE id = ${input.conversationId}
-      `);
     }
     return inserted;
+  }
+
+  /** Переключить режим разговора: 'bot' | 'human'. */
+  async setSupportMode(conversationId: number, mode: "bot" | "human"): Promise<void> {
+    await db.execute(sql`
+      UPDATE support_conversations SET mode = ${mode} WHERE id = ${conversationId}
+    `);
   }
 
   /** Zero-out unread counter for the reader side. */
@@ -1143,7 +1147,7 @@ export class DatabaseStorage implements IStorage {
   async listAllSupportConversations(): Promise<AdminSupportConversationRow[]> {
     const rows = await db.execute(sql`
       SELECT
-        c.id, c.user_id AS "userId", c.last_message_at AS "lastMessageAt",
+        c.id, c.user_id AS "userId", c.mode, c.last_message_at AS "lastMessageAt",
         c.user_unread_count AS "userUnreadCount",
         c.operator_unread_count AS "operatorUnreadCount",
         c.created_at AS "createdAt",

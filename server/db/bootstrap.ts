@@ -272,6 +272,7 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE TABLE IF NOT EXISTS support_conversations (
   id SERIAL PRIMARY KEY,
   user_id TEXT NOT NULL UNIQUE,
+  mode TEXT NOT NULL DEFAULT 'bot',
   last_message_at BIGINT,
   user_unread_count INTEGER NOT NULL DEFAULT 0,
   operator_unread_count INTEGER NOT NULL DEFAULT 0,
@@ -332,6 +333,7 @@ async function runMigrations() {
   // командами как prepared statement → «cannot insert multiple commands».
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at BIGINT;`);
   await pool.query(`ALTER TABLE parkings ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';`);
+  await pool.query(`ALTER TABLE support_conversations ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'bot';`);
 }
 
 const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];

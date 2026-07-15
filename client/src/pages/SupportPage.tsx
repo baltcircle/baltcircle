@@ -15,9 +15,13 @@ const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 type ChatState = { conversation: SupportConversation; messages: SupportMessage[] };
 
+// Вопросы совпадают с ключевыми словами бота (shared/support-faq.ts) —
+// тап отправляет вопрос, бот отвечает скриптом.
 const FAQ_HINT = [
-  { q: "Как начать аренду?", a: "Отсканируйте QR-код на велосипеде или выберите его на карте." },
-  { q: "Что делать, если велосипед неисправен?", a: "Завершите поездку в разрешённой зоне и напишите нам ниже." },
+  { q: "Как начать аренду велосипеда?" },
+  { q: "Как завершить поездку?" },
+  { q: "Как привязать карту и сколько стоит?" },
+  { q: "Что означают зоны на карте?" },
 ];
 
 function fmtTime(ms: number): string {
@@ -88,12 +92,12 @@ export function SupportPage() {
     apiRequest("POST", "/api/support/chat/read", {}).catch(() => {});
   }, [isRegistered, messages.length]);
 
-  const sendMut = useMutation<SupportMessage, Error, void>({
-    mutationFn: async () => {
+  const sendMut = useMutation<SupportMessage, Error, string | void>({
+    mutationFn: async (override) => {
       const res = await apiRequest("POST", "/api/support/chat", {
-        body: text.trim(),
-        attachmentUrl: attachment?.url,
-        attachmentMime: attachment?.mime,
+        body: typeof override === "string" ? override : text.trim(),
+        attachmentUrl: typeof override === "string" ? undefined : attachment?.url,
+        attachmentMime: typeof override === "string" ? undefined : attachment?.mime,
       });
       return res.json();
     },
@@ -154,6 +158,12 @@ export function SupportPage() {
     sendMut.mutate();
   }
 
+  // Быстрый вызов оператора — шлём ключевое слово, бот переключит разговор.
+  function callOperator() {
+    if (sendMut.isPending) return;
+    sendMut.mutate("Оператор");
+  }
+
   // Группировка по дате для разделителей
   const grouped = useMemo(() => {
     const groups: { day: string; items: SupportMessage[] }[] = [];
@@ -194,18 +204,34 @@ export function SupportPage() {
             <div className="text-xs text-muted-foreground text-center py-8">Загрузка чата…</div>
           ) : messages.length === 0 ? (
             <Card className="p-4 space-y-3">
-              <div className="text-sm font-medium">Здравствуйте. Мы на связи.</div>
+              <div className="text-sm font-medium">Здравствуйте! Я бот поддержки TakeRide 🤖</div>
               <div className="text-xs text-muted-foreground leading-snug">
-                Напишите ваш вопрос или прикрепите фото — оператор ответит в чате.
+                Опишите вопрос своими словами — подскажу по аренде, оплате, зонам и типичным
+                проблемам. Нужен живой сотрудник — нажмите «Позвать оператора» или напишите «оператор».
               </div>
               <div className="space-y-2 pt-1">
                 {FAQ_HINT.map((f, i) => (
-                  <div key={i}>
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => sendMut.mutate(f.q)}
+                    disabled={sendMut.isPending}
+                    className="block w-full text-left rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5 hover:bg-muted/60 transition-colors disabled:opacity-50"
+                  >
                     <div className="text-xs font-medium">{f.q}</div>
-                    <div className="text-xs text-muted-foreground">{f.a}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full mt-1"
+                onClick={callOperator}
+                disabled={sendMut.isPending}
+              >
+                Позвать оператора
+              </Button>
             </Card>
           ) : (
             grouped.map((g, gi) => (
@@ -299,6 +325,7 @@ export function SupportPage() {
 function MessageBubble({ message }: { message: SupportMessage }) {
   const isUser = message.senderRole === "user";
   const isSystem = message.senderRole === "system";
+  const isBot = message.senderRole === "bot";
 
   if (isSystem) {
     return (
@@ -318,7 +345,7 @@ function MessageBubble({ message }: { message: SupportMessage }) {
         }`}
       >
         {!isUser && (
-          <div className="text-[10px] font-medium opacity-70 mb-0.5">Оператор</div>
+          <div className="text-[10px] font-medium opacity-70 mb-0.5">{isBot ? "Бот поддержки" : "Оператор"}</div>
         )}
         {message.attachmentUrl && (
           <a
