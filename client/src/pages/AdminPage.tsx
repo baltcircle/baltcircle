@@ -13,6 +13,7 @@ import {
   LifeBuoy, MessageSquare,
 } from "lucide-react";
 import { useSupportUnread } from "@/hooks/use-support-unread";
+import { useFleetStream } from "@/hooks/use-fleet-stream";
 
 // Active rides running longer than this are surfaced as an alert — a likely
 // abandoned/forgotten rental or a lock that never reported its end.
@@ -31,6 +32,7 @@ export function AdminPage() {
   // are public reads already used elsewhere in the operator UI. No new backend
   // surface is needed to assemble the dashboard.
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
+  useFleetStream(); // живое обновление счётчиков статусов
   const usersQ = useQuery<User[]>({ queryKey: ["/api/admin/users"] });
   const ridesQ = useQuery<Ride[]>({ queryKey: ["/api/rides"] });
   const ticketsQ = useQuery<Ticket[]>({ queryKey: ["/api/tickets"] });

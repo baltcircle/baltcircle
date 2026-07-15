@@ -9,6 +9,7 @@ import { QrScanModal } from "@/components/QrScanModal";
 import { DrawerMenu } from "@/components/DrawerMenu";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
+import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { useActiveRideTracker } from "@/hooks/use-active-ride-tracker";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -34,6 +35,8 @@ export function MapPage() {
   });
   // Live active-ride updates via SSE (replaces the old 4s poll).
   useActiveRideStream();
+  // Живое обновление доступности велосипедов на карте (статусы).
+  useFleetStream();
   const { isRegistered, isLoading: userLoading } = useCurrentUser();
 
   const activeRide = activeQ.data ?? null;

@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Bike, BikeStatus, Parking } from "@shared/schema";
 import { BIKE_STATUSES } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { bikeQrLink } from "@/lib/format";
@@ -76,6 +77,7 @@ export function BikesPage() {
   const canWrite = !isMechanic;
   const bikesQ = useQuery<Bike[]>({ queryKey: ADMIN_BIKES_KEY });
   const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
+  useFleetStream(); // живое обновление статусов велосипедов
 
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);

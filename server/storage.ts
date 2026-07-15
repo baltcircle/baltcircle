@@ -39,6 +39,14 @@ rideEvents.setMaxListeners(0);
 // whether to re-read ("start"/"point") or push a terminal null ("end").
 export type RideEventReason = "start" | "point" | "end";
 
+// Флот-шина: единый broadcast-канал "fleet". Эмитится при ЛЮБОМ изменении
+// набора/статуса велосипедов (старт/конец аренды, бронь, освобождение брони,
+// правки из админки). Открытые админ-страницы и карта подписываются на SSE и
+// перезапрашивают список сразу, а не по таймеру.
+export const bikeEvents = new EventEmitter();
+bikeEvents.setMaxListeners(0);
+export const BIKE_EVENT_CHANNEL = "fleet";
+
 
 // ---------- Storage interface ----------
 
@@ -290,9 +298,13 @@ export class DatabaseStorage implements IStorage {
 
   // Drop the cached bike rows so the next listBikes() re-reads from the DB.
   // Call after ANY write that can change a bike's row (status/position/CRUD).
-  invalidateBikesCache(): void {
+  // По умолчанию также шлём fleet-событие (админка/карта обновятся).
+  // silent:true — для position-only обновлений во время поездки (каждая
+  // GPS-точка), чтобы не спамить стрим флота — статус там не меняется.
+  invalidateBikesCache(opts?: { silent?: boolean }): void {
     this._bikesCache = null;
     this._bikesCacheAt = 0;
+    if (!opts?.silent) bikeEvents.emit(BIKE_EVENT_CHANNEL);
   }
 
   // Apply the env-driven admin override so callers always see the effective
@@ -1509,10 +1521,12 @@ export class DatabaseStorage implements IStorage {
     // never the price. rides.track is finalised once in endRide.
     await db.update(rides).set({ distanceM: newDistance }).where(eq(rides.id, rideId));
     await db.update(bikes).set({ lat: y, lng: x, lastSeen: Date.now(), idleHours: 0 } as any)
+      /* position-only во время поездки — fleet-событие не нужно (silent ниже) */
       .where(eq(bikes.id, r.bikeId));
     // Position changed → invalidate the map list and push the owning rider a
-    // fresh active-ride snapshot (new track point) over SSE.
-    this.invalidateBikesCache();
+    // fresh active-ride snapshot (new track point) over SSE. silent: статус не
+    // меняется, не будим fleet-стрим на каждую GPS-точку.
+    this.invalidateBikesCache({ silent: true });
     rideEvents.emit(r.userId, "point" as RideEventReason);
     return this.hydrateTrack(
       (await db.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride,

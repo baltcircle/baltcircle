@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { storage } from "../storage";
+import { storage, bikeEvents, BIKE_EVENT_CHANNEL } from "../storage";
 import { z } from "zod";
 import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
 import {
@@ -43,6 +43,35 @@ export function registerCatalogRoutes(app: Express): void {
   // rental selection. (The admin fleet page uses /api/admin/bikes for the full
   // list including archived.)
   app.get("/api/bikes", async (_req, res) => res.json(await storage.listBikes()));
+
+  // SSE-стрим флота: сервер шлёт событие "tick" при любом изменении
+  // статуса/набора велосипедов. Клиент по этому событию инвалидирует
+  // список. Общий broadcast (не per-user) — один канал на весь флот.
+  // Публичный (без роли): карта тоже слушает, чтобы обновлять метки.
+  app.get("/api/bikes/stream", (req, res) => {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.flushHeaders?.();
+    let closed = false;
+    const onTick = () => { if (!closed) res.write(`data: tick\n\n`); };
+    bikeEvents.on(BIKE_EVENT_CHANNEL, onTick);
+    // Начальный пинг, чтобы клиент сразу подтянул актуальное состояние.
+    res.write(`data: tick\n\n`);
+    const heartbeat = setInterval(() => { if (!closed) res.write(": ping\n\n"); }, 25000);
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(heartbeat);
+      bikeEvents.off(BIKE_EVENT_CHANNEL, onTick);
+    };
+    req.on("close", cleanup);
+    res.on("error", cleanup);
+  });
+
   app.get("/api/bikes/:id", async (req, res) => {
     const b = await storage.getBike(req.params.id);
     if (!b) return res.status(404).json({ error: "Велосипед не найден" });
