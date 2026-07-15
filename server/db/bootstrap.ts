@@ -339,7 +339,7 @@ const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
 // Bump this whenever the demo geography/seed data changes so existing databases
 // get refreshed automatically on next startup (MVP demo data — safe to wipe &
 // reseed, it carries no real user data).
-const DEMO_DATA_VERSION = 5;
+const DEMO_DATA_VERSION = 6;
 
 // Demo fleet size — kept small so QR/rental + admin tables have data without
 // flooding the map/tables.
@@ -415,61 +415,8 @@ async function populateDemoData(client: pg.PoolClient) {
     ]);
   }
 
-  // Wallet — single demo user, seeded with a top-up so the MVP is exercisable.
-  await client.query(
-    "INSERT INTO wallet (user_id, balance, active_tariff, tariff_expires_at) VALUES ('demo', 50000, 'h2', NULL)",
-  );
-
-  // Sample maintenance tickets against seeded bikes.
-  const bikeRows = await client.query<{ id: string }>("SELECT id FROM bikes ORDER BY id");
-  const sampleBikeIds = bikeRows.rows;
-  const insertT = (
-    bikeId: string, kind: string, priority: string, title: string, message: string,
-    assignee: string | null, status: string, createdAt: number, updatedAt: number | null, closedAt: number | null,
-  ) =>
-    client.query(
-      `INSERT INTO tickets (bike_id, kind, priority, title, message, assignee, status, created_at, updated_at, closed_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [bikeId, kind, priority, title, message, assignee, status, createdAt, updatedAt, closedAt],
-    );
-  if (sampleBikeIds[0]) await insertT(sampleBikeIds[0].id, "wheel_puncture", "high", "Спущено колесо", "Пользователь сообщил: спущено заднее колесо", null, "new", now - 5400000, null, null);
-  if (sampleBikeIds[1]) await insertT(sampleBikeIds[1].id, "lock", "critical", "Не фиксируется замок", "Пользователь сообщил: не фиксируется замок", "Сервисная бригада", "in_progress", now - 86400000, now - 80000000, null);
-  if (sampleBikeIds[2]) await insertT(sampleBikeIds[2].id, "dirty", "low", "Грязный велосипед", "Требуется мойка после поездки в дождь", null, "resolved", now - 172800000, now - 90000000, now - 90000000);
-
-  // Baseline payments + rides for analytics.
-  await client.query(
-    "INSERT INTO payments (user_id, amount, kind, description, created_at) VALUES ('demo', 50000, 'topup', $1, $2)",
-    ["Пополнение через банковскую карту •• 4242", now - 86400000 * 6],
-  );
-
-  const rideUsers = ["demo", "user-2", "user-3", "user-4", "user-5"];
-  for (let i = 0; i < 240; i++) {
-    const bikeIdx = 1 + Math.floor(rng() * DEMO_BIKE_COUNT);
-    const bikeId = `BC-${String(bikeIdx).padStart(3, "0")}`;
-    const user = rideUsers[Math.floor(rng() * rideUsers.length)];
-    const daysAgo = Math.floor(rng() * 28);
-    const startedAt = now - daysAgo * 86400000 - Math.floor(rng() * 86400000);
-    const duration = Math.floor(180000 + rng() * 1800000); // 3–33 min
-    const endedAt = startedAt + duration;
-    const sp = PARKINGS[Math.floor(rng() * PARKINGS.length)];
-    const ep = PARKINGS[Math.floor(rng() * PARKINGS.length)];
-    const trackPts: [number, number, number][] = [];
-    const steps = 8;
-    for (let k = 0; k <= steps; k++) {
-      const t = k / steps;
-      const x = sp.x + (ep.x - sp.x) * t + (rng() - 0.5) * 14;
-      const y = sp.y + (ep.y - sp.y) * t + (rng() - 0.5) * 14;
-      trackPts.push([x, y, startedAt + duration * t]);
-    }
-    const distance = Math.floor(800 + rng() * 5200);
-    const seedTariff = TARIFFS[0]; // h1 — demo rides fit inside one hour
-    const cost = tariffPriceKopecks(seedTariff);
-    await client.query(
-      `INSERT INTO rides (bike_id, user_id, started_at, ended_at, start_lat, start_lng, end_lat, end_lng, track, distance_m, cost, tariff, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'completed')`,
-      [bikeId, user, startedAt, endedAt, sp.y, sp.x, ep.y, ep.x, JSON.stringify(trackPts), distance, cost, seedTariff.id],
-    );
-  }
+  // Демо-активность пользователей (кошелёк, платежи, поездки, заявки) не
+  // создаётся — только инфраструктура: велосипеды, парковки, зоны.
 }
 
 // Seed demo data on a fresh DB, or refresh stale/legacy demo data on an existing
@@ -520,11 +467,8 @@ async function bootstrapDemoData() {
       DELETE FROM ticket_comments WHERE ticket_id IN (
         SELECT id FROM tickets WHERE bike_id IN (SELECT id FROM bikes WHERE seed = TRUE)
       )`);
-    await client.query(
-      `DELETE FROM rides WHERE bike_id IN (SELECT id FROM bikes WHERE seed = TRUE)
-                            AND user_id = ANY($1::text[])`,
-      [DEMO_USERS],
-    );
+    // Всё активность демо-юзеров — демо (это фейковые аккаунты), чистим полностью.
+    await client.query(`DELETE FROM rides WHERE user_id = ANY($1::text[])`, [DEMO_USERS]);
     await client.query(`DELETE FROM tickets WHERE bike_id IN (SELECT id FROM bikes WHERE seed = TRUE)`);
     await client.query(`DELETE FROM payments WHERE user_id = ANY($1::text[])`, [DEMO_USERS]);
     await client.query(`DELETE FROM wallet   WHERE user_id = ANY($1::text[])`, [DEMO_USERS]);
