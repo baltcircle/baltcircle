@@ -90,10 +90,10 @@ export function MapLibreMap({
   // HTML markers (bikes/parkings/ride starts/tickets) are managed imperatively;
   // routes/zones/tracks go through GeoJSON sources. Kept in a ref so the render
   // effect can clear the previous batch before drawing the next.
-  const markersRef   = useRef<any[]>([]);
+  const markersRef   = useRef<maplibregl.Marker[]>([]);
   // Editor draft vertices — отдельный пул, чтобы не дёргать основной слой
   // маркеров при каждом добавлении точки.
-  const draftMarkersRef = useRef<any[]>([]);
+  const draftMarkersRef = useRef<maplibregl.Marker[]>([]);
   // Signals the overlay effects that the map instance + sources exist. Data that
   // resolves before map init would otherwise render into a null map and stay blank.
   const readyRef     = useRef(false);
@@ -156,7 +156,7 @@ export function MapLibreMap({
         map.keyboard.disable();
       }
       // Map clicks feed the editor draw mode with real [lat, lng].
-      map.on("click", (e: any) => {
+      map.on("click", (e: maplibregl.MapMouseEvent) => {
         onMapClickRef.current?.([e.lngLat.lat, e.lngLat.lng]);
       });
       map.once("load", () => {
@@ -194,7 +194,8 @@ export function MapLibreMap({
       if (cancelled || mapRef.current) return;
       const origin = window.location.origin;
       try {
-        const j: any = await fetch(`${origin}/tiles/data/kaliningrad.json`).then(r => r.json());
+        const j = await fetch(`${origin}/tiles/data/kaliningrad.json`)
+          .then(r => r.json()) as { tiles?: string[]; minzoom?: number; maxzoom?: number };
         if (cancelled) return;
         const rawTiles: string[] = Array.isArray(j.tiles) ? j.tiles : [];
         const tileUrl = rawTiles.map((u: string) =>
@@ -384,7 +385,7 @@ export function MapLibreMap({
     const src = map.getSource("saved-objects");
     if (!src) return;
 
-    const features: any[] = [];
+    const features: GeoJSON.Feature[] = [];
     if (show.objects) {
       for (const obj of mapObjects) {
         const pts = coercePoints(obj.points);
@@ -419,7 +420,7 @@ export function MapLibreMap({
     if (!src) return;
 
     // 1) Линия/полигон
-    const features: any[] = [];
+    const features: GeoJSON.Feature[] = [];
     const pts = editorDraft?.points ?? [];
     const color = editorDraft?.color ?? "#1d6f8e";
     const kind = editorDraft?.kind ?? "route";
@@ -518,7 +519,7 @@ export function MapLibreMap({
           const nextPts: [number, number][] = pts.map((pp, idx) =>
             idx === i ? [ll.lat, ll.lng] as [number, number] : pp,
           );
-          const nextFeatures: any[] = [];
+          const nextFeatures: GeoJSON.Feature[] = [];
           if (nextPts.length >= 2) {
             const nextRing = nextPts.map(([la, ln]) => [ln, la]);
             if (kind === "zone" && nextPts.length >= 3) {
@@ -569,7 +570,7 @@ export function MapLibreMap({
     const src = map.getSource("ride-tracks");
     if (!src) return;
 
-    const features: any[] = [];
+    const features: GeoJSON.Feature[] = [];
     const addTrack = (raw: string | null | undefined) => {
       if (!raw) return;
       let pts: [number, number, number][];
