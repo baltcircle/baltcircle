@@ -1,0 +1,567 @@
+import maplibregl from "maplibre-gl";
+import { Protocol } from "pmtiles";
+
+// maplibre-gl is bundled by Vite, so its web-worker is emitted same-origin and
+// loaded automatically — no CDN, no cross-origin Worker, no setWorkerUrl hacks.
+// The pmtiles Protocol is registered once at module load below.
+let __pmRegistered = false;
+export function ensurePMTilesProtocol() {
+  if (__pmRegistered) return;
+  const protocol = new Protocol();
+  maplibregl.addProtocol("pmtiles", protocol.tile.bind(protocol));
+  __pmRegistered = true;
+}
+
+// Overlay marker colours (resolved HEX — swap here to re-theme markers).
+export const MARKER_COLORS = {
+  bikeAvailable:  "#26a884",
+  bikeRented:     "#1d6f8e",
+  bikeMaintenance:"#d64545",
+  bikeReserved:   "#e0972a",
+  bikeDefault:    "#8a8f96",
+  parkingActive:  "#1d6f8e",
+  parkingInactive:"#8a8f96",
+  ride:           "#1d6f8e",
+  ticketHigh:     "#d64545",
+  ticketLow:      "#e0972a",
+} as const;
+
+// NOTE: Kaliningrad oblast contour and land-mask hack removed in Protomaps migration.
+// Protomaps has a real `earth` land layer — no synthetic mask needed.
+
+export const MAX_BOUNDS: [number, number, number, number] = [18.3, 53.2, 26.8, 57.3];
+
+// PALETTE - swap any value by HEX to re-theme the whole map.
+// Base tones follow the official Protomaps "light" flavor, tuned to the
+// TakeRide brand (#1D1E5D dark / #61B5C4 light).
+const COLORS = {
+  land:            "#e8e6e1", // land polygon (Protomaps `earth` layer) — soft warm grey
+  water:           "#9fc9e0", // sea, gulfs, lakes, rivers — muted blue
+  forest:          "#c4e7d2", // forest / wood (Protomaps light landcover.forest)
+  grass:           "#d2efcf", // grass / meadow / park (landcover.grassland)
+  farmland:        "#d8efd2", // farmland (landcover.farmland)
+  urban:           "#dcdcec", // urban_area / residential / built-up landuse — light tint of brand #1D1E5D
+  building:        "#cfd0e3", // building polygons — slightly deeper tint of brand #1D1E5D (reads over `urban`)
+  boundaryCountry: "#8a6fae", // RU / LT / PL state border (boundaries kind=country)
+  roadOutline:     "#1D1E5D", // ALL roads — 1px outline in dark-theme primary (hollow fill)
+  houseNumber:     "#1D1E5D", // house-number labels (z16+) — brand blue, rendered at 0.55 opacity
+} as const;
+
+// PMTiles file served same-origin via Express (Range request support, no CORS).
+const PMTILES_URL = "/kaliningrad.pmtiles";
+const ADDR_URL = "/addresses.pmtiles";
+
+// REAL_CENTER (54.945, 20.275) сидит в Акватории севернее Аммониевой косы —
+// при zoom=10 на портретном экране верхняя половина вьюа — открытое море,
+// пользователь видит голубой фон. Сдвигаем центр в глубь побережья (район между
+// Пионерским и Зеленоградском) и увеличиваем стартовый zoom, чтобы суша заполнила экран.
+export const DEFAULT_CENTER: [number, number] = [20.35, 54.87]; // (lng, lat)
+export const DEFAULT_ZOOM = 11;
+
+export { PMTILES_URL, ADDR_URL };
+
+export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"; url: string }, minzoom: number, maxzoom: number): object => {
+  // Russian label with graceful fallback (Protomaps stores names in `name:ru` / `name` / `name:en`).
+  const RU = ["coalesce", ["get", "name:ru"], ["get", "name"], ["get", "name:en"]];
+  return {
+    version: 8,
+    glyphs: "/glyphs/{fontstack}/{range}.pbf",
+    sources: {
+      pm: tileSource.type === "pmtiles"
+        ? { type: "vector", url: `pmtiles://${tileSource.url}`, minzoom, maxzoom }
+        : { type: "vector", tiles: [tileSource.url], minzoom, maxzoom },
+      // House-number overlay — separate lightweight pmtiles (OSM addr:housenumber).
+      // The base Protomaps extract carries no address data, so numbers ship as
+      // their own source. Tiles are built z14-16; MapLibre overzooms past z16.
+      addr: { type: "vector", url: `pmtiles://${ADDR_URL}`, minzoom: 14, maxzoom: 16 },
+      // Static label anchor for Poland: the `places` country point for Polska sits
+      // south of the map's maxBounds, so it never renders. This forces "ПОЛЬША"
+      // into the visible area (just below Kaliningrad) on far zoom.
+      "poland-label": {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features: [{
+            type: "Feature",
+            properties: { name: "Польша" },
+            geometry: { type: "Point", coordinates: [20.2, 54.0] },
+          }],
+        },
+      },
+      // Static anchor for Kaliningrad's far-zoom label. The tile `places` point
+      // can't be repositioned, so the city is pinned here (shifted east of its
+      // real coord) and excluded from the tile `country-labels` filter below.
+      "kaliningrad-label": {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features: [{
+            type: "Feature",
+            properties: { name: "Калининград" },
+            geometry: { type: "Point", coordinates: [20.95, 54.72] },
+          }],
+        },
+      },
+      // Operator-drawn routes/zones (from the visual map editor) + live ride
+      // tracks. Populated at runtime via setData; empty at init.
+      "saved-objects": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      "ride-tracks":   { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      // Live editor draft — pending line/polygon during drawing.
+      "editor-draft":  { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+      // Blue-dot: user's current GPS position. Populated at runtime via setData
+      // when navigator.geolocation.watchPosition resolves. Empty at init so the
+      // dot doesn't render on the null island before permission is granted.
+      "user-location": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+    },
+    layers: [
+      // Sea = background; the real `earth` land polygon (Protomaps) draws on top at every zoom.
+      { id: "background", type: "background", paint: { "background-color": COLORS.water } },
+
+      // ── LAND (earth) — root fix: real clipped land polygon, no more flooding ──
+      { id: "earth", type: "fill", source: "pm", "source-layer": "earth", paint: { "fill-color": COLORS.land } },
+
+      // ── LANDCOVER (natural cover, z0-7) ──────────────────────────────────────
+      {
+        id: "landcover", type: "fill", source: "pm", "source-layer": "landcover",
+        paint: {
+          "fill-color": ["match", ["get", "kind"],
+            "farmland",   COLORS.farmland,
+            "grassland",  COLORS.grass,
+            "forest",     COLORS.forest,
+            "scrub",      COLORS.grass,
+            "urban_area", COLORS.urban,
+            COLORS.grass,
+          ],
+          "fill-opacity": 0.8,
+        },
+      },
+
+      // ── LANDUSE (z2+) ─────────────────────────────────────────────────────────
+      {
+        // Protected-area kinds (national_park / nature_reserve / protected_area)
+        // are excluded: on the Curonian Spit they render as one big green
+        // rectangle over the real wood/sand/beach polygons underneath.
+        // minzoom 7: landcover (green base) only ships z5-7, landuse detail ships
+        // z7+. Starting landuse at z7 closes the z8 gap where the map turned white
+        // (no landcover, no landuse — only grey earth + water).
+        id: "landuse", type: "fill", source: "pm", "source-layer": "landuse", minzoom: 7,
+        filter: ["!", ["in", ["get", "kind"], ["literal", ["national_park", "nature_reserve", "protected_area"]]]],
+        paint: {
+          "fill-color": ["match", ["get", "kind"],
+            "forest",        COLORS.forest,
+            "wood",          COLORS.forest,
+            "park",          COLORS.grass,
+            "grass",         COLORS.grass,
+            "meadow",        COLORS.grass,
+            "farmland",      COLORS.farmland,
+            "allotments",    COLORS.farmland,
+            "cemetery",      COLORS.grass,
+            "military",      COLORS.land,
+            "industrial",    COLORS.urban,
+            "commercial",    COLORS.urban,
+            "residential",   COLORS.urban,
+            "hospital",      "#f0e2e2",
+            "college",       COLORS.urban,
+            "university",    COLORS.urban,
+            "school",        COLORS.urban,
+            "kindergarten",  COLORS.urban,
+            "beach",         "#f3ecc8",
+            "pedestrian",    COLORS.urban,
+            COLORS.urban,
+          ],
+          "fill-opacity": 0.85,
+        },
+      },
+
+      // ── WATER (lakes/rivers/lagoons — ocean stays as background) ──────────────
+      {
+        // Protomaps stores rivers/canals as LineString inside the SAME `water`
+        // source-layer. A fill layer would triangulate those lines into diagonal
+        // wedges across land, so the fill must be constrained to real polygons.
+        id: "water", type: "fill", source: "pm", "source-layer": "water",
+        filter: ["all", ["==", ["geometry-type"], "Polygon"], ["!=", ["get", "kind"], "ocean"]],
+        paint: { "fill-color": COLORS.water },
+      },
+      {
+        id: "water-line", type: "line", source: "pm", "source-layer": "water",
+        filter: ["all", ["==", ["geometry-type"], "LineString"], ["in", ["get", "kind"], ["literal", ["river", "stream", "canal"]]]],
+        paint: {
+          "line-color": COLORS.water,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 0.8, 12, 2.5, 14, 4],
+        },
+      },
+
+      // ── ADMIN BOUNDARIES ──────────────────────────────────────────────────────
+      // Region/county dashed borders removed: they cluttered the whole map with
+      // "district" outlines the user didn't want. Only the country border stays.
+      {
+        id: "boundary-country", type: "line", source: "pm", "source-layer": "boundaries",
+        filter: ["==", ["get", "kind"], "country"],
+        paint: {
+          "line-color": COLORS.boundaryCountry,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1.2, 9, 2.2, 12, 3],
+          "line-dasharray": [3, 1.5], "line-opacity": 0.85,
+        },
+      },
+
+      // ── ROADS — hollow outline ────────────────────────────────────────────────
+      // ALL roads (highway/major/minor/path) render as a hollow shape: a dark
+      // outline (COLORS.roadOutline, the dark-theme primary) with a land-coloured
+      // interior, so only a 1px border shows on each side. Collapsed into TWO
+      // layers (outline + interior) driven by `kind` widths to minimise draw calls
+      // vs. the previous per-class layers. minzoom 8: roads carry no country/admin
+      // property to clip to the oblast, so gating at z8 keeps them out of the
+      // far-zoom country-label view where they bled into Lithuania/Poland.
+      //
+      // ROAD_W = interior width by kind/zoom; the outline layer is ROAD_W + 2px
+      // (1px border each side).
+      // `zoom` must sit directly inside a top-level interpolate, so the outline
+      // width is a separate interpolate (= inner width + 2px), not arithmetic.
+      ...(() => {
+        // Interior width by kind/zoom. Three-tier hierarchy per user request:
+        //   1) highway (motorway/trunk) — областные подходы + окружная/кольцевая,
+        //      НЕ трогаем, сохраняем прежние ширины.
+        //   2) major_road (primary/secondary) — крупные проспекты внутри кольцевой
+        //      (Московский, Ленинский, Советский, Победы, ...). Уменьшены.
+        //   3) medium_road / minor_road / path — ещё меньше, самые тонкие.
+        const ROAD_W: any = ["interpolate", ["linear"], ["zoom"],
+          8,  ["match", ["get", "kind"], "highway", 1.2, "major_road", 0.55, 0.3],
+          12, ["match", ["get", "kind"], "highway", 4.5, "major_road", 1.8, "medium_road", 0.7, "minor_road", 0.55, "path", 0.4, 0.55],
+          14, ["match", ["get", "kind"], "highway", 8, "major_road", 3.2, "medium_road", 1.3, "minor_road", 1.1, "path", 0.7, 1.1],
+          16, ["match", ["get", "kind"], "highway", 12, "major_road", 4.8, "medium_road", 2.4, "minor_road", 2, "path", 1.1, 2],
+        ];
+        // Outline = interior + ~2px border (own interpolate; zoom must be top-level).
+        const ROAD_W_OUT: any = ["interpolate", ["linear"], ["zoom"],
+          8,  ["match", ["get", "kind"], "highway", 3.2, "major_road", 2.55, 2.3],
+          12, ["match", ["get", "kind"], "highway", 6.5, "major_road", 3.8, "medium_road", 2.3, "minor_road", 2.15, "path", 1.8, 2.15],
+          14, ["match", ["get", "kind"], "highway", 10, "major_road", 5.2, "medium_road", 2.9, "minor_road", 2.7, "path", 2.1, 2.7],
+          16, ["match", ["get", "kind"], "highway", 14, "major_road", 6.8, "medium_road", 4, "minor_road", 3.6, "path", 2.5, 3.6],
+        ];
+        // Zoom-gated visibility (matches reference maps): trunk roads from z8,
+        // minor roads only once the user zooms into a district (z13), paths z14.
+        // Filtering out minor/path at low zoom also means far fewer features are
+        // drawn on the oblast overview — lighter load.
+        const ROAD_FILTER: any = ["any",
+          ["in", ["get", "kind"], ["literal", ["highway", "major_road"]]],
+          ["all", ["==", ["get", "kind"], "medium_road"], [">=", ["zoom"], 12]],
+          ["all", ["==", ["get", "kind"], "minor_road"], [">=", ["zoom"], 13]],
+          ["all", ["==", ["get", "kind"], "path"], [">=", ["zoom"], 14]],
+        ];
+        // Outline только для highway (областные + окружная). Все остальные (major/medium/
+        // minor/path) рисуем без контура — в цвет land, чтобы были белыми линиями
+        // без тёмной обводки (убирает паутину).
+        const OUT_OPACITY = 0.28;
+        return [
+          {
+            id: "road-outline", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
+            filter: ["all", ROAD_FILTER, ["==", ["get", "kind"], "highway"]],
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: { "line-color": COLORS.roadOutline, "line-width": ROAD_W_OUT, "line-opacity": OUT_OPACITY },
+          },
+          {
+            // highway — hollow в цвет land (внутри контура).
+            id: "road-inner-highway", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
+            filter: ["all", ROAD_FILTER, ["==", ["get", "kind"], "highway"]],
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: { "line-color": COLORS.land, "line-width": ROAD_W },
+          },
+          {
+            // major/medium/minor/path — без контура, светло-серые линии.
+            id: "road-inner", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
+            filter: ["all", ROAD_FILTER, ["!=", ["get", "kind"], "highway"]],
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: { "line-color": "#c9c7c1", "line-width": ROAD_W },
+          },
+        ];
+      })(),
+      {
+        // Only mainline rail (Яндекс-style): service tracks (spur/yard/siding/
+        // crossover) are excluded so the map isn't overloaded with yard clutter.
+        id: "road-rail", type: "line", source: "pm", "source-layer": "roads", minzoom: 10,
+        filter: ["all", ["==", ["get", "kind"], "rail"], ["!", ["has", "service"]], ["!=", ["get", "kind_detail"], "tram"], ["!=", ["get", "kind_detail"], "light_rail"]],
+        paint: {
+          "line-color": COLORS.roadOutline,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 14, 1.5],
+          "line-dasharray": [2, 2],
+          "line-opacity": 0.45,
+        },
+      },
+
+      // ── BUILDINGS (z11+) ──────────────────────────────────────────────────────
+      {
+        id: "building", type: "fill", source: "pm", "source-layer": "buildings", minzoom: 13,
+        paint: {
+          "fill-color": COLORS.building,
+          "fill-outline-color": COLORS.building,
+          // Opaque at z14+ so underlying road lines don't bleed through the building.
+          "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.7, 14, 1],
+        },
+      },
+
+      // ── HOUSE NUMBERS (z15+) ──────────────────────────────────────────────────
+      // Overlay from the `addresses` pmtiles. Kept off until z15 (individual houses
+      // become distinguishable there) so numbers don't clutter the map. Blue at 0.55
+      // opacity; collision detection hides overlapping numbers automatically.
+      {
+        id: "house-numbers", type: "symbol", source: "addr", "source-layer": "addresses", minzoom: 15,
+        layout: {
+          "text-field": ["get", "hn"],
+          "text-font": ["Noto Sans Regular"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 15, 10, 18, 12],
+          "text-allow-overlap": false,
+          "text-padding": 4,
+        },
+        paint: {
+          "text-color": COLORS.houseNumber,
+          "text-opacity": ["interpolate", ["linear"], ["zoom"], 14.8, 0, 15.2, 0.55],
+        },
+      },
+
+      // ── ROAD NAMES ────────────────────────────────────────────────────────────
+      {
+        id: "road-labels", type: "symbol", source: "pm", "source-layer": "roads", minzoom: 12,
+        filter: ["in", ["get", "kind"], ["literal", ["highway", "major_road", "medium_road", "minor_road"]]],
+        layout: {
+          "text-field": RU,
+          "text-font": ["Noto Sans Regular"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 12, 10, 14, 12],
+          "symbol-placement": "line",
+          "text-max-angle": 30,
+          "text-padding": 5,
+        },
+        paint: { "text-color": COLORS.roadOutline },
+      },
+
+      // ── WATER NAMES (polygons: bays, lagoons, lakes) ──────────────────────────
+      {
+        id: "water-labels", type: "symbol", source: "pm", "source-layer": "water", minzoom: 9,
+        filter: ["all", ["has", "name"], ["==", ["geometry-type"], "Polygon"]],
+        layout: {
+          "text-field": RU,
+          "text-font": ["Noto Sans Regular"],
+          "text-size": 11,
+          "symbol-placement": "point",
+        },
+        paint: { "text-color": "#3a7ab0", "text-halo-color": "rgba(255,255,255,0.8)", "text-halo-width": 1.5 },
+      },
+
+      // ── RIVER NAMES (LineString: written along the river, appear with roads) ──
+      // minzoom 12 matches road-labels so rivers no longer label too early, and
+      // symbol-placement:line writes the name INTO the river channel, not on top.
+      {
+        id: "river-labels", type: "symbol", source: "pm", "source-layer": "water", minzoom: 12,
+        filter: ["all", ["has", "name"], ["==", ["geometry-type"], "LineString"]],
+        layout: {
+          "text-field": RU,
+          "text-font": ["Noto Sans Italic"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 12, 10, 14, 12],
+          "symbol-placement": "line",
+          "text-max-angle": 30,
+          "text-padding": 5,
+        },
+        paint: { "text-color": "#3a7ab0", "text-halo-color": "rgba(255,255,255,0.8)", "text-halo-width": 1.5 },
+      },
+
+      // ── FAR-ZOOM LABELS (z<8): border countries + Kaliningrad, BOLD ───────────
+      // Neighbours Lithuania / Latvia / Poland (kind=country) plus the city of
+      // Kaliningrad show while zoomed out. Kaliningrad is matched by its Russian
+      // name because places store name=Калининград here (not the latin "Kaliningrad").
+      // Cities appear from z8 via place-labels.
+      {
+        id: "country-labels", type: "symbol", source: "pm", "source-layer": "places",
+        maxzoom: 8,
+        // Poland and Kaliningrad are both rendered by static label layers below
+        // (repositioned per design), so exclude them from the tile places here.
+        filter: ["all", ["==", ["get", "kind"], "country"], ["!=", ["get", "name:ru"], "Польша"]],
+        layout: {
+          "text-field": RU,
+          // Bold is not in the Protomaps font CDN (only Regular/Medium/Italic);
+          // Medium is the heaviest available weight — used here for "жирный".
+          "text-font": ["Noto Sans Medium"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 4, 13, 7, 17],
+          "text-max-width": 8,
+          "text-transform": "uppercase",
+          "text-letter-spacing": 0.15,
+          "text-padding": 4,
+        },
+        paint: { "text-color": "#4a5a6a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1.5 },
+      },
+
+      // ── POLAND STATIC LABEL (z<8): forced into visible area below Kaliningrad ──
+      {
+        id: "poland-label", type: "symbol", source: "poland-label",
+        maxzoom: 8,
+        layout: {
+          "text-field": ["get", "name"],
+          "text-font": ["Noto Sans Medium"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 4, 13, 7, 17],
+          "text-transform": "uppercase",
+          "text-letter-spacing": 0.15,
+          "text-padding": 4,
+        },
+        paint: { "text-color": "#4a5a6a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1.5 },
+      },
+
+      // ── KALININGRAD STATIC LABEL (z<8): repositioned east of the city point ──
+      {
+        id: "kaliningrad-label", type: "symbol", source: "kaliningrad-label",
+        maxzoom: 8,
+        layout: {
+          "text-field": ["get", "name"],
+          "text-font": ["Noto Sans Medium"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 4, 13, 7, 17],
+          "text-max-width": 8,
+          "text-transform": "uppercase",
+          "text-letter-spacing": 0.15,
+          "text-padding": 4,
+        },
+        paint: { "text-color": "#4a5a6a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1.5 },
+      },
+
+      // ── PLACE LABELS (z8+): cities, towns, villages ───────────────────────────
+      // ── OPERATOR OBJECTS (routes/zones) + RIDE TRACKS ─────────────────────────
+      // GeoJSON overlays drawn above the base map. Zone fills sit lowest, then
+      // zone/route outlines, then ride tracks. Colours come per-feature from the
+      // saved object's `color` (data-driven).
+      {
+        id: "saved-zone-fill", type: "fill", source: "saved-objects",
+        filter: ["==", ["get", "kind"], "zone"],
+        paint: { "fill-color": ["get", "fillColor"], "fill-opacity": 1 },
+      },
+      {
+        id: "saved-zone-line", type: "line", source: "saved-objects",
+        filter: ["==", ["get", "kind"], "zone"],
+        layout: { "line-join": "round" },
+        paint: { "line-color": ["get", "color"], "line-width": 2 },
+      },
+      {
+        id: "saved-route-line", type: "line", source: "saved-objects",
+        filter: ["==", ["get", "kind"], "route"],
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: { "line-color": ["get", "color"], "line-width": 5, "line-opacity": 0.95 },
+      },
+      {
+        id: "ride-track-line", type: "line", source: "ride-tracks",
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: { "line-color": MARKER_COLORS.ride, "line-width": 4, "line-opacity": 0.9 },
+      },
+
+      // ── EDITOR DRAFT (live drawing preview) ───────────────────────────────────
+      // Полупрозрачная заливка для zone-черновика.
+      {
+        id: "editor-draft-fill", type: "fill", source: "editor-draft",
+        filter: ["==", ["get", "kind"], "zone"],
+        paint: { "fill-color": ["get", "color"], "fill-opacity": 0.15 },
+      },
+      // Пунктирная линия черновика (и для route, и для zone до замыкания).
+      {
+        id: "editor-draft-line", type: "line", source: "editor-draft",
+        filter: ["==", ["geometry-type"], "LineString"],
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: {
+          "line-color": ["get", "color"],
+          "line-width": 3,
+          "line-opacity": 0.9,
+          "line-dasharray": [2, 2],
+        },
+      },
+
+      // ── USER LOCATION (голубая точка в стиле Google/Apple Maps) ─────────────
+      // Три слоя на одном GeoJSON Point: мягкая аура → белое кольцо → цветная точка.
+      // Цвет центра — брендовый --primary #61B5C4 (голубой TakeRide).
+      {
+        id: "user-location-accuracy", type: "circle", source: "user-location",
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 18, 14, 34, 18, 56],
+          "circle-color": "#61B5C4",
+          "circle-opacity": 0.18,
+          "circle-stroke-width": 0,
+          "circle-pitch-alignment": "map",
+        },
+      },
+      // Стрелка направления. Рисуется МЕЖДУ аурой и белым кольцом — видна
+      // только кончик, торчащий из-под точки (как на Apple/Google Maps).
+      // Отображается только когда hasHeading=true (в стоячем положении GPS не даёт heading).
+      {
+        id: "user-location-heading", type: "symbol", source: "user-location",
+        filter: ["==", ["get", "hasHeading"], true],
+        layout: {
+          "icon-image": "user-heading-arrow",
+          "icon-rotate": ["get", "heading"],
+          "icon-rotation-alignment": "map",
+          "icon-pitch-alignment": "map",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+          "icon-anchor": "center",
+          "icon-size": 1,
+        },
+      },
+      {
+        id: "user-location-halo", type: "circle", source: "user-location",
+        paint: {
+          "circle-radius": 13,
+          "circle-color": "#ffffff",
+          "circle-opacity": 1,
+          "circle-stroke-width": 0,
+        },
+      },
+      {
+        id: "user-location-dot", type: "circle", source: "user-location",
+        paint: {
+          "circle-radius": 8,
+          "circle-color": "#61B5C4",
+          "circle-opacity": 1,
+          "circle-stroke-width": 0,
+        },
+      },
+
+      {
+        id: "place-labels", type: "symbol", source: "pm", "source-layer": "places", minzoom: 8,
+        filter: ["in", ["get", "kind"], ["literal", ["locality", "city", "town", "village", "neighbourhood", "suburb"]]],
+        layout: {
+          "text-field": RU,
+          "text-font": ["Noto Sans Regular"],
+          // Base size by kind, with a +bump for five key towns. The bump is
+          // applied INSIDE each interpolate stop's output (multiplying the base
+          // by the town factor) so that ["zoom"] stays the direct top-level input
+          // of interpolate (MapLibre requires this for text-size/line-width).
+          "text-size": ["interpolate", ["linear"], ["zoom"],
+            8,  ["*",
+              ["match", ["get", "kind"], "city", 15, "town", 12, 11],
+              ["match", RU, ["Калининград", "Пионерский", "Зеленоградск", "Светлогорск", "Янтарный"], 1.25, 1]],
+            12, ["*",
+              ["match", ["get", "kind"], "city", 20, "town", 15, 12],
+              ["match", RU, ["Калининград", "Пионерский", "Зеленоградск", "Светлогорск", "Янтарный"], 1.25, 1]],
+          ],
+          "text-anchor": "center",
+          "text-offset": ["literal", [0, 0]],
+          "text-max-width": 8,
+          "text-padding": 1.5,
+          "symbol-sort-key": ["-", ["coalesce", ["get", "population_rank"], 0]],
+        },
+        paint: {
+          "text-color": COLORS.roadOutline,
+          // Opacity rules (Яндекс/Google-style), by kind:
+          //  - Districts (neighbourhood/suburb): constant 0.55 — dimmer than
+          //    street names, but always visible as in-city landmarks.
+          //  - Towns/cities (population_rank >= 6: Калининград r10,
+          //    Светлогорск/Зеленоградск/Пионерский/Гурьевск r6):
+          //    FADE OUT by z13.5 so the settlement name doesn't clutter the
+          //    street-level view once you're inside it.
+          //  - Small settlements (villages, r<=5): stay visible at all zooms.
+          // interpolate(zoom) must stay top-level; the per-feature branch is
+          // nested inside each zoom stop's output.
+          "text-opacity": ["interpolate", ["linear"], ["zoom"],
+            12.5, ["match", ["get", "kind"], ["neighbourhood", "suburb"], 0.55, 1],
+            13.5, [
+              "case",
+              ["in", ["get", "kind"], ["literal", ["neighbourhood", "suburb"]]], 0.55,
+              [">=", ["coalesce", ["get", "population_rank"], 0], 6], 0,
+              1,
+            ],
+          ],
+        },
+      },
+    ],
+  };
+};
