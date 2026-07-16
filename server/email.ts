@@ -6,11 +6,10 @@
 //
 // Docs: https://rusender.ru/developer/api/email/
 
+import { logger } from "./logger";
+
 function log(message: string, source = "email"): void {
-  const time = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true,
-  });
-  console.log(`${time} [${source}] ${message}`);
+  logger.info({ source }, message);
 }
 
 export interface EmailSendResult {

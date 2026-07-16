@@ -21,7 +21,7 @@ import {
   TARIFFS, tariffPriceKopecks,
 } from "@shared/geo";
 import { computeOverage, finalRideCost } from "@shared/billing";
-import { eq, desc, sql, gt, and, asc } from "drizzle-orm";
+import { eq, desc, sql, gt, and, asc, inArray } from "drizzle-orm";
 import { EventEmitter } from "node:events";
 // db client + schema bootstrap + migrations + demo seed run on import of this module.
 // bootstrapReady MUST be awaited before serving requests (server entrypoint does this).
@@ -121,162 +121,9 @@ export function resolveRole(user: User): UserRole {
   return (user.role as UserRole) ?? "rider";
 }
 
-export interface IStorage {
-  // users
-  getUser(id: string): Promise<User | undefined>;
-  getUserByPhone(phone: string): Promise<User | undefined>;
-  updateProfile(id: string, patch: UpdateProfileInput): Promise<{ user: User } | { error: string }>;
-  // admin user management
-  listUsers(opts?: { limit?: number; offset?: number }): Promise<User[]>;
-  countUsers(): Promise<number>;
-  setUserRole(id: string, role: UserRole): Promise<{ user: User } | { error: string }>;
-  setUserBlocked(id: string, blocked: boolean, reason?: string): Promise<{ user: User } | { error: string }>;
-  // OTP verification
-  startOtp(input: { name: string; phone: string }): Promise<
-    | { ok: true; phone: string; code: string; resendInSec: number }
-    | { error: string; retryAfterSec?: number }
-  >;
-  verifyOtp(input: { phone: string; code: string; consentIp?: string }): Promise<{ user: User } | { error: string }>;
-  // OTP delivery diagnostics (provider id/status persisted per phone)
-  recordOtpSend(input: {
-    phone: string;
-    provider?: string;
-    providerMessageId?: string;
-    providerStatus?: string;
-    providerError?: string;
-  }): Promise<void>;
-  getLastOtpSend(phone: string): Promise<OtpRequest | undefined>;
-  updateOtpProviderStatus(input: {
-    phone: string;
-    providerStatus?: string;
-    providerError?: string;
-  }): Promise<void>;
-  // phone change (SMS OTP for an existing account)
-  startPhoneChange(input: { userId: string; phone: string }): Promise<
-    | { ok: true; phone: string; code: string; resendInSec: number }
-    | { error: string; retryAfterSec?: number }
-  >;
-  verifyPhoneChange(input: { userId: string; code: string }): Promise<{ user: User } | { error: string }>;
-  // payment methods (metadata only — no card data)
-  listPaymentMethods(userId: string): Promise<PaymentMethod[]>;
-  linkPaymentMethod(userId: string, type: "card" | "sbp"): Promise<PaymentMethod>;
-  unlinkPaymentMethod(userId: string, id: number): Promise<boolean>;
-  // T-Bank card binding (real acquiring metadata)
-  createPendingCardMethod(input: { userId: string; customerKey: string; requestKey?: string }): Promise<PaymentMethod>;
-  createPendingBindPayment(input: {
-    userId: string;
-    customerKey: string;
-    orderId: string;
-    amountKopecks: number;
-  }): Promise<PaymentMethod>;
-  // SBP account binding (AddAccountQr): a pending sbp-type method keyed by the
-  // RequestKey so the notification/state poll can attach the AccountToken.
-  createPendingSbpBinding(input: {
-    userId: string;
-    customerKey: string;
-    orderId: string;
-    requestKey?: string;
-  }): Promise<PaymentMethod>;
-  getPaymentMethod(id: number): Promise<PaymentMethod | undefined>;
-  findPendingCardMethod(userId: string): Promise<PaymentMethod | undefined>;
-  findCardMethodByOrderId(orderId: string): Promise<PaymentMethod | undefined>;
-  findCardMethodByRequestKey(userId: string, requestKey: string): Promise<PaymentMethod | undefined>;
-  // Locate any T-Bank method (card or sbp) by RequestKey alone — used by the SBP
-  // binding notification, which carries a RequestKey but no user id.
-  findMethodByRequestKey(requestKey: string): Promise<PaymentMethod | undefined>;
-  // The rider's saved SBP account usable for a recurring charge (active + token).
-  getActiveSavedSbp(userId: string, paymentMethodId?: number): Promise<PaymentMethod | undefined>;
-  updatePaymentMethod(id: number, patch: Partial<PaymentMethod>): Promise<PaymentMethod | undefined>;
-  // The rider's saved T-Bank card usable for a recurring charge (active + RebillId)
-  getActiveSavedCard(userId: string, paymentMethodId?: number): Promise<PaymentMethod | undefined>;
-  // Уже привязанная или привязываемая сейчас карта пользователя (active или pending).
-  // Используется, чтобы не давать привязать вторую карту (одна карта на райдера).
-  getBlockingCard(userId: string): Promise<PaymentMethod | undefined>;
-  // T-Bank ride payment orders (hosted pay-then-start AND saved-card charge)
-  createRidePaymentOrder(input: {
-    orderId: string;
-    userId: string;
-    bikeId: string;
-    tariffId: string;
-    amountKopecks: number;
-    source?: "hosted" | "saved_card";
-    paymentMethodId?: number;
-    rebillId?: string;
-  }): Promise<PaymentOrder>;
-  getRidePaymentOrder(orderId: string): Promise<PaymentOrder | undefined>;
-  updateRidePaymentOrder(id: number, patch: Partial<PaymentOrder>): Promise<PaymentOrder | undefined>;
-  // support tickets (rider help requests)
-  listSupportTickets(userId: string): Promise<SupportTicket[]>;
-  createSupportTicket(input: { userId: string; subject: string; message: string }): Promise<SupportTicket>;
-  // support tickets (staff/operator inbox — all riders)
-  listAllSupportTickets(): Promise<SupportTicketWithUser[]>;
-  updateSupportTicket(id: number, patch: { status?: SupportTicketStatus }): Promise<SupportTicket | undefined>;
-  // support chat (continuous conversation per rider)
-  ensureSupportConversation(userId: string): Promise<SupportConversation>;
-  listSupportMessages(conversationId: number, opts?: { afterId?: number; limit?: number }): Promise<SupportMessage[]>;
-  appendSupportMessage(input: { conversationId: number; senderRole: SupportMessageRole; senderId: string | null; body: string; attachmentUrl?: string | null; attachmentMime?: string | null }): Promise<SupportMessage>;
-  markSupportRead(conversationId: number, reader: "user" | "operator"): Promise<void>;
-  setSupportMode(conversationId: number, mode: "bot" | "human"): Promise<void>;
-  listAllSupportConversations(): Promise<AdminSupportConversationRow[]>;
-  getSupportConversation(id: number): Promise<SupportConversation | undefined>;
-  // bikes
-  listBikes(opts?: { includeArchived?: boolean }): Promise<Bike[]>;
-  getBike(id: string): Promise<Bike | undefined>;
-  updateBike(id: string, patch: Partial<Bike>): Promise<Bike | undefined>;
-  // bikes — admin CRUD (staff only)
-  createBike(input: AdminCreateBikeInput): Promise<{ bike: Bike } | { error: string }>;
-  adminUpdateBike(id: string, patch: AdminUpdateBikeInput): Promise<{ bike: Bike } | { error: string }>;
-  archiveBike(id: string): Promise<{ bike: Bike } | { error: string }>;
-  deleteBike(id: string): Promise<{ ok: true } | { error: string; archived?: Bike }>;
-  // parkings
-  listParkings(opts?: { includeInactive?: boolean; includeArchived?: boolean }): Promise<Parking[]>;
-  getParking(id: string): Promise<Parking | undefined>;
-  createParking(input: AdminCreateParkingInput): Promise<{ parking: Parking } | { error: string }>;
-  updateParking(id: string, patch: AdminUpdateParkingInput): Promise<{ parking: Parking } | { error: string }>;
-  archiveParking(id: string): Promise<{ parking: Parking } | { error: string }>;
-  restoreParking(id: string): Promise<{ parking: Parking } | { error: string }>;
-  deleteParking(id: string): Promise<{ ok: true } | { error: string; archived?: Parking }>;
-  // zones
-  listZones(): Promise<ZoneRow[]>;
-  // rides
-  startRide(input: { bikeId: string; userId: string; tariff: string; prepaid?: boolean }): Promise<Ride | { error: string }>;
-  appendRidePoint(rideId: number, x: number, y: number): Promise<Ride | undefined>;
-  endRide(rideId: number): Promise<Ride | undefined>;
-  getRide(rideId: number): Promise<Ride | undefined>;
-  getActiveRide(userId: string): Promise<Ride | undefined>;
-  listRides(opts?: { userId?: string; limit?: number }): Promise<Ride[]>;
-  listAdminRides(opts?: { limit?: number; offset?: number }): Promise<AdminRide[]>;
-  countRides(): Promise<number>;
-  // payments / wallet
-  getWallet(userId: string): Promise<Wallet>;
-  topUp(userId: string, amount: number): Promise<{ wallet: Wallet; payment: Payment }>;
-  purchaseTariff(userId: string, tariff: string, price: number, durationMs: number): Promise<{ wallet: Wallet; payment: Payment }>;
-  listPayments(userId: string): Promise<Payment[]>;
-  // service / maintenance tickets
-  listTickets(opts?: { limit?: number; offset?: number }): Promise<Ticket[]>;
-  countTickets(): Promise<number>;
-  getTicket(id: number): Promise<TicketWithComments | undefined>;
-  createTicket(input: CreateTicketInput): Promise<TicketWithComments>;
-  updateTicket(id: number, patch: UpdateTicketInput, actor: string): Promise<TicketWithComments | undefined>;
-  addTicketComment(id: number, author: string, body: string): Promise<TicketWithComments | undefined>;
-  // map objects (operator-drawn routes/zones)
-  listMapObjects(opts?: { activeOnly?: boolean }): Promise<MapObject[]>;
-  createMapObject(input: InsertMapObject): Promise<MapObject>;
-  setMapObjectActive(id: number, active: boolean): Promise<MapObject | undefined>;
-  updateMapObject(id: number, patch: Partial<{
-    name: string;
-    type: "route" | "operating" | "slow" | "forbidden";
-    kind: "route" | "zone";
-    color: string;
-    points: [number, number][];
-    active: boolean;
-  }>): Promise<MapObject | undefined>;
-  deleteMapObject(id: number): Promise<boolean>;
-  // analytics
-  analytics(): Promise<any>;
-  // period-scoped analytics for the admin "Аналитика v1" page
-  adminAnalytics(range: { from: number; to: number }): Promise<any>;
-}
+// IStorage is split into domain-segmented sub-interfaces; re-exported for callers.
+export type { IStorage } from "./storage/interfaces";
+import type { IStorage } from "./storage/interfaces";
 
 // map_objects.points хранится как JSON-строка — парсим перед отдачей
 // клиенту, чтобы везде API возвращал [number, number][], а не string.
@@ -1647,20 +1494,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Rides for the operator panel, newest first, joined to rider identity so the
-  // admin table can show a name/phone instead of a raw user id. Riders are
-  // looked up in a single batch; unknown/demo ids resolve to null so the UI can
-  // fall back to the id.
+  // admin table can show a name/phone instead of a raw user id. Only the riders
+  // referenced by this page are fetched (single batched `IN` query) instead of
+  // loading the whole users table into memory. Track points are NOT hydrated for
+  // the list — the map GPS track is only needed on a single-ride view and is
+  // loaded on demand via getRide (audit L5).
   async listAdminRides(opts?: { limit?: number; offset?: number }) {
     const limit = opts?.limit ?? 200;
     const offset = opts?.offset ?? 0;
     const rows = (await db.select().from(rides).orderBy(desc(rides.startedAt)).limit(limit).offset(offset)) as Ride[];
-    const all = (await db.select().from(users)) as User[];
-    const byId = new Map(all.map((u) => [u.id, u]));
-    return Promise.all(rows.map(async (r) => {
-      const hydrated = (await this.hydrateTrack(r))!;
-      const u = byId.get(hydrated.userId);
-      return { ...hydrated, userName: u?.name ?? null, userPhone: u?.phone ?? null } as AdminRide;
-    }));
+    const userIds = Array.from(new Set(rows.map((r) => r.userId)));
+    const riders = userIds.length
+      ? ((await db.select().from(users).where(inArray(users.id, userIds))) as User[])
+      : [];
+    const byId = new Map(riders.map((u) => [u.id, u]));
+    return rows.map((r) => {
+      const u = byId.get(r.userId);
+      return { ...r, userName: u?.name ?? null, userPhone: u?.phone ?? null } as AdminRide;
+    });
   }
 
   async countRides() {

@@ -31,6 +31,7 @@ import {
   maskPan, cardBrand,
 } from "./../payments/tbank-handlers";
 import { log } from "./../index";
+import { logger } from "./../logger";
 import {
   riderId, isStaffSession, canManageRide, actorName, clientIp,
   requireRole, requireAuth, requireRoleWhenConfigured,
@@ -162,7 +163,7 @@ export function registerTileRoutes(app: Express): void {
           });
         } else {
           // Log tile proxy response for debugging
-          console.log(`[tile-proxy] ${tilePath} -> ${proxyRes.statusCode} ct=${ct} ce=${ce} headers=${JSON.stringify(proxyRes.headers)}`);
+          logger.debug({ tilePath, status: proxyRes.statusCode, ct, ce, headers: proxyRes.headers }, "[tile-proxy] response");
           if (ce) res.setHeader("Content-Encoding", ce);
           res.setHeader("Content-Type", ct);
           // Buffer tile and forward — avoids pipe issues with some proxy setups
@@ -170,14 +171,14 @@ export function registerTileRoutes(app: Express): void {
           proxyRes.on("data", (chunk: Buffer) => tileChunks.push(chunk));
           proxyRes.on("end", () => {
             const body = Buffer.concat(tileChunks);
-            console.log(`[tile-proxy] ${tilePath} body bytes=${body.length}`);
+            logger.debug({ tilePath, bytes: body.length }, "[tile-proxy] body");
             res.status(proxyRes.statusCode ?? 200).end(body);
           });
         }
       }
     );
     proxyReq.on("error", (err: unknown) => {
-      console.error("[tile-proxy] error:", err);
+      logger.error({ err }, "[tile-proxy] error");
       if (!res.headersSent) res.status(502).end();
     });
     proxyReq.end();

@@ -17,14 +17,13 @@
 
 import { createHash, randomInt } from "node:crypto";
 
-// Local logger. We intentionally do NOT import the logger from ./index, because
-// importing index boots the HTTP server (top-level listen). Keeping logging
-// self-contained here lets the token logic be unit-tested in isolation.
+import { logger } from "./logger";
+
+// Structured logger (audit L6). We import from ./logger, NOT ./index, because
+// importing index boots the HTTP server (top-level listen); ./logger has no such
+// side effect, so the token logic stays unit-testable in isolation.
 function log(message: string, source = "tbank"): void {
-  const time = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true,
-  });
-  console.log(`${time} [${source}] ${message}`);
+  logger.info({ source }, message);
 }
 
 const DEFAULT_API_BASE = "https://securepay.tinkoff.ru/v2";
