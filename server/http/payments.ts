@@ -547,9 +547,14 @@ export function registerPaymentRoutes(app: Express): void {
   });
 
   // Public T-Bank notification webhook. T-Bank POSTs payment/binding status
-  // updates here with a Token we verify against the terminal password. We must
-  // always answer "OK" (HTTP 200) once the signature is valid, otherwise T-Bank
-  // retries indefinitely. An invalid/missing token is rejected with 403.
+  // updates here with a Token we verify against the terminal password. We answer
+  // the literal "OK" (HTTP 200) ONLY after the update has been durably persisted;
+  // if processing fails we return 500 so the acquirer RETRIES the notification
+  // (T-Bank keeps retrying until it receives "OK"). Acking before the DB write
+  // completed would silently drop a payment confirmation (audit H2). An
+  // invalid/missing token is rejected with 403. Handlers are idempotent
+  // (order.status === "paid" short-circuits, ride start is guarded), so a retry
+  // of an already-processed notification never double-charges or double-starts.
   app.post("/api/payments/tbank/notification", async (req, res) => {
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются." });
@@ -561,11 +566,14 @@ export function registerPaymentRoutes(app: Express): void {
     }
 
     try {
-      handleTbankNotification(body, cfg);
+      // Await so the HTTP response is sent ONLY after the DB write succeeds and
+      // so an async rejection is caught here instead of crashing unhandled.
+      await handleTbankNotification(body, cfg);
     } catch (err) {
-      // Log but still ack so T-Bank doesn't hammer us; reconciliation can be
-      // done out of band via GetState.
+      // Do NOT ack: return 500 so T-Bank retries later. Idempotent handlers make
+      // the retry safe. Out-of-band reconciliation via GetState remains possible.
       log(`[tbank] notification processing error: ${(err as Error)?.message ?? "?"}`, "tbank");
+      return res.status(500).type("text/plain").send("ERROR");
     }
 
     // T-Bank expects the literal string "OK" with HTTP 200.

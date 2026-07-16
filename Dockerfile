@@ -34,8 +34,15 @@ RUN apt-get update \
 ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/yc-root.crt
 # App data now lives in managed PostgreSQL (DATABASE_URL at runtime), not a
 # local SQLite file. No /app/data directory needed.
-COPY --from=build /app/package*.json ./
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
+# Run as the unprivileged `node` user (uid 1000, shipped in the base image)
+# instead of root, so a compromise inside the container cannot trivially
+# escalate on the host (audit H3). App files are chowned to `node`, and the
+# runtime uploads directory (support-chat attachments, written to /app/uploads
+# by default) is pre-created and owned by `node` so the process can write there.
+COPY --from=build --chown=node:node /app/package*.json ./
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist ./dist
+RUN mkdir -p /app/uploads && chown -R node:node /app/uploads
+USER node
 EXPOSE 5000
 CMD ["node", "dist/index.cjs"]

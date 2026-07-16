@@ -1,6 +1,25 @@
 name: Build Check
-on: [workflow_dispatch]
+on: [workflow_dispatch, pull_request]
 jobs:
+  # Type-check and unit tests. Runs on every PR so type errors and business-logic
+  # regressions (billing, ride start/finish, payment webhook) fail CI instead of
+  # slipping through silently (audit H5). No secrets or DB required — tests mock
+  # the storage layer.
+  typecheck-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test
+
   build:
     runs-on: [self-hosted, baltcircle-prod]
     permissions:
