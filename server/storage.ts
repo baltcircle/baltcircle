@@ -21,7 +21,7 @@ import {
   TARIFFS, tariffPriceKopecks,
 } from "@shared/geo";
 import { computeOverage, finalRideCost } from "@shared/billing";
-import { eq, desc, sql, gt, and, asc } from "drizzle-orm";
+import { eq, desc, sql, gt, and, asc, inArray } from "drizzle-orm";
 import { EventEmitter } from "node:events";
 // db client + schema bootstrap + migrations + demo seed run on import of this module.
 // bootstrapReady MUST be awaited before serving requests (server entrypoint does this).
@@ -1647,20 +1647,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Rides for the operator panel, newest first, joined to rider identity so the
-  // admin table can show a name/phone instead of a raw user id. Riders are
-  // looked up in a single batch; unknown/demo ids resolve to null so the UI can
-  // fall back to the id.
+  // admin table can show a name/phone instead of a raw user id. Only the riders
+  // referenced by this page are fetched (single batched `IN` query) instead of
+  // loading the whole users table into memory. Track points are NOT hydrated for
+  // the list — the map GPS track is only needed on a single-ride view and is
+  // loaded on demand via getRide (audit L5).
   async listAdminRides(opts?: { limit?: number; offset?: number }) {
     const limit = opts?.limit ?? 200;
     const offset = opts?.offset ?? 0;
     const rows = (await db.select().from(rides).orderBy(desc(rides.startedAt)).limit(limit).offset(offset)) as Ride[];
-    const all = (await db.select().from(users)) as User[];
-    const byId = new Map(all.map((u) => [u.id, u]));
-    return Promise.all(rows.map(async (r) => {
-      const hydrated = (await this.hydrateTrack(r))!;
-      const u = byId.get(hydrated.userId);
-      return { ...hydrated, userName: u?.name ?? null, userPhone: u?.phone ?? null } as AdminRide;
-    }));
+    const userIds = Array.from(new Set(rows.map((r) => r.userId)));
+    const riders = userIds.length
+      ? ((await db.select().from(users).where(inArray(users.id, userIds))) as User[])
+      : [];
+    const byId = new Map(riders.map((u) => [u.id, u]));
+    return rows.map((r) => {
+      const u = byId.get(r.userId);
+      return { ...r, userName: u?.name ?? null, userPhone: u?.phone ?? null } as AdminRide;
+    });
   }
 
   async countRides() {
