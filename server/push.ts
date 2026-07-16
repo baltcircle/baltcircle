@@ -10,11 +10,10 @@ import { db } from "./db/bootstrap";
 import { pushSubscriptions, type PushSubscription } from "@shared/schema";
 import { and, eq } from "drizzle-orm";
 
+import { logger } from "./logger";
+
 function log(message: string, source = "push"): void {
-  const time = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true,
-  });
-  console.log(`${time} [${source}] ${message}`);
+  logger.info({ source }, message);
 }
 
 const PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY ?? "";

@@ -8,14 +8,13 @@
 // working without a key and without spending SMS quota. Production MUST set
 // SMS_PROVIDER to a real provider.
 
-// Local logger. We intentionally do NOT import the logger from ./index, because
-// importing index boots the HTTP server (top-level listen). Keeping logging
-// self-contained here lets the send logic be unit-tested in isolation.
+import { logger } from "./logger";
+
+// Structured logger (audit L6). We import from ./logger, NOT ./index, because
+// importing index boots the HTTP server (top-level listen); ./logger has no such
+// side effect, so the send logic stays unit-testable in isolation.
 function log(message: string, source = "sms"): void {
-  const time = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true,
-  });
-  console.log(`${time} [${source}] ${message}`);
+  logger.info({ source }, message);
 }
 
 export interface SmsSendResult {

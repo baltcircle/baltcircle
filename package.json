@@ -91,6 +91,7 @@
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
     "pg": "^8.22.0",
+    "pino": "^9.14.0",
     "pmtiles": "^3.2.1",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",

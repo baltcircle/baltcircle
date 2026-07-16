@@ -7,8 +7,14 @@ import { pool, bootstrapReady } from "./storage";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
+import { logger, log } from "./logger";
+
+// Re-exported so existing `import { log } from "../index"` call sites keep
+// working now that the implementation lives in server/logger.ts (audit L6).
+export { log };
 
 const app = express();
 const httpServer = createServer(app);
@@ -29,8 +35,8 @@ const PgStore = connectPgSimple(session);
 const DEV_SESSION_SECRET = "baltcircle-dev-session-secret";
 const sessionSecret = process.env.SESSION_SECRET || DEV_SESSION_SECRET;
 if (process.env.NODE_ENV === "production" && sessionSecret === DEV_SESSION_SECRET) {
-  console.error(
-    "FATAL: SESSION_SECRET is not set (or equals the public dev default) in production. " +
+  logger.fatal(
+    "SESSION_SECRET is not set (or equals the public dev default) in production. " +
       "Set a strong, secret SESSION_SECRET and restart. Refusing to start.",
   );
   process.exit(1);
@@ -86,17 +92,6 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
-
-  console.log(`${formattedTime} [${source}] ${message}`);
-}
-
 // Keys whose values must never reach the logs — PII (phone/email), auth secrets
 // (OTP/codes/tokens/passwords) and payment data (PANs). Matched case-insensitively
 // as a substring so `phoneNumber`, `cardNumber`, `accessToken` etc. are all caught.
@@ -135,6 +130,11 @@ const LOG_RESPONSE_BODY = process.env.LOG_RESPONSE_BODY === "1";
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
+  // Correlation id per request: honour an inbound X-Request-Id (e.g. from nginx)
+  // or mint one, echo it back, and tag every log line for this request so a
+  // request can be traced end-to-end across log lines (audit L6).
+  const reqId = (req.headers["x-request-id"] as string) || randomUUID();
+  res.setHeader("x-request-id", reqId);
   let capturedJsonResponse: unknown = undefined;
 
   if (LOG_RESPONSE_BODY) {
@@ -148,14 +148,19 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      const fields: Record<string, unknown> = {
+        reqId,
+        method: req.method,
+        path,
+        status: res.statusCode,
+        durationMs: duration,
+      };
       if (LOG_RESPONSE_BODY && capturedJsonResponse !== undefined) {
         let dump = JSON.stringify(redact(capturedJsonResponse));
         if (dump.length > 500) dump = dump.slice(0, 500) + "…";
-        logLine += ` :: ${dump}`;
+        fields.body = dump;
       }
-
-      log(logLine);
+      logger.info(fields, `${req.method} ${path} ${res.statusCode} in ${duration}ms`);
     }
   });
 
@@ -186,7 +191,7 @@ app.use((req, res, next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
-    console.error("Internal Server Error:", err);
+    logger.error({ err, status }, "Internal Server Error");
 
     if (res.headersSent) {
       return next(err);
