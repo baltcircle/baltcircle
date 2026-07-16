@@ -71,8 +71,9 @@ function hashOtp(phone: string, code: string): string {
 }
 
 function generateOtp(): string {
-  // 4-digit numeric code (1000–9999) — matches the SMS copy and UI input.
-  return String(randomInt(1000, 10000));
+  // 6-digit numeric code (000000–999999) — matches the SMS copy and UI input.
+  // Zero-padded so every code is exactly six digits (audit M6).
+  return String(randomInt(0, 1_000_000)).padStart(6, "0");
 }
 
 function safeEqualHex(a: string, b: string): boolean {

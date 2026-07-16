@@ -107,7 +107,7 @@ export const otpVerifySchema = z.object({
   code: z
     .string({ required_error: "Введите код из SMS" })
     .trim()
-    .regex(/^\d{4}$/, "Код состоит из 4 цифр"),
+    .regex(/^\d{6}$/, "Код состоит из 6 цифр"),
 });
 export type OtpVerifyInput = z.infer<typeof otpVerifySchema>;
 
@@ -141,13 +141,13 @@ export const phoneChangeVerifySchema = z.object({
   code: z
     .string({ required_error: "Введите код из SMS" })
     .trim()
-    .regex(/^\d{4}$/, "Код состоит из 4 цифр"),
+    .regex(/^\d{6}$/, "Код состоит из 6 цифр"),
 });
 export type PhoneChangeVerifyInput = z.infer<typeof phoneChangeVerifySchema>;
 
 /* ------- EMAIL CHANGE (email OTP for an existing account) ------- */
 // Mirrors phone_change_requests: one pending email verification per user. A
-// 4-digit code is sent to the target address via RuSender; only its HMAC is
+// 6-digit code is sent to the target address via RuSender; only its HMAC is
 // stored. On success we set users.email + users.emailVerifiedAt. Used for both
 // "link email to existing account" and "change existing verified email".
 export const emailChangeRequests = pgTable("email_change_requests", {
@@ -177,7 +177,7 @@ export const emailChangeVerifySchema = z.object({
   code: z
     .string({ required_error: "Введите код из письма" })
     .trim()
-    .regex(/^\d{4}$/, "Код состоит из 4 цифр"),
+    .regex(/^\d{6}$/, "Код состоит из 6 цифр"),
 });
 export type EmailChangeVerifyInput = z.infer<typeof emailChangeVerifySchema>;
 

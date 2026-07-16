@@ -157,7 +157,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
 
   function submitCode(e: React.FormEvent) {
     e.preventDefault();
-    if (!/^\d{4}$/.test(code.trim())) return setError("Код состоит из 4 цифр");
+    if (!/^\d{6}$/.test(code.trim())) return setError("Код состоит из 6 цифр");
     setError(null);
     verifyMut.mutate();
   }
@@ -290,10 +290,10 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
                 type="text"
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                maxLength={4}
+                maxLength={6}
                 value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
-                placeholder="1234"
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="123456"
                 className="font-mono tracking-[0.5em] text-center text-lg"
                 data-testid="input-registration-code"
               />
