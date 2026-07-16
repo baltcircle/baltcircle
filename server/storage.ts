@@ -1658,28 +1658,73 @@ export class DatabaseStorage implements IStorage {
     return w;
   }
 
+  // Top up the wallet inside a single DB transaction. The balance change is an
+  // atomic SQL increment (`balance = balance + $amount`) via an UPSERT, not a
+  // read-then-write in app code, so two concurrent top-ups can never lose an
+  // update (audit M2). The payment row is written in the same transaction so a
+  // balance change and its ledger entry always land together.
   async topUp(userId: string, amount: number) {
-    const w = await this.getWallet(userId);
-    const newBal = w.balance + amount;
-    await db.update(wallet).set({ balance: newBal }).where(eq(wallet.userId, userId));
-    const pay = (await db.insert(payments).values({
-      userId, amount, kind: "topup",
-      description: `Пополнение баланса карты •• 4242`, createdAt: Date.now(),
-    }).returning())[0] as Payment;
-    return { wallet: await this.getWallet(userId), payment: pay };
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const w = (await client.query(
+        `INSERT INTO wallet (user_id, balance, active_tariff, tariff_expires_at)
+         VALUES ($1, $2, 'payg', NULL)
+         ON CONFLICT (user_id) DO UPDATE SET balance = wallet.balance + $2
+         RETURNING user_id AS "userId", balance,
+                   active_tariff AS "activeTariff", tariff_expires_at AS "tariffExpiresAt"`,
+        [userId, amount],
+      )).rows[0] as Wallet;
+      const pay = (await client.query(
+        `INSERT INTO payments (user_id, amount, kind, description, created_at)
+         VALUES ($1, $2, 'topup', $3, $4)
+         RETURNING id, user_id AS "userId", amount, kind, description, created_at AS "createdAt"`,
+        [userId, amount, `Пополнение баланса карты •• 4242`, Date.now()],
+      )).rows[0] as Payment;
+      await client.query("COMMIT");
+      return { wallet: w, payment: pay };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
+  // Purchase a tariff inside a single transaction. The debit is a conditional
+  // atomic update (`balance = balance - $price WHERE balance >= $price`): if a
+  // concurrent purchase already drained the wallet the update matches no row and
+  // we reject, so the balance can never go negative or be double-spent (M2).
   async purchaseTariff(userId: string, tariff: string, price: number, durationMs: number) {
-    const w = await this.getWallet(userId);
-    const newBal = w.balance - price;
     const expires = Date.now() + durationMs;
-    await db.update(wallet).set({ balance: newBal, activeTariff: tariff, tariffExpiresAt: expires } as any)
-      .where(eq(wallet.userId, userId));
-    const pay = (await db.insert(payments).values({
-      userId, amount: -price, kind: "tariff_purchase",
-      description: `Подключён тариф «${tariff}»`, createdAt: Date.now(),
-    }).returning())[0] as Payment;
-    return { wallet: await this.getWallet(userId), payment: pay };
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const rows = (await client.query(
+        `UPDATE wallet SET balance = balance - $2, active_tariff = $3, tariff_expires_at = $4
+         WHERE user_id = $1 AND balance >= $2
+         RETURNING user_id AS "userId", balance,
+                   active_tariff AS "activeTariff", tariff_expires_at AS "tariffExpiresAt"`,
+        [userId, price, tariff, expires],
+      )).rows;
+      if (rows.length === 0) {
+        throw new Error("Недостаточно средств на балансе");
+      }
+      const w = rows[0] as Wallet;
+      const pay = (await client.query(
+        `INSERT INTO payments (user_id, amount, kind, description, created_at)
+         VALUES ($1, $2, 'tariff_purchase', $3, $4)
+         RETURNING id, user_id AS "userId", amount, kind, description, created_at AS "createdAt"`,
+        [userId, -price, `Подключён тариф «${tariff}»`, Date.now()],
+      )).rows[0] as Payment;
+      await client.query("COMMIT");
+      return { wallet: w, payment: pay };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async listPayments(userId: string) {
