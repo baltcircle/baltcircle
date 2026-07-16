@@ -14,6 +14,13 @@ import {
   TARIFFS, tariffPriceKopecks,
 } from "@shared/geo";
 import { drizzle } from "drizzle-orm/node-postgres";
+import { getTableConfig } from "drizzle-orm/pg-core";
+import type { PgTable } from "drizzle-orm/pg-core";
+import {
+  users, oauthIdentities, pushSubscriptions, bikes, rides, tickets,
+  ticketComments, payments, paymentMethods, paymentOrders,
+  supportTickets, supportConversations, supportMessages,
+} from "@shared/schema";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -293,35 +300,43 @@ CREATE TABLE IF NOT EXISTS support_messages (
 }
 
 // ---------- Performance indexes ----------
-// Same hot-path indexes as the SQLite build. IF NOT EXISTS keeps re-runs safe.
+// The hot-path indexes are declared as first-class Drizzle definitions on their
+// tables in shared/schema.ts (audit M8) — this is the single source of truth.
+// We derive the CREATE INDEX DDL from those definitions via getTableConfig so
+// the two never drift, and emit `IF NOT EXISTS` so re-runs are idempotent (no
+// duplicate indexes). `ride_points` is created by raw SQL above (it has no
+// Drizzle table), so its index is kept as an explicit statement here.
+const INDEXED_TABLES: PgTable[] = [
+  users, oauthIdentities, pushSubscriptions, bikes, rides, tickets,
+  ticketComments, payments, paymentMethods, paymentOrders,
+  supportTickets, supportConversations, supportMessages,
+];
+
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
 async function createIndexes() {
-  await pool.query(`
-CREATE INDEX IF NOT EXISTS idx_rides_user_status ON rides (user_id, status);
-CREATE INDEX IF NOT EXISTS idx_rides_user ON rides (user_id);
-CREATE INDEX IF NOT EXISTS idx_rides_bike ON rides (bike_id);
-CREATE INDEX IF NOT EXISTS idx_rides_started ON rides (started_at);
-CREATE INDEX IF NOT EXISTS idx_ride_points_ride ON ride_points (ride_id, id);
-CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone);
-CREATE INDEX IF NOT EXISTS idx_bikes_status ON bikes (status);
-CREATE INDEX IF NOT EXISTS idx_pm_user ON payment_methods (user_id);
-CREATE INDEX IF NOT EXISTS idx_pm_user_provider_status ON payment_methods (user_id, provider, status);
-CREATE INDEX IF NOT EXISTS idx_pm_order ON payment_methods (order_id);
-CREATE INDEX IF NOT EXISTS idx_pm_request_key ON payment_methods (request_key);
-CREATE INDEX IF NOT EXISTS idx_po_order ON payment_orders (order_id);
-CREATE INDEX IF NOT EXISTS idx_po_user ON payment_orders (user_id);
-CREATE INDEX IF NOT EXISTS idx_po_payment ON payment_orders (payment_id);
-CREATE INDEX IF NOT EXISTS idx_payments_user ON payments (user_id);
-CREATE INDEX IF NOT EXISTS idx_tickets_bike ON tickets (bike_id);
-CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket ON ticket_comments (ticket_id);
-CREATE INDEX IF NOT EXISTS idx_support_tickets_user ON support_tickets (user_id);
-CREATE INDEX IF NOT EXISTS idx_support_conv_user ON support_conversations (user_id);
-CREATE INDEX IF NOT EXISTS idx_support_conv_last ON support_conversations (last_message_at DESC);
-CREATE INDEX IF NOT EXISTS idx_support_msg_conv ON support_messages (conversation_id, id DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_provider_subject ON oauth_identities (provider, subject);
-CREATE INDEX IF NOT EXISTS idx_oauth_user ON oauth_identities (user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_push_endpoint ON push_subscriptions (endpoint);
-CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions (user_id);
-`);
+  for (const table of INDEXED_TABLES) {
+    const { name: tableName, indexes } = getTableConfig(table);
+    for (const idx of indexes) {
+      const cfg = idx.config;
+      const cols = cfg.columns
+        .map((c: any) => {
+          const order = c.indexConfig?.order === "desc" ? " DESC" : "";
+          return `${quoteIdent(c.name)}${order}`;
+        })
+        .join(", ");
+      const unique = cfg.unique ? "UNIQUE " : "";
+      await pool.query(
+        `CREATE ${unique}INDEX IF NOT EXISTS ${quoteIdent(cfg.name!)} ON ${quoteIdent(tableName)} (${cols});`,
+      );
+    }
+  }
+  // ride_points has no Drizzle table (raw SQL only) — keep its index explicit.
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_ride_points_ride ON ride_points (ride_id, id);`,
+  );
 }
 
 // ---------- Column migrations for existing databases ----------
