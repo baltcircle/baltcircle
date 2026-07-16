@@ -19,6 +19,9 @@ jobs:
   generate:
     runs-on: [self-hosted, baltcircle-prod]
     timeout-minutes: 60
+    # `contents: write` is still required to publish the PMTiles GitHub Release
+    # (the actual map data). The URL is no longer self-committed to the repo —
+    # it is exposed as an Actions artifact instead (audit M1).
     permissions:
       contents: write
 
@@ -84,20 +87,16 @@ jobs:
           echo "$URL" > /home/yc-user/osm/pmtiles_url.txt
           echo "=== DONE === URL: $URL"
 
-      - name: Commit PMTiles URL to repo
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
+      - name: Stage PMTiles URL for artifact upload
         shell: bash
         run: |
           set -e
-          URL=$(cat /home/yc-user/osm/pmtiles_url.txt)
-          echo "URL: $URL"
-          SHA=$(curl -sf -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/$REPO/contents/pmtiles_url.txt" | python3 -c "import json,sys; print(json.load(sys.stdin).get('sha',''))" 2>/dev/null || echo "")
-          ENC=$(printf '%s' "$URL" | base64 -w0)
-          if [ -n "$SHA" ] && [ "$SHA" != "None" ]; then
-            curl -sf -X PUT -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" "https://api.github.com/repos/$REPO/contents/pmtiles_url.txt" -d "{\"message\":\"ci: pmtiles url updated\",\"content\":\"$ENC\",\"sha\":\"$SHA\"}"
-          else
-            curl -sf -X PUT -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" "https://api.github.com/repos/$REPO/contents/pmtiles_url.txt" -d "{\"message\":\"ci: pmtiles url created\",\"content\":\"$ENC\"}"
-          fi
-          echo "pmtiles_url.txt committed"
+          cp /home/yc-user/osm/pmtiles_url.txt "$GITHUB_WORKSPACE/pmtiles_url.txt"
+          echo "URL: $(cat "$GITHUB_WORKSPACE/pmtiles_url.txt")"
+
+      - name: Upload PMTiles URL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pmtiles-url
+          path: pmtiles_url.txt
+          retention-days: 90

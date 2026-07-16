@@ -71,8 +71,9 @@ function hashOtp(phone: string, code: string): string {
 }
 
 function generateOtp(): string {
-  // 4-digit numeric code (1000–9999) — matches the SMS copy and UI input.
-  return String(randomInt(1000, 10000));
+  // 6-digit numeric code (000000–999999) — matches the SMS copy and UI input.
+  // Zero-padded so every code is exactly six digits (audit M6).
+  return String(randomInt(0, 1_000_000)).padStart(6, "0");
 }
 
 function safeEqualHex(a: string, b: string): boolean {
@@ -126,7 +127,8 @@ export interface IStorage {
   getUserByPhone(phone: string): Promise<User | undefined>;
   updateProfile(id: string, patch: UpdateProfileInput): Promise<{ user: User } | { error: string }>;
   // admin user management
-  listUsers(): Promise<User[]>;
+  listUsers(opts?: { limit?: number; offset?: number }): Promise<User[]>;
+  countUsers(): Promise<number>;
   setUserRole(id: string, role: UserRole): Promise<{ user: User } | { error: string }>;
   setUserBlocked(id: string, blocked: boolean, reason?: string): Promise<{ user: User } | { error: string }>;
   // OTP verification
@@ -243,14 +245,16 @@ export interface IStorage {
   getRide(rideId: number): Promise<Ride | undefined>;
   getActiveRide(userId: string): Promise<Ride | undefined>;
   listRides(opts?: { userId?: string; limit?: number }): Promise<Ride[]>;
-  listAdminRides(opts?: { limit?: number }): Promise<AdminRide[]>;
+  listAdminRides(opts?: { limit?: number; offset?: number }): Promise<AdminRide[]>;
+  countRides(): Promise<number>;
   // payments / wallet
   getWallet(userId: string): Promise<Wallet>;
   topUp(userId: string, amount: number): Promise<{ wallet: Wallet; payment: Payment }>;
   purchaseTariff(userId: string, tariff: string, price: number, durationMs: number): Promise<{ wallet: Wallet; payment: Payment }>;
   listPayments(userId: string): Promise<Payment[]>;
   // service / maintenance tickets
-  listTickets(): Promise<Ticket[]>;
+  listTickets(opts?: { limit?: number; offset?: number }): Promise<Ticket[]>;
+  countTickets(): Promise<number>;
   getTicket(id: number): Promise<TicketWithComments | undefined>;
   createTicket(input: CreateTicketInput): Promise<TicketWithComments>;
   updateTicket(id: number, patch: UpdateTicketInput, actor: string): Promise<TicketWithComments | undefined>;
@@ -342,9 +346,18 @@ export class DatabaseStorage implements IStorage {
   // List every registered user, newest first, with effective roles applied so
   // the admin table shows the same role the rest of the app enforces (the
   // ADMIN_PHONE_NUMBERS override can make a stored "rider" effectively admin).
-  async listUsers() {
-    const rows = (await db.select().from(users).orderBy(desc(users.createdAt))) as User[];
+  // Optional limit/offset let callers page the list (audit M5). When no limit is
+  // given the full list is returned (preserves consumers that need every row:
+  // client-side search, CSV export). The HTTP layer clamps limit to a sane max.
+  async listUsers(opts?: { limit?: number; offset?: number }) {
+    let q = db.select().from(users).orderBy(desc(users.createdAt)).$dynamic();
+    if (opts?.limit !== undefined) q = q.limit(opts.limit).offset(opts.offset ?? 0);
+    const rows = (await q) as User[];
     return rows.map((u) => this.withResolvedRole(u)!);
+  }
+
+  async countUsers() {
+    return Number((await pool.query("SELECT COUNT(*)::int AS c FROM users")).rows[0].c);
   }
 
   async setUserRole(id: string, role: UserRole) {
@@ -1637,9 +1650,10 @@ export class DatabaseStorage implements IStorage {
   // admin table can show a name/phone instead of a raw user id. Riders are
   // looked up in a single batch; unknown/demo ids resolve to null so the UI can
   // fall back to the id.
-  async listAdminRides(opts?: { limit?: number }) {
+  async listAdminRides(opts?: { limit?: number; offset?: number }) {
     const limit = opts?.limit ?? 200;
-    const rows = (await db.select().from(rides).orderBy(desc(rides.startedAt)).limit(limit)) as Ride[];
+    const offset = opts?.offset ?? 0;
+    const rows = (await db.select().from(rides).orderBy(desc(rides.startedAt)).limit(limit).offset(offset)) as Ride[];
     const all = (await db.select().from(users)) as User[];
     const byId = new Map(all.map((u) => [u.id, u]));
     return Promise.all(rows.map(async (r) => {
@@ -1647,6 +1661,10 @@ export class DatabaseStorage implements IStorage {
       const u = byId.get(hydrated.userId);
       return { ...hydrated, userName: u?.name ?? null, userPhone: u?.phone ?? null } as AdminRide;
     }));
+  }
+
+  async countRides() {
+    return Number((await pool.query("SELECT COUNT(*)::int AS c FROM rides")).rows[0].c);
   }
 
   async getWallet(userId: string) {
@@ -1658,28 +1676,73 @@ export class DatabaseStorage implements IStorage {
     return w;
   }
 
+  // Top up the wallet inside a single DB transaction. The balance change is an
+  // atomic SQL increment (`balance = balance + $amount`) via an UPSERT, not a
+  // read-then-write in app code, so two concurrent top-ups can never lose an
+  // update (audit M2). The payment row is written in the same transaction so a
+  // balance change and its ledger entry always land together.
   async topUp(userId: string, amount: number) {
-    const w = await this.getWallet(userId);
-    const newBal = w.balance + amount;
-    await db.update(wallet).set({ balance: newBal }).where(eq(wallet.userId, userId));
-    const pay = (await db.insert(payments).values({
-      userId, amount, kind: "topup",
-      description: `Пополнение баланса карты •• 4242`, createdAt: Date.now(),
-    }).returning())[0] as Payment;
-    return { wallet: await this.getWallet(userId), payment: pay };
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const w = (await client.query(
+        `INSERT INTO wallet (user_id, balance, active_tariff, tariff_expires_at)
+         VALUES ($1, $2, 'payg', NULL)
+         ON CONFLICT (user_id) DO UPDATE SET balance = wallet.balance + $2
+         RETURNING user_id AS "userId", balance,
+                   active_tariff AS "activeTariff", tariff_expires_at AS "tariffExpiresAt"`,
+        [userId, amount],
+      )).rows[0] as Wallet;
+      const pay = (await client.query(
+        `INSERT INTO payments (user_id, amount, kind, description, created_at)
+         VALUES ($1, $2, 'topup', $3, $4)
+         RETURNING id, user_id AS "userId", amount, kind, description, created_at AS "createdAt"`,
+        [userId, amount, `Пополнение баланса карты •• 4242`, Date.now()],
+      )).rows[0] as Payment;
+      await client.query("COMMIT");
+      return { wallet: w, payment: pay };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
+  // Purchase a tariff inside a single transaction. The debit is a conditional
+  // atomic update (`balance = balance - $price WHERE balance >= $price`): if a
+  // concurrent purchase already drained the wallet the update matches no row and
+  // we reject, so the balance can never go negative or be double-spent (M2).
   async purchaseTariff(userId: string, tariff: string, price: number, durationMs: number) {
-    const w = await this.getWallet(userId);
-    const newBal = w.balance - price;
     const expires = Date.now() + durationMs;
-    await db.update(wallet).set({ balance: newBal, activeTariff: tariff, tariffExpiresAt: expires } as any)
-      .where(eq(wallet.userId, userId));
-    const pay = (await db.insert(payments).values({
-      userId, amount: -price, kind: "tariff_purchase",
-      description: `Подключён тариф «${tariff}»`, createdAt: Date.now(),
-    }).returning())[0] as Payment;
-    return { wallet: await this.getWallet(userId), payment: pay };
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const rows = (await client.query(
+        `UPDATE wallet SET balance = balance - $2, active_tariff = $3, tariff_expires_at = $4
+         WHERE user_id = $1 AND balance >= $2
+         RETURNING user_id AS "userId", balance,
+                   active_tariff AS "activeTariff", tariff_expires_at AS "tariffExpiresAt"`,
+        [userId, price, tariff, expires],
+      )).rows;
+      if (rows.length === 0) {
+        throw new Error("Недостаточно средств на балансе");
+      }
+      const w = rows[0] as Wallet;
+      const pay = (await client.query(
+        `INSERT INTO payments (user_id, amount, kind, description, created_at)
+         VALUES ($1, $2, 'tariff_purchase', $3, $4)
+         RETURNING id, user_id AS "userId", amount, kind, description, created_at AS "createdAt"`,
+        [userId, -price, `Подключён тариф «${tariff}»`, Date.now()],
+      )).rows[0] as Payment;
+      await client.query("COMMIT");
+      return { wallet: w, payment: pay };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async listPayments(userId: string) {
@@ -1688,7 +1751,15 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(payments.createdAt))) as Payment[];
   }
 
-  async listTickets() { return (await db.select().from(tickets).orderBy(desc(tickets.createdAt))) as Ticket[]; }
+  async listTickets(opts?: { limit?: number; offset?: number }) {
+    let q = db.select().from(tickets).orderBy(desc(tickets.createdAt)).$dynamic();
+    if (opts?.limit !== undefined) q = q.limit(opts.limit).offset(opts.offset ?? 0);
+    return (await q) as Ticket[];
+  }
+
+  async countTickets() {
+    return Number((await pool.query("SELECT COUNT(*)::int AS c FROM tickets")).rows[0].c);
+  }
 
   async getTicket(id: number): Promise<TicketWithComments | undefined> {
     const t = (await db.select().from(tickets).where(eq(tickets.id, id)).limit(1))[0] as Ticket | undefined;

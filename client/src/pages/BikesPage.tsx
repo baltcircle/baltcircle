@@ -27,6 +27,7 @@ import {
   Search, Plus, Pencil, QrCode, Archive, Trash2, Copy, Download, Printer, Bike as BikeIcon, Wrench,
 } from "lucide-react";
 import { Link } from "wouter";
+import { TablePager, useClientPagination } from "@/components/table-pager";
 
 const ADMIN_BIKES_KEY = ["/api/admin/bikes"] as const;
 
@@ -108,6 +109,7 @@ export function BikesPage() {
   }, [bikes, search, showArchived]);
 
   const archivedCount = bikes.filter((b) => b.status === "archived").length;
+  const { page, setPage, pageCount, pageItems } = useClientPagination(filtered);
 
   // ---------- Mutations ----------
   const saveMut = useMutation({
@@ -281,7 +283,7 @@ export function BikesPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((b) => (
+            {pageItems.map((b) => (
               <TableRow key={b.id} data-testid={`row-admin-bike-${b.id}`} className="hover-elevate">
                 <TableCell className="font-mono text-sm">
                   <span className="inline-flex items-center gap-2">
@@ -351,6 +353,7 @@ export function BikesPage() {
             )}
           </TableBody>
         </Table>
+        <TablePager page={page} pageCount={pageCount} total={filtered.length} onPage={setPage} testid="bikes-pager" />
       </Card>
 
       {/* ---------- Add / edit dialog ---------- */}
@@ -478,6 +481,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+// Escape HTML metacharacters before interpolating untrusted text into a raw
+// document.write() string (the QR print window). Prevents stored XSS via
+// operator-controlled bike id/model (audit M10).
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!
+  ));
+}
+
 function QrDialog({ bike, onClose, onCopied }: { bike: Bike | null; onClose: () => void; onCopied: () => void }) {
   const link = bike ? bikeQrLink(bike.id) : "";
 
@@ -498,10 +510,14 @@ function QrDialog({ bike, onClose, onCopied }: { bike: Bike | null; onClose: () 
     const svg = qrToSvg(link, { size: 320 });
     const w = window.open("", "_blank", "width=420,height=560");
     if (!w) return;
-    w.document.write(`<!doctype html><html><head><title>QR ${bike.id}</title>
+    // bike.id / bike.model are operator-controlled free text — escape before
+    // interpolating into the print document so they can't inject markup (M10).
+    const id = escapeHtml(bike.id);
+    const model = escapeHtml(bike.model);
+    w.document.write(`<!doctype html><html><head><title>QR ${id}</title>
       <style>body{font-family:sans-serif;text-align:center;padding:32px}
       h1{font-size:20px;margin:16px 0 4px}p{color:#666;margin:0;font-size:13px}</style>
-      </head><body>${svg}<h1>${bike.id}</h1><p>${bike.model}</p>
+      </head><body>${svg}<h1>${id}</h1><p>${model}</p>
       <script>window.onload=function(){window.print();}</script></body></html>`);
     w.document.close();
   };

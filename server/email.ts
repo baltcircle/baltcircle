@@ -65,7 +65,14 @@ export async function sendOtpEmail(email: string, code: string): Promise<EmailSe
   const provider = emailProvider();
 
   if (provider === "") {
-    // Dev fallback — log the code and echo it back to the client.
+    // Dev fallback. In production a missing provider is a misconfiguration, and
+    // logging/echoing the OTP would leak it — fail loudly instead so no code is
+    // ever written to the log or returned to the caller (audit M7). Outside
+    // production, log the code and echo it back so a developer can complete the
+    // flow without a real email channel.
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("Email-сервис не настроен. Обратитесь в поддержку.");
+    }
     log(`[email:dev] OTP for ${email}: ${code}`, "email");
     return { devEcho: true };
   }

@@ -65,9 +65,15 @@ export async function sendOtpSms(phone: string, code: string): Promise<SmsSendRe
     };
   }
 
-  if (provider === "" ) {
-    // Dev / local fallback: no provider configured. Log the code so a developer
-    // can complete the flow; the route echoes it to the client as well.
+  if (provider === "") {
+    // Dev / local fallback: no provider configured. In production this is a
+    // misconfiguration, and logging/echoing the OTP would leak it — fail loudly
+    // instead so no code is ever written to the log or returned to the caller
+    // (audit M7). Outside production, log the code and echo it so a developer
+    // can complete the flow without a real SMS channel.
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("SMS-провайдер не настроен. Обратитесь в поддержку.");
+    }
     log(`[sms:dev] OTP for ${phone}: ${code}`, "sms");
     return { devEcho: true };
   }

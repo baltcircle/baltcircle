@@ -14,3 +14,7 @@ data.db-journal
 
 *.log
 .DS_Store
+
+# CI-generated artifacts — published via Actions artifacts, not committed (audit M1)
+diag-result.txt
+pmtiles_url.txt

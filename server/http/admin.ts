@@ -34,7 +34,7 @@ import { log } from "./../index";
 import {
   riderId, isStaffSession, canManageRide, actorName, clientIp,
   requireRole, requireAuth, requireRoleWhenConfigured,
-  otpLimiter, paymentLimiter,
+  otpLimiter, paymentLimiter, parsePageParams,
 } from "./context";
 
 export function registerAdminUserRoutes(app: Express): void {
@@ -43,8 +43,10 @@ export function registerAdminUserRoutes(app: Express): void {
   // registered-but-not-staff). Granting/revoking the admin role additionally
   // requires the caller to be an admin — operators may manage rider/operator
   // roles but cannot create or remove admins.
-  app.get("/api/admin/users", requireRole("operator", "admin"), async (_req, res) => {
-    res.json(await storage.listUsers());
+  app.get("/api/admin/users", requireRole("operator", "admin"), async (req, res) => {
+    const page = parsePageParams(req);
+    res.setHeader("X-Total-Count", String(await storage.countUsers()));
+    res.json(await storage.listUsers(page));
   });
 
   app.patch("/api/admin/users/:id/role", requireRole("operator", "admin"), async (req, res) => {

@@ -1,4 +1,4 @@
-import { pgTable, text, integer, bigint, doublePrecision, boolean, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, bigint, doublePrecision, boolean, serial, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -20,7 +20,9 @@ export const users = pgTable("users", {
   blockedReason: text("blocked_reason"),     // optional operator-supplied note shown in the admin UI
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }),          // unix ms of last profile mutation
-});
+}, (t) => [
+  index("idx_users_phone").on(t.phone),
+]);
 export type User = typeof users.$inferSelect;
 export type UserRole = "rider" | "mechanic" | "operator" | "admin";
 
@@ -107,7 +109,7 @@ export const otpVerifySchema = z.object({
   code: z
     .string({ required_error: "Введите код из SMS" })
     .trim()
-    .regex(/^\d{4}$/, "Код состоит из 4 цифр"),
+    .regex(/^\d{6}$/, "Код состоит из 6 цифр"),
 });
 export type OtpVerifyInput = z.infer<typeof otpVerifySchema>;
 
@@ -141,13 +143,13 @@ export const phoneChangeVerifySchema = z.object({
   code: z
     .string({ required_error: "Введите код из SMS" })
     .trim()
-    .regex(/^\d{4}$/, "Код состоит из 4 цифр"),
+    .regex(/^\d{6}$/, "Код состоит из 6 цифр"),
 });
 export type PhoneChangeVerifyInput = z.infer<typeof phoneChangeVerifySchema>;
 
 /* ------- EMAIL CHANGE (email OTP for an existing account) ------- */
 // Mirrors phone_change_requests: one pending email verification per user. A
-// 4-digit code is sent to the target address via RuSender; only its HMAC is
+// 6-digit code is sent to the target address via RuSender; only its HMAC is
 // stored. On success we set users.email + users.emailVerifiedAt. Used for both
 // "link email to existing account" and "change existing verified email".
 export const emailChangeRequests = pgTable("email_change_requests", {
@@ -177,7 +179,7 @@ export const emailChangeVerifySchema = z.object({
   code: z
     .string({ required_error: "Введите код из письма" })
     .trim()
-    .regex(/^\d{4}$/, "Код состоит из 4 цифр"),
+    .regex(/^\d{6}$/, "Код состоит из 6 цифр"),
 });
 export type EmailChangeVerifyInput = z.infer<typeof emailChangeVerifySchema>;
 
@@ -196,7 +198,10 @@ export const oauthIdentities = pgTable("oauth_identities", {
   email: text("email"),                      // provider-reported email at link time (may be null for VK)
   displayName: text("display_name"),         // provider-reported name at link time
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
-});
+}, (t) => [
+  uniqueIndex("idx_oauth_provider_subject").on(t.provider, t.subject),
+  index("idx_oauth_user").on(t.userId),
+]);
 export type OauthIdentity = typeof oauthIdentities.$inferSelect;
 export const OAUTH_PROVIDERS = ["yandex", "vk"] as const;
 export type OauthProvider = typeof OAUTH_PROVIDERS[number];
@@ -213,7 +218,10 @@ export const pushSubscriptions = pgTable("push_subscriptions", {
   userAgent: text("user_agent"),                // для отладки, необязательно
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   lastSuccessAt: bigint("last_success_at", { mode: "number" }),
-});
+}, (t) => [
+  uniqueIndex("idx_push_endpoint").on(t.endpoint),
+  index("idx_push_user").on(t.userId),
+]);
 export type PushSubscription = typeof pushSubscriptions.$inferSelect;
 
 export const pushSubscribeSchema = z.object({
@@ -249,7 +257,9 @@ export const bikes = pgTable("bikes", {
   // `seed` marks demo fleet rows so the demo reseed migration can refresh them
   // without ever touching bikes an operator added manually.
   seed: boolean("seed").notNull().default(false),
-});
+}, (t) => [
+  index("idx_bikes_status").on(t.status),
+]);
 
 // Operational statuses. `available`/`rented`/`reserved` drive the rental flow;
 // `maintenance`/`offline`/`storage`/`lost` take a bike out of rotation; and
@@ -425,7 +435,12 @@ export const rides = pgTable("rides", {
   cost: integer("cost").notNull().default(0),   // stored in kopecks (integer) — never float rubles
   tariff: text("tariff").notNull(),
   status: text("status").notNull(),   // active | completed | cancelled
-});
+}, (t) => [
+  index("idx_rides_user_status").on(t.userId, t.status),
+  index("idx_rides_user").on(t.userId),
+  index("idx_rides_bike").on(t.bikeId),
+  index("idx_rides_started").on(t.startedAt),
+]);
 export type Ride = typeof rides.$inferSelect;
 export const insertRideSchema = createInsertSchema(rides);
 
@@ -454,7 +469,9 @@ export const tickets = pgTable("tickets", {
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }),      // unix ms of last mutation
   closedAt: bigint("closed_at", { mode: "number" }),        // unix ms when resolved/closed/cancelled
-});
+}, (t) => [
+  index("idx_tickets_bike").on(t.bikeId),
+]);
 export type Ticket = typeof tickets.$inferSelect;
 
 // History / comment entries attached to a ticket. Each row is either a free-text
@@ -466,7 +483,9 @@ export const ticketComments = pgTable("ticket_comments", {
   body: text("body").notNull(),
   kind: text("kind").notNull().default("comment"), // comment | event
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
-});
+}, (t) => [
+  index("idx_ticket_comments_ticket").on(t.ticketId),
+]);
 export type TicketComment = typeof ticketComments.$inferSelect;
 
 // A ticket enriched with its comment/history thread for the detail view.
@@ -536,7 +555,9 @@ export const payments = pgTable("payments", {
   kind: text("kind").notNull(),       // topup | ride_charge | tariff_purchase
   description: text("description").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
-});
+}, (t) => [
+  index("idx_payments_user").on(t.userId),
+]);
 export type Payment = typeof payments.$inferSelect;
 
 export const wallet = pgTable("wallet", {
@@ -591,7 +612,12 @@ export const paymentMethods = pgTable("payment_methods", {
   lastErrorDetails: text("last_error_details"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }),          // unix ms of last status change
-});
+}, (t) => [
+  index("idx_pm_user").on(t.userId),
+  index("idx_pm_user_provider_status").on(t.userId, t.provider, t.status),
+  index("idx_pm_order").on(t.orderId),
+  index("idx_pm_request_key").on(t.requestKey),
+]);
 export type PaymentMethod = typeof paymentMethods.$inferSelect;
 
 // Link a payment method. Only the type is client-supplied; the label/status are
@@ -631,7 +657,11 @@ export const paymentOrders = pgTable("payment_orders", {
   lastErrorDetails: text("last_error_details"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }),
-});
+}, (t) => [
+  index("idx_po_order").on(t.orderId),
+  index("idx_po_user").on(t.userId),
+  index("idx_po_payment").on(t.paymentId),
+]);
 export type PaymentOrder = typeof paymentOrders.$inferSelect;
 export type PaymentOrderStatus = "pending" | "paid" | "failed";
 
@@ -664,7 +694,9 @@ export const supportTickets = pgTable("support_tickets", {
   message: text("message").notNull(),
   status: text("status").notNull().default("open"), // open | resolved
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
-});
+}, (t) => [
+  index("idx_support_tickets_user").on(t.userId),
+]);
 export type SupportTicket = typeof supportTickets.$inferSelect;
 
 export const createSupportTicketSchema = z.object({
@@ -703,7 +735,10 @@ export const supportConversations = pgTable("support_conversations", {
   userUnreadCount: integer("user_unread_count").notNull().default(0),
   operatorUnreadCount: integer("operator_unread_count").notNull().default(0),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
-});
+}, (t) => [
+  index("idx_support_conv_user").on(t.userId),
+  index("idx_support_conv_last").on(t.lastMessageAt.desc()),
+]);
 export type SupportConversation = typeof supportConversations.$inferSelect;
 
 export const SUPPORT_MESSAGE_ROLES = ["user", "operator", "system", "bot"] as const;
@@ -719,7 +754,9 @@ export const supportMessages = pgTable("support_messages", {
   attachmentMime: text("attachment_mime"),
   readAt: bigint("read_at", { mode: "number" }),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
-});
+}, (t) => [
+  index("idx_support_msg_conv").on(t.conversationId, t.id.desc()),
+]);
 export type SupportMessage = typeof supportMessages.$inferSelect;
 
 export const sendSupportMessageSchema = z

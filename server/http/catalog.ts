@@ -34,7 +34,7 @@ import { log } from "./../index";
 import {
   riderId, isStaffSession, canManageRide, actorName, clientIp,
   requireRole, requireAuth, requireRoleWhenConfigured,
-  otpLimiter, paymentLimiter,
+  otpLimiter, paymentLimiter, parsePageParams,
 } from "./context";
 
 export function registerCatalogRoutes(app: Express): void {
@@ -138,8 +138,13 @@ export function registerCatalogRoutes(app: Express): void {
   // operators can see/restore them; the public /api/bikes never does.
   // Read access includes mechanics so the service staff can see the full fleet
   // (including archived) while triaging tickets; writes below stay operator/admin.
-  app.get("/api/admin/bikes", requireRole("mechanic", "operator", "admin"), async (_req, res) => {
-    res.json(await storage.listBikes({ includeArchived: true }));
+  app.get("/api/admin/bikes", requireRole("mechanic", "operator", "admin"), async (req, res) => {
+    // listBikes is cached and shared by the map/analytics, so paginate the
+    // already-loaded list here rather than in the storage layer (audit M5).
+    const all = await storage.listBikes({ includeArchived: true });
+    res.setHeader("X-Total-Count", String(all.length));
+    const { limit, offset } = parsePageParams(req);
+    res.json(limit !== undefined ? all.slice(offset, offset + limit) : all);
   });
   app.post("/api/admin/bikes", requireRole("operator", "admin"), async (req, res) => {
     const parsed = adminCreateBikeSchema.safeParse(req.body);

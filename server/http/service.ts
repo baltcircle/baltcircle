@@ -34,7 +34,7 @@ import { log } from "./../index";
 import {
   riderId, isStaffSession, canManageRide, actorName, clientIp,
   requireRole, requireAuth, requireRoleWhenConfigured,
-  otpLimiter, paymentLimiter,
+  otpLimiter, paymentLimiter, parsePageParams,
 } from "./context";
 
 export function registerServiceTicketRoutes(app: Express): void {
@@ -43,7 +43,11 @@ export function registerServiceTicketRoutes(app: Express): void {
   // List is open (operator UI reads it freely); all mutations are staff-gated
   // when ADMIN_PHONE_NUMBERS is configured. Service tickets are the mechanic's
   // core surface, so mechanic/operator/admin may create, update and comment.
-  app.get("/api/tickets", async (_req, res) => res.json(await storage.listTickets()));
+  app.get("/api/tickets", async (req, res) => {
+    const page = parsePageParams(req);
+    res.setHeader("X-Total-Count", String(await storage.countTickets()));
+    res.json(await storage.listTickets(page));
+  });
   app.get("/api/tickets/:id", async (req, res) => {
     const t = await storage.getTicket(Number(req.params.id));
     if (!t) return res.status(404).json({ error: "Заявка не найдена" });

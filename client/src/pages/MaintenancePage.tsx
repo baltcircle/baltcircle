@@ -21,6 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Plus, Wrench, MessageSquarePlus, X, LifeBuoy } from "lucide-react";
 import type { SupportTicketWithUser } from "@shared/schema";
 import { fmtRelative } from "@/lib/format";
+import { TablePager, useClientPagination } from "@/components/table-pager";
 
 // Russian labels for the stored ids. Legacy auto-flag kinds are mapped too so
 // older seeded/auto-generated tickets still render a friendly label.
@@ -163,6 +164,7 @@ export function MaintenancePage() {
   }, [tickets, openOnly, statusFilter, priorityFilter, query]);
 
   const openCount = tickets.filter((t) => !isClosed(t.status)).length;
+  const { page, setPage, pageCount, pageItems } = useClientPagination(filtered);
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-maintenance">
@@ -247,7 +249,7 @@ export function MaintenancePage() {
             Заявок не найдено
           </div>
         )}
-        {filtered.map((t) => (
+        {pageItems.map((t) => (
           <button
             key={t.id}
             onClick={() => setDetailId(t.id)}
@@ -276,6 +278,7 @@ export function MaintenancePage() {
             </Card>
           </button>
         ))}
+        <TablePager page={page} pageCount={pageCount} total={filtered.length} onPage={setPage} testid="tickets-pager" />
       </div>
 
       {/* Create dialog */}

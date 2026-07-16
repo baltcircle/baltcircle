@@ -92,6 +92,21 @@ export function requireRoleWhenConfigured(...roles: UserRole[]) {
   };
 }
 
+// --- Pagination ------------------------------------------------------------
+// Parse optional limit/offset query params for admin list endpoints (audit M5).
+// When `limit` is absent the caller wants the full list (client-side search /
+// CSV export rely on this), so we return offset only and the storage layer skips
+// LIMIT. When present, `limit` is clamped to [1, MAX_PAGE_LIMIT] so a client can
+// never ask for an unbounded page, and `offset` is floored at 0. The default
+// page size (50) is a client concern; the server only enforces the ceiling.
+export const MAX_PAGE_LIMIT = 200;
+export function parsePageParams(req: Request): { limit?: number; offset: number } {
+  const offset = Math.max(0, Math.floor(Number(req.query.offset) || 0));
+  if (req.query.limit === undefined) return { offset };
+  const limit = Math.min(Math.max(1, Math.floor(Number(req.query.limit) || 0)), MAX_PAGE_LIMIT);
+  return { limit, offset };
+}
+
 // --- Rate limiters ---------------------------------------------------------
 // We sit behind nginx with `trust proxy` set, so the limiter keys on the real
 // client IP (first X-Forwarded-For hop). Standard headers on, legacy off.

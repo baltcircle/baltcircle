@@ -1,1 +1,0 @@
-https://github.com/baltcircle/baltcircle/releases/download/pmtiles-latest/kaliningrad.pmtiles

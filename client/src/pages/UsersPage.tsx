@@ -19,6 +19,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Search, Users, ShieldCheck, Ban, Check, AlertTriangle } from "lucide-react";
 import { fmtDate, ROLE_LABEL } from "@/lib/format";
+import { TablePager, useClientPagination } from "@/components/table-pager";
 
 const USERS_KEY = ["/api/admin/users"];
 
@@ -83,6 +84,7 @@ export function UsersPage() {
   }, [users, search]);
 
   const blockedCount = users.filter((u) => u.blockedAt).length;
+  const { page, setPage, pageCount, pageItems } = useClientPagination(filtered);
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-users">
@@ -145,7 +147,7 @@ export function UsersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((u) => (
+              {pageItems.map((u) => (
                 <UserRowItem
                   key={u.id}
                   u={u}
@@ -159,6 +161,7 @@ export function UsersPage() {
             </TableBody>
           </Table>
         )}
+        <TablePager page={page} pageCount={pageCount} total={filtered.length} onPage={setPage} testid="users-pager" />
       </Card>
     </div>
   );

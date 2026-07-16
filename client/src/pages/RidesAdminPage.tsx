@@ -16,6 +16,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Search, Activity, AlertTriangle, StopCircle } from "lucide-react";
 import { fmtDate, fmtRub, fmtDuration, fmtTariff } from "@/lib/format";
+import { TablePager, useClientPagination } from "@/components/table-pager";
 
 const RIDES_KEY = ["/api/admin/rides"];
 
@@ -80,6 +81,8 @@ export function RidesAdminPage() {
       r.userId.toLowerCase().includes(q),
     );
   }, [rides, tab, search]);
+
+  const { page, setPage, pageCount, pageItems } = useClientPagination(filtered);
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-rides">
@@ -155,7 +158,7 @@ export function RidesAdminPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((r) => (
+              {pageItems.map((r) => (
                 <RideRowItem
                   key={r.id}
                   r={r}
@@ -166,6 +169,7 @@ export function RidesAdminPage() {
             </TableBody>
           </Table>
         )}
+        <TablePager page={page} pageCount={pageCount} total={filtered.length} onPage={setPage} testid="rides-pager" />
       </Card>
 
       <AlertDialog open={!!pendingEnd} onOpenChange={(o) => { if (!o) setPendingEnd(null); }}>
