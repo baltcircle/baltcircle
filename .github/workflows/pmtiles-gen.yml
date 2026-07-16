@@ -36,6 +36,9 @@ jobs:
           MAXZOOM: "14"
           # Protomaps CLI version (self-hostable extract tool, ODbL data).
           PMTILES_VER: "1.30.3"
+          # sha256 of go-pmtiles_${PMTILES_VER}_Linux_x86_64.tar.gz.
+          # Update this whenever PMTILES_VER changes.
+          PMTILES_SHA256: "adda9f979b719416d0c0069f57401a21c32078c46870a94f9bbda95d850f199f"
         shell: bash
         run: |
           set -e
@@ -47,6 +50,7 @@ jobs:
           if [ ! -x "$PM_BIN" ] || ! "$PM_BIN" version 2>/dev/null | grep -q "$PMTILES_VER"; then
             echo "Installing pmtiles CLI v$PMTILES_VER..."
             curl -L "https://github.com/protomaps/go-pmtiles/releases/download/v${PMTILES_VER}/go-pmtiles_${PMTILES_VER}_Linux_x86_64.tar.gz" -o /tmp/pmtiles.tar.gz
+            echo "${PMTILES_SHA256}  /tmp/pmtiles.tar.gz" | sha256sum -c -
             tar -xzf /tmp/pmtiles.tar.gz -C /home/yc-user/osm pmtiles
             chmod +x "$PM_BIN"
             rm -f /tmp/pmtiles.tar.gz

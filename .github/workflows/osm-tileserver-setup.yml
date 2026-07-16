@@ -35,6 +35,10 @@ jobs:
           fi
 
       - name: Install Tilemaker
+        env:
+          # sha256 of tilemaker-ubuntu-22.04.zip for the pinned release below.
+          # Update this whenever the Tilemaker version in the URL changes.
+          TILEMAKER_SHA256: a9cc99250782969aa41344f3a46a7a921b92525502e6d5a224e63fb9c4918150
         run: |
           if command -v tilemaker &>/dev/null; then
             echo "Already installed"
@@ -42,6 +46,7 @@ jobs:
             cd /tmp
             curl -L -o tilemaker.zip \
               https://github.com/systemed/tilemaker/releases/download/v2.4.0/tilemaker-ubuntu-22.04.zip
+            echo "${TILEMAKER_SHA256}  tilemaker.zip" | sha256sum -c -
             unzip -o tilemaker.zip
             sudo cp build/tilemaker /usr/local/bin/tilemaker
             sudo chmod +x /usr/local/bin/tilemaker
