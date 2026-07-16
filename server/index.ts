@@ -97,23 +97,62 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+// Keys whose values must never reach the logs — PII (phone/email), auth secrets
+// (OTP/codes/tokens/passwords) and payment data (PANs). Matched case-insensitively
+// as a substring so `phoneNumber`, `cardNumber`, `accessToken` etc. are all caught.
+const SENSITIVE_KEY_PATTERNS = [
+  "phone", "email", "otp", "code", "password", "pass", "token",
+  "secret", "card", "pan", "cvv", "cvc", "rebill", "auth", "session",
+];
+
+function isSensitiveKey(key: string): boolean {
+  const k = key.toLowerCase();
+  return SENSITIVE_KEY_PATTERNS.some((p) => k.includes(p));
+}
+
+// Recursively redact sensitive fields so a debug body dump never leaks PII or
+// secrets. Depth-limited to avoid pathological/cyclic payloads.
+function redact(value: unknown, depth = 0): unknown {
+  if (depth > 4) return "[…]";
+  if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = isSensitiveKey(k) ? "[REDACTED]" : redact(v, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+// Log response bodies only when explicitly opted in via LOG_RESPONSE_BODY=1, and
+// even then with sensitive fields redacted and the payload length-capped. By
+// default we log only method/path/status/latency (audit H1 — the old logger
+// dumped full JSON bodies, leaking phones, emails, dev OTP codes and payment
+// statuses into the logs).
+const LOG_RESPONSE_BODY = process.env.LOG_RESPONSE_BODY === "1";
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+  let capturedJsonResponse: unknown = undefined;
 
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
+  if (LOG_RESPONSE_BODY) {
+    const originalResJson = res.json;
+    res.json = function (bodyJson, ...args) {
+      capturedJsonResponse = bodyJson;
+      return originalResJson.apply(res, [bodyJson, ...args]);
+    };
+  }
 
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      if (LOG_RESPONSE_BODY && capturedJsonResponse !== undefined) {
+        let dump = JSON.stringify(redact(capturedJsonResponse));
+        if (dump.length > 500) dump = dump.slice(0, 500) + "…";
+        logLine += ` :: ${dump}`;
       }
 
       log(logLine);
