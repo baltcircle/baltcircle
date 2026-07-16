@@ -6,6 +6,7 @@ import { MapLibreMap } from "@/components/MapLibreMap";
 import { RentalStartModal } from "@/components/RentalStartModal";
 import { RegistrationModal } from "@/components/RegistrationModal";
 import { QrScanModal } from "@/components/QrScanModal";
+import { RideTimer } from "@/components/RideTimer";
 import { DrawerMenu } from "@/components/DrawerMenu";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
@@ -13,7 +14,7 @@ import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { useActiveRideTracker } from "@/hooks/use-active-ride-tracker";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { fmtDuration, fmtDistance, fmtRub } from "@/lib/format";
+import { fmtDistance, fmtRub } from "@/lib/format";
 import { PENDING_BIKE_KEY } from "@/lib/pending-bike";
 import { QrCode, Lock, Clock, Menu, MapPin, Route, X, CreditCard } from "lucide-react";
 import { Link } from "wouter";
@@ -171,13 +172,6 @@ export function MapPage() {
   };
 
   const pendingMulti = useRef<boolean | null>(null);
-
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!activeRide) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [activeRide]);
 
   useEffect(() => {
     if (userLoading || isRegistered) return;
@@ -348,7 +342,7 @@ export function MapPage() {
                   <Clock className="w-3 h-3" /> Время
                 </div>
                 <div className="font-display text-base font-light tabular-nums mt-0.5" data-testid="text-ride-duration">
-                  {fmtDuration(now - activeRide.startedAt)}
+                  <RideTimer startedAt={activeRide.startedAt} />
                 </div>
               </div>
               <div className="rounded-xl bg-background/50 border border-card-border px-3 py-2">
