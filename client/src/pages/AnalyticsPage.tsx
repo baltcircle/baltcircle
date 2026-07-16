@@ -401,7 +401,19 @@ function ExportBar() {
 
   const exportRides = () =>
     run("rides", async () => {
-      const rows = (await (await apiRequest("GET", "/api/admin/rides?limit=1000")).json()) as AdminRide[];
+      // The rides endpoint clamps `limit` to 200 (audit M5), so page through
+      // with offset until a short page signals the end rather than asking for an
+      // unbounded slice.
+      const pageSize = 200;
+      const rows: AdminRide[] = [];
+      for (let offset = 0; ; offset += pageSize) {
+        const page = (await (await apiRequest(
+          "GET",
+          `/api/admin/rides?limit=${pageSize}&offset=${offset}`,
+        )).json()) as AdminRide[];
+        rows.push(...page);
+        if (page.length < pageSize) break;
+      }
       downloadCsv("rides.csv", rows, [
         { header: "ID", value: (r) => r.id },
         { header: "Велосипед", value: (r) => r.bikeId },

@@ -27,6 +27,7 @@ import {
   Search, Plus, Pencil, QrCode, Archive, Trash2, Copy, Download, Printer, Bike as BikeIcon, Wrench,
 } from "lucide-react";
 import { Link } from "wouter";
+import { TablePager, useClientPagination } from "@/components/table-pager";
 
 const ADMIN_BIKES_KEY = ["/api/admin/bikes"] as const;
 
@@ -108,6 +109,7 @@ export function BikesPage() {
   }, [bikes, search, showArchived]);
 
   const archivedCount = bikes.filter((b) => b.status === "archived").length;
+  const { page, setPage, pageCount, pageItems } = useClientPagination(filtered);
 
   // ---------- Mutations ----------
   const saveMut = useMutation({
@@ -281,7 +283,7 @@ export function BikesPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((b) => (
+            {pageItems.map((b) => (
               <TableRow key={b.id} data-testid={`row-admin-bike-${b.id}`} className="hover-elevate">
                 <TableCell className="font-mono text-sm">
                   <span className="inline-flex items-center gap-2">
@@ -351,6 +353,7 @@ export function BikesPage() {
             )}
           </TableBody>
         </Table>
+        <TablePager page={page} pageCount={pageCount} total={filtered.length} onPage={setPage} testid="bikes-pager" />
       </Card>
 
       {/* ---------- Add / edit dialog ---------- */}

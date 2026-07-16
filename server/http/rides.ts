@@ -35,7 +35,7 @@ import { sendToUserAsync } from "./../push";
 import {
   riderId, isStaffSession, canManageRide, actorName, clientIp,
   requireRole, requireAuth, requireRoleWhenConfigured,
-  otpLimiter, paymentLimiter,
+  otpLimiter, paymentLimiter, parsePageParams,
 } from "./context";
 
 export function registerRideRoutes(app: Express): void {
@@ -165,8 +165,9 @@ export function registerRideRoutes(app: Express): void {
   // Staff-only operational view of every ride with rider identity attached.
   // 401 unregistered, 403 registered-but-not-staff (mirrors /api/admin/*).
   app.get("/api/admin/rides", requireRole("operator", "admin"), async (req, res) => {
-    const limit = req.query.limit ? Math.min(Number(req.query.limit) || 200, 1000) : 200;
-    res.json(await storage.listAdminRides({ limit }));
+    res.setHeader("X-Total-Count", String(await storage.countRides()));
+    const { limit, offset } = parsePageParams(req);
+    res.json(await storage.listAdminRides({ limit, offset }));
   });
   // Manually finish any active ride. Reuses the shared endRide() (which settles
   // cost, frees the bike and charges the wallet) but, unlike the rider endpoint,
