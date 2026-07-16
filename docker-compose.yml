@@ -77,7 +77,9 @@ services:
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_CONTACT: ${VAPID_CONTACT:-mailto:no-reply@takeride.ru}
     ports:
-      - "5000:5000"
+      # Bind only to loopback so the app is reachable through nginx on the same
+      # host, not exposed on all interfaces to the outside world (audit L8).
+      - "127.0.0.1:5000:5000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
