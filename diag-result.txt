@@ -1,3 +1,50 @@
-mbtiles: 37M	kaliningrad.mbtiles
-disk: /dev/vda1        39G   28G   11G  72% /
-bounds: [18.913317, 54.317231, 22.887466, 55.645845]
+#15 11.84 npm notice New major version of npm available! 10.8.2 -> 12.0.1
+#15 11.84 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.1
+#15 11.84 npm notice To update run: npm install -g npm@12.0.1
+#15 11.84 npm notice
+#15 DONE 12.0s
+
+#16 [build 4/4] RUN npm prune --omit=dev
+#16 0.768 npm warn EBADENGINE Unsupported engine {
+#16 0.768 npm warn EBADENGINE   package: '@zxing/library@0.22.0',
+#16 0.768 npm warn EBADENGINE   required: { node: '>= 24.0.0' },
+#16 0.768 npm warn EBADENGINE   current: { node: 'v20.20.2', npm: '10.8.2' }
+#16 0.768 npm warn EBADENGINE }
+#16 2.846 
+#16 2.846 up to date, audited 434 packages in 3s
+#16 2.846 
+#16 2.846 65 packages are looking for funding
+#16 2.846   run `npm fund` for details
+#16 2.849 
+#16 2.849 1 low severity vulnerability
+#16 2.849 
+#16 2.849 To address all issues, run:
+#16 2.849   npm audit fix
+#16 2.849 
+#16 2.849 Run `npm audit` for details.
+#16 DONE 2.9s
+
+#17 [runtime 4/7] COPY --from=build --chown=node:node /app/package*.json ./
+#17 DONE 0.5s
+
+#18 [runtime 5/7] COPY --from=build --chown=node:node /app/node_modules ./node_modules
+#18 DONE 16.7s
+
+#19 [runtime 6/7] COPY --from=build --chown=node:node /app/dist ./dist
+#19 DONE 0.8s
+
+#20 [runtime 7/7] RUN mkdir -p /app/uploads && chown -R node:node /app/uploads
+#20 DONE 0.4s
+
+#21 exporting to image
+#21 exporting layers
+#21 exporting layers 11.1s done
+#21 exporting manifest sha256:dc495a3d7057b6b5ce14525c5c3fd9d930e7fbd303cf8f9addc46e2e3d9e10d3 0.0s done
+#21 exporting config sha256:0afd9afa1f91e4b58196d865a8a9ee9150a1a1fa8be3273174e9a6902b9a535d 0.0s done
+#21 exporting attestation manifest sha256:ab30a2bec79d71be27882a02b81089bbdbc0d5a5fa5493308719a8cb03e9c668 0.0s done
+#21 exporting manifest list sha256:29dddfe9a3bfaa28e79e4992a1163e431da08f94ed4016068e8f34d1a317e769 0.0s done
+#21 naming to docker.io/library/bc-test:latest
+#21 naming to docker.io/library/bc-test:latest done
+#21 unpacking to docker.io/library/bc-test:latest
+#21 unpacking to docker.io/library/bc-test:latest 5.6s done
+#21 DONE 16.9s
