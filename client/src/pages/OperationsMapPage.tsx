@@ -8,9 +8,14 @@ import { Button } from "@/components/ui/button";
 import { MapLibreMap, type MapLayers } from "@/components/MapLibreMap";
 import { fmtDate, fmtRub } from "@/lib/format";
 import {
-  Bike as BikeIcon, MapPin, Route, Wrench, RefreshCw, X,
-  ParkingCircle, Activity, ExternalLink,
+  Bike as BikeIcon, MapPin, Route, Wrench, X,
+  ParkingCircle, ExternalLink,
 } from "lucide-react";
+
+// Poll layer data on an interval so the map stays live without a manual
+// refresh. React Query only swaps in new data — the map instance, zoom and
+// center are preserved because MapLibreMap updates from props in place.
+const LAYER_POLL_MS = 20_000;
 
 // Status strings that mean a bike is part of the live operational fleet (i.e.
 // not soft-deleted). Archived bikes must never reach the operations map.
@@ -52,11 +57,11 @@ type Selection =
   | null;
 
 export function OperationsMapPage({ embedded = false }: { embedded?: boolean } = {}) {
-  const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/admin/bikes"] });
-  const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/admin/parkings"] });
-  const ridesQ = useQuery<AdminRide[]>({ queryKey: ["/api/admin/rides"] });
-  const ticketsQ = useQuery<Ticket[]>({ queryKey: ["/api/tickets"] });
-  const objectsQ = useQuery<MapObject[]>({ queryKey: ["/api/admin/map-objects"] });
+  const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/admin/bikes"], refetchInterval: LAYER_POLL_MS });
+  const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/admin/parkings"], refetchInterval: LAYER_POLL_MS });
+  const ridesQ = useQuery<AdminRide[]>({ queryKey: ["/api/admin/rides"], refetchInterval: LAYER_POLL_MS });
+  const ticketsQ = useQuery<Ticket[]>({ queryKey: ["/api/tickets"], refetchInterval: LAYER_POLL_MS });
+  const objectsQ = useQuery<MapObject[]>({ queryKey: ["/api/admin/map-objects"], refetchInterval: LAYER_POLL_MS });
 
   const [layers, setLayers] = useState<MapLayers>({
     parkings: true, bikes: true, rides: true, tickets: true, objects: true,
@@ -88,18 +93,6 @@ export function OperationsMapPage({ embedded = false }: { embedded?: boolean } =
     [objectsQ.data],
   );
 
-  const activeParkings = parkings.filter((p) => p.status === "active").length;
-  const inactiveParkings = parkings.filter((p) => p.status === "inactive").length;
-
-  const refreshing =
-    bikesQ.isFetching || parkingsQ.isFetching || ridesQ.isFetching ||
-    ticketsQ.isFetching || objectsQ.isFetching;
-
-  const refreshAll = () => {
-    bikesQ.refetch(); parkingsQ.refetch(); ridesQ.refetch();
-    ticketsQ.refetch(); objectsQ.refetch();
-  };
-
   const toggleLayer = (key: LayerKey) =>
     setLayers((l) => ({ ...l, [key]: !l[key] }));
 
@@ -108,26 +101,18 @@ export function OperationsMapPage({ embedded = false }: { embedded?: boolean } =
       className={embedded ? "" : "px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto"}
       data-testid="page-admin-operations-map"
     >
-      <header className={`flex items-end justify-between flex-wrap gap-4 ${embedded ? "mb-3" : "mb-6"}`}>
-        <div>
-          {!embedded && (
-            <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Операции</div>
-          )}
-          <h1 className={`font-display font-light ${embedded ? "text-lg" : "text-2xl lg:text-3xl mt-1"}`}>
+      {!embedded && (
+        <header className="mb-6">
+          <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Операции</div>
+          <h1 className="font-display font-light text-2xl lg:text-3xl mt-1">
             Операторская карта
           </h1>
-          {!embedded && (
-            <p className="text-muted-foreground text-sm mt-1">
-              Мониторинг флота, поездок, парковок и сервисных тикетов на одной карте.
-              Только просмотр — редактирование в соответствующих разделах.
-            </p>
-          )}
-        </div>
-        <Button variant="outline" size="sm" onClick={refreshAll} disabled={refreshing} data-testid="button-operations-refresh">
-          <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
-          Обновить
-        </Button>
-      </header>
+          <p className="text-muted-foreground text-sm mt-1">
+            Мониторинг флота, поездок, парковок и сервисных тикетов на одной карте.
+            Только просмотр — редактирование в соответствующих разделах.
+          </p>
+        </header>
+      )}
 
       {/* Layer toggles */}
       <div className="flex flex-wrap items-center gap-2 mb-4" data-testid="operations-layer-toggles">
@@ -149,81 +134,33 @@ export function OperationsMapPage({ embedded = false }: { embedded?: boolean } =
         })}
       </div>
 
-      <div className="grid lg:grid-cols-[1fr_320px] gap-4 lg:gap-6">
-        <div className="space-y-3">
-          <MapLibreMap
-            bikes={bikes}
-            parkings={parkings}
-            activeRides={activeRides}
-            tickets={openTickets}
-            mapObjects={activeObjects}
-            layers={layers}
-            height="64vh"
-            className="relative w-full overflow-hidden rounded-xl border border-card-border bg-card"
-            selectedBikeId={selection?.kind === "bike" ? selection.id : null}
-            onSelectBike={(id) => setSelection({ kind: "bike", id })}
-            onSelectParking={(id) => setSelection({ kind: "parking", id })}
-            onSelectRide={(id) => setSelection({ kind: "ride", id })}
-            onSelectTicket={(id) => setSelection({ kind: "ticket", id })}
-          />
+      <div className="space-y-3">
+        <MapLibreMap
+          bikes={bikes}
+          parkings={parkings}
+          activeRides={activeRides}
+          tickets={openTickets}
+          mapObjects={activeObjects}
+          layers={layers}
+          height="64vh"
+          className="relative w-full overflow-hidden rounded-xl border border-card-border bg-card"
+          selectedBikeId={selection?.kind === "bike" ? selection.id : null}
+          onSelectBike={(id) => setSelection({ kind: "bike", id })}
+          onSelectParking={(id) => setSelection({ kind: "parking", id })}
+          onSelectRide={(id) => setSelection({ kind: "ride", id })}
+          onSelectTicket={(id) => setSelection({ kind: "ticket", id })}
+        />
 
-          <DetailCard
-            selection={selection}
-            onClose={() => setSelection(null)}
-            bikes={bikes}
-            parkings={parkings}
-            rides={activeRides}
-            tickets={openTickets}
-          />
-        </div>
-
-        {/* Summary panel */}
-        <Card className="p-5 h-fit" data-testid="operations-summary">
-          <div className="flex items-center gap-2 mb-4 text-xs uppercase tracking-widest text-muted-foreground">
-            <Activity className="w-3.5 h-3.5" /> Сводка
-          </div>
-          <div className="space-y-2">
-            <SummaryRow
-              icon={BikeIcon} label="Велосипеды" value={bikes.length}
-              href="/admin/bikes" testId="summary-bikes"
-            />
-            <SummaryRow
-              icon={Route} label="Активные поездки" value={activeRides.length}
-              href="/admin/rides" testId="summary-rides"
-            />
-            <SummaryRow
-              icon={Wrench} label="Открытые тикеты" value={openTickets.length}
-              href="/admin/maintenance" testId="summary-tickets"
-            />
-            <SummaryRow
-              icon={ParkingCircle} label="Активные парковки" value={activeParkings}
-              href="/admin/parkings" testId="summary-parkings-active"
-            />
-            <SummaryRow
-              icon={ParkingCircle} label="Неактивные парковки" value={inactiveParkings}
-              href="/admin/parkings" testId="summary-parkings-inactive"
-            />
-          </div>
-        </Card>
+        <DetailCard
+          selection={selection}
+          onClose={() => setSelection(null)}
+          bikes={bikes}
+          parkings={parkings}
+          rides={activeRides}
+          tickets={openTickets}
+        />
       </div>
     </div>
-  );
-}
-
-function SummaryRow({ icon: Icon, label, value, href, testId }: {
-  icon: typeof BikeIcon; label: string; value: number; href: string; testId: string;
-}) {
-  return (
-    <Link
-      href={href}
-      data-testid={testId}
-      className="flex items-center gap-3 rounded-md border border-card-border px-3 py-2 hover-elevate"
-    >
-      <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
-      <span className="text-sm font-light flex-1">{label}</span>
-      <span className="text-base font-medium tabular-nums">{value}</span>
-      <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
-    </Link>
   );
 }
 
