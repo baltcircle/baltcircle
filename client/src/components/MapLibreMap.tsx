@@ -9,8 +9,9 @@ import {
 } from "./map/mapStyle";
 import {
   bikeMarkerColor, ticketMarkerColor, dotMarkerEl, parkingMarkerEl,
-  fillFromColor, coercePoints, smoothCorners,
+  fillFromColor, coercePoints, smoothCorners, catmullRomSmooth,
 } from "./map/mapMarkers";
+import { createGeoFilter, douglasPeucker } from "@/lib/geoSmoothing";
 
 /** Which optional overlay layers are drawn. Every flag defaults to visible so
  *  the customer map and editors are unaffected; the admin operations map flips
@@ -162,23 +163,39 @@ export function MapLibreMap({
       map.once("load", () => {
         map.resize();
         readyRef.current = true;
-        // Регистрируем иконку-стрелку для heading. Треугольник указывает вверх (0° = север),
-        // MapLibre крутит его по icon-rotate. Центр icon = центр GPS-точки; кончик
-        // торчит из-под белого кольца (r=13px), остальное скрыто под точкой.
-        if (!map.hasImage("user-heading-arrow")) {
-          const size = 40;
+        // Сектор-конус направления движения (стиль Google Maps «луч фонарика»).
+        // Вершина конуса — в самой GPS-точке, веер расходится в сторону heading
+        // с плавным градиентом: насыщенный брендовый #61B5C4 у вершины → полностью
+        // прозрачный на внешней дуге. Рисуем «вверх» (0° = север); MapLibre крутит
+        // по icon-rotate. icon-anchor:bottom → вершина конуса привязана к точке,
+        // поворот идёт вокруг неё. Рендер в 2× (pixelRatio) для чёткости на retina.
+        if (!map.hasImage("user-heading-cone")) {
+          const S = 120;          // логический размер стороны
+          const dpr = 2;
           const c = document.createElement("canvas");
-          c.width = size; c.height = size;
+          c.width = S * dpr; c.height = S * dpr;
           const ctx = c.getContext("2d")!;
-          ctx.fillStyle = "#1f2937"; // тёмно-серый — читаемо на голубой ауре
+          ctx.scale(dpr, dpr);
+          const apexX = S / 2, apexY = S;      // вершина — центр нижней грани
+          const R = S * 0.94;                  // длина луча
+          const half = (75 / 2) * Math.PI / 180; // раствор ~75°
+          const up = -Math.PI / 2;
+          const grad = ctx.createRadialGradient(apexX, apexY, 0, apexX, apexY, R);
+          grad.addColorStop(0.0, "rgba(97,181,196,0.55)"); // #61B5C4 у точки
+          grad.addColorStop(0.55, "rgba(97,181,196,0.22)");
+          grad.addColorStop(1.0, "rgba(97,181,196,0.0)");  // прозрачный край
+          ctx.fillStyle = grad;
           ctx.beginPath();
-          ctx.moveTo(size / 2, 4);              // кончик вверху
-          ctx.lineTo(size / 2 - 7, size / 2 + 4); // левый низ
-          ctx.lineTo(size / 2 + 7, size / 2 + 4); // правый низ
+          ctx.moveTo(apexX, apexY);
+          ctx.arc(apexX, apexY, R, up - half, up + half);
           ctx.closePath();
           ctx.fill();
-          const img = ctx.getImageData(0, 0, size, size);
-          map.addImage("user-heading-arrow", { width: size, height: size, data: new Uint8Array(img.data.buffer) });
+          const img = ctx.getImageData(0, 0, S * dpr, S * dpr);
+          map.addImage(
+            "user-heading-cone",
+            { width: S * dpr, height: S * dpr, data: new Uint8Array(img.data.buffer) },
+            { pixelRatio: dpr },
+          );
         }
         // Hand the editor a getter for the live centre as [lat, lng].
         onCenterGetterRef.current?.(() => {
@@ -261,16 +278,18 @@ export function MapLibreMap({
     const map = mapRef.current;
     if (!map) return;
 
+    // Фильтр качества GPS: режет неточные точки (accuracy > 50 м), «телепорты»
+    // (скорость между точками > 60 км/ч — нереально для велосипеда) и сглаживает
+    // джиттер адаптивным EMA. Логика/тесты — client/src/lib/geoSmoothing.ts.
+    const geo = createGeoFilter();
     // heading от GPS приходит только когда юзер двигается (в стоячем положении = null/NaN).
-    // Храним последнее валидное значение в локальной переменной — как только человек остановился,
-    // стрелка продолжает смотреть в туже сторону, куда шёл, а не обнуляется.
+    // Фильтр держит последнее валидное значение — стрелка/сектор не обнуляются на остановке.
     let lastHeading: number | null = null;
 
-    const updateSource = (lng: number, lat: number, rawHeading: number | null) => {
+    const updateSource = (lng: number, lat: number, heading: number | null) => {
       const src = map.getSource("user-location");
       if (!src) return;
-      // GPS speed=0 даёт heading=NaN; принимаем только числовые валидные градусы.
-      if (rawHeading !== null && Number.isFinite(rawHeading)) lastHeading = rawHeading;
+      if (heading !== null) lastHeading = heading;
       src.setData({
         type: "FeatureCollection",
         features: [{
@@ -293,7 +312,17 @@ export function MapLibreMap({
     };
 
     const watchId = navigator.geolocation.watchPosition(
-      (pos) => updateSource(pos.coords.longitude, pos.coords.latitude, pos.coords.heading ?? null),
+      (pos) => {
+        const smoothed = geo.push({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          heading: pos.coords.heading ?? null,
+          timestamp: pos.timestamp ?? Date.now(),
+        });
+        if (!smoothed) return; // точка отброшена как выброс/шум
+        updateSource(smoothed.lng, smoothed.lat, smoothed.heading);
+      },
       () => { /* silent fail — no dot */ },
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
     );
@@ -575,8 +604,16 @@ export function MapLibreMap({
       if (!raw) return;
       let pts: [number, number, number][];
       try { pts = JSON.parse(raw) as [number, number, number][]; } catch { return; }
-      const coords = pts.map(([x, y]) => { const [lat, lng] = mapToReal(x, y); return [lng, lat]; });
-      if (coords.length > 1) features.push({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } });
+      const coords = pts.map(([x, y]) => { const [lat, lng] = mapToReal(x, y); return [lng, lat] as [number, number]; });
+      if (coords.length <= 1) return;
+      // Сырой трек соединяет GPS-точки ломаной — углы и шум. Чистим в два шага:
+      //  1) Дуглас-Пекер (ε≈1e-5° ≈ 1.1 м) — выкидывает избыточные точки на
+      //     прямых, не искажая форму;
+      //  2) Catmull-Rom — интерполирует сглаженной кривой, проходящей через
+      //     оставшиеся точки. Вместе с line-join/cap:round даёт плавную линию.
+      const simplified = douglasPeucker(coords, 1e-5);
+      const smooth = simplified.length >= 3 ? catmullRomSmooth(simplified, 8) : simplified;
+      features.push({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: smooth } });
     };
     if (show.rides) {
       if (ride) addTrack(ride.track);
