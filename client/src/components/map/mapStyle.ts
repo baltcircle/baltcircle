@@ -45,6 +45,7 @@ const COLORS = {
   boundaryCountry: "#8a6fae", // RU / LT / PL state border (boundaries kind=country)
   roadOutline:     "#1D1E5D", // ALL roads — 1px outline in dark-theme primary (hollow fill)
   houseNumber:     "#1D1E5D", // house-number labels (z16+) — brand blue, rendered at 0.55 opacity
+  cycleway:        "#2563EB", // dedicated cycleways (highway=cycleway) — saturated blue, distinct from muted water #9fc9e0
 } as const;
 
 // PMTiles file served same-origin via Express (Range request support, no CORS).
@@ -274,6 +275,28 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
           },
         ];
       })(),
+
+      // ── CYCLEWAYS — выделенные велодорожки синей линией ────────────────────────
+      // Protomaps basemap кладёт дороги в source-layer "roads" с полем `kind` и
+      // уточняющим `kind_detail` (сырое значение OSM-тега highway). Выделенные
+      // велодорожки (highway=cycleway) приходят как kind="path", kind_detail="cycleway".
+      // Велополосы на проезжей части (cycleway=lane) в схему Protomaps НЕ попадают —
+      // это атрибут дороги, а не отдельная геометрия, поэтому рисуем только
+      // обособленные велодорожки. Слой стоит ПОВЕРХ дорожных линий (road-inner*),
+      // но НИЖЕ зданий/подписей/маркеров, поэтому синяя линия читается на дороге.
+      // minzoom 12 — велодорожки появляются на городском масштабе (раньше, чем
+      // обычные path z14, т.к. это выделяемая фича).
+      {
+        id: "cycleway", type: "line", source: "pm", "source-layer": "roads", minzoom: 12,
+        filter: ["==", ["get", "kind_detail"], "cycleway"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": COLORS.cycleway,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 12, 1.5, 14, 2.5, 16, 3.5],
+          "line-opacity": 0.9,
+        },
+      },
+
       {
         // Only mainline rail (Яндекс-style): service tracks (spur/yard/siding/
         // crossover) are excluded so the map isn't overloaded with yard clutter.
