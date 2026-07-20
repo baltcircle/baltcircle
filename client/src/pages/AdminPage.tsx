@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useSupportUnread } from "@/hooks/use-support-unread";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
+import { OperationsMapPage } from "./OperationsMapPage";
 
 // Active rides running longer than this are surfaced as an alert — a likely
 // abandoned/forgotten rental or a lock that never reported its end.
@@ -100,47 +101,47 @@ export function AdminPage() {
 
           <div className="flex flex-wrap gap-2">
             <StatusChip
+              tone="emerald"
+              icon={<CheckCircle2 className="w-3.5 h-3.5" />}
+              label="Доступно"
+              value={m.available}
+              testId="status-available"
+            />
+            <StatusChip
               tone="sky"
               icon={<BikeIcon className="w-3.5 h-3.5" />}
-              label="Всего велосипедов"
-              value={m.totalBikes}
-              testId="status-total-bikes"
-            />
-            <StatusChip
-              tone="emerald"
-              icon={<Plus className="w-3.5 h-3.5" />}
-              label="Новых сегодня"
-              value={m.newUsersToday}
-              testId="status-new-users"
-            />
-            <StatusChip
-              tone="rose"
-              icon={<MapIcon className="w-3.5 h-3.5" />}
-              label="Объектов на карте"
-              value={m.mapObjects}
-              testId="status-map-objects"
+              label="В аренде"
+              value={m.rented}
+              testId="status-rented"
             />
             <StatusChip
               tone="muted"
-              icon={<MapPin className="w-3.5 h-3.5" />}
-              label="Активных парковок"
-              value={m.activeParkings}
-              testId="status-active-parkings"
+              icon={<Activity className="w-3.5 h-3.5" />}
+              label="Поездок сегодня"
+              value={m.ridesToday}
+              testId="status-rides-today"
+            />
+            <StatusChip
+              tone={m.openTickets > 0 ? "amber" : "muted"}
+              icon={<Wrench className="w-3.5 h-3.5" />}
+              label="Сервисные заявки"
+              value={m.openTickets}
+              testId="status-open-tickets"
+            />
+            <StatusChip
+              tone={openSupport.length > 0 ? "amber" : "muted"}
+              icon={<LifeBuoy className="w-3.5 h-3.5" />}
+              label="Обращения в поддержку"
+              value={openSupport.length}
+              testId="status-open-support"
             />
           </div>
         </div>
       </header>
 
-      {/* ---------- KPI cards ---------- */}
-      <section
-        className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-6"
-        data-testid="dashboard-kpis"
-      >
-        <Kpi testId="dashboard-kpi-available" label="Доступно" value={m.available} tone="emerald" />
-        <Kpi testId="dashboard-kpi-rented" label="В аренде" value={m.rented} tone="sky" />
-        <Kpi testId="dashboard-kpi-rides-today" label="Поездок сегодня" value={m.ridesToday} />
-        <Kpi testId="dashboard-kpi-open-tickets" label="Сервисные заявки" value={m.openTickets} tone={m.openTickets > 0 ? "amber" : undefined} icon={<Wrench className="w-4 h-4" />} />
-        <Kpi testId="dashboard-kpi-open-support" label="Обращения в поддержку" value={openSupport.length} tone={openSupport.length > 0 ? "amber" : undefined} icon={<LifeBuoy className="w-4 h-4" />} />
+      {/* ---------- Operator map (embedded from OperationsMapPage) ---------- */}
+      <section className="mb-6" data-testid="dashboard-operations-map">
+        <OperationsMapPage embedded />
       </section>
 
       {/* ---------- Quick actions ---------- */}
@@ -516,6 +517,7 @@ const CHIP_TONE: Record<string, string> = {
   emerald: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
   sky: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
   rose: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
+  amber: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
   muted: "bg-muted text-muted-foreground",
 };
 
@@ -530,20 +532,6 @@ function StatusChip({ tone, icon, label, value, testId }: {
         <div className="text-[10px] uppercase tracking-wider opacity-80">{label}</div>
       </div>
     </div>
-  );
-}
-
-function Kpi({ label, value, testId, tone, icon }: {
-  label: string; value: number; testId: string; tone?: string; icon?: React.ReactNode;
-}) {
-  return (
-    <Card className="p-4" data-testid={testId}>
-      <div className="flex items-center justify-between text-muted-foreground">
-        <div className="text-[10px] uppercase tracking-widest">{label}</div>
-        {icon}
-      </div>
-      <div className={`font-display text-2xl font-light mt-1 ${tone ? TONE_TEXT[tone] : ""}`}>{value}</div>
-    </Card>
   );
 }
 

@@ -6,7 +6,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import type { UserRole } from "@shared/schema";
 import {
   Map, QrCode, Route, ShieldCheck, Wrench, BarChart3,
-  Sun, Moon, Bike, ChevronRight, ArrowLeft, User, Users, MapPin, Crosshair, LifeBuoy,
+  Sun, Moon, Bike, ChevronRight, ArrowLeft, User, Users, MapPin, LifeBuoy,
 } from "lucide-react";
 
 interface NavItem {
@@ -35,7 +35,8 @@ const OPS_NAV: NavItem[] = [
   { href: "/admin/rides",       label: "Поездки",      icon: Route,       testId: "nav-admin-rides", roles: ["operator", "admin"] },
   { href: "/admin/users",       label: "Пользователи", icon: Users,       testId: "nav-users",       roles: ["operator", "admin"] },
   { href: "/admin/map",         label: "Карта",        icon: Map,         testId: "nav-map-editor",  roles: ["operator", "admin"] },
-  { href: "/admin/operations-map", label: "Оперкарта",  icon: Crosshair,  testId: "nav-operations-map", roles: ["operator", "admin"] },
+  // Оперкарта убрана из меню — карта встроена в дашборд (/admin). Маршрут
+  // /admin/operations-map остаётся рабочим для прямых ссылок и закладок.
   { href: "/admin/parkings",    label: "Парковки",     icon: MapPin,      testId: "nav-parkings",    roles: ["operator", "admin"] },
   { href: "/admin/analytics",   label: "Аналитика",    icon: BarChart3,   testId: "nav-analytics",   roles: ["operator", "admin"] },
   { href: "/admin/maintenance", label: "Сервис",       icon: Wrench,      testId: "nav-maintenance", roles: ["mechanic", "operator", "admin"] },
