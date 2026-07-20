@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useSupportUnread } from "@/hooks/use-support-unread";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
+import { OperationsMapPage } from "./OperationsMapPage";
 
 // Active rides running longer than this are surfaced as an alert — a likely
 // abandoned/forgotten rental or a lock that never reported its end.
@@ -138,16 +139,9 @@ export function AdminPage() {
         </div>
       </header>
 
-      {/* ---------- KPI cards ---------- */}
-      <section
-        className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-6"
-        data-testid="dashboard-kpis"
-      >
-        <Kpi testId="dashboard-kpi-available" label="Доступно" value={m.available} tone="emerald" />
-        <Kpi testId="dashboard-kpi-rented" label="В аренде" value={m.rented} tone="sky" />
-        <Kpi testId="dashboard-kpi-rides-today" label="Поездок сегодня" value={m.ridesToday} />
-        <Kpi testId="dashboard-kpi-open-tickets" label="Сервисные заявки" value={m.openTickets} tone={m.openTickets > 0 ? "amber" : undefined} icon={<Wrench className="w-4 h-4" />} />
-        <Kpi testId="dashboard-kpi-open-support" label="Обращения в поддержку" value={openSupport.length} tone={openSupport.length > 0 ? "amber" : undefined} icon={<LifeBuoy className="w-4 h-4" />} />
+      {/* ---------- Operator map (embedded from OperationsMapPage) ---------- */}
+      <section className="mb-6" data-testid="dashboard-operations-map">
+        <OperationsMapPage embedded />
       </section>
 
       {/* ---------- Quick actions ---------- */}
@@ -538,20 +532,6 @@ function StatusChip({ tone, icon, label, value, testId }: {
         <div className="text-[10px] uppercase tracking-wider opacity-80">{label}</div>
       </div>
     </div>
-  );
-}
-
-function Kpi({ label, value, testId, tone, icon }: {
-  label: string; value: number; testId: string; tone?: string; icon?: React.ReactNode;
-}) {
-  return (
-    <Card className="p-4" data-testid={testId}>
-      <div className="flex items-center justify-between text-muted-foreground">
-        <div className="text-[10px] uppercase tracking-widest">{label}</div>
-        {icon}
-      </div>
-      <div className={`font-display text-2xl font-light mt-1 ${tone ? TONE_TEXT[tone] : ""}`}>{value}</div>
-    </Card>
   );
 }
 

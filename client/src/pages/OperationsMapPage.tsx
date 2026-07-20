@@ -51,7 +51,7 @@ type Selection =
   | { kind: "ticket"; id: number }
   | null;
 
-export function OperationsMapPage() {
+export function OperationsMapPage({ embedded = false }: { embedded?: boolean } = {}) {
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/admin/bikes"] });
   const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/admin/parkings"] });
   const ridesQ = useQuery<AdminRide[]>({ queryKey: ["/api/admin/rides"] });
@@ -104,15 +104,24 @@ export function OperationsMapPage() {
     setLayers((l) => ({ ...l, [key]: !l[key] }));
 
   return (
-    <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-operations-map">
-      <header className="mb-6 flex items-end justify-between flex-wrap gap-4">
+    <div
+      className={embedded ? "" : "px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto"}
+      data-testid="page-admin-operations-map"
+    >
+      <header className={`flex items-end justify-between flex-wrap gap-4 ${embedded ? "mb-3" : "mb-6"}`}>
         <div>
-          <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Операции</div>
-          <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Операторская карта</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Мониторинг флота, поездок, парковок и сервисных тикетов на одной карте.
-            Только просмотр — редактирование в соответствующих разделах.
-          </p>
+          {!embedded && (
+            <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Операции</div>
+          )}
+          <h1 className={`font-display font-light ${embedded ? "text-lg" : "text-2xl lg:text-3xl mt-1"}`}>
+            Операторская карта
+          </h1>
+          {!embedded && (
+            <p className="text-muted-foreground text-sm mt-1">
+              Мониторинг флота, поездок, парковок и сервисных тикетов на одной карте.
+              Только просмотр — редактирование в соответствующих разделах.
+            </p>
+          )}
         </div>
         <Button variant="outline" size="sm" onClick={refreshAll} disabled={refreshing} data-testid="button-operations-refresh">
           <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
