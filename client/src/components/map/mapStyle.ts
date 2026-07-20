@@ -489,40 +489,47 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
         },
       },
 
-      // ── USER LOCATION (голубая точка в стиле Google/Apple Maps) ─────────────
-      // Три слоя на одном GeoJSON Point: мягкая аура → белое кольцо → цветная точка.
-      // Цвет центра — брендовый --primary #61B5C4 (голубой TakeRide).
+      // ── USER LOCATION (голубая точка в стиле Google Maps) ───────────────────
+      // Слои снизу вверх на одном GeoJSON Point:
+      //   shadow (мягкая тень) → cone (сектор направления) → white halo → dot.
+      // Большой полупрозрачный accuracy-круг убран — вместо него направленный
+      // сектор-конус. Цвет — брендовый --primary #61B5C4 (голубой TakeRide).
+      //
+      // Мягкая тень под точкой (circle-blur даёт размытие → эффект drop-shadow).
       {
-        id: "user-location-accuracy", type: "circle", source: "user-location",
+        id: "user-location-shadow", type: "circle", source: "user-location",
         paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 18, 14, 34, 18, 56],
-          "circle-color": "#61B5C4",
-          "circle-opacity": 0.18,
+          "circle-radius": 13,
+          "circle-color": "#000000",
+          "circle-opacity": 0.25,
+          "circle-blur": 0.6,
+          "circle-translate": [0, 1],
           "circle-stroke-width": 0,
-          "circle-pitch-alignment": "map",
         },
       },
-      // Стрелка направления. Рисуется МЕЖДУ аурой и белым кольцом — видна
-      // только кончик, торчащий из-под точки (как на Apple/Google Maps).
-      // Отображается только когда hasHeading=true (в стоячем положении GPS не даёт heading).
+      // Сектор-конус направления («луч фонарика»). Вершина конуса в точке,
+      // веер расходится по heading; заливка градиентная (насыщенный у вершины →
+      // прозрачный на дуге). icon-anchor:bottom → вершина привязана к GPS-точке,
+      // поворот вокруг неё. Показывается только при hasHeading=true (в стоячем
+      // положении GPS heading отсутствует).
       {
         id: "user-location-heading", type: "symbol", source: "user-location",
         filter: ["==", ["get", "hasHeading"], true],
         layout: {
-          "icon-image": "user-heading-arrow",
+          "icon-image": "user-heading-cone",
           "icon-rotate": ["get", "heading"],
           "icon-rotation-alignment": "map",
           "icon-pitch-alignment": "map",
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
-          "icon-anchor": "center",
-          "icon-size": 1,
+          "icon-anchor": "bottom",
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 12, 0.6, 16, 1, 18, 1.3],
         },
       },
       {
         id: "user-location-halo", type: "circle", source: "user-location",
         paint: {
-          "circle-radius": 13,
+          "circle-radius": 11,
           "circle-color": "#ffffff",
           "circle-opacity": 1,
           "circle-stroke-width": 0,
@@ -531,7 +538,7 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
       {
         id: "user-location-dot", type: "circle", source: "user-location",
         paint: {
-          "circle-radius": 8,
+          "circle-radius": 7,
           "circle-color": "#61B5C4",
           "circle-opacity": 1,
           "circle-stroke-width": 0,
