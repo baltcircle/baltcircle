@@ -101,31 +101,31 @@ export function AdminPage() {
           <div className="flex flex-wrap gap-2">
             <StatusChip
               tone="sky"
-              icon={<Activity className="w-3.5 h-3.5" />}
-              label="Активные поездки"
-              value={m.activeRides}
-              testId="status-active-rides"
+              icon={<BikeIcon className="w-3.5 h-3.5" />}
+              label="Всего велосипедов"
+              value={m.totalBikes}
+              testId="status-total-bikes"
             />
             <StatusChip
               tone="emerald"
-              icon={<BikeIcon className="w-3.5 h-3.5" />}
-              label="Доступно"
-              value={m.available}
-              testId="status-available"
+              icon={<Plus className="w-3.5 h-3.5" />}
+              label="Новых сегодня"
+              value={m.newUsersToday}
+              testId="status-new-users"
             />
             <StatusChip
               tone="rose"
-              icon={<Wrench className="w-3.5 h-3.5" />}
-              label="Сервис / оффлайн"
-              value={m.maintenance + m.offline}
-              testId="status-maintenance"
+              icon={<MapIcon className="w-3.5 h-3.5" />}
+              label="Объектов на карте"
+              value={m.mapObjects}
+              testId="status-map-objects"
             />
             <StatusChip
-              tone={critical > 0 ? "rose" : "muted"}
-              icon={<AlertTriangle className="w-3.5 h-3.5" />}
-              label="Критичные"
-              value={critical}
-              testId="status-critical"
+              tone="muted"
+              icon={<MapPin className="w-3.5 h-3.5" />}
+              label="Активных парковок"
+              value={m.activeParkings}
+              testId="status-active-parkings"
             />
           </div>
         </div>
@@ -136,18 +136,11 @@ export function AdminPage() {
         className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-6"
         data-testid="dashboard-kpis"
       >
-        <Kpi testId="dashboard-kpi-total-bikes" label="Всего велосипедов" value={m.totalBikes} icon={<BikeIcon className="w-4 h-4" />} />
         <Kpi testId="dashboard-kpi-available" label="Доступно" value={m.available} tone="emerald" />
         <Kpi testId="dashboard-kpi-rented" label="В аренде" value={m.rented} tone="sky" />
-        <Kpi testId="dashboard-kpi-maintenance" label="Сервис / оффлайн" value={m.maintenance + m.offline} tone="rose" />
-        <Kpi testId="dashboard-kpi-users" label="Пользователей" value={m.totalUsers} icon={<UsersIcon className="w-4 h-4" />} />
-        <Kpi testId="dashboard-kpi-new-users" label="Новых сегодня" value={m.newUsersToday} />
         <Kpi testId="dashboard-kpi-rides-today" label="Поездок сегодня" value={m.ridesToday} />
-        <Kpi testId="dashboard-kpi-active-rides" label="Активные поездки" value={m.activeRides} tone="sky" />
         <Kpi testId="dashboard-kpi-open-tickets" label="Сервисные заявки" value={m.openTickets} tone={m.openTickets > 0 ? "amber" : undefined} icon={<Wrench className="w-4 h-4" />} />
         <Kpi testId="dashboard-kpi-open-support" label="Обращения в поддержку" value={openSupport.length} tone={openSupport.length > 0 ? "amber" : undefined} icon={<LifeBuoy className="w-4 h-4" />} />
-        <Kpi testId="dashboard-kpi-map-objects" label="Объектов на карте" value={m.mapObjects} icon={<MapIcon className="w-4 h-4" />} />
-        <Kpi testId="dashboard-kpi-active-parkings" label="Активных парковок" value={m.activeParkings} tone={m.activeParkings === 0 ? "amber" : undefined} icon={<MapPin className="w-4 h-4" />} />
       </section>
 
       {/* ---------- Quick actions ---------- */}
