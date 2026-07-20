@@ -100,32 +100,39 @@ export function AdminPage() {
 
           <div className="flex flex-wrap gap-2">
             <StatusChip
+              tone="emerald"
+              icon={<CheckCircle2 className="w-3.5 h-3.5" />}
+              label="Доступно"
+              value={m.available}
+              testId="status-available"
+            />
+            <StatusChip
               tone="sky"
               icon={<BikeIcon className="w-3.5 h-3.5" />}
-              label="Всего велосипедов"
-              value={m.totalBikes}
-              testId="status-total-bikes"
-            />
-            <StatusChip
-              tone="emerald"
-              icon={<Plus className="w-3.5 h-3.5" />}
-              label="Новых сегодня"
-              value={m.newUsersToday}
-              testId="status-new-users"
-            />
-            <StatusChip
-              tone="rose"
-              icon={<MapIcon className="w-3.5 h-3.5" />}
-              label="Объектов на карте"
-              value={m.mapObjects}
-              testId="status-map-objects"
+              label="В аренде"
+              value={m.rented}
+              testId="status-rented"
             />
             <StatusChip
               tone="muted"
-              icon={<MapPin className="w-3.5 h-3.5" />}
-              label="Активных парковок"
-              value={m.activeParkings}
-              testId="status-active-parkings"
+              icon={<Activity className="w-3.5 h-3.5" />}
+              label="Поездок сегодня"
+              value={m.ridesToday}
+              testId="status-rides-today"
+            />
+            <StatusChip
+              tone={m.openTickets > 0 ? "amber" : "muted"}
+              icon={<Wrench className="w-3.5 h-3.5" />}
+              label="Сервисные заявки"
+              value={m.openTickets}
+              testId="status-open-tickets"
+            />
+            <StatusChip
+              tone={openSupport.length > 0 ? "amber" : "muted"}
+              icon={<LifeBuoy className="w-3.5 h-3.5" />}
+              label="Обращения в поддержку"
+              value={openSupport.length}
+              testId="status-open-support"
             />
           </div>
         </div>
@@ -516,6 +523,7 @@ const CHIP_TONE: Record<string, string> = {
   emerald: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
   sky: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
   rose: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
+  amber: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
   muted: "bg-muted text-muted-foreground",
 };
 
