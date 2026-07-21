@@ -12,6 +12,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { useActiveRideTracker } from "@/hooks/use-active-ride-tracker";
+import { useRideGuard } from "@/hooks/use-ride-guard";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDistance, fmtRub } from "@/lib/format";
@@ -45,6 +46,9 @@ export function MapPage() {
   // GPS-трекер активной аренды: слушает onUserLocation от MapLibreMap и шлёт
   // точки на /api/rides/{id}/point (тротлинг 3с + фильтр GPS-дребезга <5м).
   const rideTracker = useActiveRideTracker(activeRide);
+
+  // Screen Wake Lock + уведомление о разрывах трекинга на время активной аренды.
+  const rideGuard = useRideGuard(!!activeRide);
 
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -273,7 +277,10 @@ export function MapPage() {
           followUser={!!activeRide}
           onUserLocation={(lat, lng) => {
             lastPosRef.current = { lat, lng };
-            if (activeRide) rideTracker.push(lat, lng);
+            if (activeRide) {
+              rideTracker.push(lat, lng);
+              rideGuard.notePoint();
+            }
           }}
           className="w-full h-full"
         />
