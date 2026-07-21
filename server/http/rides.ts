@@ -1,7 +1,9 @@
 import type { Express, Request, Response } from "express";
 import { storage, rideEvents } from "../storage";
 import { z } from "zod";
-import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
+import { TARIFFS, tariffPriceKopecks, realToMap } from "@shared/geo";
+import { mergeRideTrack, type TrackPoint } from "@shared/rideTrack";
+import { timingSafeEqual } from "node:crypto";
 import {
   insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
   adminSetRoleSchema, adminSetBlockedSchema,
@@ -159,6 +161,51 @@ export function registerRideRoutes(app: Express): void {
     const r = await storage.endRide(Number(req.params.id));
     if (!r) return res.status(404).json({ error: "Поездка не активна" });
     res.json(r);
+  });
+  // Authoritative track for a ride, built from the bike's onboard tracker when
+  // it is reporting (survives phone screen-lock) and falling back to the phone
+  // track otherwise. The rider (or staff) polls this during an active ride so a
+  // locked phone no longer drops part of the saved route. `source` tells the
+  // client which feed won so it can label/behave accordingly.
+  app.get("/api/rides/:id/track", async (req, res) => {
+    const ride = await storage.getRide(Number(req.params.id));
+    if (!ride) return res.status(404).json({ error: "Поездка не найдена" });
+    if (!(await canManageRide(req, ride))) return res.status(403).json({ error: "Нет доступа" });
+    const fromT = ride.startedAt;
+    const toT = ride.endedAt ?? Date.now();
+    const tracker = await storage.getBikeTelemetry(ride.bikeId, fromT, toT);
+    let phone: TrackPoint[] = [];
+    try { phone = JSON.parse(ride.track) as TrackPoint[]; } catch { /* corrupt/empty track → treat as no phone points */ }
+    const merged = mergeRideTrack({ tracker, phone });
+    res.json(merged);
+  });
+  // Onboard tracker ingestion. A physical bike tracker POSTs its real GPS fix
+  // here; we convert to map space and persist it as authoritative telemetry.
+  // Token-gated (device credential, not a user session): without a configured
+  // TELEMETRY_INGEST_TOKEN the endpoint is closed (503), which also reflects the
+  // real-world state of a fleet that has no tracker wired up yet.
+  app.post("/api/telemetry/bike", async (req, res) => {
+    const expected = process.env.TELEMETRY_INGEST_TOKEN;
+    if (!expected) return res.status(503).json({ error: "Telemetry ingestion not configured" });
+    const header = req.get("authorization") ?? "";
+    const presented = header.startsWith("Bearer ") ? header.slice(7) : "";
+    const a = Buffer.from(presented);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const schema = z.object({
+      bikeId: z.string().trim().min(1).max(20),
+      lat: z.number().finite(),
+      lng: z.number().finite(),
+      ts: z.number().int().positive().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Bad request" });
+    const { bikeId, lat, lng } = parsed.data;
+    const { x, y } = realToMap(lat, lng);
+    await storage.insertBikeTelemetry(bikeId, x, y, parsed.data.ts ?? Date.now());
+    res.json({ ok: true });
   });
 
   // -------------- Admin rides --------------

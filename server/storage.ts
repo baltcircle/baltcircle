@@ -1405,6 +1405,31 @@ export class DatabaseStorage implements IStorage {
     );
   }
 
+  // ---- onboard bike tracker telemetry (independent of the rider's phone) ----
+  // A physical tracker POSTs its position to /api/telemetry/bike; we store it in
+  // map space (converted at ingest) so it merges with the phone-fed ride track.
+  async insertBikeTelemetry(bikeId: string, x: number, y: number, t: number) {
+    await pool.query(
+      "INSERT INTO bike_telemetry (bike_id, x, y, t) VALUES ($1, $2, $3, $4)",
+      [bikeId, x, y, t],
+    );
+    // Keep the fleet's live position fresh from the tracker too, so the ops map
+    // reflects the bike even when no phone is relaying points.
+    await db.update(bikes).set({ lat: y, lng: x, lastSeen: t, idleHours: 0 } as any)
+      .where(eq(bikes.id, bikeId));
+    this.invalidateBikesCache({ silent: true });
+  }
+
+  // Telemetry points for one bike within [fromT, toT], time-ordered. Used to
+  // build the authoritative ride track for the ride's bike + time window.
+  async getBikeTelemetry(bikeId: string, fromT: number, toT: number): Promise<[number, number, number][]> {
+    const rows = (await pool.query(
+      "SELECT x, y, t FROM bike_telemetry WHERE bike_id = $1 AND t >= $2 AND t <= $3 ORDER BY t, id",
+      [bikeId, fromT, toT],
+    )).rows as { x: number; y: number; t: number }[];
+    return rows.map((p) => [p.x, p.y, p.t]);
+  }
+
   async endRide(rideId: number) {
     // Atomic: completing a ride touches four tables (ride, bike, wallet,
     // payment ledger). Doing them as separate statements risks a partial state

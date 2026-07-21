@@ -12,6 +12,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { useActiveRideTracker } from "@/hooks/use-active-ride-tracker";
+import { useRideTrackPoll } from "@/hooks/use-ride-track-poll";
 import { useRideGuard } from "@/hooks/use-ride-guard";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -49,6 +50,20 @@ export function MapPage() {
 
   // Screen Wake Lock + уведомление о разрывах трекинга на время активной аренды.
   const rideGuard = useRideGuard(!!activeRide);
+
+  // Авторитетный трек поездки от бортового трекера велосипеда (репортит даже при
+  // заблокированном телефоне). Пока трекер отдаёт точки — рисуем маршрут по ним;
+  // если трекера нет/молчит, сервер вернёт source:"phone" и мы падаем обратно на
+  // трек из телефона (текущее поведение, без регресса).
+  const trackPoll = useRideTrackPoll(activeRide?.id);
+  const displayRide = useMemo<Ride | null>(() => {
+    if (!activeRide) return null;
+    const merged = trackPoll.data;
+    if (merged?.source === "tracker" && merged.points.length > 1) {
+      return { ...activeRide, track: JSON.stringify(merged.points) };
+    }
+    return activeRide;
+  }, [activeRide, trackPoll.data]);
 
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -270,7 +285,7 @@ export function MapPage() {
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
-          ride={activeRide}
+          ride={displayRide}
           height="100%"
           showLabels={false}
           center={geoCenter}
