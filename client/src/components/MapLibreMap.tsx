@@ -11,7 +11,7 @@ import {
   bikeMarkerColor, ticketMarkerColor, dotMarkerEl, parkingMarkerEl,
   fillFromColor, coercePoints, smoothCorners, catmullRomSmooth,
 } from "./map/mapMarkers";
-import { createGeoFilter, douglasPeucker } from "@/lib/geoSmoothing";
+import { createGeoFilter, douglasPeucker, segmentTrack, type TrackFix } from "@/lib/geoSmoothing";
 
 /** Which optional overlay layers are drawn. Every flag defaults to visible so
  *  the customer map and editors are unaffected; the admin operations map flips
@@ -604,16 +604,31 @@ export function MapLibreMap({
       if (!raw) return;
       let pts: [number, number, number][];
       try { pts = JSON.parse(raw) as [number, number, number][]; } catch { return; }
-      const coords = pts.map(([x, y]) => { const [lat, lng] = mapToReal(x, y); return [lng, lat] as [number, number]; });
-      if (coords.length <= 1) return;
-      // Сырой трек соединяет GPS-точки ломаной — углы и шум. Чистим в два шага:
-      //  1) Дуглас-Пекер (ε≈1e-5° ≈ 1.1 м) — выкидывает избыточные точки на
-      //     прямых, не искажая форму;
-      //  2) Catmull-Rom — интерполирует сглаженной кривой, проходящей через
-      //     оставшиеся точки. Вместе с line-join/cap:round даёт плавную линию.
-      const simplified = douglasPeucker(coords, 1e-5);
-      const smooth = simplified.length >= 3 ? catmullRomSmooth(simplified, 8) : simplified;
-      features.push({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: smooth } });
+      if (pts.length <= 1) return;
+      const fixes: TrackFix[] = pts.map(([x, y, t]) => {
+        const [lat, lng] = mapToReal(x, y);
+        return { lng, lat, t };
+      });
+      // Рвём трек на сегменты по большим временным разрывам (уход в фон / потеря
+      // GPS): иначе линия соединяет «где вышел» и «где вернулся» ложным прямым
+      // отрезком через незаписанный участок. Каждый сегмент чистим отдельно —
+      // сглаживание через разрыв сгладило бы и этот ложный переход.
+      const lines: number[][][] = [];
+      for (const seg of segmentTrack(fixes)) {
+        const coords = seg.map((f) => [f.lng, f.lat] as [number, number]);
+        if (coords.length <= 1) continue; // одиночная точка — линию не рисуем
+        // Сырой трек соединяет GPS-точки ломаной — углы и шум. Чистим в два шага:
+        //  1) Дуглас-Пекер (ε≈1e-5° ≈ 1.1 м) — выкидывает избыточные точки на
+        //     прямых, не искажая форму;
+        //  2) Catmull-Rom — интерполирует сглаженной кривой, проходящей через
+        //     оставшиеся точки. Вместе с line-join/cap:round даёт плавную линию.
+        const simplified = douglasPeucker(coords, 1e-5);
+        lines.push(simplified.length >= 3 ? catmullRomSmooth(simplified, 8) : simplified);
+      }
+      if (lines.length === 0) return;
+      // MultiLineString: несколько несоединённых сегментов в одной feature —
+      // на карте выглядит как обрыв линии без «телепорт»-отрезка через разрыв.
+      features.push({ type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: lines } });
     };
     if (show.rides) {
       if (ride) addTrack(ride.track);

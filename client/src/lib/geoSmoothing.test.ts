@@ -4,7 +4,10 @@ import {
   haversineM,
   bearingDeg,
   douglasPeucker,
+  segmentTrack,
+  TRACK_GAP_MS,
   type RawFix,
+  type TrackFix,
 } from "./geoSmoothing";
 
 // Базовая точка — Пионерский. Небольшие шаги в градусах: ~1e-5° ≈ 1.1 м широты.
@@ -167,5 +170,55 @@ describe("douglasPeucker", () => {
     const line: [number, number][] = [[0, 0], [1, 0.2], [2, -0.1], [3, 0.05], [4, 0]];
     const out = douglasPeucker(line, 0.01);
     expect(out.length).toBeLessThanOrEqual(line.length);
+  });
+});
+
+describe("segmentTrack — сегментация по разрывам", () => {
+  const p = (t: number, extra: Partial<TrackFix> = {}): TrackFix => ({
+    lng: BASE.lng,
+    lat: BASE.lat,
+    t,
+    ...extra,
+  });
+
+  it("пустой вход — нет сегментов", () => {
+    expect(segmentTrack([])).toEqual([]);
+  });
+
+  it("непрерывная последовательность — один сегмент", () => {
+    const pts = [p(0), p(3000), p(6000), p(9000)];
+    const segs = segmentTrack(pts, TRACK_GAP_MS);
+    expect(segs).toHaveLength(1);
+    expect(segs[0]).toHaveLength(4);
+  });
+
+  it("разрыв по времени > порога — два сегмента", () => {
+    // 0..6с идёт нормально, затем пауза 120с (уход в фон), потом продолжение.
+    const pts = [p(0), p(3000), p(6000), p(126000), p(129000)];
+    const segs = segmentTrack(pts, TRACK_GAP_MS);
+    expect(segs).toHaveLength(2);
+    expect(segs[0].map((f) => f.t)).toEqual([0, 3000, 6000]);
+    expect(segs[1].map((f) => f.t)).toEqual([126000, 129000]);
+  });
+
+  it("интервал ровно на границе порога не рвёт линию", () => {
+    const pts = [p(0), p(TRACK_GAP_MS)];
+    expect(segmentTrack(pts, TRACK_GAP_MS)).toHaveLength(1);
+  });
+
+  it("явный маркер gapBefore рвёт сегмент даже при малом интервале", () => {
+    // Точки идут часто (3с), но visibilitychange пометил разрыв перед 3-й.
+    const pts = [p(0), p(3000), p(6000, { gapBefore: true }), p(9000)];
+    const segs = segmentTrack(pts, TRACK_GAP_MS);
+    expect(segs).toHaveLength(2);
+    expect(segs[0].map((f) => f.t)).toEqual([0, 3000]);
+    expect(segs[1].map((f) => f.t)).toEqual([6000, 9000]);
+  });
+
+  it("несколько разрывов — несколько сегментов", () => {
+    const pts = [p(0), p(3000), p(60000), p(63000), p(200000)];
+    const segs = segmentTrack(pts, TRACK_GAP_MS);
+    expect(segs).toHaveLength(3);
+    expect(segs.map((s) => s.length)).toEqual([2, 2, 1]);
   });
 });

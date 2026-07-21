@@ -133,6 +133,55 @@ export function createGeoFilter(options: GeoFilterOptions = {}): GeoFilter {
   return { push, reset };
 }
 
+// ── Сегментация трека по разрывам ───────────────────────────────────────────
+// Мобильный браузер приостанавливает JS/watchPosition, когда вкладка уходит в
+// фон (блокировка экрана, сворачивание — особенно iOS Safari). Точки в это время
+// не пишутся, и наивная линия соединяет «где вышел» и «где вернулся» прямым
+// отрезком через весь незаписанный участок. То же бывает при потере GPS-сигнала.
+// Решение: рвать линию на отдельные сегменты там, где между двумя соседними
+// принятыми точками прошёл слишком большой интервал (или пришёл явный маркер
+// разрыва от visibilitychange), и сглаживать каждый сегмент по отдельности.
+
+/** Порог разрыва трека (мс). Больший интервал между соседними точками = пауза
+ *  трекинга. 45 с заведомо выше нормального шага (троттл трекера 3 с, а
+ *  watchPosition отдаёт точку раз в 5-15 с даже на месте), но достаточно мало,
+ *  чтобы уверенно поймать уход в фон или потерю сигнала. */
+export const TRACK_GAP_MS = 45_000;
+
+export interface TrackFix {
+  lng: number;
+  lat: number;
+  /** Момент точки, мс (server-side t из ride_points). */
+  t: number;
+  /** Явный маркер разрыва перед этой точкой (например, от visibilitychange). */
+  gapBefore?: boolean;
+}
+
+/**
+ * Разбивает последовательность точек трека на непрерывные сегменты. Разрыв
+ * объявляется, если между соседними точками прошло больше gapMs ИЛИ у точки
+ * выставлен gapBefore. Порядок точек сохраняется; сглаживание (Дуглас-Пекер +
+ * Catmull-Rom) вызывающий код применяет к каждому сегменту отдельно — иначе
+ * сгладился бы и ложный переход через разрыв.
+ */
+export function segmentTrack(points: TrackFix[], gapMs: number = TRACK_GAP_MS): TrackFix[][] {
+  const segments: TrackFix[][] = [];
+  let current: TrackFix[] = [];
+  for (const p of points) {
+    if (current.length > 0) {
+      const prev = current[current.length - 1];
+      const broken = p.gapBefore === true || p.t - prev.t > gapMs;
+      if (broken) {
+        segments.push(current);
+        current = [];
+      }
+    }
+    current.push(p);
+  }
+  if (current.length > 0) segments.push(current);
+  return segments;
+}
+
 /** Расстояние между двумя точками по формуле гаверсинусов, метры. */
 export function haversineM(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371000;
