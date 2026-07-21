@@ -8,8 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fmtRelative, fmtRub } from "@/lib/format";
 import {
-  Plus, Map as MapIcon, Users as UsersIcon, Wrench, BarChart3,
-  Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity, ChevronRight, MapPin,
+  Map as MapIcon, Users as UsersIcon, Wrench,
+  Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity, ChevronRight,
   LifeBuoy, MessageSquare,
 } from "lucide-react";
 import { useSupportUnread } from "@/hooks/use-support-unread";
@@ -142,21 +142,6 @@ export function AdminPage() {
       {/* ---------- Operator map (embedded from OperationsMapPage) ---------- */}
       <section className="mb-6" data-testid="dashboard-operations-map">
         <OperationsMapPage embedded />
-      </section>
-
-      {/* ---------- Quick actions ---------- */}
-      <section className="mb-6" data-testid="dashboard-quick-actions">
-        <h2 className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground mb-3">Быстрые действия</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <QuickAction href="/admin/bikes" icon={<Plus className="w-5 h-5" />} label="Добавить велосипед" testId="quick-action-add-bike" />
-          <QuickAction href="/admin/rides" icon={<Activity className="w-5 h-5" />} label="Поездки" testId="quick-action-rides" />
-          <QuickAction href="/admin/map" icon={<MapIcon className="w-5 h-5" />} label="Редактор карты" testId="quick-action-map" />
-          <QuickAction href="/admin/parkings" icon={<MapPin className="w-5 h-5" />} label="Парковки" testId="quick-action-parkings" />
-          <QuickAction href="/admin/users" icon={<UsersIcon className="w-5 h-5" />} label="Пользователи" testId="quick-action-users" />
-          <QuickAction href="/admin/maintenance" icon={<Wrench className="w-5 h-5" />} label="Сервис" testId="quick-action-maintenance" />
-          <QuickAction href="/admin/support" icon={<LifeBuoy className="w-5 h-5" />} label="Поддержка" testId="quick-action-support" badge={support.unreadTotal} />
-          <QuickAction href="/admin/analytics" icon={<BarChart3 className="w-5 h-5" />} label="Аналитика" testId="quick-action-analytics" />
-        </div>
       </section>
 
       <div className="grid lg:grid-cols-3 gap-4">
@@ -532,28 +517,6 @@ function StatusChip({ tone, icon, label, value, testId }: {
         <div className="text-[10px] uppercase tracking-wider opacity-80">{label}</div>
       </div>
     </div>
-  );
-}
-
-function QuickAction({ href, icon, label, testId, badge }: {
-  href: string; icon: React.ReactNode; label: string; testId: string; badge?: number;
-}) {
-  const show = typeof badge === "number" && badge > 0;
-  return (
-    <Link href={href} data-testid={testId}>
-      <Card className="p-4 h-full flex flex-col items-center justify-center gap-2 text-center hover-elevate cursor-pointer relative">
-        {show && (
-          <span
-            className="absolute top-1.5 right-1.5 min-w-[20px] h-5 px-1 inline-flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-semibold shadow-sm"
-            data-testid={`${testId}-badge`}
-          >
-            {badge! > 99 ? "99+" : badge}
-          </span>
-        )}
-        <span className="text-primary">{icon}</span>
-        <span className="text-xs font-medium leading-tight">{label}</span>
-      </Card>
-    </Link>
   );
 }
 
