@@ -148,6 +148,8 @@ export interface IParkingStorage {
 export interface IRideStorage {
   startRide(input: { bikeId: string; userId: string; tariff: string; prepaid?: boolean }): Promise<Ride | { error: string }>;
   appendRidePoint(rideId: number, x: number, y: number): Promise<Ride | undefined>;
+  insertBikeTelemetry(bikeId: string, x: number, y: number, t: number): Promise<void>;
+  getBikeTelemetry(bikeId: string, fromT: number, toT: number): Promise<[number, number, number][]>;
   endRide(rideId: number): Promise<Ride | undefined>;
   getRide(rideId: number): Promise<Ride | undefined>;
   getActiveRide(userId: string): Promise<Ride | undefined>;

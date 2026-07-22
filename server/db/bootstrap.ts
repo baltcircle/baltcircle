@@ -272,6 +272,18 @@ CREATE TABLE IF NOT EXISTS ride_points (
   y DOUBLE PRECISION NOT NULL,
   t BIGINT NOT NULL
 );
+-- Onboard bike GPS/IoT tracker reports. Independent of any rider's phone: the
+-- tracker keeps reporting the bike's position even while the phone screen is
+-- locked, so an active ride's track can be reconstructed from here without the
+-- gaps that browser watchPosition leaves. x/y are abstract map space (matching
+-- ride_points), converted from the device's real lat/lng at ingest time.
+CREATE TABLE IF NOT EXISTS bike_telemetry (
+  id SERIAL PRIMARY KEY,
+  bike_id TEXT NOT NULL,
+  x DOUBLE PRECISION NOT NULL,
+  y DOUBLE PRECISION NOT NULL,
+  t BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -336,6 +348,11 @@ async function createIndexes() {
   // ride_points has no Drizzle table (raw SQL only) — keep its index explicit.
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_ride_points_ride ON ride_points (ride_id, id);`,
+  );
+  // bike_telemetry (raw SQL only): the ride-track query filters by bike + time
+  // window, so index on (bike_id, t).
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_bike_telemetry_bike_t ON bike_telemetry (bike_id, t);`,
   );
 }
 
