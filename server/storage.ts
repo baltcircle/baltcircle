@@ -1406,8 +1406,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ---- onboard bike tracker telemetry (independent of the rider's phone) ----
-  // A physical tracker POSTs its position to /api/telemetry/bike; we store it in
-  // map space (converted at ingest) so it merges with the phone-fed ride track.
+  // The OMNI smart locks are the primary writer and reach bike_telemetry through
+  // the TCP ingest process (server/omni/), which batches its own INSERTs. The two
+  // methods below serve the manual HTTP ingest path (/api/telemetry/bike) and the
+  // ride-track read, and store positions in map space so tracker points merge
+  // with the phone-fed ride track.
   async insertBikeTelemetry(bikeId: string, x: number, y: number, t: number) {
     await pool.query(
       "INSERT INTO bike_telemetry (bike_id, x, y, t) VALUES ($1, $2, $3, $4)",
@@ -1422,9 +1425,16 @@ export class DatabaseStorage implements IStorage {
 
   // Telemetry points for one bike within [fromT, toT], time-ordered. Used to
   // build the authoritative ride track for the ride's bike + time window.
+  //
+  // Positionless rows are skipped: a lock's battery check-in, heartbeat or
+  // no-satellite-fix report is stored in the same table with NULL x/y, and must
+  // not enter a track as a (null, null) point. The partial index
+  // idx_bike_telemetry_pos matches this predicate.
   async getBikeTelemetry(bikeId: string, fromT: number, toT: number): Promise<[number, number, number][]> {
     const rows = (await pool.query(
-      "SELECT x, y, t FROM bike_telemetry WHERE bike_id = $1 AND t >= $2 AND t <= $3 ORDER BY t, id",
+      `SELECT x, y, t FROM bike_telemetry
+        WHERE bike_id = $1 AND t >= $2 AND t <= $3 AND x IS NOT NULL AND y IS NOT NULL
+        ORDER BY t, id`,
       [bikeId, fromT, toT],
     )).rows as { x: number; y: number; t: number }[];
     return rows.map((p) => [p.x, p.y, p.t]);

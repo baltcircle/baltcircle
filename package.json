@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
+    "dev:omni": "NODE_ENV=development tsx server/omni/index.ts",
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
+    "start:omni": "NODE_ENV=production node dist/omni.cjs",
+    "omni:sim": "tsx script/omni-sim.ts",
     "check": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",

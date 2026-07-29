@@ -251,8 +251,15 @@ export const bikes = pgTable("bikes", {
   flagged: boolean("flagged").notNull().default(false),
   // ----- Real-fleet operations fields (added for admin management) -----
   serial: text("serial"),                    // manufacturer serial / frame number
-  lockId: text("lock_id"),                   // smart-lock id placeholder (no real integration yet)
+  lockId: text("lock_id"),                   // vendor-facing lock id printed on the unit
   parkingId: text("parking_id"),             // optional home parking station id
+  // ----- OMNI smart lock (TCP ingest, server/omni/) -----
+  // The lock's IMEI is how an inbound TCP connection is resolved to a bike, so
+  // it must be unique across the fleet; the partial UNIQUE index enforcing that
+  // is in server/db/bootstrap.ts (Drizzle cannot express a partial index).
+  lockImei: text("lock_imei"),
+  lockOnline: boolean("lock_online").notNull().default(false),
+  lockLastSeen: bigint("lock_last_seen", { mode: "number" }),  // unix ms
   notes: text("notes"),                      // operator free-text notes
   // `seed` marks demo fleet rows so the demo reseed migration can refresh them
   // without ever touching bikes an operator added manually.

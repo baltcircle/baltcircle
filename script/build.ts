@@ -43,18 +43,32 @@ async function buildAll() {
   ];
   const externals = allDeps.filter((dep) => !allowlist.includes(dep));
 
-  await esbuild({
-    entryPoints: ["server/index.ts"],
-    platform: "node",
+  const serverBundle = {
+    platform: "node" as const,
     bundle: true,
-    format: "cjs",
-    outfile: "dist/index.cjs",
+    format: "cjs" as const,
     define: {
       "process.env.NODE_ENV": '"production"',
     },
     minify: true,
     external: externals,
-    logLevel: "info",
+    logLevel: "info" as const,
+  };
+
+  await esbuild({
+    ...serverBundle,
+    entryPoints: ["server/index.ts"],
+    outfile: "dist/index.cjs",
+  });
+
+  // The OMNI lock TCP ingest is a separate process (server/omni/index.ts): it
+  // must be deployable and restartable without touching the web API, so it gets
+  // its own bundle rather than being started from dist/index.cjs.
+  console.log("building OMNI lock ingest...");
+  await esbuild({
+    ...serverBundle,
+    entryPoints: ["server/omni/index.ts"],
+    outfile: "dist/omni.cjs",
   });
 }
 

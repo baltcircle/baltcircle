@@ -1,0 +1,541 @@
+// End-to-end tests for the OMNI lock TCP ingest server.
+//
+// These drive real TCP sockets: MockLock (server/omni/mockLock.ts) speaks the
+// genuine wire protocol on one side, OmniTcpServer listens on an ephemeral port
+// on the other, and an in-memory OmniStore stands in for Postgres so the suite
+// still needs no live database (see vitest.config.ts / audit H5).
+import { afterEach, describe, expect, it, vi } from "vitest";
+import pino from "pino";
+
+// server/omni/store.ts imports the shared pg pool, whose module-level
+// `bootstrapReady` would try to reach Postgres on import. The tests inject a
+// fake store instead, so nothing here ever touches the real pool.
+vi.mock("../db/bootstrap", () => ({
+  pool: { query: async () => ({ rows: [] }) },
+  db: {},
+  bootstrapReady: Promise.resolve(),
+}));
+
+import { OmniTcpServer, type OmniServerOptions } from "./server";
+import { MockLock } from "./mockLock";
+import { TelemetryWriter, type BikeLiveUpdate, type OmniStore, type TelemetryRow } from "./store";
+
+const IMEI_A = "861234567890123";
+const IMEI_B = "861234567890124";
+const UNKNOWN_IMEI = "869999999999999";
+
+class FakeStore implements OmniStore {
+  readonly bikes = new Map<string, string>([[IMEI_A, "bike-a"], [IMEI_B, "bike-b"]]);
+  readonly telemetry: TelemetryRow[] = [];
+  readonly live: BikeLiveUpdate[] = [];
+  readonly onlineCalls: { imei: string; online: boolean }[] = [];
+  resetCount = 0;
+  /** Set to make findBikeIdByImei throw, simulating a database outage. */
+  lookupError: Error | null = null;
+  /** Set to stall findBikeIdByImei, so a test can act during the lookup. */
+  lookupGate: Promise<void> | null = null;
+
+  async findBikeIdByImei(imei: string): Promise<string | null> {
+    if (this.lookupGate) await this.lookupGate;
+    if (this.lookupError) throw this.lookupError;
+    return this.bikes.get(imei) ?? null;
+  }
+
+  async insertTelemetry(rows: TelemetryRow[]): Promise<void> {
+    this.telemetry.push(...rows);
+  }
+
+  async applyLiveUpdates(updates: BikeLiveUpdate[]): Promise<void> {
+    this.live.push(...updates);
+  }
+
+  async setLockOnline(imei: string, online: boolean): Promise<void> {
+    this.onlineCalls.push({ imei, online });
+  }
+
+  async resetAllLocksOffline(): Promise<void> {
+    this.resetCount++;
+  }
+
+  rowsFor(cmd: string): TelemetryRow[] {
+    return this.telemetry.filter((r) => r.cmd === cmd);
+  }
+}
+
+const silentLogger = pino({ level: "silent" });
+
+/** Poll until `predicate` holds, so tests never depend on a fixed sleep. */
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("condition not met within timeout");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+interface Harness {
+  server: OmniTcpServer;
+  store: FakeStore;
+  lock(imei: string): Promise<MockLock>;
+}
+
+const active: { servers: OmniTcpServer[]; locks: MockLock[] } = { servers: [], locks: [] };
+
+type Overrides = Partial<Omit<OmniServerOptions, "store" | "logger">>;
+
+async function harness(overrides: Overrides = {}): Promise<Harness> {
+  const store = new FakeStore();
+  const server = new OmniTcpServer({
+    store,
+    logger: silentLogger,
+    port: 0,
+    host: "127.0.0.1",
+    // Flush fast so assertions do not wait on the 2 s production window, and
+    // disable status throttling unless a test opts into it.
+    writer: { flushIntervalMs: 5 },
+    statusMinIntervalMs: 0,
+    ...overrides,
+  });
+  await server.listen();
+  active.servers.push(server);
+
+  return {
+    server,
+    store,
+    async lock(imei: string) {
+      const lock = new MockLock({ imei, port: server.port, host: "127.0.0.1" });
+      await lock.connect();
+      active.locks.push(lock);
+      return lock;
+    },
+  };
+}
+
+afterEach(async () => {
+  for (const lock of active.locks.splice(0)) lock.disconnect();
+  for (const server of active.servers.splice(0)) await server.close();
+});
+
+describe("connection lifecycle", () => {
+  it("clears stale online flags before accepting anything", async () => {
+    const { store } = await harness();
+    expect(store.resetCount).toBe(1);
+  });
+
+  it("binds a lock on its first valid packet and marks it online", async () => {
+    const { server, store, lock } = await harness();
+    const device = await lock(IMEI_A);
+
+    device.sendCheckin(412);
+
+    await waitFor(() => store.onlineCalls.length > 0);
+    expect(store.onlineCalls[0]).toEqual({ imei: IMEI_A, online: true });
+    expect(server.connectionCount).toBe(1);
+  });
+
+  it("marks a lock offline when the socket closes", async () => {
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    device.disconnect();
+
+    await waitFor(() => store.onlineCalls.length === 2);
+    expect(store.onlineCalls[1]).toEqual({ imei: IMEI_A, online: false });
+  });
+
+  it("closes the stale socket when a device reconnects with the same IMEI", async () => {
+    const { server, store, lock } = await harness();
+    const first = await lock(IMEI_A);
+    first.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    const second = await lock(IMEI_A);
+    second.sendCheckin();
+
+    // The replacement owns the registry slot and the stale socket is gone, so
+    // the device is left online rather than being marked offline by the
+    // teardown of the socket it just replaced.
+    await waitFor(() => server.connectionCount === 1);
+    expect(store.onlineCalls.filter((c) => c.online === false)).toEqual([]);
+
+    // The surviving socket still ingests: the second check-in landed.
+    await waitFor(() => store.rowsFor("Q0").length >= 2);
+  });
+
+  it("rejects an unregistered IMEI without persisting anything", async () => {
+    const { server, store, lock } = await harness();
+    const device = await lock(UNKNOWN_IMEI);
+
+    device.sendCheckin();
+
+    await waitFor(() => server.connectionCount === 0);
+    expect(store.onlineCalls).toEqual([]);
+    expect(store.telemetry).toEqual([]);
+  });
+
+  it("does not re-query the database for a rejected IMEI on every reconnect", async () => {
+    const { server, store, lock } = await harness();
+    const spy = vi.spyOn(store, "findBikeIdByImei");
+
+    for (let i = 0; i < 3; i++) {
+      const device = await lock(UNKNOWN_IMEI);
+      device.sendCheckin();
+      await waitFor(() => server.connectionCount === 0);
+    }
+
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes a socket that changes IMEI mid-session", async () => {
+    const { server, store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    device.sendRaw(device.packet("Q0", [400]).toString("latin1").replace(IMEI_A, IMEI_B));
+
+    await waitFor(() => server.connectionCount === 0);
+    expect(store.telemetry.every((r) => r.imei === IMEI_A)).toBe(true);
+  });
+
+  it("refuses connections beyond the configured cap", async () => {
+    const { server, store, lock } = await harness({ maxConnections: 1 });
+    const first = await lock(IMEI_A);
+    first.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    const second = await lock(IMEI_B);
+    // The listener destroys the socket at accept time, before any packet is read.
+    await waitFor(() => server.connectionCount === 1);
+    expect(() => second.sendCheckin()).not.toThrow();
+    await waitFor(() => store.rowsFor("Q0").length === 1);
+    expect(store.onlineCalls).toEqual([{ imei: IMEI_A, online: true }]);
+  });
+
+  it("does not register a socket that closed while its IMEI was being looked up", async () => {
+    const { server, store, lock } = await harness();
+    let openGate = () => {};
+    store.lookupGate = new Promise<void>((resolve) => { openGate = resolve; });
+
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    // The lock hangs up mid-lookup — a real possibility on a flaky mobile link.
+    await waitFor(() => server.connectionCount === 1);
+    device.disconnect();
+    await waitFor(() => server.connectionCount === 0);
+
+    openGate();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    // A dead socket must not end up owning the registry slot: nothing would ever
+    // evict it, the bike would read online forever, and sendToDevice would
+    // silently write into a destroyed socket.
+    expect(server.connectionCount).toBe(0);
+    expect(store.onlineCalls).toEqual([]);
+    expect(server.sendToDevice(IMEI_A, "S5")).toBe(false);
+  });
+
+  it("drops a socket whose IMEI cannot be resolved because the database is down", async () => {
+    const { server, store, lock } = await harness();
+    store.lookupError = new Error("connection refused");
+    const device = await lock(IMEI_A);
+
+    device.sendCheckin();
+
+    await waitFor(() => server.connectionCount === 0);
+    expect(store.onlineCalls).toEqual([]);
+  });
+});
+
+describe("stream framing over a real socket", () => {
+  it("ingests two packets coalesced into a single write", async () => {
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+
+    device.sendRaw(Buffer.concat([
+      device.packet("Q0", [412]),
+      device.packet("H0", [1, 405, 24]),
+    ]));
+
+    await waitFor(() => store.rowsFor("Q0").length === 1 && store.rowsFor("H0").length === 1);
+    expect(store.rowsFor("H0")[0].signalLevel).toBe(24);
+  });
+
+  it("reassembles a packet delivered one byte per write", async () => {
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    const packet = device.packet("Q0", [377]);
+
+    for (const byte of packet) {
+      device.sendRaw(Buffer.from([byte]));
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    await waitFor(() => store.rowsFor("Q0").length === 1);
+    expect(store.rowsFor("Q0")[0].voltageCv).toBe(377);
+  });
+
+  it("handles a write boundary in the middle of a packet", async () => {
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    const packet = device.packet("H0", [0, 390, 19]);
+    const cut = 20;
+
+    device.sendRaw(packet.subarray(0, cut));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    device.sendRaw(packet.subarray(cut));
+
+    await waitFor(() => store.rowsFor("H0").length === 1);
+    expect(store.rowsFor("H0")[0].locked).toBe(false);
+  });
+
+  it("keeps the connection alive across a malformed frame", async () => {
+    const { server, store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.rowsFor("Q0").length === 1);
+
+    // Structurally broken (bad manufacturer) and semantically broken (voltage
+    // out of the documented 320-420 range) frames are both logged and skipped.
+    device.sendRaw(`*CMDR,ZZ,${IMEI_A},200318123020,Q0,412#\n`);
+    device.sendRaw(device.packet("Q0", [9999]));
+    device.sendCheckin(400);
+
+    await waitFor(() => store.rowsFor("Q0").length === 2);
+    expect(server.connectionCount).toBe(1);
+    expect(store.rowsFor("Q0").map((r) => r.voltageCv)).toEqual([412, 400]);
+  });
+
+  it("closes a connection that never terminates a frame", async () => {
+    const { server, store, lock } = await harness({ maxFrameBytes: 256 });
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    device.sendRaw(`*${"A".repeat(1024)}`);
+
+    await waitFor(() => server.connectionCount === 0);
+  });
+
+  it("closes a socket that never sends a valid packet", async () => {
+    const { server, lock } = await harness({ handshakeTimeoutMs: 50 });
+    const device = await lock(IMEI_A);
+    device.sendRaw("not a packet at all");
+
+    await waitFor(() => server.connectionCount === 0);
+  });
+});
+
+describe("acknowledgements", () => {
+  it("acknowledges the commands the protocol requires a response for", async () => {
+    const { lock } = await harness();
+    const device = await lock(IMEI_A);
+
+    device.sendPosition(54.9442, 20.1561);
+    expect(await device.nextCommand()).toEqual({ cmd: "Re", params: ["D0"] });
+
+    device.sendAlarm(1);
+    expect(await device.nextCommand()).toEqual({ cmd: "Re", params: ["W0"] });
+
+    device.sendRaw(device.packet("L0", [0, "1234", 1497689816]));
+    expect(await device.nextCommand()).toEqual({ cmd: "Re", params: ["L0"] });
+  });
+
+  it("stays silent for check-ins and heartbeats, which need no response", async () => {
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+
+    device.sendCheckin();
+    device.sendHeartbeat();
+    await waitFor(() => store.rowsFor("H0").length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(device.received).toEqual([]);
+  });
+
+  it("pushes a server-initiated command to a connected lock", async () => {
+    const { server, store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    expect(server.sendToDevice(IMEI_A, "S5")).toBe(true);
+    expect(await device.nextCommand()).toEqual({ cmd: "S5", params: [] });
+
+    expect(server.sendToDevice(IMEI_A, "L0", [1, "1234", 1497689816])).toBe(true);
+    expect(await device.nextCommand()).toEqual({ cmd: "L0", params: ["1", "1234", "1497689816"] });
+
+    expect(server.sendToDevice(IMEI_B, "S5")).toBe(false);
+  });
+});
+
+describe("telemetry persistence", () => {
+  it("stores a check-in with the interpolated battery percentage", async () => {
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+
+    device.sendCheckin(412);
+
+    await waitFor(() => store.rowsFor("Q0").length === 1);
+    const row = store.rowsFor("Q0")[0];
+    expect(row.bikeId).toBe("bike-a");
+    expect(row.imei).toBe(IMEI_A);
+    expect(row.voltageCv).toBe(412);
+    expect(row.batteryPct).toBe(100);
+    expect(row.x).toBeNull();
+    expect(row.lat).toBeNull();
+    expect(store.live.some((u) => u.bikeId === "bike-a" && u.batteryPct === 100)).toBe(true);
+  });
+
+  it("stores a position report as both WGS84 and projected map coordinates", async () => {
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    // The wire format carries whole seconds, and the server only trusts a GPS
+    // clock close to now, so use a recent second-aligned instant.
+    const at = Math.floor((Date.now() - 60_000) / 1000) * 1000;
+
+    device.sendPosition(54.9442, 20.1561, { satellites: 9, at });
+
+    await waitFor(() => store.rowsFor("D0").length === 1);
+    const row = store.rowsFor("D0")[0];
+    expect(row.lat).toBeCloseTo(54.9442, 4);
+    expect(row.lng).toBeCloseTo(20.1561, 4);
+    expect(row.x).not.toBeNull();
+    expect(row.y).not.toBeNull();
+    expect(row.satellites).toBe(9);
+    expect(row.t).toBe(at);
+    expect(store.live.some((u) => u.bikeId === "bike-a" && u.x === row.x && u.y === row.y)).toBe(true);
+  });
+
+  it("ignores an implausible GPS clock and timestamps the row on arrival", async () => {
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    const before = Date.now();
+
+    // A lock that has not acquired a date yet reports one years in the past.
+    device.sendPosition(54.9442, 20.1561, { at: Date.UTC(2011, 0, 1) });
+
+    await waitFor(() => store.rowsFor("D0").length === 1);
+    expect(store.rowsFor("D0")[0].t).toBeGreaterThanOrEqual(before);
+  });
+
+  it("keeps a positionless report but leaves it unplottable", async () => {
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+
+    device.sendNoFix();
+
+    await waitFor(() => store.rowsFor("D0").length === 1);
+    const row = store.rowsFor("D0")[0];
+    expect(row.x).toBeNull();
+    expect(row.lat).toBeNull();
+  });
+
+  it("stores an alarm code", async () => {
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+
+    device.sendAlarm(2);
+
+    await waitFor(() => store.rowsFor("W0").length === 1);
+    expect(store.rowsFor("W0")[0].alarmCode).toBe(2);
+  });
+
+  it("does not store rental lifecycle or auxiliary commands as telemetry", async () => {
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+
+    device.sendRaw(device.packet("L1", ["1234", 1497689816, 3]));
+    device.sendRaw(device.packet("G0", ["XX_110", "Jul 4 2018"]));
+    device.sendCheckin();
+
+    await waitFor(() => store.rowsFor("Q0").length === 1);
+    expect(store.telemetry.map((r) => r.cmd)).toEqual(["Q0"]);
+  });
+
+  it("throttles positionless status chatter but never drops a position", async () => {
+    const { store, lock } = await harness({ statusMinIntervalMs: 60_000 });
+    const device = await lock(IMEI_A);
+
+    device.sendCheckin(412);
+    device.sendHeartbeat(true, 411, 24);
+    device.sendCheckin(410);
+    device.sendPosition(54.9442, 20.1561);
+    device.sendPosition(54.9443, 20.1562);
+
+    await waitFor(() => store.rowsFor("D0").length === 2);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(store.telemetry.filter((r) => r.cmd === "Q0" || r.cmd === "H0")).toHaveLength(1);
+  });
+
+  it("throttles per bike, so one chatty lock cannot silence another", async () => {
+    const { store, lock } = await harness({ statusMinIntervalMs: 60_000 });
+    const a = await lock(IMEI_A);
+    const b = await lock(IMEI_B);
+
+    a.sendCheckin();
+    a.sendCheckin();
+    b.sendCheckin();
+
+    await waitFor(() => store.rowsFor("Q0").length === 2);
+    expect(store.rowsFor("Q0").map((r) => r.bikeId).sort()).toEqual(["bike-a", "bike-b"]);
+  });
+
+  it("batches a burst of reports into few store round-trips", async () => {
+    const { store, lock } = await harness({ writer: { flushIntervalMs: 30 } });
+    const device = await lock(IMEI_A);
+    const insert = vi.spyOn(store, "insertTelemetry");
+
+    for (let i = 0; i < 20; i++) device.sendPosition(54.9442 + i / 10_000, 20.1561);
+
+    await waitFor(() => store.rowsFor("D0").length === 20);
+    expect(insert.mock.calls.length).toBeLessThan(20);
+  });
+
+  it("does not lose rows queued while a slow flush is already in flight", async () => {
+    // Directly against the writer: a flush snapshots the queue, so rows arriving
+    // during a slow INSERT belong to the next batch and close() must drain them.
+    const store = new FakeStore();
+    let releaseInsert = () => {};
+    const firstInsert = new Promise<void>((resolve) => { releaseInsert = resolve; });
+    let calls = 0;
+    vi.spyOn(store, "insertTelemetry").mockImplementation(async (rows) => {
+      if (++calls === 1) await firstInsert;
+      store.telemetry.push(...rows);
+    });
+
+    const writer = new TelemetryWriter(store, { flushIntervalMs: 5 });
+    const row = (t: number): TelemetryRow => ({
+      bikeId: "bike-a", imei: IMEI_A, cmd: "D0", t,
+      x: 1, y: 2, lat: 54.9, lng: 20.1,
+      satellites: 9, hdop: 1, altitudeM: 10,
+      voltageCv: null, batteryPct: null, signalLevel: null, locked: null, alarmCode: null,
+    });
+
+    writer.add(row(1));
+    await waitFor(() => calls === 1);
+    writer.add(row(2));
+
+    const closed = writer.close();
+    releaseInsert();
+    await closed;
+
+    expect(store.telemetry.map((r) => r.t)).toEqual([1, 2]);
+  });
+
+  it("flushes buffered telemetry on shutdown", async () => {
+    const { server, store, lock } = await harness({ writer: { flushIntervalMs: 60_000 } });
+    const device = await lock(IMEI_A);
+    device.sendPosition(54.9442, 20.1561);
+    await waitFor(() => server.connectionCount === 1);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(store.telemetry).toEqual([]);
+
+    await server.close();
+    active.servers.length = 0;
+
+    expect(store.rowsFor("D0")).toHaveLength(1);
+  });
+});

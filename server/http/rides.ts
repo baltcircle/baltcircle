@@ -162,11 +162,15 @@ export function registerRideRoutes(app: Express): void {
     if (!r) return res.status(404).json({ error: "Поездка не активна" });
     res.json(r);
   });
-  // Authoritative track for a ride, built from the bike's onboard tracker when
+  // Authoritative track for a ride, built from the bike's onboard OMNI lock when
   // it is reporting (survives phone screen-lock) and falling back to the phone
   // track otherwise. The rider (or staff) polls this during an active ride so a
   // locked phone no longer drops part of the saved route. `source` tells the
   // client which feed won so it can label/behave accordingly.
+  //
+  // Lock positions arrive over TCP (server/omni/), not through this process, so
+  // the read is a plain query — getBikeTelemetry already filters out the
+  // positionless status rows the locks also write.
   app.get("/api/rides/:id/track", async (req, res) => {
     const ride = await storage.getRide(Number(req.params.id));
     if (!ride) return res.status(404).json({ error: "Поездка не найдена" });
@@ -179,11 +183,11 @@ export function registerRideRoutes(app: Express): void {
     const merged = mergeRideTrack({ tracker, phone });
     res.json(merged);
   });
-  // Onboard tracker ingestion. A physical bike tracker POSTs its real GPS fix
-  // here; we convert to map space and persist it as authoritative telemetry.
-  // Token-gated (device credential, not a user session): without a configured
-  // TELEMETRY_INGEST_TOKEN the endpoint is closed (503), which also reflects the
-  // real-world state of a fleet that has no tracker wired up yet.
+  // Manual/third-party tracker ingestion. The OMNI locks do NOT use this: they
+  // speak a raw TCP protocol and are handled by the ingest process in
+  // server/omni/. This endpoint stays for backfills and for any future tracker
+  // that can only speak HTTP, and remains token-gated (device credential, not a
+  // user session): without a configured TELEMETRY_INGEST_TOKEN it is closed (503).
   app.post("/api/telemetry/bike", async (req, res) => {
     const expected = process.env.TELEMETRY_INGEST_TOKEN;
     if (!expected) return res.status(503).json({ error: "Telemetry ingestion not configured" });
