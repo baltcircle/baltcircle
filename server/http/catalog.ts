@@ -11,6 +11,7 @@ import {
   adminCreateBikeSchema, adminUpdateBikeSchema,
   createTicketSchema, updateTicketSchema, addTicketCommentSchema,
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
+  UNASSIGNED_LOCK_TTL_MS,
 } from "@shared/schema";
 import type { PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
 import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./../sms";
@@ -163,8 +164,21 @@ export function registerCatalogRoutes(app: Express): void {
       return res.status(400).json({ error: msg });
     }
     const result = await storage.adminUpdateBike(String(req.params.id), parsed.data);
-    if ("error" in result) return res.status(404).json(result);
+    if ("error" in result) {
+      // A lock taken by another bike is a conflict, not a missing bike.
+      const status = (result.error ?? "").includes("не найден") ? 404 : 409;
+      return res.status(status).json(result);
+    }
     res.json(result.bike);
+  });
+
+  // -------------- Admin: smart lock discovery --------------
+  // Locks that have connected to the OMNI TCP ingest but are not fitted to any
+  // bike. The ingest refuses telemetry from an unregistered IMEI, so this is the
+  // only way an operator learns which physical locks are powered on and free.
+  app.get("/api/admin/locks/unassigned", requireRole("operator", "admin"), async (_req, res) => {
+    const seenSince = Date.now() - UNASSIGNED_LOCK_TTL_MS;
+    res.json(await storage.listUnassignedLocks(seenSince));
   });
   app.post("/api/admin/bikes/:id/archive", requireRole("operator", "admin"), async (req, res) => {
     const result = await storage.archiveBike(String(req.params.id));

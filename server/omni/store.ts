@@ -9,6 +9,7 @@
 // checking in on a 4-minute cadence do not turn into 100-200 individual
 // INSERTs: reports accumulate in memory and land as one multi-row statement per
 // flush window.
+import { UNASSIGNED_LOCK_MAX_ROWS, UNASSIGNED_LOCK_TTL_MS } from "@shared/schema";
 import { pool } from "../db/bootstrap";
 
 /** One accepted device report, already validated and projected. */
@@ -44,6 +45,12 @@ export interface BikeLiveUpdate {
 export interface OmniStore {
   /** Resolve an IMEI to the bike it is fitted to, or null if unregistered. */
   findBikeIdByImei(imei: string): Promise<string | null>;
+  /**
+   * Note that an unregistered lock is alive, so an operator can pick it when
+   * creating a bike. Recording a sighting never grants the lock access — the
+   * caller still closes the socket.
+   */
+  recordUnassignedLock(imei: string, at: number): Promise<void>;
   insertTelemetry(rows: TelemetryRow[]): Promise<void>;
   applyLiveUpdates(updates: BikeLiveUpdate[]): Promise<void>;
   setLockOnline(imei: string, online: boolean, at: number): Promise<void>;
@@ -67,6 +74,30 @@ export class PgOmniStore implements OmniStore {
       [imei],
     )).rows;
     return rows.length > 0 ? rows[0].id : null;
+  }
+
+  /**
+   * Upsert a sighting of an unregistered lock, keeping the table small.
+   *
+   * Expired rows are dropped first so the cap is self-healing: capping alone
+   * would let a burst of spoofed IMEIs fill every slot and permanently hide the
+   * next real lock an operator powers on. The insert is guarded by the cap in
+   * the same statement (rather than a read-then-write) so concurrent
+   * connections cannot race past it; an IMEI already present always refreshes,
+   * because a known lock must not be evicted by a full table.
+   */
+  async recordUnassignedLock(imei: string, at: number): Promise<void> {
+    await pool.query("DELETE FROM unassigned_locks WHERE last_seen < $1", [
+      at - UNASSIGNED_LOCK_TTL_MS,
+    ]);
+    await pool.query(
+      `INSERT INTO unassigned_locks (imei, first_seen, last_seen)
+       SELECT $1, $2, $2
+        WHERE EXISTS (SELECT 1 FROM unassigned_locks WHERE imei = $1)
+           OR (SELECT count(*) FROM unassigned_locks) < $3
+       ON CONFLICT (imei) DO UPDATE SET last_seen = EXCLUDED.last_seen`,
+      [imei, at, UNASSIGNED_LOCK_MAX_ROWS],
+    );
   }
 
   async insertTelemetry(rows: TelemetryRow[]): Promise<void> {

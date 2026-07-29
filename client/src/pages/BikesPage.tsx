@@ -6,7 +6,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { bikeQrLink } from "@/lib/format";
+import { bikeQrLink, fmtRelative } from "@/lib/format";
 import { qrToSvg } from "@/lib/qrcode";
 import { BikeQr } from "@/components/BikeQr";
 import { Card } from "@/components/ui/card";
@@ -60,14 +60,20 @@ type FormState = {
   battery: string;
   serial: string;
   lockId: string;
+  lockImei: string;
   parkingId: string;
   notes: string;
 };
 
 const emptyForm: FormState = {
   id: "", model: "", status: "available", battery: "100",
-  serial: "", lockId: "", parkingId: "", notes: "",
+  serial: "", lockId: "", lockImei: "", parkingId: "", notes: "",
 };
+
+const UNASSIGNED_LOCKS_KEY = ["/api/admin/locks/unassigned"] as const;
+
+/** A lock that has connected to the TCP ingest but is not fitted to a bike. */
+type UnassignedLock = { imei: string; lastSeen: number };
 
 export function BikesPage() {
   const toast = useToast();
@@ -89,6 +95,16 @@ export function BikesPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const [qrBike, setQrBike] = useState<Bike | null>(null);
+
+  // Locks are discovered asynchronously: the operator often opens this form
+  // before the lock they just powered on has dialled in. Poll while the form is
+  // open so the list fills in without the operator closing and reopening it.
+  const locksQ = useQuery<UnassignedLock[]>({
+    queryKey: UNASSIGNED_LOCKS_KEY,
+    enabled: formOpen && canWrite,
+    refetchInterval: formOpen ? 10_000 : false,
+    staleTime: 0,
+  });
 
   const bikes = bikesQ.data ?? [];
   const parkings = parkingsQ.data ?? [];
@@ -126,6 +142,9 @@ export function BikesPage() {
       setFormOpen(false);
       toast.toast({ title: editing ? "Велосипед обновлён" : "Велосипед добавлен", description: bike.id });
     },
+    // On success the claimed lock is no longer unassigned; on a lost race (409)
+    // the picker must drop the lock the other operator took. Either way, refetch.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: UNASSIGNED_LOCKS_KEY }),
     onError: (err: any) => setFormError(err?.message?.replace(/^\d+:\s*/, "") ?? "Не удалось сохранить"),
   });
 
@@ -178,6 +197,7 @@ export function BikesPage() {
       battery: String(b.battery),
       serial: b.serial ?? "",
       lockId: b.lockId ?? "",
+      lockImei: b.lockImei ?? "",
       parkingId: b.parkingId ?? "",
       notes: b.notes ?? "",
     });
@@ -202,10 +222,19 @@ export function BikesPage() {
       notes: form.notes,
     };
     if (editing) {
-      saveMut.mutate({ editingId: editing.id, body: common });
-    } else {
-      saveMut.mutate({ editingId: null, body: { id: form.id, ...common } });
+      // Only send the lock when it actually changed: an untouched edit must not
+      // look like a lock swap (which resets the lock's live state server-side).
+      const lockPatch = form.lockImei && form.lockImei !== editing.lockImei
+        ? { lockImei: form.lockImei }
+        : {};
+      saveMut.mutate({ editingId: editing.id, body: { ...common, ...lockPatch } });
+      return;
     }
+    if (!form.lockImei) {
+      setFormError("Выберите замок — без него велосипед нельзя отследить");
+      return;
+    }
+    saveMut.mutate({ editingId: null, body: { id: form.id, lockImei: form.lockImei, ...common } });
   };
 
   // ---------- Loading / error ----------
@@ -406,6 +435,15 @@ export function BikesPage() {
                 />
               </Field>
             </div>
+            <LockPicker
+              value={form.lockImei}
+              onChange={(imei) => setForm((f) => ({ ...f, lockImei: imei }))}
+              locks={locksQ.data ?? []}
+              loading={locksQ.isFetching}
+              onRefresh={() => locksQ.refetch()}
+              currentImei={editing?.lockImei ?? null}
+              required={!editing}
+            />
             <Field label="Парковка (необязательно)">
               <Select
                 value={form.parkingId || "none"}
@@ -428,11 +466,13 @@ export function BikesPage() {
                   data-testid="input-bike-serial"
                 />
               </Field>
-              <Field label="ID замка (placeholder)">
+              {/* Legacy free-text label, kept for inventory notes. The IMEI
+                  above is what actually binds a lock to this bike. */}
+              <Field label="Инв. номер замка (необязательно)">
                 <Input
                   value={form.lockId}
                   onChange={(e) => setForm((f) => ({ ...f, lockId: e.target.value }))}
-                  placeholder="Без интеграции"
+                  placeholder="Своя маркировка"
                   data-testid="input-bike-lock"
                 />
               </Field>
@@ -455,7 +495,11 @@ export function BikesPage() {
             <Button variant="outline" onClick={() => setFormOpen(false)} data-testid="button-bike-cancel">
               Отмена
             </Button>
-            <Button onClick={submitForm} disabled={saveMut.isPending} data-testid="button-bike-save">
+            <Button
+              onClick={submitForm}
+              disabled={saveMut.isPending || (!editing && !form.lockImei)}
+              data-testid="button-bike-save"
+            >
               {saveMut.isPending ? "Сохранение…" : "Сохранить"}
             </Button>
           </DialogFooter>
@@ -468,6 +512,78 @@ export function BikesPage() {
         onClose={() => setQrBike(null)}
         onCopied={() => toast.toast({ title: "Скопировано", description: "Ссылка QR в буфере обмена" })}
       />
+    </div>
+  );
+}
+
+/**
+ * Picks the physical lock a bike is fitted with.
+ *
+ * The options come from locks that have connected to the TCP ingest but are not
+ * bound to a bike yet — there is no other way to learn a lock's IMEI, since the
+ * ingest refuses telemetry from an unregistered device. An empty list is the
+ * normal state right after opening the form, so it gets an explanation and a
+ * retry rather than a silent empty dropdown.
+ */
+function LockPicker({
+  value, onChange, locks, loading, onRefresh, currentImei, required,
+}: {
+  value: string;
+  onChange: (imei: string) => void;
+  locks: UnassignedLock[];
+  loading: boolean;
+  onRefresh: () => void;
+  currentImei: string | null;
+  required: boolean;
+}) {
+  // On edit the bike's own lock is (correctly) absent from the unassigned list,
+  // but it must stay selectable or saving would look like removing the lock.
+  const options: { imei: string; label: string }[] = [
+    ...(currentImei ? [{ imei: currentImei, label: `IMEI ${currentImei} — текущий` }] : []),
+    ...locks
+      .filter((l) => l.imei !== currentImei)
+      .map((l) => ({ imei: l.imei, label: `IMEI ${l.imei} — виден ${fmtRelative(l.lastSeen)}` })),
+  ];
+
+  // Deliberately not wrapped in <Field>: that renders a <label>, and a click
+  // anywhere on a label activates the control inside it — which here would be
+  // the refresh button.
+  return (
+    <div className="block">
+      <div className="text-xs font-medium text-muted-foreground mb-1">
+        {required ? "Замок (обязательно)" : "Замок"}
+      </div>
+      {options.length === 0 ? (
+        <div className="rounded-md border border-dashed p-3 space-y-2" data-testid="lock-picker-empty">
+          <p className="text-xs text-muted-foreground">
+            Свободных замков пока не видно — включите замок и дождитесь,
+            пока он подключится к серверу.
+          </p>
+          <Button type="button" size="sm" variant="outline" onClick={onRefresh} disabled={loading}
+            data-testid="button-locks-refresh">
+            {loading ? "Обновление…" : "Обновить"}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <Select value={value} onValueChange={onChange}>
+            <SelectTrigger className="flex-1" data-testid="select-bike-lock-imei">
+              <SelectValue placeholder="Выберите замок" />
+            </SelectTrigger>
+            <SelectContent>
+              {options.map((o) => (
+                <SelectItem key={o.imei} value={o.imei} data-testid={`lock-option-${o.imei}`}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button type="button" variant="outline" onClick={onRefresh} disabled={loading}
+            data-testid="button-locks-refresh">
+            {loading ? "…" : "Обновить"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

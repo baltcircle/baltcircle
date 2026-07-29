@@ -283,12 +283,47 @@ export const insertBikeSchema = createInsertSchema(bikes);
 export type InsertBike = z.infer<typeof insertBikeSchema>;
 export type Bike = typeof bikes.$inferSelect;
 
+/* ------- UNASSIGNED SMART LOCKS ------- */
+// A lock that dialled in but is not fitted to any bike yet. The TCP ingest
+// refuses to accept telemetry from an unknown IMEI, so without this table a
+// freshly powered-on lock would be invisible and an operator would have no way
+// to learn its IMEI short of reading it off the device.
+//
+// This is a discovery buffer, not a device registry: the registry is
+// `bikes.lock_imei`. A row here is advisory and may be stale — an IMEI that has
+// since been assigned is filtered out at read time rather than trusted.
+export const unassignedLocks = pgTable("unassigned_locks", {
+  imei: text("imei").primaryKey(),
+  firstSeen: bigint("first_seen", { mode: "number" }).notNull(),  // unix ms
+  lastSeen: bigint("last_seen", { mode: "number" }).notNull(),    // unix ms
+});
+export type UnassignedLock = typeof unassignedLocks.$inferSelect;
+
+/** A sighting older than this is neither offered to operators nor kept. */
+export const UNASSIGNED_LOCK_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Rows kept before new IMEIs stop being recorded. The lock port is public and
+ * IMEIs are spoofable, so this table must not become an unbounded write target;
+ * expired rows are pruned on write, which keeps room for real locks.
+ */
+export const UNASSIGNED_LOCK_MAX_ROWS = 500;
+
+/** An OMNI IMEI as it appears on the wire: exactly 15 digits (protocol §1.1). */
+export const lockImeiSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{15}$/, "IMEI замка: ровно 15 цифр");
+
 // Admin: create a bike. Id/model required; status defaults to available. Map
 // coordinates are optional (default to a station/centre server-side). Battery
 // defaults to 100 for a freshly provisioned lock.
 const bikeIdRegex = /^[A-Za-z0-9-]{2,20}$/;
 export const adminCreateBikeSchema = z.object({
   id: z.string().trim().regex(bikeIdRegex, "Код: латиница, цифры и дефис (2–20 символов)"),
+  // Required: a bike without a lock cannot be rented or tracked, and the only
+  // way an operator learns an IMEI is by picking a lock that has dialled in.
+  lockImei: lockImeiSchema,
   model: z.string().trim().min(1, "Укажите модель").max(60),
   status: z.enum(BIKE_STATUSES).default("available"),
   battery: z.number().int().min(0).max(100).default(100),
@@ -301,6 +336,9 @@ export type AdminCreateBikeInput = z.infer<typeof adminCreateBikeSchema>;
 
 // Admin: edit a bike. All fields optional; id is immutable (path param).
 export const adminUpdateBikeSchema = z.object({
+  // Optional on edit: a lock can be swapped when the fitted one dies, but an
+  // untouched form must not have to resend it.
+  lockImei: lockImeiSchema.optional(),
   model: z.string().trim().min(1).max(60).optional(),
   status: z.enum(BIKE_STATUSES).optional(),
   battery: z.number().int().min(0).max(100).optional(),

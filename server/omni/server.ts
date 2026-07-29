@@ -253,7 +253,23 @@ export class OmniTcpServer {
       bikeId,
       expiresAt: now + (bikeId ? IMEI_CACHE_TTL_MS : IMEI_NEGATIVE_TTL_MS),
     });
+    if (bikeId === null) this.noteUnassigned(imei, now);
     return bikeId;
+  }
+
+  /**
+   * Remember that an unregistered lock is alive, so an operator can pick it in
+   * the admin bike form. Reached only on a cache miss, so the negative cache
+   * already throttles this to one write per IMEI per IMEI_NEGATIVE_TTL_MS
+   * however hard a device (or a spoofer) reconnects.
+   *
+   * Not awaited: the caller's job is to reject the connection, and discovery
+   * bookkeeping must neither delay that nor fail it.
+   */
+  private noteUnassigned(imei: string, at: number): void {
+    void this.options.store.recordUnassignedLock(imei, at).catch((err) => {
+      this.log.warn({ err, imei }, "failed to record unassigned lock sighting");
+    });
   }
 }
 

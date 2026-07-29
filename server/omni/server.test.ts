@@ -34,11 +34,21 @@ class FakeStore implements OmniStore {
   lookupError: Error | null = null;
   /** Set to stall findBikeIdByImei, so a test can act during the lookup. */
   lookupGate: Promise<void> | null = null;
+  /** Sightings of locks not fitted to a bike, keyed by IMEI. */
+  readonly sightings = new Map<string, { firstSeen: number; lastSeen: number }>();
+  /** Set to make recordUnassignedLock throw, simulating a database outage. */
+  sightingError: Error | null = null;
 
   async findBikeIdByImei(imei: string): Promise<string | null> {
     if (this.lookupGate) await this.lookupGate;
     if (this.lookupError) throw this.lookupError;
     return this.bikes.get(imei) ?? null;
+  }
+
+  async recordUnassignedLock(imei: string, at: number): Promise<void> {
+    if (this.sightingError) throw this.sightingError;
+    const prev = this.sightings.get(imei);
+    this.sightings.set(imei, { firstSeen: prev?.firstSeen ?? at, lastSeen: at });
   }
 
   async insertTelemetry(rows: TelemetryRow[]): Promise<void> {
@@ -186,6 +196,55 @@ describe("connection lifecycle", () => {
     }
 
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("records a sighting of an unregistered lock so it can be assigned later", async () => {
+    const { server, store, lock } = await harness();
+    const device = await lock(UNKNOWN_IMEI);
+
+    device.sendCheckin();
+
+    await waitFor(() => store.sightings.has(UNKNOWN_IMEI));
+    // Discovery must not grant access: the socket still goes and nothing is stored.
+    await waitFor(() => server.connectionCount === 0);
+    expect(store.telemetry).toEqual([]);
+    expect(store.onlineCalls).toEqual([]);
+  });
+
+  it("does not record a sighting for a lock that is already fitted to a bike", async () => {
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+
+    device.sendCheckin();
+
+    await waitFor(() => store.onlineCalls.length === 1);
+    expect(store.sightings.size).toBe(0);
+  });
+
+  it("throttles sighting writes through the negative IMEI cache", async () => {
+    const { server, store, lock } = await harness();
+    const spy = vi.spyOn(store, "recordUnassignedLock");
+
+    // A rejected lock reconnects immediately and forever; the sighting write
+    // must not follow it, or the lock port becomes a write amplifier.
+    for (let i = 0; i < 3; i++) {
+      const device = await lock(UNKNOWN_IMEI);
+      device.sendCheckin();
+      await waitFor(() => server.connectionCount === 0);
+    }
+
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("still rejects an unregistered lock when the sighting write fails", async () => {
+    const { server, store, lock } = await harness();
+    store.sightingError = new Error("db down");
+    const device = await lock(UNKNOWN_IMEI);
+
+    device.sendCheckin();
+
+    await waitFor(() => server.connectionCount === 0);
+    expect(store.telemetry).toEqual([]);
   });
 
   it("closes a socket that changes IMEI mid-session", async () => {

@@ -313,6 +313,16 @@ CREATE TABLE IF NOT EXISTS bike_telemetry (
   locked BOOLEAN,
   alarm_code INTEGER
 );
+-- Locks that have dialled in over TCP but are not fitted to any bike yet.
+-- Purely a discovery buffer so an operator can pick a real IMEI when creating a
+-- bike; the registry of record stays bikes.lock_imei. Rows are capped and
+-- pruned by age on write (see server/omni/store.ts) because the lock port is
+-- public and IMEIs are spoofable.
+CREATE TABLE IF NOT EXISTS unassigned_locks (
+  imei TEXT PRIMARY KEY,
+  first_seen BIGINT NOT NULL,
+  last_seen BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
