@@ -65,6 +65,9 @@ CREATE TABLE IF NOT EXISTS bikes (
   flagged BOOLEAN NOT NULL DEFAULT FALSE,
   serial TEXT,
   lock_id TEXT,
+  lock_imei TEXT,
+  lock_online BOOLEAN NOT NULL DEFAULT FALSE,
+  lock_last_seen BIGINT,
   parking_id TEXT,
   notes TEXT,
   seed BOOLEAN NOT NULL DEFAULT FALSE
@@ -272,6 +275,54 @@ CREATE TABLE IF NOT EXISTS ride_points (
   y DOUBLE PRECISION NOT NULL,
   t BIGINT NOT NULL
 );
+-- Onboard OMNI smart-lock reports (wire protocol in shared/omni/protocol.ts).
+-- Independent of any rider's phone: the lock keeps reporting even while the
+-- phone screen is locked, so an active ride's track can be reconstructed here
+-- without the gaps that browser watchPosition leaves.
+--
+-- One row per accepted device report, written in batches by the TCP ingest
+-- server. The cmd column is the OMNI command that produced the row and decides
+-- which columns are populated:
+--   D0 (position)  -> x/y/lat/lng/satellites/hdop/altitude_m
+--   Q0 (check-in)  -> voltage_cv/battery_pct
+--   H0 (heartbeat) -> voltage_cv/battery_pct/signal_level/locked
+--   S5 (status)    -> as H0, plus satellites
+--   W0 (alarm)     -> alarm_code
+-- Everything except bike_id/cmd/t is therefore nullable: a check-in carries no
+-- position, and a position report carries no voltage.
+--
+-- x/y are abstract map space (matching ride_points), projected from the
+-- device's WGS84 fix at ingest; the raw lat/lng is kept alongside so a bad
+-- projection can be diagnosed and reprocessed without losing the source fix.
+CREATE TABLE IF NOT EXISTS bike_telemetry (
+  id SERIAL PRIMARY KEY,
+  bike_id TEXT NOT NULL,
+  imei TEXT,
+  cmd TEXT NOT NULL DEFAULT 'D0',
+  t BIGINT NOT NULL,
+  x DOUBLE PRECISION,
+  y DOUBLE PRECISION,
+  lat DOUBLE PRECISION,
+  lng DOUBLE PRECISION,
+  satellites INTEGER,
+  hdop DOUBLE PRECISION,
+  altitude_m DOUBLE PRECISION,
+  voltage_cv INTEGER,
+  battery_pct INTEGER,
+  signal_level INTEGER,
+  locked BOOLEAN,
+  alarm_code INTEGER
+);
+-- Locks that have dialled in over TCP but are not fitted to any bike yet.
+-- Purely a discovery buffer so an operator can pick a real IMEI when creating a
+-- bike; the registry of record stays bikes.lock_imei. Rows are capped and
+-- pruned by age on write (see server/omni/store.ts) because the lock port is
+-- public and IMEIs are spoofable.
+CREATE TABLE IF NOT EXISTS unassigned_locks (
+  imei TEXT PRIMARY KEY,
+  first_seen BIGINT NOT NULL,
+  last_seen BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -337,6 +388,23 @@ async function createIndexes() {
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_ride_points_ride ON ride_points (ride_id, id);`,
   );
+  // bike_telemetry (raw SQL only): the ride-track query filters by bike + time
+  // window, so index on (bike_id, t).
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_bike_telemetry_bike_t ON bike_telemetry (bike_id, t);`,
+  );
+  // Most rows are positionless check-ins/heartbeats, but the ride-track query
+  // only ever wants rows that carry a fix. A partial index keeps that scan off
+  // the status rows entirely.
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_bike_telemetry_pos ON bike_telemetry (bike_id, t) WHERE x IS NOT NULL;`,
+  );
+  // The OMNI TCP server resolves an incoming connection by IMEI on every new
+  // socket, and two bikes must never claim the same lock. Partial UNIQUE
+  // because the column is NULL for every bike without a smart lock fitted.
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_bikes_lock_imei ON bikes (lock_imei) WHERE lock_imei IS NOT NULL;`,
+  );
 }
 
 // ---------- Column migrations for existing databases ----------
@@ -349,6 +417,37 @@ async function runMigrations() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at BIGINT;`);
   await pool.query(`ALTER TABLE parkings ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';`);
   await pool.query(`ALTER TABLE support_conversations ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'bot';`);
+
+  // ---- OMNI smart-lock integration ----
+  // Device registry lives on the bike: the TCP server maps an incoming IMEI to
+  // the bike it is fitted to, and records whether that lock currently holds a
+  // connection.
+  await pool.query(`ALTER TABLE bikes ADD COLUMN IF NOT EXISTS lock_imei TEXT;`);
+  await pool.query(`ALTER TABLE bikes ADD COLUMN IF NOT EXISTS lock_online BOOLEAN NOT NULL DEFAULT FALSE;`);
+  await pool.query(`ALTER TABLE bikes ADD COLUMN IF NOT EXISTS lock_last_seen BIGINT;`);
+
+  // bike_telemetry was originally created (unreleased, PR #83) for a generic
+  // HTTP webhook as (bike_id, x, y, t) with x/y NOT NULL. The real devices speak
+  // TCP and send positionless check-ins, so widen the row and drop the NOT NULL
+  // on the coordinates. Additive + constraint-relaxing: existing rows stay valid.
+  for (const col of [
+    "imei TEXT",
+    "cmd TEXT NOT NULL DEFAULT 'D0'",
+    "lat DOUBLE PRECISION",
+    "lng DOUBLE PRECISION",
+    "satellites INTEGER",
+    "hdop DOUBLE PRECISION",
+    "altitude_m DOUBLE PRECISION",
+    "voltage_cv INTEGER",
+    "battery_pct INTEGER",
+    "signal_level INTEGER",
+    "locked BOOLEAN",
+    "alarm_code INTEGER",
+  ]) {
+    await pool.query(`ALTER TABLE bike_telemetry ADD COLUMN IF NOT EXISTS ${col};`);
+  }
+  await pool.query(`ALTER TABLE bike_telemetry ALTER COLUMN x DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE bike_telemetry ALTER COLUMN y DROP NOT NULL;`);
 }
 
 const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];

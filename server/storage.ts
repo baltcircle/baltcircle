@@ -1071,6 +1071,40 @@ export class DatabaseStorage implements IStorage {
     return t.length > 0 ? t : null;
   }
 
+  // Locks that dialled in recently but are not fitted to a bike, newest first.
+  //
+  // The anti-join is the point: a sighting row is only a hint left by the TCP
+  // ingest and is not deleted the instant a lock is assigned, so an IMEI that
+  // now belongs to a bike must be filtered out here rather than trusted. The
+  // recency window drops locks that have gone quiet (returned, unpowered,
+  // spoofed once) without needing a scheduled prune.
+  async listUnassignedLocks(seenSinceMs: number): Promise<{ imei: string; lastSeen: number }[]> {
+    return (await pool.query(
+      `SELECT u.imei, u.last_seen AS "lastSeen" FROM unassigned_locks u
+        WHERE u.last_seen >= $1
+          AND NOT EXISTS (SELECT 1 FROM bikes b WHERE b.lock_imei = u.imei)
+        ORDER BY u.last_seen DESC`,
+      [seenSinceMs],
+    )).rows as { imei: string; lastSeen: number }[];
+  }
+
+  // Postgres unique-violation. Two operators can pick the same freshly
+  // discovered lock at the same time; the partial unique index on
+  // bikes.lock_imei is what actually decides, and the loser gets told plainly
+  // instead of a 500.
+  // Drizzle wraps driver errors in a DrizzleQueryError whose own `code` is
+  // undefined and keeps the pg error (carrying the SQLSTATE) on `cause`, while
+  // a raw pool.query throws that pg error directly. Both shapes reach here, so
+  // both are checked — matching only the top level lets a duplicate IMEI
+  // written through Drizzle escape as a 500.
+  private isUniqueViolation(err: unknown): boolean {
+    const code = (e: unknown) => (e as { code?: string } | null | undefined)?.code;
+    return code(err) === "23505" || code((err as { cause?: unknown } | null)?.cause) === "23505";
+  }
+
+  private static readonly LOCK_TAKEN =
+    "Этот замок только что назначили другому велосипеду — выберите другой";
+
   // Create a real (non-demo) bike. The id is unique (primary key); a duplicate
   // is rejected with a clear message. Map coordinates default to the assigned
   // parking station or the map centre so the bike has a valid position.
@@ -1087,23 +1121,42 @@ export class DatabaseStorage implements IStorage {
     }
 
     const now = Date.now();
-    await db.insert(bikes).values({
-      id,
-      model: input.model.trim(),
-      status: input.status,
-      battery: input.battery,
-      lat, lng,
-      lastSeen: now,
-      idleHours: 0,
-      flagged: false,
-      serial: this.optStr(input.serial),
-      lockId: this.optStr(input.lockId),
-      parkingId,
-      notes: this.optStr(input.notes),
-      seed: false,
-    } as any);
+    const lockImei = input.lockImei.trim();
+    try {
+      await db.insert(bikes).values({
+        id,
+        model: input.model.trim(),
+        status: input.status,
+        battery: input.battery,
+        lat, lng,
+        lastSeen: now,
+        idleHours: 0,
+        flagged: false,
+        serial: this.optStr(input.serial),
+        lockId: this.optStr(input.lockId),
+        lockImei,
+        parkingId,
+        notes: this.optStr(input.notes),
+        seed: false,
+      } as any);
+    } catch (err) {
+      if (this.isUniqueViolation(err)) return { error: DatabaseStorage.LOCK_TAKEN };
+      throw err;
+    }
+    await this.forgetUnassignedLock(lockImei);
     this.invalidateBikesCache();
     return { bike: (await this.getBike(id))! };
+  }
+
+  // The lock is now in the registry, so its discovery row is noise. Best-effort:
+  // listUnassignedLocks already excludes assigned IMEIs, so failing to clean up
+  // is cosmetic and must not fail the bike that was successfully created.
+  private async forgetUnassignedLock(imei: string): Promise<void> {
+    try {
+      await pool.query("DELETE FROM unassigned_locks WHERE imei = $1", [imei]);
+    } catch {
+      /* ignore */
+    }
   }
 
   async adminUpdateBike(id: string, patch: AdminUpdateBikeInput) {
@@ -1121,7 +1174,22 @@ export class DatabaseStorage implements IStorage {
       const parkingId = this.optStr(patch.parkingId);
       set.parkingId = parkingId;
     }
-    await db.update(bikes).set(set as any).where(eq(bikes.id, id));
+    // Swapping the lock resets its live state: the new lock has not connected
+    // as this bike yet, and inheriting the old one's "online" would show a dead
+    // bike as reachable until the ingest corrects it.
+    const swappingLock = patch.lockImei !== undefined && patch.lockImei !== existing.lockImei;
+    if (swappingLock) {
+      set.lockImei = patch.lockImei!.trim();
+      set.lockOnline = false;
+      set.lockLastSeen = null;
+    }
+    try {
+      await db.update(bikes).set(set as any).where(eq(bikes.id, id));
+    } catch (err) {
+      if (this.isUniqueViolation(err)) return { error: DatabaseStorage.LOCK_TAKEN };
+      throw err;
+    }
+    if (swappingLock) await this.forgetUnassignedLock(set.lockImei!);
     this.invalidateBikesCache();
     return { bike: (await this.getBike(id))! };
   }
@@ -1403,6 +1471,41 @@ export class DatabaseStorage implements IStorage {
     return this.hydrateTrack(
       (await db.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride,
     );
+  }
+
+  // ---- onboard bike tracker telemetry (independent of the rider's phone) ----
+  // The OMNI smart locks are the primary writer and reach bike_telemetry through
+  // the TCP ingest process (server/omni/), which batches its own INSERTs. The two
+  // methods below serve the manual HTTP ingest path (/api/telemetry/bike) and the
+  // ride-track read, and store positions in map space so tracker points merge
+  // with the phone-fed ride track.
+  async insertBikeTelemetry(bikeId: string, x: number, y: number, t: number) {
+    await pool.query(
+      "INSERT INTO bike_telemetry (bike_id, x, y, t) VALUES ($1, $2, $3, $4)",
+      [bikeId, x, y, t],
+    );
+    // Keep the fleet's live position fresh from the tracker too, so the ops map
+    // reflects the bike even when no phone is relaying points.
+    await db.update(bikes).set({ lat: y, lng: x, lastSeen: t, idleHours: 0 } as any)
+      .where(eq(bikes.id, bikeId));
+    this.invalidateBikesCache({ silent: true });
+  }
+
+  // Telemetry points for one bike within [fromT, toT], time-ordered. Used to
+  // build the authoritative ride track for the ride's bike + time window.
+  //
+  // Positionless rows are skipped: a lock's battery check-in, heartbeat or
+  // no-satellite-fix report is stored in the same table with NULL x/y, and must
+  // not enter a track as a (null, null) point. The partial index
+  // idx_bike_telemetry_pos matches this predicate.
+  async getBikeTelemetry(bikeId: string, fromT: number, toT: number): Promise<[number, number, number][]> {
+    const rows = (await pool.query(
+      `SELECT x, y, t FROM bike_telemetry
+        WHERE bike_id = $1 AND t >= $2 AND t <= $3 AND x IS NOT NULL AND y IS NOT NULL
+        ORDER BY t, id`,
+      [bikeId, fromT, toT],
+    )).rows as { x: number; y: number; t: number }[];
+    return rows.map((p) => [p.x, p.y, p.t]);
   }
 
   async endRide(rideId: number) {

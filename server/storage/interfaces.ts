@@ -131,6 +131,8 @@ export interface IBikeStorage {
   adminUpdateBike(id: string, patch: AdminUpdateBikeInput): Promise<{ bike: Bike } | { error: string }>;
   archiveBike(id: string): Promise<{ bike: Bike } | { error: string }>;
   deleteBike(id: string): Promise<{ ok: true } | { error: string; archived?: Bike }>;
+  // OMNI locks seen by the TCP ingest but not yet fitted to a bike.
+  listUnassignedLocks(seenSinceMs: number): Promise<{ imei: string; lastSeen: number }[]>;
 }
 
 export interface IParkingStorage {
@@ -148,6 +150,8 @@ export interface IParkingStorage {
 export interface IRideStorage {
   startRide(input: { bikeId: string; userId: string; tariff: string; prepaid?: boolean }): Promise<Ride | { error: string }>;
   appendRidePoint(rideId: number, x: number, y: number): Promise<Ride | undefined>;
+  insertBikeTelemetry(bikeId: string, x: number, y: number, t: number): Promise<void>;
+  getBikeTelemetry(bikeId: string, fromT: number, toT: number): Promise<[number, number, number][]>;
   endRide(rideId: number): Promise<Ride | undefined>;
   getRide(rideId: number): Promise<Ride | undefined>;
   getActiveRide(userId: string): Promise<Ride | undefined>;
