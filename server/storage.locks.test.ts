@@ -93,6 +93,24 @@ describe("createBike lock binding", () => {
     expect(result).toEqual({ error: expect.stringContaining("другому велосипеду") });
   });
 
+  // createBike writes through Drizzle, which does not rethrow the pg error: it
+  // wraps it in a DrizzleQueryError carrying no `code` of its own, with the
+  // SQLSTATE on `cause`. Confirmed against a real Postgres — matching only the
+  // top-level code sent back a 500 with the raw SQL and params in the body.
+  it("reports a lock taken when Drizzle wraps the pg error in `cause`", async () => {
+    selectResults = [[]];
+    writeError = Object.assign(new Error('Failed query: insert into "bikes"'), {
+      cause: Object.assign(new Error("duplicate key value violates unique constraint"), {
+        code: "23505",
+        constraint: "idx_bikes_lock_imei",
+      }),
+    });
+
+    const result = await storage.createBike(createInput);
+
+    expect(result).toEqual({ error: expect.stringContaining("другому велосипеду") });
+  });
+
   it("does not swallow an unrelated database failure", async () => {
     selectResults = [[]];
     writeError = Object.assign(new Error("connection terminated"), { code: "57P01" });

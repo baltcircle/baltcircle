@@ -1092,8 +1092,14 @@ export class DatabaseStorage implements IStorage {
   // discovered lock at the same time; the partial unique index on
   // bikes.lock_imei is what actually decides, and the loser gets told plainly
   // instead of a 500.
+  // Drizzle wraps driver errors in a DrizzleQueryError whose own `code` is
+  // undefined and keeps the pg error (carrying the SQLSTATE) on `cause`, while
+  // a raw pool.query throws that pg error directly. Both shapes reach here, so
+  // both are checked — matching only the top level lets a duplicate IMEI
+  // written through Drizzle escape as a 500.
   private isUniqueViolation(err: unknown): boolean {
-    return (err as { code?: string } | null)?.code === "23505";
+    const code = (e: unknown) => (e as { code?: string } | null | undefined)?.code;
+    return code(err) === "23505" || code((err as { cause?: unknown } | null)?.cause) === "23505";
   }
 
   private static readonly LOCK_TAKEN =
