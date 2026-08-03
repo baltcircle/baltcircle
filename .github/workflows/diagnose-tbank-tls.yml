@@ -88,7 +88,130 @@ jobs:
             });
           '
 
+      # -----------------------------------------------------------------
+      # Log-tailing additions below (all read-only; no secrets printed).
+      #
+      # Purpose: TLS to T-Bank is confirmed OK, credentials were rotated and
+      # redeployed, and the merchant cabinet NotificationURL is confirmed
+      # correct — yet "Тест 1. Успешная оплата" still shows "Не пройдено".
+      # The remaining question is factual: does T-Bank's server actually
+      # reach our NotificationURL during the test payment, and if so what
+      # does our stack (nginx, then the Node app) do with that request?
+      # These steps tail recent logs so a run right after triggering a test
+      # payment in the T-Bank cabinet shows the real evidence.
+      #
+      # nginx: deploy/nginx/baltcircle.conf in this repo is a *reference*
+      # config for an nginx reverse proxy on port 443, but the live prod host
+      # does NOT load it via docker-compose (there is no nginx service in
+      # docker-compose.yml). Per .github/workflows/configure-takeride-domain.yml,
+      # nginx runs directly on the VM host (systemd), config installed at
+      # /etc/nginx/sites-available/baltcircle (symlinked into sites-enabled),
+      # proxying to 127.0.0.1:5000. That workflow does not set a custom
+      # access_log directive, so the distro default access log applies —
+      # /var/log/nginx/access.log on the Debian/Ubuntu image used for this
+      # runner. The step below tails that file if present; if the log has
+      # rotated/compressed or the path differs, it falls back to `journalctl
+      # -u nginx` and clearly reports which source it used.
+      - name: Tail nginx access log for the T-Bank notification path (host nginx)
+        if: always()
+        run: |
+          set +e
+          echo "== Looking for a host nginx access log (last ~15 minutes) =="
+          SINCE_EPOCH=$(date -d '15 minutes ago' +%s 2>/dev/null || date -v-15M +%s)
+          NGINX_LOG="/var/log/nginx/access.log"
+
+          if [ -f "$NGINX_LOG" ] && [ -r "$NGINX_LOG" ]; then
+            echo "Source: $NGINX_LOG"
+            echo "Filter: path contains 'tbank/notification', last ~15 minutes"
+            echo "Columns: timestamp | method | path | status | response_size"
+            echo "---"
+            # Default nginx combined log format:
+            #   $remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent"
+            sudo tail -n 20000 "$NGINX_LOG" 2>/dev/null | grep -i "tbank/notification" | awk -v since="$SINCE_EPOCH" '
+              {
+                ts_start = index($0, "[");
+                ts_end = index($0, "]");
+                ts = substr($0, ts_start + 1, ts_end - ts_start - 1);
+                rest = substr($0, ts_end + 2);
+                req_start = index(rest, "\"");
+                req_end = index(substr(rest, req_start + 1), "\"") + req_start;
+                request = substr(rest, req_start + 1, req_end - req_start - 1);
+                tail = substr(rest, req_end + 2);
+                split(tail, f, " ");
+                status = f[1];
+                size = f[2];
+                split(request, rp, " ");
+                method = rp[1];
+                path = rp[2];
+                print "time="ts, "method="method, "path="path, "status="status, "size="size;
+              }' \
+              || echo "(no lines matched 'tbank/notification' in the tail window scanned)"
+            echo "---"
+            echo "NOTE: this greps the last 20000 lines of the file for a rough last-15-minutes"
+            echo "window based on log volume, not a strict time filter (awk parses nginx's"
+            echo "[time_local] but does not convert it here to keep this dependency-free);"
+            echo "cross-check the printed 'time=' column against the current run time."
+          else
+            echo "$NGINX_LOG not found or not readable at this path."
+            echo "Falling back to journalctl for the nginx unit (in case logs go to journald"
+            echo "or the access log lives elsewhere on this host):"
+            echo "---"
+            sudo journalctl -u nginx --since "15 minutes ago" --no-pager 2>/dev/null | grep -i "tbank/notification" \
+              || echo "(journalctl unavailable, empty, or no matching lines — this host image may not run nginx at all; see Summary step)"
+          fi
+
+          echo "---"
+          echo "Also checking whether nginx is installed/active on this runner at all:"
+          (command -v nginx >/dev/null 2>&1 && echo "nginx binary: $(command -v nginx)") || echo "nginx binary not found on PATH"
+          (systemctl is-active nginx 2>/dev/null && echo "nginx systemd unit is active") || echo "nginx systemd unit not active/found (or systemctl unavailable)"
+
+      # App container: server/index.ts logs every /api request via pino
+      # (method, path, status, durationMs) to stdout, which `docker logs`
+      # captures. server/http/payments.ts additionally logs
+      # "[tbank] notification rejected: bad token" (403, verifyNotificationToken
+      # failed) and "[tbank] notification processing error: <message>" (500,
+      # handleTbankNotification threw) — exactly the two failure modes we need
+      # to rule in/out. pino's own redaction (server/logger.ts) already masks
+      # password/token/secret/card/... fields in structured fields, but we
+      # additionally scrub the raw text output below as defence in depth: any
+      # `"Password":"..."` or `"Token":"<hex>"` JSON field value is masked
+      # in-place rather than dropping the whole line, so context is preserved
+      # without ever printing the raw password. (Token is a SHA-256 hex digest
+      # derived from the password + other fields, not the password itself, but
+      # we redact it too since it's still sensitive-looking and not needed to
+      # diagnose reachability/parsing.)
+      - name: Tail app container logs for T-Bank/notification/webhook activity
+        if: always()
+        run: |
+          set +e
+          echo "== docker logs baltcircle-mvp --since 15m, filtered =="
+          echo "Filter (case-insensitive): tbank | notification | Bad token | webhook"
+          echo "---"
+          docker logs baltcircle-mvp --since 15m 2>&1 \
+            | grep -iE "tbank|notification|Bad token|webhook" \
+            | sed -E \
+                -e 's/("[Pp]assword"[[:space:]]*:[[:space:]]*")[^"]*(")/\1[REDACTED]\2/g' \
+                -e 's/("[Tt]oken"[[:space:]]*:[[:space:]]*")[^"]*(")/\1[REDACTED]\2/g' \
+                -e 's/\b[0-9a-fA-F]{32,64}\b/[REDACTED_HEX]/g' \
+            || echo "(no matching lines in the last 15 minutes — either no request arrived, or it arrived outside this window)"
+          echo "---"
+          echo "If this is empty: either T-Bank never sent the Notification POST in the"
+          echo "last 15 minutes (network/firewall/cabinet-config issue upstream of us), or"
+          echo "it arrived earlier than this window — rerun this workflow immediately after"
+          echo "triggering the T-Bank test payment to narrow the window."
+
       - name: Summary
         if: always()
         run: |
           echo "Diagnostic complete. Review the 'Live fetch() call' step output above for RESULT: TLS_OK / TLS_FAIL and the exact error."
+          echo ""
+          echo "Additionally review the two log-tailing steps above:"
+          echo "  1. 'Tail nginx access log...' — did T-Bank's request even reach nginx on the host?"
+          echo "     (No matching line at all => the request never arrived at our edge — look"
+          echo "     upstream: DNS, firewall/security group, or T-Bank-side delivery.)"
+          echo "  2. 'Tail app container logs...' — did the request reach the Node app, and did"
+          echo "     verifyNotificationToken() accept it? A 403 'Bad token' line means the app"
+          echo "     received the POST but rejected the signature (check TBANK_PASSWORD matches"
+          echo "     what's configured in the merchant cabinet, and that no proxy is mutating"
+          echo "     the body). A 500 'processing error' line means the token was fine but"
+          echo "     handleTbankNotification() threw — check that message for the real cause."
