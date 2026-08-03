@@ -395,14 +395,40 @@ export function bindingErrorPatch(body: {
 // tbankCancel it records whether the money actually came back. `knownStatus` is
 // the fresh payment status from the same notification/GetState, letting the
 // helper skip a redundant GetState round-trip.
+//
+// CONCURRENCY GUARD: this function has two independent call sites that can
+// observe the SAME method transitioning to "active" at nearly the same time —
+// handleInitBindingNotification() (the webhook) and the GET
+// /api/payments/tbank/refresh-bind/:id polling route (hit every ~2s by more
+// than one concurrent client-side poll loop while the bind modal is open, see
+// client/src/pages/PaymentMethodsPage.tsx). Before this guard, both callers
+// would unconditionally proceed to call tbankRefundVerificationCharge (which
+// itself retries /Cancel up to 3 times), so a single PaymentId could get two
+// overlapping 3-attempt /Cancel retry loops fired against T-Bank concurrently
+// — this reproduces the interleaved "attempt 1 failed / OK / attempt 2 failed
+// / attempt 3 failed / GIVE UP" log pattern seen for a single PaymentId in
+// production. storage.claimRefund() is an atomic compare-and-swap: only the
+// first caller to observe a claimable refundStatus (not already
+// "pending"/"refunded") gets to proceed; every later concurrent caller backs
+// off immediately with no acquirer call at all.
 export async function refundVerificationCharge(
   cfg: TbankConfig,
   methodId: number,
   paymentId: string,
   knownStatus?: string,
 ): Promise<void> {
-  // Mark pending immediately so the UI/support can see a refund is in flight.
-  await storage.updatePaymentMethod(methodId, { refundStatus: "pending", refundError: null });
+  // Atomically claim the right to refund this method. If another concurrent
+  // caller already claimed it (or it was already refunded), back off — do NOT
+  // call T-Bank a second time for the same charge.
+  const claimed = await storage.claimRefund(methodId);
+  if (!claimed) {
+    log(
+      `[tbank] refund SKIP methodId=${methodId} PaymentId=${paymentId}: already claimed by a concurrent ` +
+        `caller (webhook/poll race) — not calling /Cancel twice for the same charge.`,
+      "tbank",
+    );
+    return;
+  }
   void tbankRefundVerificationCharge(cfg, paymentId, knownStatus)
     .then(async (outcome) => {
       if (outcome.result === "failed") {

@@ -14,6 +14,7 @@ const storageMock = vi.hoisted(() => ({
   findMethodByRequestKey: vi.fn(),
   findPendingCardMethod: vi.fn(),
   updatePaymentMethod: vi.fn(),
+  claimRefund: vi.fn(),
 }));
 
 // tbankRefundVerificationCharge is the ONLY function in server/tbank.ts that ever
@@ -37,7 +38,21 @@ import {
   handleRidePaymentNotification,
   handleTbankNotification,
   handleAddCardNotification,
+  refundVerificationCharge,
 } from "./tbank-handlers";
+import type { TbankConfig } from "../tbank";
+
+function makeCfg(): TbankConfig {
+  return {
+    terminalKey: "test-terminal",
+    password: "test-password",
+    apiBase: "https://securepay.tinkoff.ru/v2",
+    publicAppUrl: "https://takeride.ru",
+    addCardCheckType: "3DS",
+    cardBindAmountKopecks: 100,
+    cardBindMethod: "payment",
+  } as TbankConfig;
+}
 
 function makeOrder(overrides: Partial<PaymentOrder> = {}): PaymentOrder {
   return {
@@ -302,5 +317,69 @@ describe("handleAddCardNotification unmatched-notification guard", () => {
       5,
       expect.objectContaining({ status: "active", cardId: "card-1" }),
     );
+  });
+});
+
+// Regression coverage for the CustomerKey-collision investigation: the actual
+// production incident (PaymentId=8979349666 refunded despite being T-Bank's own
+// unmatched dashboard-test notification) is best explained not by a CustomerKey
+// collision (our CustomerKey === our own random-UUID userId, never guessable by
+// T-Bank's dashboard) but by a concurrency race: the notification webhook
+// (handleInitBindingNotification) and the client's own GET
+// /api/payments/tbank/refresh-bind/:id polling loop can both independently
+// observe the SAME method going "active" and both call refundVerificationCharge
+// for the same PaymentId, each firing an independent 3-attempt /Cancel retry
+// loop against T-Bank. storage.claimRefund() closes this gap with an atomic
+// compare-and-swap; these tests assert the guard actually prevents the double
+// /Cancel call.
+describe("refundVerificationCharge concurrency guard (claimRefund)", () => {
+  it("calls tbankRefundVerificationCharge when it wins the claim", async () => {
+    storageMock.claimRefund.mockResolvedValue(true);
+    tbankRefundVerificationChargeMock.mockResolvedValue({ result: "refunded", status: "REFUNDED" });
+
+    await refundVerificationCharge(makeCfg(), 138, "8979349666", "CONFIRMED");
+    // let the fire-and-forget .then() chain flush
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(storageMock.claimRefund).toHaveBeenCalledWith(138);
+    expect(tbankRefundVerificationChargeMock).toHaveBeenCalledWith(makeCfg(), "8979349666", "CONFIRMED");
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(
+      138,
+      expect.objectContaining({ refundStatus: "refunded" }),
+    );
+  });
+
+  it("does NOT call tbankRefundVerificationCharge (does not touch /Cancel) when the claim is lost to a concurrent caller", async () => {
+    // Simulates the exact race: the webhook and the refresh-bind poll both see
+    // outcome === "active" for the same method around the same time; only the
+    // first to reach claimRefund() should ever touch the acquirer.
+    storageMock.claimRefund.mockResolvedValue(false);
+
+    await refundVerificationCharge(makeCfg(), 138, "8979349666", "CONFIRMED");
+
+    expect(storageMock.claimRefund).toHaveBeenCalledWith(138);
+    expect(tbankRefundVerificationChargeMock).not.toHaveBeenCalled();
+    // No unconditional refundStatus="pending" write either — the loser makes no
+    // DB mutation at all beyond the failed claim attempt itself.
+    expect(storageMock.updatePaymentMethod).not.toHaveBeenCalled();
+    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("SKIP"), "tbank");
+  });
+
+  it("simultaneous webhook + poll callers: only one ever reaches tbankRefundVerificationCharge", async () => {
+    // First caller (e.g. the webhook) wins the claim; second caller (e.g. the
+    // concurrent refresh-bind poll tick) loses it. Mirrors two overlapping
+    // observations of the same activation for methodId=138.
+    storageMock.claimRefund.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    tbankRefundVerificationChargeMock.mockResolvedValue({ result: "refunded", status: "REFUNDED" });
+
+    await Promise.all([
+      refundVerificationCharge(makeCfg(), 138, "8979349666", "CONFIRMED"),
+      refundVerificationCharge(makeCfg(), 138, "8979349666", "CONFIRMED"),
+    ]);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(storageMock.claimRefund).toHaveBeenCalledTimes(2);
+    // Exactly one /Cancel attempt for the shared PaymentId, never two.
+    expect(tbankRefundVerificationChargeMock).toHaveBeenCalledTimes(1);
   });
 });

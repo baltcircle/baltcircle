@@ -76,6 +76,12 @@ export interface IPaymentMethodStorage {
     requestKey?: string;
   }): Promise<PaymentMethod>;
   getPaymentMethod(id: number): Promise<PaymentMethod | undefined>;
+  // Atomic compare-and-swap guard against concurrent double-refund: only the
+  // caller whose claim actually flips refundStatus wins the right to call
+  // T-Bank's /Cancel for this method. See implementation for why this exists
+  // (the notification webhook and the client's refresh-bind polling can both
+  // observe the same method going "active" concurrently).
+  claimRefund(methodId: number): Promise<boolean>;
   findPendingCardMethod(userId: string): Promise<PaymentMethod | undefined>;
   findCardMethodByOrderId(orderId: string): Promise<PaymentMethod | undefined>;
   findCardMethodByRequestKey(userId: string, requestKey: string): Promise<PaymentMethod | undefined>;
