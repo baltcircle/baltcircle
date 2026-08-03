@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
+import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH } from "@/lib/otp";
 import { UserPlus, ShieldCheck, ArrowLeft } from "lucide-react";
 
 interface Props {
@@ -157,7 +158,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
 
   function submitCode(e: React.FormEvent) {
     e.preventDefault();
-    if (!/^\d{6}$/.test(code.trim())) return setError("Код состоит из 6 цифр");
+    if (!isCompleteOtp(code)) return setError("Код состоит из 6 цифр");
     setError(null);
     verifyMut.mutate();
   }
@@ -290,9 +291,9 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
                 type="text"
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                maxLength={6}
+                maxLength={OTP_CODE_LENGTH}
                 value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                onChange={(e) => setCode(sanitizeOtpInput(e.target.value))}
                 placeholder="123456"
                 className="font-mono tracking-[0.5em] text-center text-lg"
                 data-testid="input-registration-code"
@@ -343,7 +344,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
               </Button>
               <Button
                 type="submit"
-                disabled={verifyMut.isPending || code.trim().length !== 4}
+                disabled={verifyMut.isPending || !isCompleteOtp(code)}
                 data-testid="button-verify-otp"
               >
                 {verifyMut.isPending ? "Проверка…" : "Подтвердить"}
