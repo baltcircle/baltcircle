@@ -29,14 +29,30 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=5000
 # Yandex Cloud managed-PostgreSQL CA, required for sslmode=verify-full at
-# runtime. Baked into the image and pointed at via NODE_EXTRA_CA_CERTS so the
-# pg pool can verify the server certificate.
+# runtime, PLUS the Russian Trusted Root/Sub CA (НУЦ Минцифры) needed so
+# outgoing HTTPS requests to the T-Bank acquiring API (securepay.tinkoff.ru,
+# see TBANK_API_BASE / server/tbank.ts) keep working once T-Bank migrates its
+# TLS certificate from GlobalSign to a chain issued by these CAs. See
+# https://developer.tbank.ru/eacq/intro/certificates/migration-russian-trusted-ca
+# All three are installed at build time (per official guidance — adding
+# certs at runtime instead of at build time can leave the container serving
+# stale trust info) via the standard Debian/Ubuntu update-ca-certificates
+# mechanism: any cert placed under /usr/local/share/ca-certificates/*.crt is
+# picked up and merged into /etc/ssl/certs/ca-certificates.crt.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends curl ca-certificates \
-  && curl -fsSL -o /etc/ssl/certs/yc-root.crt https://storage.yandexcloud.net/cloud-certs/CA.pem \
+  && curl -fsSL -o /usr/local/share/ca-certificates/yc-root.crt https://storage.yandexcloud.net/cloud-certs/CA.pem \
   && apt-get purge -y curl && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/*
-ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/yc-root.crt
+COPY certs/russian_trusted_root_ca.pem /usr/local/share/ca-certificates/russian_trusted_root_ca.crt
+COPY certs/russian_trusted_sub_ca.pem /usr/local/share/ca-certificates/russian_trusted_sub_ca.crt
+RUN update-ca-certificates
+# Node.js ignores the OS trust store by default, so it must be pointed at a
+# CA bundle explicitly. Point at the system bundle (which now contains the
+# Yandex Cloud Postgres CA and the T-Bank Russian Trusted CA chain, merged
+# above by update-ca-certificates) so this single env var keeps covering
+# both integrations going forward.
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 # App data now lives in managed PostgreSQL (DATABASE_URL at runtime), not a
 # local SQLite file. No /app/data directory needed.
 # Run as the unprivileged `node` user (uid 1000, shipped in the base image)
