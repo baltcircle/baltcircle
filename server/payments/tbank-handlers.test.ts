@@ -16,14 +16,27 @@ const storageMock = vi.hoisted(() => ({
   updatePaymentMethod: vi.fn(),
 }));
 
+// tbankRefundVerificationCharge is the ONLY function in server/tbank.ts that ever
+// calls the acquirer's /Cancel endpoint (see server/tbank.ts). Mocking it here
+// lets the "unmatched notification" tests assert, with certainty, that no
+// refund/cancel was attempted — not just that no DB row was mutated.
+const tbankRefundVerificationChargeMock = vi.hoisted(() => vi.fn());
+
+const logMock = vi.hoisted(() => vi.fn());
+
 vi.mock("../storage", () => ({ storage: storageMock }));
-vi.mock("../index", () => ({ log: vi.fn() }));
+vi.mock("../index", () => ({ log: logMock }));
 vi.mock("../push", () => ({ sendToUserAsync: vi.fn() }));
+vi.mock("../tbank", async () => {
+  const actual = await vi.importActual<typeof import("../tbank")>("../tbank");
+  return { ...actual, tbankRefundVerificationCharge: tbankRefundVerificationChargeMock };
+});
 
 import {
   startRideForPaidOrder,
   handleRidePaymentNotification,
   handleTbankNotification,
+  handleAddCardNotification,
 } from "./tbank-handlers";
 
 function makeOrder(overrides: Partial<PaymentOrder> = {}): PaymentOrder {
@@ -167,5 +180,127 @@ describe("handleTbankNotification routing", () => {
 
     expect(storageMock.getRidePaymentOrder).toHaveBeenCalledWith("ride-abc");
     expect(storageMock.startRide).toHaveBeenCalledOnce();
+  });
+
+  // Regression test for the auto-refund-of-unmatched-notifications bug: T-Bank's
+  // own merchant-cabinet test dashboard ( "Тестировать" ) fires a real,
+  // correctly-signed notification straight at our NotificationURL for its own
+  // test payments (e.g. "Тест 1. Успешная оплата", test card 4300 0000 0000
+  // 0777), WITHOUT ever calling any of our own endpoints first. Its OrderId (and
+  // CustomerKey/RequestKey) therefore never correlates to any row in our DB. That
+  // must be treated as an ordinary, expected "nothing to do here" case — NOT as a
+  // reason to auto-cancel/refund the payment. This test exercises the true
+  // end-to-end dispatch path (no order, no card_binding/sbp_binding match, no
+  // RequestKey match, no pending CustomerKey match) and asserts the acquirer's
+  // /Cancel is never invoked, and that a warning is logged for visibility.
+  it("acknowledges a validly-signed notification for an unknown OrderId WITHOUT cancelling/refunding it", async () => {
+    storageMock.getRidePaymentOrder.mockResolvedValue(undefined);
+    storageMock.findCardMethodByOrderId.mockResolvedValue(undefined);
+    storageMock.findMethodByRequestKey.mockResolvedValue(undefined);
+    storageMock.findPendingCardMethod.mockResolvedValue(undefined);
+
+    // Mirrors the real production incident: T-Bank's own test-dashboard
+    // notification for "Тест 1. Успешная оплата", amount 12390.01 RUB, an
+    // OrderId/CustomerKey our app never generated, and no RequestKey.
+    await expect(
+      handleTbankNotification({
+        OrderId: "tbank-dashboard-test-order",
+        Status: "CONFIRMED",
+        PaymentId: "8979349666",
+        Amount: 1239001,
+        CustomerKey: "tbank-dashboard-customer",
+      }),
+    ).resolves.toBeUndefined();
+
+    // The DB was consulted (correlation was attempted)...
+    expect(storageMock.getRidePaymentOrder).toHaveBeenCalledWith("tbank-dashboard-test-order");
+    expect(storageMock.findCardMethodByOrderId).toHaveBeenCalledWith("tbank-dashboard-test-order");
+    expect(storageMock.findPendingCardMethod).toHaveBeenCalledWith("tbank-dashboard-customer");
+
+    // ...but nothing was mutated and, critically, /Cancel was never called.
+    expect(storageMock.updatePaymentMethod).not.toHaveBeenCalled();
+    expect(storageMock.updateRidePaymentOrder).not.toHaveBeenCalled();
+    expect(tbankRefundVerificationChargeMock).not.toHaveBeenCalled();
+
+    // A warning was logged so the gap is observable without silently vanishing.
+    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("WARN"), "tbank");
+    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("unmatched"), "tbank");
+  });
+
+  it("acknowledges a notification with no OrderId/RequestKey/CustomerKey at all WITHOUT cancelling/refunding", async () => {
+    await expect(handleTbankNotification({ Status: "CONFIRMED", PaymentId: "8979349666" })).resolves.toBeUndefined();
+
+    expect(storageMock.updatePaymentMethod).not.toHaveBeenCalled();
+    expect(tbankRefundVerificationChargeMock).not.toHaveBeenCalled();
+    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("WARN"), "tbank");
+  });
+
+  it("still processes a real, known order normally when both an unmatched-style Amount and a genuine OrderId are present", async () => {
+    // Sanity check that the new unmatched-notification guard does not regress the
+    // existing, legitimate path: a notification for an order that DOES exist
+    // keeps starting the ride as before, and never touches the refund code path
+    // (ride payments never call refundVerificationCharge in the first place).
+    storageMock.getRidePaymentOrder.mockResolvedValue(makeOrder());
+    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.startRide.mockResolvedValue({ id: 42 });
+
+    await handleTbankNotification({
+      OrderId: "ride-abc",
+      Status: "CONFIRMED",
+      PaymentId: "p",
+      Amount: 1239001,
+    });
+
+    expect(storageMock.startRide).toHaveBeenCalledOnce();
+    expect(storageMock.updateRidePaymentOrder).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ status: "paid", rideId: 42 }),
+    );
+    expect(tbankRefundVerificationChargeMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleAddCardNotification unmatched-notification guard", () => {
+  it("logs a warning and does nothing when CustomerKey is absent", async () => {
+    await handleAddCardNotification({ Status: "CONFIRMED", PaymentId: "8979349666" });
+
+    expect(storageMock.findPendingCardMethod).not.toHaveBeenCalled();
+    expect(storageMock.updatePaymentMethod).not.toHaveBeenCalled();
+    expect(tbankRefundVerificationChargeMock).not.toHaveBeenCalled();
+    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("WARN"), "tbank");
+  });
+
+  it("logs a warning and does nothing when CustomerKey has no pending method", async () => {
+    storageMock.findPendingCardMethod.mockResolvedValue(undefined);
+
+    await handleAddCardNotification({
+      Status: "CONFIRMED",
+      PaymentId: "8979349666",
+      CustomerKey: "tbank-dashboard-customer",
+    });
+
+    expect(storageMock.updatePaymentMethod).not.toHaveBeenCalled();
+    expect(tbankRefundVerificationChargeMock).not.toHaveBeenCalled();
+    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("WARN"), "tbank");
+  });
+
+  it("still activates a genuinely pending method on a real match (existing behavior preserved)", async () => {
+    storageMock.findPendingCardMethod.mockResolvedValue({
+      id: 5,
+      cardId: null,
+      rebillId: null,
+      brand: null,
+    });
+
+    await handleAddCardNotification({
+      Status: "CONFIRMED",
+      CardId: "card-1",
+      CustomerKey: "user-1",
+    });
+
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ status: "active", cardId: "card-1" }),
+    );
   });
 });
