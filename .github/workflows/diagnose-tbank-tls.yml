@@ -1,0 +1,94 @@
+name: Diagnose T-Bank TLS (production container)
+
+# Manual, read-only diagnostic. Execs into the ALREADY RUNNING production app
+# container (no rebuild, no restart, no deploy) and makes a single outbound
+# HTTPS call to the T-Bank acquiring API exactly the way server/tbank.ts does
+# (native fetch, POST, JSON body) to verify the Russian Trusted CA chain
+# installed by PR #86 is actually trusted end-to-end from inside the live
+# container. Prints the HTTP status / TLS error and NODE_EXTRA_CA_CERTS state.
+#
+# This is diagnostic-only: it does not deploy, does not touch secrets beyond
+# what the running container already has in its own environment, and does not
+# print any secret (TerminalKey/Password are never read or echoed).
+#
+# NOTE (should be removed after use): this workflow has `runs-on:
+# [self-hosted, baltcircle-prod]`, i.e. it executes directly on the production
+# Yandex Cloud VM via `docker exec`. It is intentionally low-risk (read-only
+# Node script, no writes, no restarts) but it is still a manual-trigger surface
+# on the prod runner. Keep it if ongoing TLS/connectivity diagnostics are
+# useful; otherwise delete this file once this investigation is closed.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: baltcircle-production
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    name: Probe T-Bank TLS from the running container
+    runs-on:
+      - self-hosted
+      - baltcircle-prod
+    steps:
+      - name: Locate running app container
+        run: |
+          set -e
+          echo "== docker ps (baltcircle*) =="
+          docker ps --filter "name=baltcircle" --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+
+      - name: Check NODE_EXTRA_CA_CERTS and cert file presence inside the container
+        run: |
+          set -e
+          echo "== process.env.NODE_EXTRA_CA_CERTS =="
+          docker exec baltcircle-mvp node -e "console.log(process.env.NODE_EXTRA_CA_CERTS ?? '(unset)')"
+          echo ""
+          echo "== does the referenced CA bundle file exist / how many certs does it contain =="
+          docker exec baltcircle-mvp sh -c '
+            f="$NODE_EXTRA_CA_CERTS";
+            if [ -z "$f" ]; then
+              echo "NODE_EXTRA_CA_CERTS is unset inside the container";
+            elif [ -f "$f" ]; then
+              echo "File exists: $f";
+              echo "Size: $(wc -c < "$f") bytes";
+              echo "Certificate count: $(grep -c "BEGIN CERTIFICATE" "$f")";
+              echo "Subjects:";
+              awk "/BEGIN CERTIFICATE/{c++} c" "$f" > /tmp/_ca_dump.pem 2>/dev/null || true;
+              command -v openssl >/dev/null 2>&1 && openssl crl2pkcs7 -nocrl -certfile "$f" 2>/dev/null | openssl pkcs7 -print_certs -noout 2>/dev/null | grep -i "subject=" || echo "(openssl not available in container image — skipping subject dump)";
+            else
+              echo "File NOT FOUND at $f — this would explain a TLS trust failure";
+            fi
+          '
+
+      - name: Live fetch() call to T-Bank acquiring API from inside the container
+        run: |
+          set -e
+          echo "== Running node -e fetch probe inside baltcircle-mvp =="
+          docker exec baltcircle-mvp node -e '
+            const url = "https://securepay.tinkoff.ru/v2/Init";
+            const payload = { TerminalKey: "diagnostic-probe-not-a-real-terminal" };
+            console.log("NODE_EXTRA_CA_CERTS:", process.env.NODE_EXTRA_CA_CERTS ?? "(unset)");
+            console.log("Node version:", process.version);
+            fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            }).then(async (res) => {
+              console.log("HTTP status:", res.status);
+              const text = await res.text();
+              console.log("Body (first 500 chars):", text.slice(0, 500));
+              console.log("RESULT: TLS_OK");
+            }).catch((err) => {
+              console.log("RESULT: TLS_FAIL");
+              console.log("Error name:", err && err.name);
+              console.log("Error message:", err && err.message);
+              console.log("Error cause:", err && err.cause);
+              process.exit(1);
+            });
+          '
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "Diagnostic complete. Review the 'Live fetch() call' step output above for RESULT: TLS_OK / TLS_FAIL and the exact error."
