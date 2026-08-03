@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH } from "@/lib/otp";
 import { Mail, ShieldCheck, ArrowLeft } from "lucide-react";
 
 interface Props {
@@ -115,7 +116,7 @@ export function EmailChangeModal({ open, onOpenChange }: Props) {
 
   function submitCode(e: React.FormEvent) {
     e.preventDefault();
-    if (!/^\d{6}$/.test(code.trim())) return setError("Код состоит из 6 цифр");
+    if (!isCompleteOtp(code)) return setError("Код состоит из 6 цифр");
     setError(null);
     verifyMut.mutate();
   }
@@ -179,9 +180,9 @@ export function EmailChangeModal({ open, onOpenChange }: Props) {
                 type="text"
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                maxLength={6}
+                maxLength={OTP_CODE_LENGTH}
                 value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                onChange={(e) => setCode(sanitizeOtpInput(e.target.value))}
                 placeholder="123456"
                 className="font-mono tracking-[0.5em] text-center text-lg"
                 data-testid="input-email-change-code"
@@ -217,7 +218,7 @@ export function EmailChangeModal({ open, onOpenChange }: Props) {
               >
                 <ArrowLeft className="w-4 h-4 mr-1" /> Назад
               </Button>
-              <Button type="submit" disabled={verifyMut.isPending || code.trim().length !== 4} data-testid="button-email-change-verify">
+              <Button type="submit" disabled={verifyMut.isPending || !isCompleteOtp(code)} data-testid="button-email-change-verify">
                 {verifyMut.isPending ? "Проверка…" : "Подтвердить"}
               </Button>
             </DialogFooter>
