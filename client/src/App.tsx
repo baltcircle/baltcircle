@@ -20,7 +20,6 @@ import { SafetyPage } from "@/pages/SafetyPage";
 import { InfoSectionPage } from "@/pages/InfoSectionPage";
 import { InfoDocPage } from "@/pages/InfoDocPage";
 import { LegalIndexPage } from "@/pages/LegalIndexPage";
-import { LegalDocPage } from "@/pages/LegalDocPage";
 // Admin/operator pages code-split: a rider never downloads this code,
 // and the heavy chart/map-editor deps ride along in their own chunks.
 // Info и Legal pages НЕ lazy — они крошечные (info.tsx 760 строк, legal.tsx 431)
@@ -271,7 +270,11 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
         <Route path="/rent" component={RentPage} />
         <Route path="/payment-result" component={PaymentResultPage} />
         <Route path="/legal" component={LegalIndexPage} />
-        <Route path="/legal/:slug">{(params) => <LegalDocPage slug={params.slug} />}</Route>
+        <Route path="/legal/terms"><Redirect to="/legal#terms" /></Route>
+        <Route path="/legal/rental-rules"><Redirect to="/legal#rental-rules" /></Route>
+        <Route path="/legal/privacy"><Redirect to="/legal#privacy" /></Route>
+        <Route path="/legal/consent"><Redirect to="/legal#consent" /></Route>
+        <Route path="/legal/payment-terms"><Redirect to="/legal#payment-terms" /></Route>
       </Switch>
     </div>
   );
@@ -351,8 +354,8 @@ function AppRouter() {
       <Route path="/legal/:slug"><></></Route>
 
       {/* Legacy legal routes — keep existing registration links working */}
-      <Route path="/privacy"><Redirect to="/legal/privacy" /></Route>
-      <Route path="/consent"><Redirect to="/legal/consent" /></Route>
+      <Route path="/privacy"><Redirect to="/legal#privacy" /></Route>
+      <Route path="/consent"><Redirect to="/legal#consent" /></Route>
 
       {/* Admin / operator interface — gated by role. Mechanics may only reach
           service (maintenance) and the read-only fleet; the rest is
