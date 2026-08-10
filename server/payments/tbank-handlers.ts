@@ -285,7 +285,17 @@ export async function handleInitBindingNotification(
     // stuck rouble is observable (refundStatus/refundError). We pass the fresh
     // notification status so the helper need not re-query GetState.
     const effectivePaymentId = paymentId || method.paymentId;
-    if (cfg && effectivePaymentId) await refundVerificationCharge(cfg, method.id, effectivePaymentId, status);
+    if (cfg && effectivePaymentId) {
+      const customer = await storage.getUser(method.userId);
+      await refundVerificationCharge(cfg, {
+        methodId: method.id,
+        paymentId: effectivePaymentId,
+        knownStatus: status,
+        amountKopecks: method.amountKopecks ?? cfg.cardBindAmountKopecks,
+        customerEmail: customer?.email,
+        customerPhone: customer?.phone,
+      });
+    }
   } else if (outcome === "failed") {
     await storage.updatePaymentMethod(method.id, {
       status: "failed",
@@ -413,40 +423,51 @@ export function bindingErrorPatch(body: {
 // off immediately with no acquirer call at all.
 export async function refundVerificationCharge(
   cfg: TbankConfig,
-  methodId: number,
-  paymentId: string,
-  knownStatus?: string,
+  input: {
+    methodId: number;
+    paymentId: string;
+    knownStatus?: string;
+    amountKopecks: number;
+    customerEmail?: string | null;
+    customerPhone?: string | null;
+  },
 ): Promise<void> {
   // Atomically claim the right to refund this method. If another concurrent
   // caller already claimed it (or it was already refunded), back off — do NOT
   // call T-Bank a second time for the same charge.
-  const claimed = await storage.claimRefund(methodId);
+  const claimed = await storage.claimRefund(input.methodId);
   if (!claimed) {
     log(
-      `[tbank] refund SKIP methodId=${methodId} PaymentId=${paymentId}: already claimed by a concurrent ` +
+      `[tbank] refund SKIP methodId=${input.methodId} PaymentId=${input.paymentId}: already claimed by a concurrent ` +
         `caller (webhook/poll race) — not calling /Cancel twice for the same charge.`,
       "tbank",
     );
     return;
   }
-  void tbankRefundVerificationCharge(cfg, paymentId, knownStatus)
+  void tbankRefundVerificationCharge(cfg, {
+    paymentId: input.paymentId,
+    knownStatus: input.knownStatus,
+    amountKopecks: input.amountKopecks,
+    customerEmail: input.customerEmail,
+    customerPhone: input.customerPhone,
+  })
     .then(async (outcome) => {
       if (outcome.result === "failed") {
-        await storage.updatePaymentMethod(methodId, {
+        await storage.updatePaymentMethod(input.methodId, {
           refundStatus: "failed",
           refundError: outcome.reason,
         });
       } else {
         // "refunded" (reversal or real refund) or "nothing_to_cancel" (already
         // settled/reversed) — either way no money is outstanding.
-        await storage.updatePaymentMethod(methodId, {
+        await storage.updatePaymentMethod(input.methodId, {
           refundStatus: "refunded",
           refundError: null,
         });
       }
     })
     .catch(async (err) => {
-      await storage.updatePaymentMethod(methodId, {
+      await storage.updatePaymentMethod(input.methodId, {
         refundStatus: "failed",
         refundError: String(err?.message ?? "неизвестная ошибка возврата"),
       });
@@ -462,6 +483,8 @@ export async function bindViaVerificationPayment(
   cfg: TbankConfig,
   userId: string,
   res: Response,
+  customerEmail?: string | null,
+  customerPhone?: string | null,
 ): Promise<void> {
   // Unique per attempt so each binding payment correlates to exactly one row.
   // Must stay <= 50 chars or T-Bank rejects Init with code 212 (a UUID user id
@@ -475,6 +498,8 @@ export async function bindViaVerificationPayment(
       amountKopecks,
       customerKey: userId,
       description: "Проверочный платёж для привязки карты",
+      customerEmail,
+      customerPhone,
       // ?from=tbank marks the return leg so the client can rewrite history and
       // avoid the Back-button loop into T-Bank's hosted form.
       successUrl: `${cfg.publicAppUrl}/payment-methods?from=tbank`,
