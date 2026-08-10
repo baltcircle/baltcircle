@@ -41,7 +41,7 @@ export interface InfoCategory {
 }
 
 // --- Безопасная поездка ---------------------------------------------------
-const RIDING_DOCS: InfoDoc[] = [
+export const RIDING_DOCS: InfoDoc[] = [
   {
     slug: "helmet",
     title: "Шлем и экипировка",
@@ -366,7 +366,7 @@ const RIDING_DOCS: InfoDoc[] = [
 ];
 
 // --- Конфиденциальность и данные ------------------------------------------
-const PRIVACY_DOCS: InfoDoc[] = [
+export const PRIVACY_DOCS: InfoDoc[] = [
   {
     slug: "collected",
     title: "Какие данные мы собираем",
