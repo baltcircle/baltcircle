@@ -13,6 +13,8 @@ const storageMock = vi.hoisted(() => ({
   findCardMethodByOrderId: vi.fn(),
   findMethodByRequestKey: vi.fn(),
   findPendingCardMethod: vi.fn(),
+  createPendingBindPayment: vi.fn(),
+  getUser: vi.fn(),
   updatePaymentMethod: vi.fn(),
   claimRefund: vi.fn(),
 }));
@@ -22,6 +24,7 @@ const storageMock = vi.hoisted(() => ({
 // lets the "unmatched notification" tests assert, with certainty, that no
 // refund/cancel was attempted — not just that no DB row was mutated.
 const tbankRefundVerificationChargeMock = vi.hoisted(() => vi.fn());
+const tbankInitBindCardMock = vi.hoisted(() => vi.fn());
 
 const logMock = vi.hoisted(() => vi.fn());
 
@@ -30,7 +33,11 @@ vi.mock("../index", () => ({ log: logMock }));
 vi.mock("../push", () => ({ sendToUserAsync: vi.fn() }));
 vi.mock("../tbank", async () => {
   const actual = await vi.importActual<typeof import("../tbank")>("../tbank");
-  return { ...actual, tbankRefundVerificationCharge: tbankRefundVerificationChargeMock };
+  return {
+    ...actual,
+    tbankInitBindCard: tbankInitBindCardMock,
+    tbankRefundVerificationCharge: tbankRefundVerificationChargeMock,
+  };
 });
 
 import {
@@ -39,6 +46,7 @@ import {
   handleTbankNotification,
   handleAddCardNotification,
   refundVerificationCharge,
+  bindViaVerificationPayment,
 } from "./tbank-handlers";
 import type { TbankConfig } from "../tbank";
 
@@ -195,6 +203,65 @@ describe("handleTbankNotification routing", () => {
 
     expect(storageMock.getRidePaymentOrder).toHaveBeenCalledWith("ride-abc");
     expect(storageMock.startRide).toHaveBeenCalledOnce();
+  });
+
+  it("claims and cancels a fresh Init verification charge after its matching AUTHORIZED notification", async () => {
+    const freshMethod = {
+      id: 138,
+      userId: "user-1",
+      status: "pending",
+      purpose: "card_binding",
+      orderId: "bind-fresh",
+      paymentId: "verification-payment-1",
+      amountKopecks: 100,
+      refundStatus: null,
+      rebillId: null,
+      cardId: null,
+      brand: null,
+    };
+    const response = { json: vi.fn(), status: vi.fn().mockReturnThis() } as any;
+    tbankInitBindCardMock.mockResolvedValue({
+      Success: true,
+      PaymentId: "verification-payment-1",
+      PaymentURL: "https://securepay.tinkoff.ru/pay/fresh",
+    });
+    storageMock.createPendingBindPayment.mockResolvedValue(freshMethod);
+
+    await bindViaVerificationPayment(makeCfg(), "user-1", response);
+
+    // A newly-created verification charge remains claimable. In particular,
+    // initialization must not preemptively write the in-flight "pending" state.
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(138, {
+      paymentId: "verification-payment-1",
+      paymentUrl: "https://securepay.tinkoff.ru/pay/fresh",
+    });
+
+    vi.clearAllMocks();
+    storageMock.getRidePaymentOrder.mockResolvedValue(undefined);
+    storageMock.findCardMethodByOrderId.mockResolvedValue(freshMethod);
+    storageMock.getUser.mockResolvedValue({ email: "rider@example.com", phone: "+79991234567" });
+    storageMock.claimRefund.mockResolvedValue(true);
+    tbankRefundVerificationChargeMock.mockResolvedValue({ result: "refunded", status: "REFUNDED" });
+
+    await handleTbankNotification({
+      OrderId: "bind-fresh",
+      Status: "AUTHORIZED",
+      PaymentId: "verification-payment-1",
+      RebillId: "rebill-1",
+      CardId: "card-1",
+      Pan: "430000******0777",
+    }, makeCfg());
+    // Let the fire-and-forget cancellation completion handler flush.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(storageMock.claimRefund).toHaveBeenCalledWith(138);
+    expect(tbankRefundVerificationChargeMock).toHaveBeenCalledWith(makeCfg(), {
+      paymentId: "verification-payment-1",
+      knownStatus: "AUTHORIZED",
+      amountKopecks: 100,
+      customerEmail: "rider@example.com",
+      customerPhone: "+79991234567",
+    });
   });
 
   // Regression test for the auto-refund-of-unmatched-notifications bug: T-Bank's
