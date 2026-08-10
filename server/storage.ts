@@ -770,6 +770,49 @@ export class DatabaseStorage implements IStorage {
       .limit(1))[0] as PaymentMethod | undefined;
   }
 
+  // Atomically claim the right to reverse/refund a card-binding verification
+  // charge for this method. Returns true only for the ONE caller that wins the
+  // race; every other concurrent caller gets false and must not call /Cancel.
+  //
+  // Why this exists: activation can be observed by MULTIPLE independent code
+  // paths for the very same row — the notification webhook
+  // (handleInitBindingNotification) AND the rider's own client-side polling
+  // (GET /api/payments/tbank/refresh-bind/:id, hit every ~2s from more than one
+  // concurrent useEffect poll loop on the client while the binding modal is
+  // open). Both paths call refundVerificationCharge() as soon as THEY see
+  // outcome === "active", with no coordination between them. Before this guard,
+  // refundVerificationCharge() unconditionally wrote refundStatus="pending" and
+  // fired tbankRefundVerificationCharge() (which itself retries /Cancel up to 3
+  // times), so two overlapping "active" observations could each independently
+  // fire their own 3-attempt /Cancel retry loop against T-Bank for the SAME
+  // PaymentId — a plain UPDATE...WHERE id=? has no compare-and-swap semantics,
+  // so there was nothing to stop it. This is consistent with production logs
+  // showing interleaved "refund attempt 1/3 failed" / "refund OK" / "refund
+  // attempt 2/3 failed" / "refund attempt 3/3 failed" / "refund GIVE UP" lines
+  // for a single PaymentId, in the same few hundred milliseconds — the
+  // signature of two overlapping retry loops, not one.
+  //
+  // The fix: a single atomic UPDATE ... WHERE refund_status IS NULL OR NOT IN
+  // ('pending','refunded') ... RETURNING id. Only the caller whose UPDATE
+  // actually matched a row (i.e. observed a "claimable" refundStatus and
+  // transitioned it) may proceed to call T-Bank; every other concurrent caller
+  // sees zero rows updated and must back off. This is safe to call repeatedly:
+  // a method whose refund already failed (refundStatus="failed") can still be
+  // re-claimed for a retry (by the periodic poll or a manual re-check), since
+  // "failed" is not in the "already claimed" set — that preserves the existing
+  // stuck-1-rouble recovery behavior while still preventing true concurrent
+  // double-fire.
+  async claimRefund(methodId: number): Promise<boolean> {
+    const result = await db.update(paymentMethods)
+      .set({ refundStatus: "pending", refundError: null, updatedAt: Date.now() } as any)
+      .where(sql`${paymentMethods.id} = ${methodId} AND (
+        ${paymentMethods.refundStatus} IS NULL
+        OR ${paymentMethods.refundStatus} NOT IN ('pending', 'refunded')
+      )`)
+      .returning({ id: paymentMethods.id });
+    return result.length > 0;
+  }
+
   async updatePaymentMethod(id: number, patch: Partial<PaymentMethod>) {
     const set: Record<string, unknown> = { ...patch, updatedAt: Date.now() };
     delete set.id;

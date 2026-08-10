@@ -103,8 +103,25 @@ export function tbankErrorBody(resp: {
 //     OrderId starts the paid ride once AUTHORIZED/CONFIRMED, or marks the order
 //     failed otherwise.
 //
-// The notification is assumed signature-verified by the caller. Statuses follow
-// the T-Kassa lifecycle (NEW/FORM_SHOWED/AUTHORIZED/CONFIRMED/REJECTED/...).
+// The notification is assumed signature-verified by the caller (verifyNotificationToken
+// against our terminal password — so a valid Token means this genuinely came from
+// T-Bank for OUR terminal, not a forged request). Statuses follow the T-Kassa
+// lifecycle (NEW/FORM_SHOWED/AUTHORIZED/CONFIRMED/REJECTED/...).
+//
+// IMPORTANT — unmatched-but-validly-signed notifications: T-Bank's own merchant-
+// cabinet "Тестировать" dashboard fires real, correctly-signed notifications
+// straight at our NotificationURL for test payments it initiates itself (e.g. the
+// standard test card 4300 0000 0000 0777), WITHOUT ever calling any of our own
+// endpoints first. Such a notification's OrderId/RequestKey/CustomerKey will
+// never correlate to a row in our DB — that is expected, not suspicious. A
+// validly-signed notification we cannot correlate is treated as informational: we
+// log a warning (for reconciliation visibility) and otherwise do nothing. We must
+// NEVER call Cancel/Refund merely because we lack a local row for an OrderId —
+// only a handler that has ACTUALLY MATCHED a specific order/method to a specific
+// notification may ever move money, and only for the reasons already coded into
+// that handler (e.g. reversing the small verification hold once binding is
+// confirmed). See handleAddCardNotification below for the corresponding no-op on
+// an unmatched CustomerKey.
 export async function handleTbankNotification(body: Record<string, unknown>, cfg?: TbankConfig | null): Promise<void> {
   const orderId = typeof body.OrderId === "string" ? body.OrderId : "";
 
@@ -281,19 +298,50 @@ export async function handleInitBindingNotification(
 }
 
 // Resolve an AddCard binding (fallback path) from a notification keyed by
-// CustomerKey. Unchanged from the original AddCard-only behavior.
+// CustomerKey. Unchanged from the original AddCard-only behavior, EXCEPT that
+// the no-match branches now log a warning instead of returning silently, since
+// this is the terminal fallback of handleTbankNotification's dispatch chain: if
+// we reach here and still can't correlate anything, the notification is
+// genuinely unmatched. It is still signature-verified (checked by the HTTP
+// route before handleTbankNotification is ever called), so we simply
+// acknowledge it (the caller answers T-Bank "OK") and log for visibility. We
+// deliberately do NOT cancel/refund the underlying payment here — an unmatched
+// OrderId/CustomerKey is expected for notifications T-Bank's OWN test/dashboard
+// tooling sends directly to our NotificationURL (bypassing our endpoints
+// entirely), and refunding a validly-signed payment we simply have no local row
+// for would incorrectly reverse money we have no real reason to distrust.
 export async function handleAddCardNotification(body: Record<string, unknown>): Promise<void> {
   const status = typeof body.Status === "string" ? body.Status : "";
   const customerKey = typeof body.CustomerKey === "string" ? body.CustomerKey : "";
   const cardId = typeof body.CardId === "string" ? body.CardId : "";
   const rebillId = body.RebillId != null ? String(body.RebillId) : "";
   const pan = typeof body.Pan === "string" ? body.Pan : "";
+  const paymentId = body.PaymentId != null ? String(body.PaymentId) : "";
+  const orderId = typeof body.OrderId === "string" ? body.OrderId : "";
   // T-Bank may signal failure via Success=false even without a terminal Status.
   const success = body.Success === false ? false : undefined;
 
-  if (!customerKey) return;
+  if (!customerKey) {
+    log(
+      `[tbank] WARN notification unmatched: no CustomerKey (OrderId=${orderId || "-"} ` +
+        `PaymentId=${paymentId || "-"} Status=${status || "-"}). Acknowledging without action — ` +
+        `likely T-Bank's own test-dashboard traffic or a stale order; NOT cancelling/refunding a ` +
+        `validly-signed payment just because it has no local match.`,
+      "tbank",
+    );
+    return;
+  }
   const pending = await storage.findPendingCardMethod(customerKey);
-  if (!pending) return;
+  if (!pending) {
+    log(
+      `[tbank] WARN notification unmatched: CustomerKey=${customerKey} has no pending card method ` +
+        `(OrderId=${orderId || "-"} PaymentId=${paymentId || "-"} Status=${status || "-"}). ` +
+        `Acknowledging without action — likely T-Bank's own test-dashboard traffic or a stale order; ` +
+        `NOT cancelling/refunding a validly-signed payment just because it has no local match.`,
+      "tbank",
+    );
+    return;
+  }
 
   const outcome = classifyCardBinding({ status, cardId });
   if (outcome === "active") {
@@ -347,14 +395,40 @@ export function bindingErrorPatch(body: {
 // tbankCancel it records whether the money actually came back. `knownStatus` is
 // the fresh payment status from the same notification/GetState, letting the
 // helper skip a redundant GetState round-trip.
+//
+// CONCURRENCY GUARD: this function has two independent call sites that can
+// observe the SAME method transitioning to "active" at nearly the same time —
+// handleInitBindingNotification() (the webhook) and the GET
+// /api/payments/tbank/refresh-bind/:id polling route (hit every ~2s by more
+// than one concurrent client-side poll loop while the bind modal is open, see
+// client/src/pages/PaymentMethodsPage.tsx). Before this guard, both callers
+// would unconditionally proceed to call tbankRefundVerificationCharge (which
+// itself retries /Cancel up to 3 times), so a single PaymentId could get two
+// overlapping 3-attempt /Cancel retry loops fired against T-Bank concurrently
+// — this reproduces the interleaved "attempt 1 failed / OK / attempt 2 failed
+// / attempt 3 failed / GIVE UP" log pattern seen for a single PaymentId in
+// production. storage.claimRefund() is an atomic compare-and-swap: only the
+// first caller to observe a claimable refundStatus (not already
+// "pending"/"refunded") gets to proceed; every later concurrent caller backs
+// off immediately with no acquirer call at all.
 export async function refundVerificationCharge(
   cfg: TbankConfig,
   methodId: number,
   paymentId: string,
   knownStatus?: string,
 ): Promise<void> {
-  // Mark pending immediately so the UI/support can see a refund is in flight.
-  await storage.updatePaymentMethod(methodId, { refundStatus: "pending", refundError: null });
+  // Atomically claim the right to refund this method. If another concurrent
+  // caller already claimed it (or it was already refunded), back off — do NOT
+  // call T-Bank a second time for the same charge.
+  const claimed = await storage.claimRefund(methodId);
+  if (!claimed) {
+    log(
+      `[tbank] refund SKIP methodId=${methodId} PaymentId=${paymentId}: already claimed by a concurrent ` +
+        `caller (webhook/poll race) — not calling /Cancel twice for the same charge.`,
+      "tbank",
+    );
+    return;
+  }
   void tbankRefundVerificationCharge(cfg, paymentId, knownStatus)
     .then(async (outcome) => {
       if (outcome.result === "failed") {
