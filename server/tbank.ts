@@ -156,7 +156,71 @@ export function getTbankDiagnostics(): TbankDiagnostics {
 // Receipt, DATA) are excluded from the signature per the T-Kassa spec, as is
 // the Token field itself.
 type Scalar = string | number | boolean | null | undefined;
-export type TbankParams = Record<string, Scalar | Record<string, unknown> | unknown[]>;
+export type TbankParams = Record<string, Scalar | object>;
+
+export interface TbankReceiptItem {
+  Name: string;
+  Price: number;
+  Quantity: 1;
+  Amount: number;
+  Tax: "none";
+  PaymentMethod: "full_payment";
+  PaymentObject: "service";
+}
+
+export interface TbankReceipt {
+  Email?: string;
+  Phone?: string;
+  Taxation: "usn_income_outcome";
+  Items: [TbankReceiptItem];
+}
+
+export interface BuildReceiptInput {
+  customerEmail?: string | null;
+  customerPhone?: string | null;
+  description: string;
+  amountKopecks: number;
+}
+
+const RECEIPT_ITEM_NAME_MAX_LENGTH = 128;
+const CARD_BIND_RECEIPT_DESCRIPTION = "Проверка карты";
+
+// Build the 54-FZ receipt payload required by the terminal's online cash
+// register. T-Kassa requires at least one customer contact; prefer email when
+// it is available and otherwise use the rider's required phone number. Receipt
+// is a nested object, so signedPost deliberately excludes it from Token.
+export function buildReceipt(input: BuildReceiptInput): TbankReceipt {
+  const email = input.customerEmail?.trim();
+  const phone = input.customerPhone?.trim();
+  if (!email && !phone) {
+    throw new Error("Для фискального чека нужен email или телефон покупателя.");
+  }
+
+  // Receipt item names must be at most 128 characters. Control characters are
+  // removed before submission; no other receipt-name restrictions are currently
+  // documented in this codebase.
+  const name = input.description
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, RECEIPT_ITEM_NAME_MAX_LENGTH) || "Услуга проката велосипеда";
+
+  const receipt: TbankReceipt = {
+    Taxation: "usn_income_outcome",
+    Items: [{
+      Name: name,
+      Price: input.amountKopecks,
+      Quantity: 1,
+      Amount: input.amountKopecks,
+      Tax: "none",
+      PaymentMethod: "full_payment",
+      PaymentObject: "service",
+    }],
+  };
+  if (email) receipt.Email = email;
+  else receipt.Phone = phone!;
+  return receipt;
+}
 
 function isScalar(v: unknown): v is Scalar {
   return (
@@ -351,6 +415,8 @@ export interface InitBindCardInput {
   // Recurrent=Y so a RebillId is issued for future charges.
   customerKey: string;
   description: string;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
   successUrl: string;
   failUrl: string;
   notificationUrl: string;
@@ -387,6 +453,12 @@ export async function tbankInitBindCard(
     CustomerKey: input.customerKey,
     Recurrent: "Y",
     OperationInitiatorType: "1",
+    Receipt: buildReceipt({
+      customerEmail: input.customerEmail,
+      customerPhone: input.customerPhone,
+      description: CARD_BIND_RECEIPT_DESCRIPTION,
+      amountKopecks: input.amountKopecks,
+    }),
     SuccessURL: input.successUrl,
     FailURL: input.failUrl,
     NotificationURL: input.notificationUrl,
@@ -418,6 +490,8 @@ export interface InitRidePaymentInput {
   // is NOT required for an ordinary (non-recurring) payment and carries no card
   // data; we pass our user id so payments are attributable in the merchant UI.
   customerKey?: string;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
 }
 
 // Create an ordinary (one-off) payment via /Init for a ride. Unlike the
@@ -438,6 +512,12 @@ export async function tbankInitRidePayment(
     OrderId: input.orderId,
     Description: input.description,
     CustomerKey: input.customerKey,
+    Receipt: buildReceipt({
+      customerEmail: input.customerEmail,
+      customerPhone: input.customerPhone,
+      description: input.description,
+      amountKopecks: input.amountKopecks,
+    }),
     SuccessURL: input.successUrl,
     FailURL: input.failUrl,
     NotificationURL: input.notificationUrl,
@@ -469,6 +549,8 @@ export interface InitSavedCardChargeInput {
   // call below is usually synchronous, but a NotificationURL keeps us correct if
   // the acquirer defers (e.g. 3DS step-up on a recurring charge).
   notificationUrl: string;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
 }
 
 // Create the payment object for a recurring (merchant-initiated) charge against
@@ -493,6 +575,14 @@ export async function tbankInitSavedCardCharge(
     Description: input.description,
     CustomerKey: input.customerKey,
     OperationInitiatorType: "R",
+    // Fiscal data belongs on Init, which creates this recurring payment. Charge
+    // subsequently executes that initialized payment using its RebillId.
+    Receipt: buildReceipt({
+      customerEmail: input.customerEmail,
+      customerPhone: input.customerPhone,
+      description: input.description,
+      amountKopecks: input.amountKopecks,
+    }),
     NotificationURL: input.notificationUrl,
   });
 }
@@ -631,9 +721,14 @@ export type CancelOutcome =
 // A single raw /Cancel call. For an AUTHORIZED payment this is a reversal (the
 // hold is released; nothing was debited). For a CONFIRMED payment this is a
 // refund (a real credit that appears in the cabinet). T-Bank picks the right
-// operation from the payment's current stage — we only send PaymentId.
-async function cancelOnce(cfg: TbankConfig, paymentId: string): Promise<TbankResponse> {
-  return signedPost(cfg, "/Cancel", { PaymentId: paymentId });
+// operation from the payment's current stage. The Receipt produces the required
+// refund receipt when the verification payment has already been captured.
+async function cancelOnce(
+  cfg: TbankConfig,
+  paymentId: string,
+  receipt: TbankReceipt,
+): Promise<TbankResponse> {
+  return signedPost(cfg, "/Cancel", { PaymentId: paymentId, Receipt: receipt });
 }
 
 // Statuses for which a Cancel is a no-op because there is nothing to give back:
@@ -660,11 +755,19 @@ const ALREADY_SETTLED_STATUSES: readonly string[] = [
 //   3. Call /Cancel with a few retries for transient failures.
 //   4. Return a structured outcome so the caller can PERSIST refund state and a
 //      stuck 1 ₽ becomes observable in the DB/UI instead of only in logs.
+export interface RefundVerificationChargeInput {
+  paymentId: string;
+  knownStatus?: string;
+  amountKopecks: number;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
+}
+
 export async function tbankRefundVerificationCharge(
   cfg: TbankConfig,
-  paymentId: string,
-  knownStatus?: string,
+  input: RefundVerificationChargeInput,
 ): Promise<CancelOutcome> {
+  const { paymentId, knownStatus } = input;
   if (!paymentId) return { result: "failed", reason: "нет PaymentId для возврата" };
 
   // 1. Determine the current status (skip the extra call if the caller already
@@ -689,12 +792,21 @@ export async function tbankRefundVerificationCharge(
     return { result: "nothing_to_cancel", status };
   }
 
+  // Keep this receipt identical to the original Init+Recurrent verification
+  // receipt so the provider can issue the corresponding refund fiscal receipt.
+  const receipt = buildReceipt({
+    customerEmail: input.customerEmail,
+    customerPhone: input.customerPhone,
+    description: CARD_BIND_RECEIPT_DESCRIPTION,
+    amountKopecks: input.amountKopecks,
+  });
+
   // 3. Cancel with retries for transient failures (network / acquirer 5xx-style).
   const maxAttempts = 3;
   let lastReason = "неизвестная ошибка";
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const resp = await cancelOnce(cfg, paymentId);
+      const resp = await cancelOnce(cfg, paymentId, receipt);
       if (resp.Success) {
         const newStatus =
           typeof resp.Status === "string" ? resp.Status.trim().toUpperCase() : status || "CANCELED";
@@ -727,9 +839,9 @@ export async function tbankRefundVerificationCharge(
 // fire-and-forget call sites still compile; it delegates and ignores the result.
 export async function tbankCancel(
   cfg: TbankConfig,
-  paymentId: string,
+  input: RefundVerificationChargeInput,
 ): Promise<void> {
-  await tbankRefundVerificationCharge(cfg, paymentId);
+  await tbankRefundVerificationCharge(cfg, input);
 }
 
 // ---------- SBP (СБП) account binding & recurring charge ----------

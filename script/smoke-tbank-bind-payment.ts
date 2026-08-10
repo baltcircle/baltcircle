@@ -125,6 +125,7 @@ try {
     amountKopecks: 100,
     customerKey: "user-1",
     description: "Проверочный платёж для привязки карты",
+    customerEmail: "rider@example.test",
     successUrl: "https://app.test/payment-methods",
     failUrl: "https://app.test/payment-methods",
     notificationUrl: "https://app.test/api/payments/tbank/notification",
@@ -151,6 +152,17 @@ try {
     "payload carries OperationInitiatorType=1 (parent credential-captured CIT CC)",
   );
   assert(body.Description === "Проверочный платёж для привязки карты", "payload carries Description");
+  const receipt = body.Receipt as Record<string, unknown>;
+  const item = (receipt?.Items as Record<string, unknown>[] | undefined)?.[0];
+  assert(receipt?.Email === "rider@example.test", "Receipt uses the customer email");
+  assert(receipt?.Taxation === "usn_income_outcome", "Receipt uses USN income-minus-expenses taxation");
+  assert(item?.Name === "Проверка карты", "Receipt names the verification payment");
+  assert(item?.Price === 100 && item?.Amount === 100 && item?.Quantity === 1, "Receipt item amounts are in kopecks");
+  assert(item?.Tax === "none", "Receipt item is VAT-free");
+  assert(
+    item?.PaymentMethod === "full_payment" && item?.PaymentObject === "service",
+    "Receipt item uses the confirmed payment method and object",
+  );
   assert(
     body.NotificationURL === "https://app.test/api/payments/tbank/notification",
     "payload carries NotificationURL (a valid Init field)",
@@ -175,6 +187,7 @@ try {
     amountKopecks: 100,
     customerKey: "user-2",
     description: "d",
+    customerPhone: "+79991234567",
     successUrl: "https://app.test/payment-methods",
     failUrl: "https://app.test/payment-methods",
     notificationUrl: "https://app.test/api/payments/tbank/notification",

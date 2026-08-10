@@ -337,12 +337,24 @@ describe("refundVerificationCharge concurrency guard (claimRefund)", () => {
     storageMock.claimRefund.mockResolvedValue(true);
     tbankRefundVerificationChargeMock.mockResolvedValue({ result: "refunded", status: "REFUNDED" });
 
-    await refundVerificationCharge(makeCfg(), 138, "8979349666", "CONFIRMED");
+    await refundVerificationCharge(makeCfg(), {
+      methodId: 138,
+      paymentId: "8979349666",
+      knownStatus: "CONFIRMED",
+      amountKopecks: 100,
+      customerPhone: "+79991234567",
+    });
     // let the fire-and-forget .then() chain flush
     await new Promise((r) => setTimeout(r, 0));
 
     expect(storageMock.claimRefund).toHaveBeenCalledWith(138);
-    expect(tbankRefundVerificationChargeMock).toHaveBeenCalledWith(makeCfg(), "8979349666", "CONFIRMED");
+    expect(tbankRefundVerificationChargeMock).toHaveBeenCalledWith(makeCfg(), {
+      paymentId: "8979349666",
+      knownStatus: "CONFIRMED",
+      amountKopecks: 100,
+      customerEmail: undefined,
+      customerPhone: "+79991234567",
+    });
     expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(
       138,
       expect.objectContaining({ refundStatus: "refunded" }),
@@ -355,7 +367,13 @@ describe("refundVerificationCharge concurrency guard (claimRefund)", () => {
     // first to reach claimRefund() should ever touch the acquirer.
     storageMock.claimRefund.mockResolvedValue(false);
 
-    await refundVerificationCharge(makeCfg(), 138, "8979349666", "CONFIRMED");
+    await refundVerificationCharge(makeCfg(), {
+      methodId: 138,
+      paymentId: "8979349666",
+      knownStatus: "CONFIRMED",
+      amountKopecks: 100,
+      customerPhone: "+79991234567",
+    });
 
     expect(storageMock.claimRefund).toHaveBeenCalledWith(138);
     expect(tbankRefundVerificationChargeMock).not.toHaveBeenCalled();
@@ -373,8 +391,20 @@ describe("refundVerificationCharge concurrency guard (claimRefund)", () => {
     tbankRefundVerificationChargeMock.mockResolvedValue({ result: "refunded", status: "REFUNDED" });
 
     await Promise.all([
-      refundVerificationCharge(makeCfg(), 138, "8979349666", "CONFIRMED"),
-      refundVerificationCharge(makeCfg(), 138, "8979349666", "CONFIRMED"),
+      refundVerificationCharge(makeCfg(), {
+        methodId: 138,
+        paymentId: "8979349666",
+        knownStatus: "CONFIRMED",
+        amountKopecks: 100,
+        customerPhone: "+79991234567",
+      }),
+      refundVerificationCharge(makeCfg(), {
+        methodId: 138,
+        paymentId: "8979349666",
+        knownStatus: "CONFIRMED",
+        amountKopecks: 100,
+        customerPhone: "+79991234567",
+      }),
     ]);
     await new Promise((r) => setTimeout(r, 0));
 

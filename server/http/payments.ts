@@ -106,7 +106,7 @@ export function registerPaymentRoutes(app: Express): void {
         // payment). Transparently FALL BACK to the Init+Recurrent 1 ₽ path so the
         // rider still gets a working binding — with the hardened refund.
         log(`[tbank] AddCard unavailable (${resp.ErrorCode ?? "?"}: ${resp.Message ?? "?"}), falling back to 1 ₽ verification payment`, "tbank");
-        return void (await bindViaVerificationPayment(cfg, user.id, res));
+        return void (await bindViaVerificationPayment(cfg, user.id, res, user.email, user.phone));
       }
       // AddCard binds with NO charge — there is nothing to refund.
       const method = await storage.createPendingCardMethod({
@@ -147,7 +147,7 @@ export function registerPaymentRoutes(app: Express): void {
       });
     }
 
-    await bindViaVerificationPayment(cfg, user.id, res);
+    await bindViaVerificationPayment(cfg, user.id, res, user.email, user.phone);
   });
 
   // Unified card-binding entry point the client uses. Picks the method from
@@ -181,7 +181,7 @@ export function registerPaymentRoutes(app: Express): void {
         const resp = await tbankAddCard(cfg, { customerKey: user.id });
         if (!resp.Success || !resp.PaymentURL) {
           log(`[tbank] AddCard unavailable (${resp.ErrorCode ?? "?"}: ${resp.Message ?? "?"}), falling back to 1 ₽ verification payment`, "tbank");
-          return void (await bindViaVerificationPayment(cfg, user.id, res));
+          return void (await bindViaVerificationPayment(cfg, user.id, res, user.email, user.phone));
         }
         const method = await storage.createPendingCardMethod({
           userId: user.id,
@@ -195,7 +195,7 @@ export function registerPaymentRoutes(app: Express): void {
       }
     }
     // Default: 1 ₽ verification payment (RebillId-guaranteed on all terminals).
-    await bindViaVerificationPayment(cfg, user.id, res);
+    await bindViaVerificationPayment(cfg, user.id, res, user.email, user.phone);
   });
 
   // Start an SBP ACCOUNT binding via AddAccountQr. Unlike a card, the rider binds
@@ -372,6 +372,8 @@ export function registerPaymentRoutes(app: Express): void {
         amountKopecks,
         customerKey: user.id,
         description: `Аренда велосипеда ${bike.id} • ${tariffDef.name}`,
+        customerEmail: user.email,
+        customerPhone: user.phone,
         successUrl: `${cfg.publicAppUrl}/payment-result?orderId=${encodeURIComponent(orderId)}`,
         failUrl: `${cfg.publicAppUrl}/payment-result?orderId=${encodeURIComponent(orderId)}`,
         notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
@@ -459,6 +461,8 @@ export function registerPaymentRoutes(app: Express): void {
         amountKopecks,
         customerKey: card.customerKey ?? user.id,
         description: `Аренда велосипеда ${bike.id} • ${tariffDef.name}`,
+        customerEmail: user.email,
+        customerPhone: user.phone,
         notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
       });
       if (!init.Success || init.PaymentId == null) {
@@ -722,7 +726,17 @@ export function registerPaymentRoutes(app: Express): void {
       });
       // Reverse/refund the 1 ₽ verification charge and record the outcome so a
       // stuck rouble is observable. `status` is the fresh GetState status.
-      if (method.paymentId) refundVerificationCharge(cfg, method.id, method.paymentId, status);
+      if (method.paymentId) {
+        const customer = method.userId === actor?.id ? actor : await storage.getUser(method.userId);
+        refundVerificationCharge(cfg, {
+          methodId: method.id,
+          paymentId: method.paymentId,
+          knownStatus: status,
+          amountKopecks: method.amountKopecks ?? cfg.cardBindAmountKopecks,
+          customerEmail: customer?.email,
+          customerPhone: customer?.phone,
+        });
+      }
       return res.json(updated);
     }
     if (outcome === "failed") {
