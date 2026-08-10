@@ -17,8 +17,6 @@ import { PaymentResultPage } from "@/pages/PaymentResultPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SupportPage } from "@/pages/SupportPage";
 import { SafetyPage } from "@/pages/SafetyPage";
-import { InfoSectionPage } from "@/pages/InfoSectionPage";
-import { InfoDocPage } from "@/pages/InfoDocPage";
 import { LegalIndexPage } from "@/pages/LegalIndexPage";
 // Admin/operator pages code-split: a rider never downloads this code,
 // and the heavy chart/map-editor deps ride along in their own chunks.
@@ -264,8 +262,23 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
         <Route path="/payment-methods" component={PaymentMethodsPage} />
         <Route path="/support" component={SupportPage} />
         <Route path="/safety" component={SafetyPage} />
-        <Route path="/safety/:section/:slug">{(params) => <InfoDocPage section={params.section} slug={params.slug} />}</Route>
-        <Route path="/safety/:section">{(params) => <InfoSectionPage section={params.section} />}</Route>
+        {/* Former information cards now redirect into the corresponding section of /safety. */}
+        <Route path="/safety/riding"><Redirect to="/safety#riding" /></Route>
+        <Route path="/safety/riding/helmet"><Redirect to="/safety#riding-helmet" /></Route>
+        <Route path="/safety/riding/traffic-rules"><Redirect to="/safety#riding-traffic-rules" /></Route>
+        <Route path="/safety/riding/speed"><Redirect to="/safety#riding-speed" /></Route>
+        <Route path="/safety/riding/parking"><Redirect to="/safety#riding-parking" /></Route>
+        <Route path="/safety/riding/night-weather"><Redirect to="/safety#riding-night-weather" /></Route>
+        <Route path="/safety/riding/before-ride"><Redirect to="/safety#riding-before-ride" /></Route>
+        <Route path="/safety/riding/emergency"><Redirect to="/safety#riding-emergency" /></Route>
+        <Route path="/safety/privacy"><Redirect to="/safety#privacy" /></Route>
+        <Route path="/safety/privacy/collected"><Redirect to="/safety#privacy-collected" /></Route>
+        <Route path="/safety/privacy/purposes"><Redirect to="/safety#privacy-purposes" /></Route>
+        <Route path="/safety/privacy/storage"><Redirect to="/safety#privacy-storage" /></Route>
+        <Route path="/safety/privacy/sharing"><Redirect to="/safety#privacy-sharing" /></Route>
+        <Route path="/safety/privacy/cookies"><Redirect to="/safety#privacy-cookies" /></Route>
+        <Route path="/safety/privacy/rights"><Redirect to="/safety#privacy-rights" /></Route>
+        <Route path="/safety/privacy/payments"><Redirect to="/safety#privacy-payments" /></Route>
         <Route path="/tariffs" component={TariffsPage} />
         <Route path="/rent" component={RentPage} />
         <Route path="/payment-result" component={PaymentResultPage} />
@@ -345,6 +358,7 @@ function AppRouter() {
       <Route path="/payment-result"><></></Route>
       <Route path="/settings"><></></Route>
       <Route path="/support"><></></Route>
+      {/* /safety and legacy nested URLs are rendered by OverlayRouter above. */}
       <Route path="/safety"><></></Route>
       <Route path="/safety/:section"><></></Route>
       <Route path="/safety/:section/:slug"><></></Route>
