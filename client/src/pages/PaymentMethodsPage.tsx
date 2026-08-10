@@ -12,8 +12,18 @@ import {
 } from "lucide-react";
 import { CardBrandIcon, SbpBrandIcon } from "@/components/PaymentBrandIcon";
 import { BikeQr } from "@/components/BikeQr";
+import visaLogo from "@/assets/payment-icons/visa.svg";
+import mastercardLogo from "@/assets/payment-icons/mastercard.svg";
+import mirLogo from "@/assets/payment-icons/mir.svg";
+import sbpLogo from "@/assets/payment-icons/sbp.svg";
 
 const METHODS_KEY = ["/api/payment-methods"];
+const ACCEPTED_PAYMENT_METHODS = [
+  { src: visaLogo, alt: "Visa" },
+  { src: mastercardLogo, alt: "Mastercard" },
+  { src: mirLogo, alt: "МИР" },
+  { src: sbpLogo, alt: "СБП" },
+] as const;
 
 // Human sublabel + tone for a payment-method status. Shown as the small
 // secondary line under the method label, matching the profile-row style.
@@ -390,6 +400,38 @@ export function PaymentMethodsPage() {
   return (
     <OverlayShell title="Способы оплаты">
       <div className="px-4 py-6 max-w-md mx-auto" data-testid="page-payment-methods">
+        <section
+          className="mb-4 rounded-2xl border border-card-border bg-card overflow-hidden"
+          aria-labelledby="accepted-payment-methods-heading"
+          data-testid="accepted-payment-methods"
+        >
+          <div className="px-4 pt-4">
+            <h2
+              id="accepted-payment-methods-heading"
+              className="text-base font-semibold text-gray-900 dark:text-white"
+            >
+              Принимаем к оплате
+            </h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Банковские карты и СБП
+            </p>
+          </div>
+          <ul className="flex flex-wrap items-center gap-3 px-4 py-4">
+            {ACCEPTED_PAYMENT_METHODS.map((method) => (
+              <li
+                key={method.alt}
+                className="flex h-10 min-w-[62px] items-center justify-center rounded-lg border border-gray-200 bg-white px-2 shadow-sm dark:border-zinc-700"
+              >
+                <img
+                  src={method.src}
+                  alt={method.alt}
+                  className="h-7 w-auto max-w-[58px] object-contain"
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
+
         {/* Linked methods — profile-style rows */}
         <div
           className="rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800"
