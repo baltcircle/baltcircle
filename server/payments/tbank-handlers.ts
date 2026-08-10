@@ -519,8 +519,9 @@ export async function bindViaVerificationPayment(
     await storage.updatePaymentMethod(method.id, {
       paymentId: resp.PaymentId != null ? String(resp.PaymentId) : null,
       paymentUrl: resp.PaymentURL,
-      // A charge is now outstanding; it will be reversed/refunded on activation.
-      refundStatus: "pending",
+      // Keep refundStatus NULL until activation. claimRefund() is the sole,
+      // atomic transition to "pending" when it has claimed this charge for
+      // reversal/refund; setting it earlier would make that claim fail.
     });
     res.json({ paymentUrl: resp.PaymentURL, amountKopecks, method: "payment", methodId: method.id });
   } catch (err: any) {
