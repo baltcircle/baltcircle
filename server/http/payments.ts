@@ -31,6 +31,7 @@ import {
   maskPan, cardBrand, extractLast4FromLabel,
 } from "./../payments/tbank-handlers";
 import { log } from "./../index";
+import { logger } from "./../logger";
 import {
   riderId, isStaffSession, canManageRide, actorName, clientIp,
   requireRole, requireAuth, requireRoleWhenConfigured,
@@ -70,15 +71,34 @@ function isUnknownBindingAtBank(resp: Record<string, unknown>): boolean {
   return code === "7" || /not\s*found|unknown|не\s*найден|не\s*существует/.test(message);
 }
 
+// RequestKey and PaymentId are opaque T-Bank values, so do not impose a
+// provider-specific character whitelist here. A trimmed non-control string is
+// the smallest safe definition of a usable identifier; blank/control-only
+// legacy values cannot name a live bank session and must not fail closed.
+function normalizedBindingIdentifier(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const identifier = value.trim();
+  return identifier && !/[\u0000-\u001F\u007F]/.test(identifier) ? identifier : undefined;
+}
+
 async function reconcilePendingCardBinding(
   method: PaymentMethod,
   cfg: TbankConfig,
 ): Promise<BindingReconciliation> {
   if (method.status !== "pending") return method.status === "active" ? "active" : "failed";
 
-  const isAddCard = Boolean(method.requestKey);
-  const identifier = method.requestKey || method.paymentId;
+  const requestKey = normalizedBindingIdentifier(method.requestKey);
+  const paymentId = normalizedBindingIdentifier(method.paymentId);
+  const isAddCard = Boolean(requestKey);
+  const identifier = requestKey || paymentId;
   if (method.provider !== "tbank" || !identifier) {
+    logger.info({
+      userId: method.userId,
+      methodId: method.id,
+      requestKeyPresent: Boolean(requestKey),
+      paymentIdPresent: Boolean(paymentId),
+      outcome: "failed_missing_identifier",
+    }, "[tbank] card-bind reconciliation");
     await storage.updatePaymentMethod(method.id, {
       status: "failed",
       lastErrorCode: "BINDING_IDENTIFIER_MISSING",
@@ -91,12 +111,34 @@ async function reconcilePendingCardBinding(
   let resp: Record<string, unknown>;
   try {
     resp = isAddCard
-      ? await tbankGetAddCardState(cfg, method.requestKey!, BIND_STATE_TIMEOUT_MS)
-      : await tbankGetState(cfg, method.paymentId!, BIND_STATE_TIMEOUT_MS);
+      ? await tbankGetAddCardState(cfg, requestKey!, BIND_STATE_TIMEOUT_MS)
+      : await tbankGetState(cfg, paymentId!, BIND_STATE_TIMEOUT_MS);
   } catch (err) {
-    log(`[tbank] binding state check unavailable methodId=${method.id}: ${(err as Error)?.message ?? "?"}`, "tbank");
+    logger.warn({
+      err,
+      userId: method.userId,
+      methodId: method.id,
+      requestKeyPresent: Boolean(requestKey),
+      paymentIdPresent: Boolean(paymentId),
+      outcome: "unavailable",
+    }, "[tbank] card-bind state check failed");
     return "unavailable";
   }
+
+  // Intentionally record only decision-relevant, non-card data: a raw state
+  // response may contain PAN/CardId/RebillId and must never reach application
+  // logs.
+  logger.info({
+    userId: method.userId,
+    methodId: method.id,
+    requestKeyPresent: Boolean(requestKey),
+    paymentIdPresent: Boolean(paymentId),
+    bankResponse: {
+      success: resp.Success === true,
+      status: typeof resp.Status === "string" ? resp.Status : null,
+      errorCode: resp.ErrorCode != null ? String(resp.ErrorCode) : null,
+    },
+  }, "[tbank] card-bind state response");
 
   if (!resp.Success) {
     if (isUnknownBindingAtBank(resp)) {
@@ -198,16 +240,47 @@ async function reconcilePendingCardBindingsForUser(
   // "pending" query drift back into one of the entry points.
   const pending = (methods ?? await storage.listPaymentMethods(userId))
     .filter((method) => method.type === "card" && method.status === "pending");
-  return Promise.all(pending.map((method) => reconcilePendingCardBinding(method, cfg)));
+  return Promise.all(pending.map(async (method) => {
+    // A legacy row or a transient failure while resolving one row must not
+    // prevent later rows for this same user from being independently resolved.
+    // We still fail closed for the affected row only, because its bank session
+    // may be live.
+    try {
+      return await reconcilePendingCardBinding(method, cfg);
+    } catch (err) {
+      logger.warn({
+        err,
+        userId,
+        methodId: method.id,
+        requestKeyPresent: Boolean(normalizedBindingIdentifier(method.requestKey)),
+        paymentIdPresent: Boolean(normalizedBindingIdentifier(method.paymentId)),
+        outcome: "unavailable",
+      }, "[tbank] card-bind reconciliation row failed");
+      return "unavailable" as const;
+    }
+  }));
 }
 
 async function hasLiveCardBinding(userId: string, cfg: TbankConfig): Promise<boolean> {
-  const results = await reconcilePendingCardBindingsForUser(userId, cfg);
+  const methods = await storage.listPaymentMethods(userId);
+  const pending = methods.filter((method) => method.type === "card" && method.status === "pending");
+  const results = await reconcilePendingCardBindingsForUser(userId, cfg, methods);
   // On an unavailable state query we fail closed for this request rather than
   // risk a duplicate bank-side session. A later page visit/bind retries the
   // short bounded query; no timestamp window can turn this into a permanent
   // local lock.
-  return results.some((result) => result === "in_flight" || result === "unavailable");
+  const blocked = results.some((result) => result === "in_flight" || result === "unavailable");
+  logger.info({
+    userId,
+    pendingRows: pending.map((method, index) => ({
+      methodId: method.id,
+      requestKeyPresent: Boolean(normalizedBindingIdentifier(method.requestKey)),
+      paymentIdPresent: Boolean(normalizedBindingIdentifier(method.paymentId)),
+      reconciliation: results[index],
+    })),
+    decision: blocked ? "block" : "allow",
+  }, "[tbank] card-bind guard decision");
+  return blocked;
 }
 
 export function registerPaymentRoutes(app: Express): void {
