@@ -16,7 +16,6 @@ import visaLogo from "@/assets/payment-icons/visa.svg";
 import mastercardLogo from "@/assets/payment-icons/mastercard.svg";
 import mirLogo from "@/assets/payment-icons/mir.svg";
 import sbpLogo from "@/assets/payment-icons/sbp.svg";
-import tbankLogo from "@/assets/payment-icons/tbank.svg";
 
 const METHODS_KEY = ["/api/payment-methods"];
 const ACCEPTED_PAYMENT_METHODS = [
@@ -431,31 +430,6 @@ export function PaymentMethodsPage() {
               </li>
             ))}
           </ul>
-          <a
-            href="https://www.tbank.ru"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="Платежи защищены Т-Банком — открыть tbank.ru"
-            data-testid="tbank-payment-link"
-            className="flex items-center gap-3 border-t border-card-border px-4 py-3 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-          >
-            <span className="flex h-10 w-[76px] shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white px-2 shadow-sm dark:border-zinc-700">
-              <img
-                src={tbankLogo}
-                alt="Логотип Т-Банк"
-                className="h-6 w-auto max-w-[60px] object-contain"
-              />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-medium text-gray-900 dark:text-white">
-                Платежи защищены Т‑Банком
-              </span>
-              <span className="block text-xs text-muted-foreground">
-                tbank.ru
-              </span>
-            </span>
-            <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          </a>
         </section>
 
         {/* Linked methods — profile-style rows */}
