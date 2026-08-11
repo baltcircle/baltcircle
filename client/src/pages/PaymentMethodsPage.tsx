@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { OverlayShell } from "@/components/OverlayShell";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { PaymentMethod } from "@shared/schema";
@@ -8,7 +8,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { fmtDate } from "@/lib/format";
 import { TBANK_CONFIG_KEY, type TbankConfigResponse } from "@/lib/payment";
 import {
-  CreditCard, Loader2, Trash2, AlertCircle, RefreshCw, Plus, X, ExternalLink, CheckCircle2,
+  CreditCard, Loader2, Trash2, AlertCircle, Plus, X, ExternalLink, CheckCircle2,
 } from "lucide-react";
 import { CardBrandIcon, SbpBrandIcon } from "@/components/PaymentBrandIcon";
 import { BikeQr } from "@/components/BikeQr";
@@ -18,6 +18,8 @@ import mirLogo from "@/assets/payment-icons/mir.svg";
 import sbpLogo from "@/assets/payment-icons/sbp.svg";
 
 const METHODS_KEY = ["/api/payment-methods"];
+const PENDING_POLL_INTERVAL_MS = 3_000;
+const PENDING_BINDING_TIMEOUT_MS = 3 * 60 * 1_000;
 const ACCEPTED_PAYMENT_METHODS = [
   { src: visaLogo, alt: "Visa" },
   { src: mastercardLogo, alt: "Mastercard" },
@@ -31,8 +33,6 @@ function statusLabel(status: string): { text: string; cls: string } {
   switch (status) {
     case "active":
       return { text: "Активна", cls: "text-green-500" };
-    case "pending":
-      return { text: "Привязывается…", cls: "text-amber-500" };
     case "failed":
       return { text: "Ошибка привязки", cls: "text-red-500" };
     default:
@@ -41,7 +41,7 @@ function statusLabel(status: string): { text: string; cls: string } {
 }
 
 // Live state for an in-progress SBP account binding. `payload` is the QR/
-// deeplink the rider opens in their bank; `methodId` is the pending row we poll
+// deeplink the rider opens in their bank; `methodId` is the pending method we poll
 // to detect activation. `status` drives the modal's headline (waiting → success
 // / failed). Held in component state so the QR modal survives re-renders while
 // the rider authorises the binding in their bank app.
@@ -52,6 +52,20 @@ interface SbpBinding {
   error?: string;
 }
 
+async function refreshPendingMethod(method: PaymentMethod): Promise<PaymentMethod | null> {
+  let res: Response;
+  if (method.type === "sbp" && method.requestKey) {
+    res = await apiRequest("GET", `/api/payments/tbank/refresh-bind-sbp/${method.id}`);
+  } else if (method.requestKey) {
+    res = await apiRequest("POST", `/api/payment-methods/${method.id}/refresh`);
+  } else if (method.paymentId) {
+    res = await apiRequest("GET", `/api/payments/tbank/refresh-bind/${method.id}`);
+  } else {
+    return null;
+  }
+  return (await res.json()) as PaymentMethod;
+}
+
 export function PaymentMethodsPage() {
   const toast = useToast();
   const { isRegistered, isLoading: userLoading } = useCurrentUser();
@@ -60,14 +74,46 @@ export function PaymentMethodsPage() {
   // Модальный iframe привязки карты: url — hosted-форма T-Bank, methodId — созданная
   // pending-запись для polling. null — модалка закрыта.
   const [tbankBind, setTbankBind] = useState<{ methodId: number; url: string } | null>(null);
+  const timedOutBindingIds = useRef(new Set<number>());
+  const notifiedBindingFailureIds = useRef(new Set<number>());
+  const pendingBindingIds = useRef(new Set<number>());
+  const lastPendingPollAt = useRef(0);
 
   const methodsQ = useQuery<PaymentMethod[]>({ queryKey: METHODS_KEY });
   const methods = methodsQ.data ?? [];
+  const visibleMethods = methods.filter((method) => method.status !== "pending");
 
   // Probe whether real T-Bank acquiring is configured. When it is not, we show a
   // "Платежи настраиваются" notice instead of offering a flow that would 503.
   const cfgQ = useQuery<TbankConfigResponse>({ queryKey: TBANK_CONFIG_KEY });
   const tbankConfigured = cfgQ.data?.configured === true;
+
+  // A webhook can update the list between poll responses. Detect a pending →
+  // failed transition in fetched data too, so a failure never remains silent.
+  useEffect(() => {
+    const previousPending = pendingBindingIds.current;
+    methods
+      .filter((method) => method.status === "failed" && previousPending.has(method.id))
+      .forEach((method) => {
+        if (!notifiedBindingFailureIds.current.has(method.id)) {
+          notifiedBindingFailureIds.current.add(method.id);
+          toast.toast({
+            title: "Привязка не удалась",
+            description: methodError(method),
+            variant: "destructive",
+          });
+        }
+        if (tbankBind?.methodId === method.id) setTbankBind(null);
+        setSbpBinding((binding) =>
+          binding?.methodId === method.id
+            ? { ...binding, status: "failed", error: methodError(method) }
+            : binding,
+        );
+      });
+    pendingBindingIds.current = new Set(
+      methods.filter((method) => method.status === "pending").map((method) => method.id),
+    );
+  }, [methods, tbankBind?.methodId, toast]);
 
   // Start a real T-Bank card binding via a small verification PAYMENT
   // The backend picks the binding method from config (TBANK_CARD_BIND_METHOD):
@@ -91,7 +137,7 @@ export function PaymentMethodsPage() {
       if (data.paymentUrl && typeof data.methodId === "number") {
         // Открываем hosted-форму T-Bank в МОДАЛЬНОМ iframe (bottom-sheet).
         // Вкладка НЕ уходит на pay.tbank.ru → история не меняется → native
-        // swipe-back не может попасть на форму T-Bank. Статус ловим polling'ом.
+        // swipe-back не может попасть на форму T-Bank. Статус ловим общим фоновым polling'ом.
         setTbankBind({ methodId: data.methodId, url: data.paymentUrl });
       } else if (data.paymentUrl) {
         // Фоллбэк (methodId не пришёл): старый путь через уход вкладки.
@@ -107,8 +153,8 @@ export function PaymentMethodsPage() {
   // payload/deeplink and the id of a pending sbp-type method. We open a modal
   // showing the QR (scan from another device) + an "Открыть в банке" deeplink
   // button (tap on the same phone). The AccountToken arrives asynchronously once
-  // the rider authorises in their bank, so the modal polls refresh-bind-sbp
-  // until the method activates (or fails). If the SBP-recurrent product isn't
+  // the rider authorises in their bank, so page-level background polling checks
+  // refresh-bind-sbp until the method activates (or fails). If the SBP-recurrent product isn't
   // activated on the terminal, the backend relays T-Bank's message and we show
   // it via cleanErr — no crash.
   const bindSbpMut = useMutation({
@@ -136,119 +182,79 @@ export function PaymentMethodsPage() {
       toast.toast({ title: "Не удалось отвязать", description: cleanErr(e), variant: "destructive" }),
   });
 
-  // Re-check a pending/failed binding by polling T-Bank GetAddCardState on the
-  // server. Resolves a method stuck on "привязывается…" when the notification
-  // webhook never arrived.
-  const refreshMut = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiRequest("POST", `/api/payment-methods/${id}/refresh`);
-      return (await res.json()) as PaymentMethod;
-    },
-    onSuccess: (m) => {
-      queryClient.invalidateQueries({ queryKey: METHODS_KEY });
-      if (m.status === "active") toast.toast({ title: "Карта привязана" });
-      else if (m.status === "failed")
-        toast.toast({ title: "Привязка не удалась", description: methodError(m), variant: "destructive" });
-      else toast.toast({ title: "Привязка ещё выполняется", description: "Статус пока не изменился." });
-    },
-    onError: (e: Error) =>
-      toast.toast({ title: "Не удалось проверить статус", description: cleanErr(e), variant: "destructive" }),
-  });
-
-  // Re-check a pending Init-bind method (the primary bind-card-payment flow) by
-  // polling T-Bank GetState via its stored PaymentId. These rows have no
-  // RequestKey, so the AddCard /refresh above can't resolve them — this is the
-  // recovery path when the notification webhook never arrived.
-  const refreshBindMut = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiRequest("GET", `/api/payments/tbank/refresh-bind/${id}`);
-      return (await res.json()) as PaymentMethod;
-    },
-    onSuccess: (m) => {
-      queryClient.invalidateQueries({ queryKey: METHODS_KEY });
-      if (m.status === "active") toast.toast({ title: "Карта привязана" });
-      else if (m.status === "failed")
-        toast.toast({ title: "Привязка не удалась", description: methodError(m), variant: "destructive" });
-    },
-  });
-
-  // Auto-reconcile pending Init-bind methods. When the rider lands back on this
-  // page (or it's open while a binding is in flight) we poll GetState every 2s
-  // for up to ~30s so a missed webhook still resolves the card without a manual
-  // reload. Stops as soon as no pending Init-bind method remains.
+  // Keep pending bindings out of the list and reconcile them silently in the
+  // background. This runs after remount too: the fetched list is the source of
+  // truth, so an unfinished redirect/QR flow continues where it left off.
+  // `createdAt` is intentional here — every refresh writes `updatedAt`, which
+  // must not postpone the three-minute safety valve indefinitely.
   useEffect(() => {
-    const pending = methods.filter(
-      (m) => m.provider === "tbank" && m.status === "pending" && !m.requestKey && !!m.paymentId,
-    );
-    if (pending.length === 0) return;
-    let tries = 0;
-    let cancelled = false;
-    const tick = async () => {
-      await Promise.all(
-        pending.map((m) =>
-          apiRequest("GET", `/api/payments/tbank/refresh-bind/${m.id}`).catch(() => undefined),
-        ),
-      );
-      if (!cancelled) queryClient.invalidateQueries({ queryKey: METHODS_KEY });
-    };
-    const interval = setInterval(() => {
-      if (++tries >= 15) {
-        clearInterval(interval);
-        return;
+    const pending = methods.filter((method) => method.status === "pending");
+    const now = Date.now();
+    const pollable = pending.filter((method) => {
+      if (now - method.createdAt < PENDING_BINDING_TIMEOUT_MS) return true;
+      if (!timedOutBindingIds.current.has(method.id)) {
+        timedOutBindingIds.current.add(method.id);
+        toast.toast({
+          title: method.type === "card"
+            ? "Не удалось подтвердить привязку карты. Попробуйте снова."
+            : "Не удалось подтвердить привязку счёта СБП. Попробуйте снова.",
+          variant: "destructive",
+        });
       }
-      void tick();
-    }, 2000);
-    void tick();
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [methods]);
+      return false;
+    });
+    if (pollable.length === 0) return;
 
-  // Poll the in-progress SBP binding while its modal is open. The AccountToken
-  // arrives asynchronously (the rider authorises in their bank), so we poll
-  // refresh-bind-sbp every 2s for up to ~2min. On "active" we flip the modal to
-  // its success state (and refresh the list); on "failed" we show the acquirer's
-  // reason. Stops as soon as the binding resolves or the modal closes.
-  useEffect(() => {
-    if (!sbpBinding || sbpBinding.status !== "waiting") return;
-    const methodId = sbpBinding.methodId;
-    let tries = 0;
     let cancelled = false;
     const poll = async () => {
-      try {
-        const res = await apiRequest("GET", `/api/payments/tbank/refresh-bind-sbp/${methodId}`);
-        const m = (await res.json()) as PaymentMethod;
-        if (cancelled) return;
-        if (m.status === "active") {
-          queryClient.invalidateQueries({ queryKey: METHODS_KEY });
-          setSbpBinding((b) => (b && b.methodId === methodId ? { ...b, status: "active" } : b));
-        } else if (m.status === "failed") {
-          queryClient.invalidateQueries({ queryKey: METHODS_KEY });
-          setSbpBinding((b) =>
-            b && b.methodId === methodId ? { ...b, status: "failed", error: methodError(m) } : b,
+      if (Date.now() - lastPendingPollAt.current < PENDING_POLL_INTERVAL_MS) return;
+      lastPendingPollAt.current = Date.now();
+
+      const refreshed = await Promise.all(
+        pollable.map(async (method) => {
+          try {
+            return await refreshPendingMethod(method);
+          } catch {
+            // A transient state-query failure must not expose a pending row or
+            // stop the next scheduled background reconciliation attempt.
+            return null;
+          }
+        }),
+      );
+      if (cancelled) return;
+
+      refreshed.forEach((method) => {
+        if (!method) return;
+        if (method.status === "failed") {
+          if (!notifiedBindingFailureIds.current.has(method.id)) {
+            notifiedBindingFailureIds.current.add(method.id);
+            toast.toast({
+              title: "Привязка не удалась",
+              description: methodError(method),
+              variant: "destructive",
+            });
+          }
+          if (tbankBind?.methodId === method.id) setTbankBind(null);
+          setSbpBinding((binding) =>
+            binding?.methodId === method.id
+              ? { ...binding, status: "failed", error: methodError(method) }
+              : binding,
+          );
+        } else if (method.status === "active") {
+          if (tbankBind?.methodId === method.id) setTbankBind(null);
+          setSbpBinding((binding) =>
+            binding?.methodId === method.id ? { ...binding, status: "active" } : binding,
           );
         }
-      } catch {
-        // Transient poll failure (e.g. the state query was rejected) — keep
-        // waiting; the notification webhook may still resolve the binding.
-      }
+      });
+      queryClient.invalidateQueries({ queryKey: METHODS_KEY });
     };
-    const interval = setInterval(() => {
-      if (++tries >= 60) {
-        clearInterval(interval);
-        return;
-      }
-      void poll();
-    }, 2000);
+
     void poll();
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
+    const interval = window.setInterval(() => void poll(), PENDING_POLL_INTERVAL_MS);
+    return () => { cancelled = true; window.clearInterval(interval); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sbpBinding?.methodId, sbpBinding?.status]);
+  }, [methods, tbankBind?.methodId]);
 
   // Привязка карты через МОДАЛЬНЫЙ iframe (bottom-sheet), а НЕ через уход вкладки
   // на pay.tbank.ru. Раньше форма открывалась в той же вкладке
@@ -292,61 +298,10 @@ export function PaymentMethodsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bindFrame?.methodId]);
 
-  // Polling статуса привязываемой карты, пока открыта модалка. Как только запись
-  // становится active — закрываем модалку с успехом; failed — с ошибкой.
-  // ~2 мин максимум, затем оставляем список на авто-reconcile выше.
-  useEffect(() => {
-    if (!bindFrame) return;
-    const methodId = bindFrame.methodId;
-    let tries = 0;
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        // refresh-bind опрашивает T-Bank GetState по paymentId (Init-путь);
-        // для AddCard-строк есть requestKey — обе ручки идемпотентны.
-        const res = await apiRequest("GET", `/api/payments/tbank/refresh-bind/${methodId}`).catch(
-          () => apiRequest("POST", `/api/payment-methods/${methodId}/refresh`),
-        );
-        const m = (await res.json()) as PaymentMethod;
-        if (cancelled) return;
-        if (m.status === "active") {
-          queryClient.invalidateQueries({ queryKey: METHODS_KEY });
-          toast.toast({ title: "Карта привязана" });
-          setTbankBind(null);
-        } else if (m.status === "failed") {
-          queryClient.invalidateQueries({ queryKey: METHODS_KEY });
-          toast.toast({
-            title: "Привязка не удалась",
-            description: methodError(m),
-            variant: "destructive",
-          });
-          setTbankBind(null);
-        }
-      } catch {
-        // Транзиентная ошибка опроса — продолжаем ждать webhook.
-      }
-    };
-    const interval = setInterval(() => {
-      if (++tries >= 60) {
-        clearInterval(interval);
-        return;
-      }
-      void poll();
-    }, 2000);
-    void poll();
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bindFrame?.methodId]);
-
   const busy =
     bindCardMut.isPending ||
     bindSbpMut.isPending ||
     unlinkMut.isPending ||
-    refreshMut.isPending ||
-    refreshBindMut.isPending ||
     redirecting;
 
   // Guard the "Add card" action: don't offer the flow when acquiring isn't
@@ -441,23 +396,15 @@ export function PaymentMethodsPage() {
             <div className="px-4 py-4 text-sm text-muted-foreground" data-testid="methods-loading">
               Загрузка…
             </div>
-          ) : methods.length === 0 ? (
+          ) : visibleMethods.length === 0 ? (
             <div className="px-4 py-4 text-sm text-muted-foreground" data-testid="methods-empty">
               Пока нет привязанных способов оплаты.
             </div>
           ) : (
             <ul className="divide-y divide-gray-100 dark:divide-zinc-700" data-testid="methods-list">
-              {methods.map((m) => {
+              {visibleMethods.map((m) => {
                 const st = statusLabel(m.status);
-                const canRefresh = m.provider === "tbank" && !!m.requestKey && m.status !== "active";
-                // Init-bind rows (the primary flow) have a PaymentId but no
-                // RequestKey — they're re-checked via GetState (/refresh-bind).
-                const canRefreshBind =
-                  m.provider === "tbank" && !m.requestKey && !!m.paymentId && m.status !== "active";
                 const err = methodError(m);
-                const rowRefreshing =
-                  (refreshMut.isPending && refreshMut.variables === m.id) ||
-                  (refreshBindMut.isPending && refreshBindMut.variables === m.id);
                 return (
                   <li
                     key={m.id}
@@ -479,22 +426,6 @@ export function PaymentMethodsPage() {
                           <span className="text-gray-400 dark:text-zinc-500"> · {fmtDate(m.createdAt)}</span>
                         </p>
                       </div>
-                      {(canRefresh || canRefreshBind) && (
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => (canRefresh ? refreshMut.mutate(m.id) : refreshBindMut.mutate(m.id))}
-                          data-testid={`button-refresh-${m.id}`}
-                          title="Проверить статус"
-                          className="flex items-center justify-center w-9 h-9 rounded-full text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50 shrink-0"
-                        >
-                          {rowRefreshing ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <RefreshCw className="w-4 h-4" />
-                          )}
-                        </button>
-                      )}
                       <button
                         type="button"
                         disabled={busy}
@@ -513,16 +444,6 @@ export function PaymentMethodsPage() {
                       >
                         <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
                         <span>{err}</span>
-                      </div>
-                    )}
-                    {m.status === "pending" && (
-                      <div
-                        className="mt-2 text-xs text-gray-400 dark:text-zinc-500"
-                        data-testid={`method-pending-hint-${m.id}`}
-                      >
-                        {canRefresh || canRefreshBind
-                          ? "Если форма банка уже закрыта, нажмите «Проверить статус»."
-                          : "Статус обновится автоматически после подтверждения платежа банком."}
                       </div>
                     )}
                   </li>
@@ -546,7 +467,7 @@ export function PaymentMethodsPage() {
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-base font-semibold text-gray-900 dark:text-white">
-                {methods.some((m) => m.type === "card" && (m.status === "active" || m.status === "pending"))
+                {methods.some((m) => m.type === "card" && m.status === "active")
                   ? "Добавить ещё карту"
                   : "Добавить карту"}
               </p>
@@ -575,7 +496,7 @@ export function PaymentMethodsPage() {
             )}
             <div className="min-w-0 flex-1">
               <p className="text-base font-semibold text-gray-900 dark:text-white">
-                {methods.some((m) => m.type === "sbp" && (m.status === "active" || m.status === "pending"))
+                {methods.some((m) => m.type === "sbp" && m.status === "active")
                   ? "Добавить ещё счёт СБП"
                   : "Добавить счёт СБП"}
               </p>
