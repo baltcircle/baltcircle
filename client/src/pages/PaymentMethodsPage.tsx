@@ -111,6 +111,13 @@ async function refreshPendingMethod(method: PaymentMethod): Promise<PaymentMetho
   return (await res.json()) as PaymentMethod;
 }
 
+// Use the same unlink endpoint as the pre-existing trash action. `pendingOnly`
+// makes the cleanup idempotent and prevents a timeout based on stale client
+// data from removing a method that has just been activated by a webhook.
+async function cancelTimedOutPendingMethod(method: PaymentMethod): Promise<void> {
+  await apiRequest("DELETE", `/api/payment-methods/${method.id}?pendingOnly=1`);
+}
+
 export function PaymentMethodsPage() {
   const toast = useToast();
   const { isRegistered, isLoading: userLoading } = useCurrentUser();
@@ -243,6 +250,16 @@ export function PaymentMethodsPage() {
             : "Не удалось подтвердить привязку счёта СБП. Попробуйте снова.",
           variant: "destructive",
         });
+        // A hidden pending row must not be left to keep affecting server-side
+        // binding guards after the user has been told to try again. The API
+        // safely ignores this if the binding resolved since this list snapshot.
+        void cancelTimedOutPendingMethod(method)
+          .then(() => queryClient.invalidateQueries({ queryKey: METHODS_KEY }))
+          .catch(() => {
+            // Keep the timeout visible to the rider even if this best-effort
+            // cleanup hits a transient network failure. The server's createdAt
+            // based guard still expires independently.
+          });
       }
     });
     if (pollable.length === 0) return;

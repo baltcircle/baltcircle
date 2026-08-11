@@ -6,6 +6,7 @@
 // translated for the operator, and that a lock leaves the discovery table once
 // it is bound to a bike.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import type { Bike, PaymentMethod } from "@shared/schema";
 
 const IMEI = "861234567890123";
@@ -177,7 +178,7 @@ describe("listUnassignedLocks", () => {
 });
 
 describe("getBlockingCard", () => {
-  it("queries only a fresh pending bind and never treats an active card as blocking", async () => {
+  it("queries only a fresh pending bind, never treats active cards as blocking, and uses the original bind time", async () => {
     const activeCard = {
       id: 22, userId: "user-1", type: "card", status: "active", label: "•••• 0777",
     } as PaymentMethod;
@@ -206,5 +207,15 @@ describe("getBlockingCard", () => {
     expect(result).toBeUndefined();
     expect(sqlText(whereConditions[0])).toContain("pending");
     expect(sqlText(whereConditions[0])).not.toContain("'active'");
+    // A status refresh may legitimately write updatedAt, but it must never
+    // extend the 15-minute concurrent-bind window. Keep the query anchored to
+    // the immutable original attempt timestamp.
+    const storageSource = readFileSync(new URL("./storage.ts", import.meta.url), "utf8");
+    const blockingMethod = storageSource.slice(
+      storageSource.indexOf("async getBlockingCard"),
+      storageSource.indexOf("async findActiveCardDuplicate"),
+    );
+    expect(blockingMethod).toContain("${paymentMethods.createdAt} > ${freshPendingSince}");
+    expect(blockingMethod).not.toContain("paymentMethods.updatedAt");
   });
 });

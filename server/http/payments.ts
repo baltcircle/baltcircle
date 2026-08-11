@@ -56,9 +56,15 @@ export function registerPaymentRoutes(app: Express): void {
     if (!method || method.userId !== userId) {
       return res.status(404).json({ error: "Способ оплаты не найден" });
     }
+    // The client uses this same unlink path to clean up a binding that has timed
+    // out locally. Do not let that delayed cleanup remove a card that a webhook
+    // resolved between the client's last list refresh and this request.
+    if (req.query?.pendingOnly === "1" && method.status !== "pending") {
+      return res.json({ ok: true, cancelled: false });
+    }
     const result = await unlinkPaymentMethodForUser(userId, method, clientIp(req));
     if (!result.ok) return res.status(result.status).json({ error: result.error });
-    res.json({ ok: true });
+    res.json(req.query?.pendingOnly === "1" ? { ok: true, cancelled: true } : { ok: true });
   });
 
   // -------------- T-Bank / T-Kassa real payments --------------
@@ -314,9 +320,10 @@ export function registerPaymentRoutes(app: Express): void {
       });
       return res.json(updated);
     }
-    // Still pending — the webhook may yet arrive; report unchanged.
-    const updated = await storage.updatePaymentMethod(method.id, { status: "pending" });
-    return res.json(updated);
+    // Still pending — report the row unchanged. Although SBP does not take
+    // part in the card-binding guard, status polling should not manufacture a
+    // lifecycle update when the acquirer has reported no transition.
+    return res.json(method);
   });
 
   // Start a ride by paying its tariff up front via an ordinary T-Bank payment
@@ -664,9 +671,10 @@ export function registerPaymentRoutes(app: Express): void {
       });
       return res.json(updated);
     }
-    // Still pending — record any interim status detail and report unchanged.
-    const updated = await storage.updatePaymentMethod(method.id, { status: "pending" });
-    return res.json(updated);
+    // Still pending — return the row unchanged. In particular, do not call
+    // updatePaymentMethod here: it writes updatedAt, and a high-frequency poll
+    // must not make a pending bind look newer than its original attempt.
+    return res.json(method);
   });
 
   // Refresh a pending Init-bind card binding by polling GetState with the stored
@@ -783,9 +791,9 @@ export function registerPaymentRoutes(app: Express): void {
       });
       return res.json(updated);
     }
-    // Still pending — the webhook may yet arrive; report unchanged.
-    const updated = await storage.updatePaymentMethod(method.id, { status: "pending" });
-    return res.json(updated);
+    // Still pending — return the row unchanged. Avoid touching updatedAt on
+    // every poll so status checks cannot prolong a bind's freshness window.
+    return res.json(method);
   });
 }
 
