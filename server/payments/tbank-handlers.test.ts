@@ -208,7 +208,7 @@ describe("handleTbankNotification routing", () => {
     expect(storageMock.startRide).toHaveBeenCalledOnce();
   });
 
-  it("claims and cancels a fresh Init verification charge after its matching AUTHORIZED notification", async () => {
+  it("claims and cancels a fresh Init verification charge after its matching CONFIRMED notification", async () => {
     const freshMethod = {
       id: 138,
       userId: "user-1",
@@ -248,7 +248,7 @@ describe("handleTbankNotification routing", () => {
 
     await handleTbankNotification({
       OrderId: "bind-fresh",
-      Status: "AUTHORIZED",
+      Status: "CONFIRMED",
       PaymentId: "verification-payment-1",
       RebillId: "rebill-1",
       CardId: "card-1",
@@ -260,7 +260,7 @@ describe("handleTbankNotification routing", () => {
     expect(storageMock.claimRefund).toHaveBeenCalledWith(138);
     expect(tbankRefundVerificationChargeMock).toHaveBeenCalledWith(makeCfg(), {
       paymentId: "verification-payment-1",
-      knownStatus: "AUTHORIZED",
+      knownStatus: "CONFIRMED",
       amountKopecks: 100,
       customerEmail: "rider@example.com",
       customerPhone: "+79991234567",
@@ -431,11 +431,11 @@ describe("card-binding duplicate protection", () => {
 
     await handleInitBindingNotification(
       pendingInitMethod,
-      { Status: "AUTHORIZED", PaymentId: "pay-1", RebillId: "rebill-1", CardId: "card-1", Pan: "430000******0777" },
+      { Status: "CONFIRMED", PaymentId: "pay-1", RebillId: "rebill-1", CardId: "card-1", Pan: "430000******0777" },
     );
     await handleInitBindingNotification(
       { ...pendingInitMethod, id: 139, paymentId: "verification-payment-2" },
-      { Status: "AUTHORIZED", PaymentId: "pay-2", RebillId: "rebill-2", CardId: "card-2", Pan: "555555******4444" },
+      { Status: "CONFIRMED", PaymentId: "pay-2", RebillId: "rebill-2", CardId: "card-2", Pan: "555555******4444" },
     );
 
     expect(storageMock.updatePaymentMethod).toHaveBeenNthCalledWith(
@@ -454,7 +454,7 @@ describe("card-binding duplicate protection", () => {
 
     await handleInitBindingNotification(
       pendingInitMethod,
-      { Status: "AUTHORIZED", PaymentId: "verification-payment-1", RebillId: "rebill-2", CardId: "card-2", Pan: "430000******0777" },
+      { Status: "CONFIRMED", PaymentId: "verification-payment-1", RebillId: "rebill-2", CardId: "card-2", Pan: "430000******0777" },
       makeCfg(),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -469,7 +469,7 @@ describe("card-binding duplicate protection", () => {
     expect(storageMock.claimRefund).toHaveBeenCalledWith(138);
     expect(tbankRefundVerificationChargeMock).toHaveBeenCalledWith(
       makeCfg(),
-      expect.objectContaining({ paymentId: "verification-payment-1", knownStatus: "AUTHORIZED" }),
+      expect.objectContaining({ paymentId: "verification-payment-1", knownStatus: "CONFIRMED" }),
     );
   });
 

@@ -990,25 +990,6 @@ export class DatabaseStorage implements IStorage {
   // must belong to the rider and be active with a RebillId; otherwise the most
   // recent qualifying card is returned. Returns undefined when no usable saved
   // card exists (the caller then falls back to the hosted payment flow).
-  // Карта, которая блокирует только КОНКУРЕНТНУЮ привязку: pending и свежая
-  // (привязка идёт прямо сейчас). Freshness is deliberately measured from the
-  // original bind attempt (`createdAt`), not `updatedAt`: background status
-  // checks may update diagnostic/status metadata, but must never extend this
-  // short anti-spam window. Active-карты намеренно не блокируют новый флоу —
-  // у райдера может быть несколько разных карт. Старая pending — застрявшая
-  // привязка (webhook не дошёл) — НЕ блокирует, иначе привязка закроется
-  // навсегда. failed не блокирует — можно пробовать снова.
-  async getBlockingCard(userId: string) {
-    const PENDING_TTL_MS = 15 * 60 * 1000; // 15 минут
-    const freshPendingSince = Date.now() - PENDING_TTL_MS;
-    return (await db.select().from(paymentMethods)
-      .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.type} = 'card'
-        AND ${paymentMethods.status} = 'pending'
-        AND ${paymentMethods.createdAt} > ${freshPendingSince}`)
-      .orderBy(desc(paymentMethods.createdAt))
-      .limit(1))[0] as PaymentMethod | undefined;
-  }
-
   // Detect a physical-card duplicate just before activating a pending binding.
   // label is always produced by maskPan() as "•••• XXXX", so a four-digit suffix
   // is a safe fingerprint without a schema change. Known brands refine the match;
