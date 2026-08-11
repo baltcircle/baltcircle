@@ -27,6 +27,18 @@ describe("PaymentMethodsPage auto-charge consent", () => {
     );
   });
 
+  it("shows how to revoke auto-charge consent next to the linked methods", () => {
+    const normalized = source.replace(/\s+/g, " ");
+
+    expect(source).toContain('data-testid="text-autocharge-cancel-info"');
+    expect(normalized).toContain(
+      "Вы можете в любой момент отозвать согласие на автоматическое списание — нажмите «Отвязать карту» напротив нужной карты. После отвязки автоматическое списание по этой карте прекращается.",
+    );
+    expect(source.indexOf('data-testid="card-linked-methods"')).toBeLessThan(
+      source.indexOf('data-testid="text-autocharge-cancel-info"'),
+    );
+  });
+
   it("keeps both binding buttons disabled until the rider checks consent", () => {
     const cardButton = source.slice(
       source.indexOf('data-testid="button-bind-card"') - 300,

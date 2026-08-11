@@ -20,9 +20,10 @@ import {
   PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES, MAP_W, MAP_H,
   TARIFFS, tariffPriceKopecks,
 } from "@shared/geo";
-import { computeOverage, finalRideCost } from "@shared/billing";
+import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
 import { eq, desc, sql, gt, and, asc, inArray } from "drizzle-orm";
 import { EventEmitter } from "node:events";
+import { sendToUserAsync } from "./push";
 // db client + schema bootstrap + migrations + demo seed run on import of this module.
 // bootstrapReady MUST be awaited before serving requests (server entrypoint does this).
 import { db, pool, bootstrapReady } from "./db/bootstrap";
@@ -1628,15 +1629,27 @@ export class DatabaseStorage implements IStorage {
           description: `Продление аренды ${r.bikeId} • +${extraHours} ч`, createdAt: endedAt,
         });
       }
-      return (await tx.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride;
+      return {
+        ride: (await tx.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride,
+        overageKopecks,
+      };
     });
     // Ended ride freed the bike (status "available") → refresh the map list and
     // push a terminal event so the rider's SSE stream sends null (ride over).
-    if (result) {
+    if (result?.ride) {
       this.invalidateBikesCache();
-      rideEvents.emit(result.userId, "end" as RideEventReason);
+      rideEvents.emit(result.ride.userId, "end" as RideEventReason);
+      if (result.overageKopecks > 0) {
+        sendToUserAsync(result.ride.userId, {
+          title: "Оплата поездки",
+          body: `Списано ${formatKopecksAsRubles(result.overageKopecks)} ₽ за поездку. Спасибо, что пользуетесь TakeRide!`,
+          url: "/rides",
+          tag: `ride:${result.ride.id}:overage`,
+          data: { kind: "ride-charge-confirmed", rideId: result.ride.id },
+        });
+      }
     }
-    return result;
+    return result?.ride;
   }
 
   async getRide(rideId: number) {

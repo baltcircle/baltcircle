@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeOverage, finalRideCost, overageHourKopecks } from "./billing";
+import { computeOverage, finalRideCost, formatKopecksAsRubles, overageHourKopecks } from "./billing";
 import { OVERAGE_HOUR_PRICE } from "./geo";
 
 const HOUR = 60 * 60 * 1000;
@@ -63,5 +63,12 @@ describe("finalRideCost", () => {
     const base = 12345; // 123.45 ₽
     const over = overageHourKopecks();
     expect(Number.isInteger(finalRideCost(base, over))).toBe(true);
+  });
+});
+
+describe("formatKopecksAsRubles", () => {
+  it("omits a zero fractional part but keeps non-zero kopecks", () => {
+    expect(formatKopecksAsRubles(15000)).toBe("150");
+    expect(formatKopecksAsRubles(15050)).toBe("150.50");
   });
 });
