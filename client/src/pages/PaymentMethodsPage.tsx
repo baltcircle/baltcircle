@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { CardBrandIcon, SbpBrandIcon } from "@/components/PaymentBrandIcon";
 import { BikeQr } from "@/components/BikeQr";
+import { Checkbox } from "@/components/ui/checkbox";
 import visaLogo from "@/assets/payment-icons/visa.svg";
 import mastercardLogo from "@/assets/payment-icons/mastercard.svg";
 import mirLogo from "@/assets/payment-icons/mir.svg";
@@ -57,6 +58,7 @@ export function PaymentMethodsPage() {
   const { isRegistered, isLoading: userLoading } = useCurrentUser();
   const [redirecting, setRedirecting] = useState(false);
   const [sbpBinding, setSbpBinding] = useState<SbpBinding | null>(null);
+  const [autoChargeConsent, setAutoChargeConsent] = useState(false);
   // Модальный iframe привязки карты: url — hosted-форма T-Bank, methodId — созданная
   // pending-запись для polling. null — модалка закрыта.
   const [tbankBind, setTbankBind] = useState<{ methodId: number; url: string } | null>(null);
@@ -534,9 +536,31 @@ export function PaymentMethodsPage() {
 
         {/* Add actions — profile-style rows */}
         <div className="mt-4 rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800">
+          <label
+            htmlFor="autocharge-consent"
+            className="flex cursor-pointer items-start gap-3 border-b border-gray-100 px-4 py-3 text-left dark:border-zinc-700"
+          >
+            <Checkbox
+              id="autocharge-consent"
+              checked={autoChargeConsent}
+              onCheckedChange={(checked) => setAutoChargeConsent(checked === true)}
+              className="mt-0.5"
+              data-testid="checkbox-autocharge-consent"
+            />
+            <span
+              className="text-xs leading-snug text-muted-foreground"
+              data-testid="text-autocharge-consent"
+            >
+              Соглашаюсь на автоматическое списание банком стоимости поездки:
+              оплата выбранного тарифа при старте поездки и, при превышении
+              оплаченного времени, доплата по поминутному тарифу при завершении
+              поездки. Фиксированной подписки и периодичности нет — сумма каждый
+              раз зависит от тарифа и длительности конкретной поездки.
+            </span>
+          </label>
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || !autoChargeConsent}
             onClick={handleAddCard}
             data-testid="button-bind-card"
             className="w-full px-4 py-3 border-b border-gray-100 dark:border-zinc-700 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
@@ -561,7 +585,7 @@ export function PaymentMethodsPage() {
 
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || !autoChargeConsent}
             onClick={handleAddSbp}
             data-testid="button-add-sbp"
             className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
