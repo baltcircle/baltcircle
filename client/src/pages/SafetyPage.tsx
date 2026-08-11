@@ -117,14 +117,14 @@ export function SafetyPage() {
 
         <nav
           aria-label="Содержание раздела информации"
-          className="rounded-2xl border border-card-border bg-card px-4 py-5 mb-8"
+          className="mb-8"
         >
-          <ul className="space-y-4 list-none">
+          <ul className="space-y-5 list-none">
             <li>
               <a
                 href="#riding"
                 data-testid="link-info-riding"
-                className="text-lg font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
+                className="text-xl font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
               >
                 Безопасная поездка
               </a>
@@ -133,7 +133,7 @@ export function SafetyPage() {
               <a
                 href="#privacy"
                 data-testid="link-info-privacy"
-                className="text-lg font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
+                className="text-xl font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
               >
                 Конфиденциальность и данные
               </a>
@@ -142,7 +142,7 @@ export function SafetyPage() {
               <a
                 href="#legal"
                 data-testid="link-info-legal"
-                className="text-lg font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
+                className="text-xl font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
               >
                 Правовые документы
               </a>
