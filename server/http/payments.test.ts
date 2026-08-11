@@ -18,6 +18,7 @@ const tbankMock = vi.hoisted(() => ({
   tbankRemoveCard: vi.fn(),
   tbankAddCard: vi.fn(),
 }));
+const bindViaVerificationPaymentMock = vi.hoisted(() => vi.fn());
 const refundVerificationChargeMock = vi.hoisted(() => vi.fn());
 const logMock = vi.hoisted(() => vi.fn());
 
@@ -52,7 +53,7 @@ vi.mock("../payments/tbank-handlers", () => ({
   handleTbankNotification: vi.fn(),
   bindingErrorPatch: vi.fn(() => ({})),
   refundVerificationCharge: refundVerificationChargeMock,
-  bindViaVerificationPayment: vi.fn(),
+  bindViaVerificationPayment: bindViaVerificationPaymentMock,
   maskPan: (pan: string) => `•••• ${pan.replace(/\D/g, "").slice(-4)}`,
   cardBrand: (pan: string) => pan.startsWith("4") ? "visa" : null,
   extractLast4FromLabel: (label: string) => /^••••\s(\d{4})$/.exec(label)?.[1] ?? null,
@@ -96,6 +97,9 @@ beforeEach(() => {
   storageMock.unlinkPaymentMethod.mockResolvedValue(true);
   storageMock.listPaymentMethods.mockResolvedValue([]);
   tbankMock.tbankRemoveCard.mockResolvedValue({ Success: true });
+  bindViaVerificationPaymentMock.mockImplementation(async (_cfg, _userId, res) => {
+    res.json({ paymentUrl: "https://pay.example.test/new-bind", method: "payment", methodId: 99 });
+  });
 });
 
 describe("payment-method unlink", () => {
@@ -253,7 +257,7 @@ describe("authoritative pending card-binding reconciliation", () => {
   }
 
   it.each(["REJECTED", "DEADLINE_EXPIRED", "CANCELED"])(
-    "marks an AddCard binding %s failed and permits the next bind",
+    "marks an AddCard binding %s failed and lets the client-facing bind endpoint start a new bind",
     async (status) => {
       const { post } = routeApp();
       const method = pendingAddCard();
@@ -261,7 +265,7 @@ describe("authoritative pending card-binding reconciliation", () => {
       tbankMock.tbankGetAddCardState.mockResolvedValue({ Success: true, Status: status });
       const res = response();
 
-      await post.get("/api/payments/tbank/bind-card-payment")!(
+      await post.get("/api/payments/tbank/bind-card")!(
         { session: { userId: "user-1" } }, res,
       );
 
@@ -269,7 +273,17 @@ describe("authoritative pending card-binding reconciliation", () => {
         status: "failed",
       }));
       expect(refundVerificationChargeMock).not.toHaveBeenCalled();
+      expect(bindViaVerificationPaymentMock).toHaveBeenCalledWith(
+        expect.objectContaining({ cardBindAmountKopecks: 100 }),
+        "user-1",
+        res,
+        "rider@example.com",
+        "+79991234567",
+      );
       expect(res.code).toBe(200);
+      expect(res.body).toEqual({
+        paymentUrl: "https://pay.example.test/new-bind", method: "payment", methodId: 99,
+      });
     },
   );
 
@@ -280,7 +294,7 @@ describe("authoritative pending card-binding reconciliation", () => {
     tbankMock.tbankGetState.mockResolvedValue({ Success: true, Status: "DEADLINE_EXPIRED" });
     const res = response();
 
-    await post.get("/api/payments/tbank/bind-card-payment")!(
+    await post.get("/api/payments/tbank/bind-card")!(
       { session: { userId: "user-1" } }, res,
     );
 
@@ -301,7 +315,7 @@ describe("authoritative pending card-binding reconciliation", () => {
       tbankMock.tbankGetAddCardState.mockResolvedValue({ Success: true, Status: status });
       const res = response();
 
-      await post.get("/api/payments/tbank/bind-card-payment")!(
+      await post.get("/api/payments/tbank/bind-card")!(
         { session: { userId: "user-1" } }, res,
       );
 
@@ -317,7 +331,7 @@ describe("authoritative pending card-binding reconciliation", () => {
     tbankMock.tbankGetAddCardState.mockRejectedValue(new Error("timeout"));
     const res = response();
 
-    await post.get("/api/payments/tbank/bind-card-payment")!(
+    await post.get("/api/payments/tbank/bind-card")!(
       { session: { userId: "user-1" } }, res,
     );
 
