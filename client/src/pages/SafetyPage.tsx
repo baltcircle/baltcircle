@@ -117,79 +117,37 @@ export function SafetyPage() {
 
         <nav
           aria-label="Содержание раздела информации"
-          className="rounded-2xl border border-card-border bg-card px-4 py-4 mb-8"
+          className="rounded-2xl border border-card-border bg-card px-4 py-5 mb-8"
         >
-          <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground mb-2">
-            Содержание
-          </div>
-          <ol className="space-y-3 text-sm">
+          <ul className="space-y-4 list-none">
             <li>
               <a
                 href="#riding"
                 data-testid="link-info-riding"
-                className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
+                className="text-lg font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
               >
-                1. Безопасная поездка
+                Безопасная поездка
               </a>
-              <ol className="mt-2 ml-5 space-y-1 list-[lower-alpha]">
-                {RIDING_DOCS.map((doc) => (
-                  <li key={doc.slug}>
-                    <a
-                      href={`#riding-${doc.slug}`}
-                      data-testid={`link-info-riding-${doc.slug}`}
-                      className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
-                    >
-                      {doc.title}
-                    </a>
-                  </li>
-                ))}
-              </ol>
             </li>
             <li>
               <a
                 href="#privacy"
                 data-testid="link-info-privacy"
-                className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
+                className="text-lg font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
               >
-                2. Конфиденциальность и данные
+                Конфиденциальность и данные
               </a>
-              <ol className="mt-2 ml-5 space-y-1 list-[lower-alpha]">
-                {PRIVACY_DOCS.map((doc) => (
-                  <li key={doc.slug}>
-                    <a
-                      href={`#privacy-${doc.slug}`}
-                      data-testid={`link-info-privacy-${doc.slug}`}
-                      className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
-                    >
-                      {doc.title}
-                    </a>
-                  </li>
-                ))}
-              </ol>
             </li>
             <li>
               <a
                 href="#legal"
                 data-testid="link-info-legal"
-                className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
+                className="text-lg font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
               >
-                3. Правовые документы
+                Правовые документы
               </a>
-              <ol className="mt-2 ml-5 space-y-1 list-[lower-alpha]">
-                {LEGAL_DOCS.map((doc) => (
-                  <li key={doc.slug}>
-                    <a
-                      href={`#legal-${doc.slug}`}
-                      data-testid={`link-info-legal-${doc.slug}`}
-                      className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
-                    >
-                      {doc.title}
-                    </a>
-                  </li>
-                ))}
-              </ol>
             </li>
-          </ol>
+          </ul>
         </nav>
 
         <div className="prose prose-sm dark:prose-invert max-w-none space-y-10 text-sm leading-relaxed">
