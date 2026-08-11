@@ -140,6 +140,15 @@ export function SafetyPage() {
             </li>
             <li>
               <a
+                href="#autocharge-info"
+                data-testid="link-info-autocharge"
+                className="text-xl font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
+              >
+                Оплата и автосписание
+              </a>
+            </li>
+            <li>
+              <a
                 href="#legal"
                 data-testid="link-info-legal"
                 className="text-xl font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
@@ -171,6 +180,39 @@ export function SafetyPage() {
                 <InfoDocument key={doc.slug} doc={doc} category="privacy" />
               ))}
             </div>
+          </section>
+
+          <section
+            id="autocharge-info"
+            data-testid="section-autocharge-info"
+            className="scroll-mt-6"
+          >
+            <h2 className="font-display text-xl font-light">Автосписание за поездку</h2>
+            <p data-testid="text-autocharge-info-how-it-works">
+              Стоимость выбранного тарифа списывается при старте поездки, а при превышении
+              оплаченного времени доплата по поминутному тарифу списывается при завершении
+              поездки. Фиксированной подписки и периодичности списаний нет — сумма каждый раз
+              зависит от тарифа и длительности конкретной поездки. Подробнее — в{" "}
+              <a
+                href="/legal#terms"
+                className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
+              >
+                Пользовательском соглашении
+              </a>
+              .
+            </p>
+            <p data-testid="text-autocharge-info-cancel">
+              Вы можете в любой момент отозвать согласие на автоматическое списание — отвяжите
+              карту на странице{" "}
+              <a
+                href="/payment-methods"
+                className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
+              >
+                «Способы оплаты»
+              </a>{" "}
+              (кнопка «Отвязать карту» напротив нужной карты). После отвязки автоматическое
+              списание по этой карте прекращается.
+            </p>
           </section>
 
           <section id="legal" data-testid="section-info-legal" className="scroll-mt-6">

@@ -151,7 +151,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
     e.preventDefault();
     const v = validateContact(name, phone);
     if (v) return setError(v);
-    if (!consent) return setError("Необходимо согласие на обработку персональных данных");
+    if (!consent) return setError("Необходимо принять Пользовательское соглашение и дать согласие на обработку персональных данных");
     setError(null);
     startMut.mutate();
   }
@@ -227,7 +227,17 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
                 data-testid="checkbox-personal-data-consent"
               />
               <Label htmlFor="consent" className="text-xs font-normal leading-snug text-muted-foreground">
-                Я согласен на обработку персональных данных и принимаю{" "}
+                Я принимаю{" "}
+                <a
+                  href="/legal#terms"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-foreground"
+                  data-testid="link-terms"
+                >
+                  Пользовательское соглашение
+                </a>{" "}
+                и даю согласие на обработку персональных данных в соответствии с{" "}
                 <a
                   href="/legal/privacy"
                   target="_blank"
@@ -235,7 +245,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
                   className="underline hover:text-foreground"
                   data-testid="link-privacy"
                 >
-                  Политику конфиденциальности
+                  Политикой конфиденциальности
                 </a>{" "}
                 и{" "}
                 <a
@@ -245,7 +255,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
                   className="underline hover:text-foreground"
                   data-testid="link-consent"
                 >
-                  Согласие на обработку данных
+                  Согласием на обработку данных
                 </a>
                 .
               </Label>
