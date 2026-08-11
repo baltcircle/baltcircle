@@ -40,3 +40,16 @@ export function computeOverage(usedMs: number, paidMs: number): OverageResult {
 export function finalRideCost(baseCostKopecks: number, overageKopecks: number): number {
   return baseCostKopecks + overageKopecks;
 }
+
+// A compact human-facing ruble amount for payment confirmations. Keep the
+// integer-kopek source of truth intact and omit only an all-zero fractional
+// part: 15000 -> "150", 15050 -> "150.50".
+export function formatKopecksAsRubles(kopecks: number): string {
+  const sign = kopecks < 0 ? "-" : "";
+  const absolute = Math.abs(Math.trunc(kopecks));
+  const rubles = Math.floor(absolute / 100);
+  const kopekPart = absolute % 100;
+  return kopekPart === 0
+    ? `${sign}${rubles}`
+    : `${sign}${rubles}.${String(kopekPart).padStart(2, "0")}`;
+}

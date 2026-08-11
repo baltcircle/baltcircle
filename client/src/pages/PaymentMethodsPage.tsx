@@ -534,6 +534,15 @@ export function PaymentMethodsPage() {
           )}
         </div>
 
+        <p
+          className="mt-3 rounded-xl border border-gray-200 bg-muted/40 px-4 py-3 text-sm leading-snug text-muted-foreground dark:border-zinc-800"
+          data-testid="text-autocharge-cancel-info"
+        >
+          Вы можете в любой момент отозвать согласие на автоматическое списание — нажмите
+          «Отвязать карту» напротив нужной карты. После отвязки автоматическое списание по этой
+          карте прекращается.
+        </p>
+
         {/* Add actions — profile-style rows */}
         <div className="mt-4 rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800">
           <label
