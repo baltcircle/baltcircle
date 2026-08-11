@@ -307,6 +307,48 @@ describe("authoritative pending card-binding reconciliation", () => {
     expect(res.code).toBe(200);
   });
 
+  it("activates an AUTHORIZED Init binding with a RebillId before allowing a retry", async () => {
+    const { post } = routeApp();
+    const method = pendingAddCard({
+      requestKey: null,
+      paymentId: "payment-authorized",
+      purpose: "card_binding",
+      amountKopecks: 100,
+    });
+    storageMock.listPaymentMethods.mockResolvedValue([method]);
+    storageMock.findActiveCardDuplicate.mockResolvedValue(undefined);
+    tbankMock.tbankGetState.mockResolvedValue({
+      Success: true,
+      Status: "AUTHORIZED",
+      RebillId: "rebill-authorized",
+      CardId: "card-authorized",
+      Pan: "430000******0777",
+    });
+    const res = response();
+
+    await post.get("/api/payments/tbank/bind-card")!(
+      { session: { userId: "user-1" } }, res,
+    );
+
+    expect(tbankMock.tbankGetState).toHaveBeenCalledWith(
+      expect.objectContaining({ cardBindAmountKopecks: 100 }), "payment-authorized", 5_000,
+    );
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(31, expect.objectContaining({
+      status: "active",
+      paymentId: "payment-authorized",
+      rebillId: "rebill-authorized",
+      cardId: "card-authorized",
+    }));
+    expect(bindViaVerificationPaymentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ cardBindAmountKopecks: 100 }),
+      "user-1",
+      res,
+      "rider@example.com",
+      "+79991234567",
+    );
+    expect(res.code).toBe(200);
+  });
+
   it.each(["FORM_SHOWED", "3DS_CHECKING", "AUTHORIZED"])(
     "blocks a genuine live bank-side %s session",
     async (status) => {

@@ -721,7 +721,7 @@ export function classifyInitBinding(args: {
   success?: boolean;
 }): CardBindingOutcome {
   const status = (args.status || "").trim().toUpperCase();
-  if (args.rebillId && (status === "CONFIRMED" || status === "COMPLETED")) {
+  if (args.rebillId && (status === "AUTHORIZED" || status === "CONFIRMED" || status === "COMPLETED")) {
     return "active";
   }
   // CONFIRMED/COMPLETED are terminal for the verification payment. A terminal

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildReceipt,
+  classifyInitBinding,
   computeToken,
   tbankInitRidePayment,
   tbankInitSavedCardCharge,
@@ -62,6 +63,15 @@ describe("buildReceipt", () => {
       description: "Аренда велосипеда",
       amountKopecks: 100,
     })).toThrow("email или телефон");
+  });
+});
+
+describe("classifyInitBinding", () => {
+  it("activates an authorized verification payment once T-Bank returns its recurring token", () => {
+    expect(classifyInitBinding({
+      status: "AUTHORIZED",
+      rebillId: "rebill-authorized",
+    })).toBe("active");
   });
 });
 

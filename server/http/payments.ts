@@ -45,7 +45,7 @@ import {
 // timestamp as a substitute for the bank's answer.
 const BIND_STATE_TIMEOUT_MS = 5_000;
 const LIVE_BINDING_STATUSES = new Set([
-  "NEW", "FORM_SHOWED", "3DS_CHECKING", "3DS_CHECKED", "AUTHORIZING", "AUTHORIZED",
+  "NEW", "FORM_SHOWED", "3DS_CHECKING", "3DS_CHECKED", "AUTHORIZING",
 ]);
 
 type BindingReconciliation = "active" | "failed" | "in_flight" | "unavailable";
@@ -181,8 +181,9 @@ async function reconcilePendingCardBinding(
   }
 
   // NEW, FORM_SHOWED, 3DS_* and AUTHORIZING are an actual acquirer-side
-  // session, not a locally guessed "fresh" row. They are the only states that
-  // legitimately protect against opening a second binding flow.
+  // session, not a locally guessed "fresh" row. AUTHORIZED deliberately goes
+  // through the binding-specific classifier first: an Init+Recurrent response
+  // may already include its usable RebillId at that status.
   return "in_flight";
 }
 
