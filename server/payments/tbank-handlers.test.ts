@@ -16,6 +16,7 @@ const storageMock = vi.hoisted(() => ({
   createPendingBindPayment: vi.fn(),
   getUser: vi.fn(),
   updatePaymentMethod: vi.fn(),
+  findActiveCardDuplicate: vi.fn(),
   claimRefund: vi.fn(),
 }));
 
@@ -45,8 +46,10 @@ import {
   handleRidePaymentNotification,
   handleTbankNotification,
   handleAddCardNotification,
+  handleInitBindingNotification,
   refundVerificationCharge,
   bindViaVerificationPayment,
+  extractLast4FromLabel,
 } from "./tbank-handlers";
 import type { TbankConfig } from "../tbank";
 
@@ -384,6 +387,96 @@ describe("handleAddCardNotification unmatched-notification guard", () => {
       5,
       expect.objectContaining({ status: "active", cardId: "card-1" }),
     );
+  });
+
+  it("rejects a duplicate AddCard binding rather than activating a second row", async () => {
+    storageMock.findPendingCardMethod.mockResolvedValue({
+      id: 6, userId: "user-1", cardId: null, rebillId: null, brand: null,
+    });
+    storageMock.findActiveCardDuplicate.mockResolvedValue({ id: 5 });
+
+    await handleAddCardNotification({
+      Status: "CONFIRMED",
+      CardId: "card-duplicate",
+      CustomerKey: "user-1",
+      Pan: "430000******0777",
+    });
+
+    expect(storageMock.findActiveCardDuplicate).toHaveBeenCalledWith("user-1", "0777", "visa", 6);
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(6, {
+      status: "failed",
+      lastErrorCode: "DUPLICATE_CARD",
+      lastErrorMessage: "Эта карта уже привязана к вашему аккаунту.",
+      lastErrorDetails: null,
+    });
+    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("last4=0777"), "tbank");
+  });
+});
+
+describe("card-binding duplicate protection", () => {
+  const pendingInitMethod = {
+    id: 138,
+    userId: "user-1",
+    status: "pending",
+    purpose: "card_binding",
+    paymentId: "verification-payment-1",
+    rebillId: null,
+    cardId: null,
+    brand: null,
+    amountKopecks: 100,
+  } as any;
+
+  it("allows independent activation of two different cards for one rider", async () => {
+    storageMock.findActiveCardDuplicate.mockResolvedValue(undefined);
+
+    await handleInitBindingNotification(
+      pendingInitMethod,
+      { Status: "AUTHORIZED", PaymentId: "pay-1", RebillId: "rebill-1", CardId: "card-1", Pan: "430000******0777" },
+    );
+    await handleInitBindingNotification(
+      { ...pendingInitMethod, id: 139, paymentId: "verification-payment-2" },
+      { Status: "AUTHORIZED", PaymentId: "pay-2", RebillId: "rebill-2", CardId: "card-2", Pan: "555555******4444" },
+    );
+
+    expect(storageMock.updatePaymentMethod).toHaveBeenNthCalledWith(
+      1, 138, expect.objectContaining({ status: "active", label: "•••• 0777", brand: "visa" }),
+    );
+    expect(storageMock.updatePaymentMethod).toHaveBeenNthCalledWith(
+      2, 139, expect.objectContaining({ status: "active", label: "•••• 4444", brand: "mastercard" }),
+    );
+  });
+
+  it("fails a duplicate Init binding and triggers a verification-charge refund", async () => {
+    storageMock.findActiveCardDuplicate.mockResolvedValue({ id: 137 });
+    storageMock.getUser.mockResolvedValue({ email: "rider@example.com", phone: "+79991234567" });
+    storageMock.claimRefund.mockResolvedValue(true);
+    tbankRefundVerificationChargeMock.mockResolvedValue({ result: "refunded", status: "REFUNDED" });
+
+    await handleInitBindingNotification(
+      pendingInitMethod,
+      { Status: "AUTHORIZED", PaymentId: "verification-payment-1", RebillId: "rebill-2", CardId: "card-2", Pan: "430000******0777" },
+      makeCfg(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(138, {
+      status: "failed",
+      paymentId: "verification-payment-1",
+      lastErrorCode: "DUPLICATE_CARD",
+      lastErrorMessage: "Эта карта уже привязана к вашему аккаунту.",
+      lastErrorDetails: null,
+    });
+    expect(storageMock.claimRefund).toHaveBeenCalledWith(138);
+    expect(tbankRefundVerificationChargeMock).toHaveBeenCalledWith(
+      makeCfg(),
+      expect.objectContaining({ paymentId: "verification-payment-1", knownStatus: "AUTHORIZED" }),
+    );
+  });
+
+  it("only extracts four digits from the fixed masked-card label", () => {
+    expect(extractLast4FromLabel("•••• 0777")).toBe("0777");
+    expect(extractLast4FromLabel("Карта")).toBeNull();
+    expect(extractLast4FromLabel("•••• 777")).toBeNull();
   });
 });
 

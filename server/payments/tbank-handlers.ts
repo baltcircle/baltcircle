@@ -270,13 +270,42 @@ export async function handleInitBindingNotification(
 
   const outcome = classifyInitBinding({ status, rebillId, success });
   if (outcome === "active") {
+    const label = pan ? maskPan(pan) : "Карта";
+    const brand = pan ? cardBrand(pan) ?? method.brand : method.brand;
+    const last4 = extractLast4FromLabel(label);
+    const duplicate = last4
+      ? await storage.findActiveCardDuplicate(method.userId, last4, brand, method.id)
+      : undefined;
+    if (duplicate) {
+      log(`[tbank] rejected duplicate-card bind attempt userId=${method.userId} last4=${last4}`, "tbank");
+      await storage.updatePaymentMethod(method.id, {
+        status: "failed",
+        paymentId: paymentId || method.paymentId,
+        lastErrorCode: "DUPLICATE_CARD",
+        lastErrorMessage: "Эта карта уже привязана к вашему аккаунту.",
+        lastErrorDetails: null,
+      });
+      const effectivePaymentId = paymentId || method.paymentId;
+      if (cfg && effectivePaymentId) {
+        const customer = await storage.getUser(method.userId);
+        await refundVerificationCharge(cfg, {
+          methodId: method.id,
+          paymentId: effectivePaymentId,
+          knownStatus: status,
+          amountKopecks: method.amountKopecks ?? cfg.cardBindAmountKopecks,
+          customerEmail: customer?.email,
+          customerPhone: customer?.phone,
+        });
+      }
+      return;
+    }
     await storage.updatePaymentMethod(method.id, {
       status: "active",
       rebillId: rebillId || method.rebillId,
       cardId: cardId || method.cardId,
       paymentId: paymentId || method.paymentId,
-      label: pan ? maskPan(pan) : "Карта",
-      brand: pan ? cardBrand(pan) ?? method.brand : method.brand,
+      label,
+      brand,
       lastErrorCode: null,
       lastErrorMessage: null,
       lastErrorDetails: null,
@@ -355,12 +384,28 @@ export async function handleAddCardNotification(body: Record<string, unknown>): 
 
   const outcome = classifyCardBinding({ status, cardId });
   if (outcome === "active") {
+    const label = pan ? maskPan(pan) : "Карта";
+    const brand = pan ? cardBrand(pan) ?? pending.brand : pending.brand;
+    const last4 = extractLast4FromLabel(label);
+    const duplicate = last4
+      ? await storage.findActiveCardDuplicate(pending.userId, last4, brand, pending.id)
+      : undefined;
+    if (duplicate) {
+      log(`[tbank] rejected duplicate-card bind attempt userId=${pending.userId} last4=${last4}`, "tbank");
+      await storage.updatePaymentMethod(pending.id, {
+        status: "failed",
+        lastErrorCode: "DUPLICATE_CARD",
+        lastErrorMessage: "Эта карта уже привязана к вашему аккаунту.",
+        lastErrorDetails: null,
+      });
+      return;
+    }
     await storage.updatePaymentMethod(pending.id, {
       status: "active",
       cardId: cardId || pending.cardId,
       rebillId: rebillId || pending.rebillId,
-      label: pan ? maskPan(pan) : "Карта",
-      brand: pan ? cardBrand(pan) ?? pending.brand : pending.brand,
+      label,
+      brand,
       // AddCard binds with no charge — nothing to refund.
       refundStatus: "none",
       lastErrorCode: null,
@@ -535,6 +580,14 @@ export function maskPan(pan: string): string {
   const digits = pan.replace(/\D/g, "");
   const last4 = digits.slice(-4);
   return last4 ? `•••• ${last4}` : "Карта";
+}
+
+// Extract the fingerprint used for duplicate detection from our own masked-card
+// label. Accept only the fixed maskPan() shape so legacy/generic labels cannot
+// accidentally match a card.
+export function extractLast4FromLabel(label: string): string | null {
+  const match = /^••••\s(\d{4})$/.exec(label.trim());
+  return match?.[1] ?? null;
 }
 
 // Derive the payment system from the card's BIN. T-Bank sends a masked PAN whose

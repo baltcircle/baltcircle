@@ -28,7 +28,7 @@ import type { TbankConfig } from "./../tbank";
 import {
   startRideForPaidOrder, tbankErrorBody, handleTbankNotification,
   bindingErrorPatch, refundVerificationCharge, bindViaVerificationPayment,
-  maskPan, cardBrand,
+  maskPan, cardBrand, extractLast4FromLabel,
 } from "./../payments/tbank-handlers";
 import { log } from "./../index";
 import {
@@ -92,11 +92,7 @@ export function registerPaymentRoutes(app: Express): void {
 
     const blocking = await storage.getBlockingCard(user.id);
     if (blocking) {
-      return res.status(409).json({
-        error: blocking.status === "pending"
-          ? "Карта уже привязывается. Дождитесь завершения."
-          : "Карта уже привязана. Сначала удалите текущую, чтобы добавить другую.",
-      });
+      return res.status(409).json({ error: "Карта уже привязывается. Дождитесь завершения." });
     }
 
     try {
@@ -140,11 +136,7 @@ export function registerPaymentRoutes(app: Express): void {
 
     const blocking = await storage.getBlockingCard(user.id);
     if (blocking) {
-      return res.status(409).json({
-        error: blocking.status === "pending"
-          ? "Карта уже привязывается. Дождитесь завершения."
-          : "Карта уже привязана. Сначала удалите текущую, чтобы добавить другую.",
-      });
+      return res.status(409).json({ error: "Карта уже привязывается. Дождитесь завершения." });
     }
 
     await bindViaVerificationPayment(cfg, user.id, res, user.email, user.phone);
@@ -164,14 +156,11 @@ export function registerPaymentRoutes(app: Express): void {
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
 
-    // Одна карта на райдера: если карта уже привязана (или привязывается прямо
-    // сейчас) — не запускаем новый флоу, возвращаем понятную ошибку.
+    // Не допускаем только два одновременных флоу; уже активные разные карты не
+    // мешают привязать следующую.
     const existing = await storage.getBlockingCard(user.id);
     if (existing) {
-      const msg = existing.status === "pending"
-        ? "Карта уже привязывается. Дождитесь завершения."
-        : "Карта уже привязана. Сначала удалите текущую, чтобы добавить другую.";
-      return res.status(409).json({ error: msg });
+      return res.status(409).json({ error: "Карта уже привязывается. Дождитесь завершения." });
     }
 
     if (cfg.cardBindMethod === "addcard") {
@@ -635,12 +624,28 @@ export function registerPaymentRoutes(app: Express): void {
     const outcome = classifyCardBinding({ status, cardId });
 
     if (outcome === "active") {
+      const label = pan ? maskPan(pan) : method.label === "Карта (привязывается…)" ? "Карта" : method.label;
+      const brand = pan ? cardBrand(pan) ?? method.brand : method.brand;
+      const last4 = extractLast4FromLabel(label);
+      const duplicate = last4
+        ? await storage.findActiveCardDuplicate(method.userId, last4, brand, method.id)
+        : undefined;
+      if (duplicate) {
+        log(`[tbank] rejected duplicate-card bind attempt userId=${method.userId} last4=${last4}`, "tbank");
+        const updated = await storage.updatePaymentMethod(method.id, {
+          status: "failed",
+          lastErrorCode: "DUPLICATE_CARD",
+          lastErrorMessage: "Эта карта уже привязана к вашему аккаунту.",
+          lastErrorDetails: null,
+        });
+        return res.json(updated);
+      }
       const updated = await storage.updatePaymentMethod(method.id, {
         status: "active",
         cardId: cardId || method.cardId,
         rebillId: rebillId || method.rebillId,
-        label: pan ? maskPan(pan) : method.label === "Карта (привязывается…)" ? "Карта" : method.label,
-        brand: pan ? cardBrand(pan) ?? method.brand : method.brand,
+        label,
+        brand,
         lastErrorCode: null,
         lastErrorMessage: null,
         lastErrorDetails: null,
@@ -713,13 +718,40 @@ export function registerPaymentRoutes(app: Express): void {
     const outcome = classifyInitBinding({ status, rebillId });
 
     if (outcome === "active") {
+      const label = pan ? maskPan(pan) : method.label === "Карта (привязывается…)" ? "Карта" : method.label;
+      const brand = pan ? cardBrand(pan) ?? method.brand : method.brand;
+      const last4 = extractLast4FromLabel(label);
+      const duplicate = last4
+        ? await storage.findActiveCardDuplicate(method.userId, last4, brand, method.id)
+        : undefined;
+      if (duplicate) {
+        log(`[tbank] rejected duplicate-card bind attempt userId=${method.userId} last4=${last4}`, "tbank");
+        const updated = await storage.updatePaymentMethod(method.id, {
+          status: "failed",
+          lastErrorCode: "DUPLICATE_CARD",
+          lastErrorMessage: "Эта карта уже привязана к вашему аккаунту.",
+          lastErrorDetails: null,
+        });
+        if (method.paymentId) {
+          const customer = method.userId === actor?.id ? actor : await storage.getUser(method.userId);
+          refundVerificationCharge(cfg, {
+            methodId: method.id,
+            paymentId: method.paymentId,
+            knownStatus: status,
+            amountKopecks: method.amountKopecks ?? cfg.cardBindAmountKopecks,
+            customerEmail: customer?.email,
+            customerPhone: customer?.phone,
+          });
+        }
+        return res.json(updated);
+      }
       const updated = await storage.updatePaymentMethod(method.id, {
         status: "active",
         rebillId: rebillId || method.rebillId,
         cardId: cardId || method.cardId,
         paymentId: method.paymentId,
-        label: pan ? maskPan(pan) : method.label === "Карта (привязывается…)" ? "Карта" : method.label,
-        brand: pan ? cardBrand(pan) ?? method.brand : method.brand,
+        label,
+        brand,
         lastErrorCode: null,
         lastErrorMessage: null,
         lastErrorDetails: null,

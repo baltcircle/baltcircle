@@ -93,9 +93,18 @@ export interface IPaymentMethodStorage {
   updatePaymentMethod(id: number, patch: Partial<PaymentMethod>): Promise<PaymentMethod | undefined>;
   // The rider's saved T-Bank card usable for a recurring charge (active + RebillId)
   getActiveSavedCard(userId: string, paymentMethodId?: number): Promise<PaymentMethod | undefined>;
-  // Уже привязанная или привязываемая сейчас карта пользователя (active или pending).
-  // Используется, чтобы не давать привязать вторую карту (одна карта на райдера).
+  // Свежая pending-карта пользователя. Используется только как защита от двух
+  // одновременных флоу привязки; active-карты не мешают добавлять новые.
   getBlockingCard(userId: string): Promise<PaymentMethod | undefined>;
+  // Active-карта с тем же last4 (+ брендом, когда он известен), исключая
+  // активируемую pending-запись. Нужна, чтобы не сохранить одну физическую
+  // карту несколько раз при том, что разных карт у райдера может быть несколько.
+  findActiveCardDuplicate(
+    userId: string,
+    last4: string,
+    brand: string | null,
+    excludeMethodId?: number,
+  ): Promise<PaymentMethod | undefined>;
   // T-Bank ride payment orders (hosted pay-then-start AND saved-card charge)
   createRidePaymentOrder(input: {
     orderId: string;
