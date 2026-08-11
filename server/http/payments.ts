@@ -186,21 +186,27 @@ async function reconcilePendingCardBinding(
   return "in_flight";
 }
 
-async function hasLiveCardBinding(userId: string, cfg: TbankConfig): Promise<boolean> {
-  // Resolve every local candidate, not just the newest one. Earlier hotfixes
-  // could have left more than one stale row; a new attempt is an opportunity to
-  // finalize all of them rather than letting an older phantom reappear later.
-  const pending = (await storage.listPaymentMethods(userId))
+async function reconcilePendingCardBindingsForUser(
+  userId: string,
+  cfg: TbankConfig,
+  methods?: PaymentMethod[],
+): Promise<BindingReconciliation[]> {
+  // This is intentionally the single user-level reconciliation path. Listing
+  // methods, starting a new binding, and explicit refreshes must all ask the
+  // same T-Bank endpoint for every pending card instead of letting a duplicate
+  // "pending" query drift back into one of the entry points.
+  const pending = (methods ?? await storage.listPaymentMethods(userId))
     .filter((method) => method.type === "card" && method.status === "pending");
-  for (const method of pending) {
-    const result = await reconcilePendingCardBinding(method, cfg);
-    // On an unavailable state query we fail closed for this request rather than
-    // risk a duplicate bank-side session. A later page visit/bind retries the
-    // short bounded query; no timestamp window can turn this into a permanent
-    // local lock.
-    if (result === "in_flight" || result === "unavailable") return true;
-  }
-  return false;
+  return Promise.all(pending.map((method) => reconcilePendingCardBinding(method, cfg)));
+}
+
+async function hasLiveCardBinding(userId: string, cfg: TbankConfig): Promise<boolean> {
+  const results = await reconcilePendingCardBindingsForUser(userId, cfg);
+  // On an unavailable state query we fail closed for this request rather than
+  // risk a duplicate bank-side session. A later page visit/bind retries the
+  // short bounded query; no timestamp window can turn this into a permanent
+  // local lock.
+  return results.some((result) => result === "in_flight" || result === "unavailable");
 }
 
 export function registerPaymentRoutes(app: Express): void {
@@ -217,9 +223,7 @@ export function registerPaymentRoutes(app: Express): void {
     // A page visit is a return from the hosted form just as much as a webhook
     // is. Resolve every pending card before returning the list, so abandoned
     // rows cannot become a durable UI/database state.
-    await Promise.all(methods
-      .filter((method) => method.type === "card" && method.status === "pending")
-      .map((method) => reconcilePendingCardBinding(method, cfg)));
+    await reconcilePendingCardBindingsForUser(userId, cfg, methods);
     res.json(await storage.listPaymentMethods(userId));
   });
   app.post("/api/payment-methods", requireAuth, async (req, res) => {
