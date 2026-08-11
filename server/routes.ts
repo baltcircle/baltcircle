@@ -12,6 +12,7 @@ import { registerServiceTicketRoutes } from "./http/service";
 import { registerMapRoutes } from "./http/map";
 import { registerTileRoutes } from "./http/tiles";
 import { registerPushRoutes } from "./http/push";
+import { registerAccountRoutes } from "./http/account";
 
 // Thin aggregator: the API is split into per-domain route modules under
 // server/http/*, each exporting a register<Domain>Routes(app) function that
@@ -20,6 +21,7 @@ import { registerPushRoutes } from "./http/push";
 // behaviour (e.g. specific paths before parameterised ones) is unchanged.
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   registerAuthRoutes(app);
+  registerAccountRoutes(app);
   registerPaymentRoutes(app);
   registerSupportTicketRoutes(app);
   registerSupportChatRoutes(app);

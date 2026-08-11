@@ -9,11 +9,13 @@ const storageMock = vi.hoisted(() => ({
   updatePaymentMethod: vi.fn(),
   findActiveCardDuplicate: vi.fn(),
   getBlockingCard: vi.fn(),
+  unlinkPaymentMethod: vi.fn(),
 }));
 const tbankMock = vi.hoisted(() => ({
   getTbankConfig: vi.fn(),
   tbankGetAddCardState: vi.fn(),
   tbankGetState: vi.fn(),
+  tbankRemoveCard: vi.fn(),
 }));
 const refundVerificationChargeMock = vi.hoisted(() => vi.fn());
 const logMock = vi.hoisted(() => vi.fn());
@@ -39,6 +41,7 @@ vi.mock("../tbank", async () => {
     getTbankConfig: tbankMock.getTbankConfig,
     tbankGetAddCardState: tbankMock.tbankGetAddCardState,
     tbankGetState: tbankMock.tbankGetState,
+    tbankRemoveCard: tbankMock.tbankRemoveCard,
   };
 });
 vi.mock("../payments/tbank-handlers", () => ({
@@ -60,15 +63,16 @@ type Handler = (req: any, res: any) => Promise<unknown>;
 function routeApp() {
   const post = new Map<string, Handler>();
   const get = new Map<string, Handler>();
+  const del = new Map<string, Handler>();
   const register = (target: Map<string, Handler>) => (path: string, ...handlers: any[]) => {
     target.set(path, handlers.at(-1));
   };
   registerPaymentRoutes({
     get: register(get),
     post: register(post),
-    delete: () => undefined,
+    delete: register(del),
   } as any);
-  return { post, get };
+  return { post, get, del };
 }
 
 function response() {
@@ -87,6 +91,32 @@ beforeEach(() => {
     cardBindAmountKopecks: 100,
   });
   storageMock.getUser.mockResolvedValue({ id: "user-1", role: "rider", email: "rider@example.com", phone: "+79991234567" });
+  storageMock.unlinkPaymentMethod.mockResolvedValue(true);
+  tbankMock.tbankRemoveCard.mockResolvedValue({ Success: true });
+});
+
+describe("payment-method unlink", () => {
+  it("revokes a T-Bank CardId before deleting its local reusable token", async () => {
+    const { del } = routeApp();
+    storageMock.getPaymentMethod.mockResolvedValue({
+      id: 10, userId: "user-1", provider: "tbank", type: "card",
+      cardId: "card-10", customerKey: "user-1",
+    });
+    const res = response();
+
+    await del.get("/api/payment-methods/:id")!(
+      { session: { userId: "user-1" }, params: { id: "10" }, headers: {}, ip: "203.0.113.10", socket: {} },
+      res,
+    );
+
+    expect(tbankMock.tbankRemoveCard).toHaveBeenCalledWith(
+      expect.objectContaining({ cardBindAmountKopecks: 100 }),
+      { customerKey: "user-1", cardId: "card-10", ip: "203.0.113.10" },
+    );
+    expect(storageMock.unlinkPaymentMethod).toHaveBeenCalledWith("user-1", 10);
+    expect(res.code).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
 });
 
 describe("T-Bank polling activation duplicate protection", () => {

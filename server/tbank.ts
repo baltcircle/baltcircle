@@ -392,6 +392,19 @@ export async function tbankAddCard(cfg: TbankConfig, input: AddCardInput): Promi
   });
 }
 
+// Remove a saved card from T-Bank before erasing its local payment-method
+// metadata. CustomerKey + CardId are both required by the acquiring API.
+export async function tbankRemoveCard(
+  cfg: TbankConfig,
+  input: { customerKey: string; cardId: string; ip?: string },
+): Promise<TbankResponse> {
+  return signedPost(cfg, "/RemoveCard", {
+    CustomerKey: input.customerKey,
+    CardId: input.cardId,
+    IP: input.ip,
+  });
+}
+
 // T-Bank rejects an OrderId longer than 50 chars (Init error code 212,
 // "OrderId length must be 1..50"). A UUID user id alone is 36 chars, so the old
 // `bind-${uuid}-${Date.now()}` form was ~55 chars and always failed. We build a

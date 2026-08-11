@@ -21,7 +21,7 @@ import {
   tbankInitRidePayment, generateRideOrderId, classifyRidePayment,
   tbankInitSavedCardCharge, tbankCharge, generateSavedCardRideOrderId,
   tbankGetState,
-  tbankAddAccountQr, tbankGetAddAccountQrState,
+  tbankAddAccountQr, tbankGetAddAccountQrState, tbankRemoveCard,
   generateSbpBindOrderId, extractQrPayload, classifyAccountBinding,
 } from "./../tbank";
 import type { TbankConfig } from "./../tbank";
@@ -51,8 +51,13 @@ export function registerPaymentRoutes(app: Express): void {
     res.status(201).json(await storage.linkPaymentMethod(riderId(req), parsed.data.type));
   });
   app.delete("/api/payment-methods/:id", requireAuth, async (req, res) => {
-    const ok = await storage.unlinkPaymentMethod(riderId(req), Number(req.params.id));
-    if (!ok) return res.status(404).json({ error: "Способ оплаты не найден" });
+    const userId = riderId(req);
+    const method = await storage.getPaymentMethod(Number(req.params.id));
+    if (!method || method.userId !== userId) {
+      return res.status(404).json({ error: "Способ оплаты не найден" });
+    }
+    const result = await unlinkPaymentMethodForUser(userId, method, clientIp(req));
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
     res.json({ ok: true });
   });
 
@@ -782,4 +787,45 @@ export function registerPaymentRoutes(app: Express): void {
     const updated = await storage.updatePaymentMethod(method.id, { status: "pending" });
     return res.json(updated);
   });
+}
+
+/**
+ * Shared unlink operation for the payment-methods screen and account erasure.
+ * For T-Bank cards it first revokes the CardId at the acquirer; local metadata
+ * is deleted only after that succeeds. T-Bank's AddAccountQr API does not
+ * expose a corresponding account-revocation endpoint, so an SBP AccountToken
+ * is removed locally, which makes it unusable for any future merchant charge.
+ */
+export async function unlinkPaymentMethodForUser(
+  userId: string,
+  method: PaymentMethod,
+  ip?: string,
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  if (method.provider === "tbank" && method.type === "card" && method.cardId && method.customerKey) {
+    const cfg = getTbankConfig();
+    if (!cfg) {
+      return {
+        ok: false,
+        status: 503,
+        error: "Не удалось отвязать карту в платёжном сервисе. Попробуйте позже.",
+      };
+    }
+    const remote = await tbankRemoveCard(cfg, {
+      customerKey: method.customerKey,
+      cardId: method.cardId,
+      ip,
+    });
+    if (!remote.Success) {
+      return {
+        ok: false,
+        status: 502,
+        error: "Не удалось отвязать карту в платёжном сервисе. Попробуйте позже.",
+      };
+    }
+  }
+
+  const ok = await storage.unlinkPaymentMethod(userId, method.id);
+  return ok
+    ? { ok: true }
+    : { ok: false, status: 404, error: "Способ оплаты не найден" };
 }

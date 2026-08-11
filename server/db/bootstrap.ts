@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS users (
   consent_ip TEXT,
   blocked_at BIGINT,
   blocked_reason TEXT,
+  deleted_at BIGINT,
   created_at BIGINT NOT NULL,
   updated_at BIGINT
 );
@@ -415,6 +416,7 @@ async function runMigrations() {
   // Каждый ALTER — отдельным запросом: pg отправляет запрос с несколькими
   // командами как prepared statement → «cannot insert multiple commands».
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at BIGINT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at BIGINT;`);
   await pool.query(`ALTER TABLE parkings ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';`);
   await pool.query(`ALTER TABLE support_conversations ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'bot';`);
 
