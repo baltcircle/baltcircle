@@ -56,6 +56,7 @@ describe("PaymentMethodsPage binding controls", () => {
     expect(source).toContain("Не удалось подтвердить привязку карты. Попробуйте снова.");
     expect(source).toContain("notifiedBindingFailureIds");
     expect(source).toContain('title: "Привязка не удалась"');
+    expect(source).toContain('apiRequest("DELETE", `/api/payment-methods/${method.id}?pendingOnly=1`)');
   });
 
   it("does not timeout-toast a fresh pending card on mount, even with an old active card", () => {
@@ -71,5 +72,40 @@ describe("PaymentMethodsPage binding controls", () => {
 
     expect(timedOut).toEqual([]);
     expect(pollable).toEqual([freshPendingCard]);
+  });
+
+  it("times out an old pending bind from its original createdAt even if polling refreshed updatedAt", () => {
+    const now = Date.now();
+    const repeatedlyPolledPendingCard = {
+      id: 3,
+      type: "card",
+      label: "Карта (привязывается…)",
+      status: "pending",
+      createdAt: now - (3 * 60 * 1_000),
+      // Mimics an old server version continuously touching this field.
+      updatedAt: now,
+    } as PaymentMethod;
+
+    const { pollable, timedOut } = partitionPendingBindings([repeatedlyPolledPendingCard], now);
+
+    expect(pollable).toEqual([]);
+    expect(timedOut).toEqual([repeatedlyPolledPendingCard]);
+  });
+
+  it("keeps a freshly-created pending bind pollable even if its updatedAt is old or absent", () => {
+    const now = Date.now();
+    const freshPendingCard = {
+      id: 4,
+      type: "card",
+      label: "Карта (привязывается…)",
+      status: "pending",
+      createdAt: now - (2 * 60 * 1_000),
+      updatedAt: now - (60 * 60 * 1_000),
+    } as PaymentMethod;
+
+    const { pollable, timedOut } = partitionPendingBindings([freshPendingCard], now);
+
+    expect(pollable).toEqual([freshPendingCard]);
+    expect(timedOut).toEqual([]);
   });
 });

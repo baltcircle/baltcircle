@@ -117,9 +117,73 @@ describe("payment-method unlink", () => {
     expect(res.code).toBe(200);
     expect(res.body).toEqual({ ok: true });
   });
+
+  it("does not remove a card resolved by a webhook before timed-out pending cleanup reaches the server", async () => {
+    const { del } = routeApp();
+    storageMock.getPaymentMethod.mockResolvedValue({
+      id: 12, userId: "user-1", provider: "tbank", type: "card", status: "active",
+      cardId: "card-12", customerKey: "user-1",
+    });
+    const res = response();
+
+    await del.get("/api/payment-methods/:id")!(
+      {
+        session: { userId: "user-1" }, params: { id: "12" }, query: { pendingOnly: "1" },
+        headers: {}, ip: "203.0.113.10", socket: {},
+      },
+      res,
+    );
+
+    expect(tbankMock.tbankRemoveCard).not.toHaveBeenCalled();
+    expect(storageMock.unlinkPaymentMethod).not.toHaveBeenCalled();
+    expect(res.code).toBe(200);
+    expect(res.body).toEqual({ ok: true, cancelled: false });
+  });
 });
 
 describe("T-Bank polling activation duplicate protection", () => {
+  it("returns an unchanged AddCard binding while pending without writing updatedAt", async () => {
+    const { post } = routeApp();
+    const pendingMethod = {
+      id: 8, userId: "user-1", provider: "tbank", requestKey: "request-8",
+      status: "pending", cardId: null, rebillId: null, brand: null,
+      label: "Карта (привязывается…)",
+    };
+    storageMock.getPaymentMethod.mockResolvedValue(pendingMethod);
+    tbankMock.tbankGetAddCardState.mockResolvedValue({
+      Success: true, Status: "NEW", CardId: "", RebillId: null,
+    });
+    const res = response();
+
+    await post.get("/api/payment-methods/:id/refresh")!(
+      { session: { userId: "user-1" }, params: { id: "8" } }, res,
+    );
+
+    expect(storageMock.updatePaymentMethod).not.toHaveBeenCalled();
+    expect(res.body).toEqual(pendingMethod);
+  });
+
+  it("returns an unchanged Init binding while pending without writing updatedAt", async () => {
+    const { get } = routeApp();
+    const pendingMethod = {
+      id: 9, userId: "user-1", provider: "tbank", paymentId: "payment-9",
+      status: "pending", cardId: null, rebillId: null, brand: null,
+      label: "Карта (привязывается…)", amountKopecks: 100,
+    };
+    storageMock.getPaymentMethod.mockResolvedValue(pendingMethod);
+    tbankMock.tbankGetState.mockResolvedValue({
+      Success: true, Status: "NEW", CardId: "", RebillId: null,
+    });
+    const res = response();
+
+    await get.get("/api/payments/tbank/refresh-bind/:paymentMethodId")!(
+      { session: { userId: "user-1" }, params: { paymentMethodId: "9" } }, res,
+    );
+
+    expect(storageMock.updatePaymentMethod).not.toHaveBeenCalled();
+    expect(res.body).toEqual(pendingMethod);
+  });
+
   it("marks a duplicate AddCard polling result failed instead of activating it", async () => {
     const { post } = routeApp();
     storageMock.getPaymentMethod.mockResolvedValue({
