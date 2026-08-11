@@ -327,6 +327,7 @@ async function signedPost(
   cfg: TbankConfig,
   path: string,
   params: TbankParams,
+  timeoutMs?: number,
 ): Promise<TbankResponse> {
   // Build the final root-level param set, then drop empty values so they are
   // neither signed nor sent (T-Kassa signs only the fields present in the body).
@@ -336,15 +337,22 @@ async function signedPost(
 
   const url = `${cfg.apiBase}${path}`;
   let res: globalThis.Response;
+  const controller = timeoutMs == null ? undefined : new AbortController();
+  const timeout = controller == null
+    ? undefined
+    : setTimeout(() => controller.abort(), timeoutMs);
   try {
     res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: controller?.signal,
     });
   } catch {
-    log(`[tbank] transport error calling ${path}`, "tbank");
+    log(`[tbank] transport error calling ${path}${timeoutMs == null ? "" : ` (timeout ${timeoutMs}ms)`}`, "tbank");
     throw new Error("Платёжный сервис временно недоступен. Попробуйте позже.");
+  } finally {
+    if (timeout != null) clearTimeout(timeout);
   }
 
   let data: TbankResponse;
@@ -653,8 +661,9 @@ export function classifyRidePayment(args: {
 export async function tbankGetAddCardState(
   cfg: TbankConfig,
   requestKey: string,
+  timeoutMs?: number,
 ): Promise<TbankResponse> {
-  return signedPost(cfg, "/GetAddCardState", { RequestKey: requestKey });
+  return signedPost(cfg, "/GetAddCardState", { RequestKey: requestKey }, timeoutMs);
 }
 
 // Poll the status of a payment created with Init by its PaymentId. /GetState
@@ -669,8 +678,9 @@ export async function tbankGetAddCardState(
 export async function tbankGetState(
   cfg: TbankConfig,
   paymentId: string,
+  timeoutMs?: number,
 ): Promise<TbankResponse> {
-  return signedPost(cfg, "/GetState", { PaymentId: paymentId });
+  return signedPost(cfg, "/GetState", { PaymentId: paymentId }, timeoutMs);
 }
 
 // Map a T-Bank AddCard binding response/notification to our lifecycle status.
@@ -693,7 +703,7 @@ export function classifyCardBinding(args: {
   cardId?: string;
 }): CardBindingOutcome {
   const status = (args.status || "").trim().toUpperCase();
-  if (args.cardId || status === "COMPLETED" || status === "AUTHORIZED" || status === "CONFIRMED") {
+  if (args.cardId || status === "COMPLETED" || status === "CONFIRMED") {
     return "active";
   }
   if (FAILED_BINDING_STATUSES.includes(status)) return "failed";
@@ -711,8 +721,14 @@ export function classifyInitBinding(args: {
   success?: boolean;
 }): CardBindingOutcome {
   const status = (args.status || "").trim().toUpperCase();
-  if (args.rebillId && (status === "AUTHORIZED" || status === "CONFIRMED")) {
+  if (args.rebillId && (status === "CONFIRMED" || status === "COMPLETED")) {
     return "active";
+  }
+  // CONFIRMED/COMPLETED are terminal for the verification payment. A terminal
+  // response without the recurring token cannot produce a usable bound card,
+  // so it must not remain pending indefinitely.
+  if ((status === "CONFIRMED" || status === "COMPLETED") && !args.rebillId) {
+    return "failed";
   }
   if (args.success === false || FAILED_BINDING_STATUSES.includes(status)) {
     return "failed";

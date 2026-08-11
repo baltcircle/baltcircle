@@ -244,21 +244,17 @@ export function PaymentMethodsPage() {
     timedOut.forEach((method) => {
       if (!timedOutBindingIds.current.has(method.id)) {
         timedOutBindingIds.current.add(method.id);
-        toast.toast({
-          title: method.type === "card"
-            ? "Не удалось подтвердить привязку карты. Попробуйте снова."
-            : "Не удалось подтвердить привязку счёта СБП. Попробуйте снова.",
-          variant: "destructive",
-        });
-        // A hidden pending row must not be left to keep affecting server-side
-        // binding guards after the user has been told to try again. The API
-        // safely ignores this if the binding resolved since this list snapshot.
+        // This is only a secondary safety check. For T-Bank cards the server
+        // first synchronously asks GetAddCardState/GetState and refuses to
+        // delete a genuinely live bank-side form/3DS session; a terminal
+        // outcome becomes active/failed and is shown on the next list refresh.
+        // The legacy/SBP cleanup remains idempotent. Do not show a speculative
+        // timeout failure before the authoritative response says it failed.
         void cancelTimedOutPendingMethod(method)
           .then(() => queryClient.invalidateQueries({ queryKey: METHODS_KEY }))
           .catch(() => {
-            // Keep the timeout visible to the rider even if this best-effort
-            // cleanup hits a transient network failure. The server's createdAt
-            // based guard still expires independently.
+            // The normal list/load reconciliation retries on the next visit;
+            // never expose a local timer guess as a binding result.
           });
       }
     });

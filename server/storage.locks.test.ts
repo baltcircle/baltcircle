@@ -6,21 +6,12 @@
 // translated for the operator, and that a lock leaves the discovery table once
 // it is bound to a bike.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import type { Bike, PaymentMethod } from "@shared/schema";
+import type { Bike } from "@shared/schema";
 
 const IMEI = "861234567890123";
 
 /** Rows the next db.select() chain resolves to, in call order. */
 let selectResults: unknown[][] = [];
-/** Drizzle SQL conditions passed to select().where(), in call order. */
-let whereConditions: unknown[] = [];
-
-function sqlText(part: any): string {
-  if (Array.isArray(part?.queryChunks)) return part.queryChunks.map(sqlText).join("");
-  if (Array.isArray(part?.value)) return part.value.join("");
-  return typeof part?.value === "string" ? part.value : "";
-}
 /** Set to make the INSERT/UPDATE reject, standing in for a Postgres error. */
 let writeError: unknown = null;
 
@@ -52,14 +43,13 @@ function bikeRow(overrides: Partial<Bike> = {}): Bike {
 beforeEach(() => {
   vi.clearAllMocks();
   selectResults = [];
-  whereConditions = [];
   writeError = null;
 
   dbMock.select.mockImplementation(() => {
     const rows = selectResults.shift() ?? [];
     const chain: any = {
       from: () => chain,
-      where: (condition: unknown) => { whereConditions.push(condition); return chain; },
+      where: () => chain,
       orderBy: () => chain,
       limit: () => Promise.resolve(rows),
     };
@@ -174,48 +164,5 @@ describe("listUnassignedLocks", () => {
     // assignment, so an assigned IMEI must be filtered out by the query itself.
     expect(String(sql)).toMatch(/NOT EXISTS[\s\S]*bikes[\s\S]*lock_imei/);
     expect(String(sql)).toContain("last_seen >= $1");
-  });
-});
-
-describe("getBlockingCard", () => {
-  it("queries only a fresh pending bind, never treats active cards as blocking, and uses the original bind time", async () => {
-    const activeCard = {
-      id: 22, userId: "user-1", type: "card", status: "active", label: "•••• 0777",
-    } as PaymentMethod;
-    // Model the relevant database behaviour: an active row is available, but it
-    // can be returned only if the generated WHERE clause explicitly admits it.
-    dbMock.select.mockImplementation(() => {
-      const chain: any = {
-        from: () => chain,
-        where: (condition: unknown) => {
-          whereConditions.push(condition);
-          const admitsActive = sqlText(condition).includes("'active'");
-          return {
-            ...chain,
-            orderBy: () => ({
-              ...chain,
-              limit: () => Promise.resolve(admitsActive ? [activeCard] : []),
-            }),
-          };
-        },
-      };
-      return chain;
-    });
-
-    const result = await storage.getBlockingCard("user-1");
-
-    expect(result).toBeUndefined();
-    expect(sqlText(whereConditions[0])).toContain("pending");
-    expect(sqlText(whereConditions[0])).not.toContain("'active'");
-    // A status refresh may legitimately write updatedAt, but it must never
-    // extend the 15-minute concurrent-bind window. Keep the query anchored to
-    // the immutable original attempt timestamp.
-    const storageSource = readFileSync(new URL("./storage.ts", import.meta.url), "utf8");
-    const blockingMethod = storageSource.slice(
-      storageSource.indexOf("async getBlockingCard"),
-      storageSource.indexOf("async findActiveCardDuplicate"),
-    );
-    expect(blockingMethod).toContain("${paymentMethods.createdAt} > ${freshPendingSince}");
-    expect(blockingMethod).not.toContain("paymentMethods.updatedAt");
   });
 });

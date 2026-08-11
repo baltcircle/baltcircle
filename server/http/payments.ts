@@ -37,13 +37,190 @@ import {
   otpLimiter, paymentLimiter,
 } from "./context";
 
+// A state check is on the synchronous request path when a rider returns to the
+// payment-methods page or starts another bind. Bound it so an acquirer outage
+// cannot tie up an Express worker indefinitely. On a transport/timeout error we
+// deliberately fail closed for that one request: a live 3DS session is still
+// possible, and creating another one would orphan it. We never use a local
+// timestamp as a substitute for the bank's answer.
+const BIND_STATE_TIMEOUT_MS = 5_000;
+const LIVE_BINDING_STATUSES = new Set([
+  "NEW", "FORM_SHOWED", "3DS_CHECKING", "3DS_CHECKED", "AUTHORIZING", "AUTHORIZED",
+]);
+
+type BindingReconciliation = "active" | "failed" | "in_flight" | "unavailable";
+
+function failedBindingPatch(body: Record<string, unknown>, fallback: string) {
+  const patch = bindingErrorPatch(body);
+  return {
+    ...patch,
+    lastErrorCode: patch.lastErrorCode ?? "BINDING_STATE_UNAVAILABLE",
+    lastErrorMessage: patch.lastErrorMessage ?? fallback,
+    lastErrorDetails: patch.lastErrorDetails ?? null,
+  };
+}
+
+// T-Bank uses an unsuccessful state request for an identifier it no longer
+// knows. That is terminal for our local attempt: it cannot become active later.
+// Keep the match deliberately narrow; authentication/terminal outages are
+// handled as `unavailable` below and must not incorrectly fail a live bind.
+function isUnknownBindingAtBank(resp: Record<string, unknown>): boolean {
+  const code = String(resp.ErrorCode ?? "").trim();
+  const message = `${String(resp.Message ?? "")} ${String(resp.Details ?? "")}`.toLowerCase();
+  return code === "7" || /not\s*found|unknown|не\s*найден|не\s*существует/.test(message);
+}
+
+async function reconcilePendingCardBinding(
+  method: PaymentMethod,
+  cfg: TbankConfig,
+): Promise<BindingReconciliation> {
+  if (method.status !== "pending") return method.status === "active" ? "active" : "failed";
+
+  const isAddCard = Boolean(method.requestKey);
+  const identifier = method.requestKey || method.paymentId;
+  if (method.provider !== "tbank" || !identifier) {
+    await storage.updatePaymentMethod(method.id, {
+      status: "failed",
+      lastErrorCode: "BINDING_IDENTIFIER_MISSING",
+      lastErrorMessage: "Не удалось найти идентификатор привязки в платёжном сервисе.",
+      lastErrorDetails: null,
+    });
+    return "failed";
+  }
+
+  let resp: Record<string, unknown>;
+  try {
+    resp = isAddCard
+      ? await tbankGetAddCardState(cfg, method.requestKey!, BIND_STATE_TIMEOUT_MS)
+      : await tbankGetState(cfg, method.paymentId!, BIND_STATE_TIMEOUT_MS);
+  } catch (err) {
+    log(`[tbank] binding state check unavailable methodId=${method.id}: ${(err as Error)?.message ?? "?"}`, "tbank");
+    return "unavailable";
+  }
+
+  if (!resp.Success) {
+    if (isUnknownBindingAtBank(resp)) {
+      await storage.updatePaymentMethod(method.id, {
+        status: "failed",
+        ...failedBindingPatch(resp, "Привязка не найдена в платёжном сервисе."),
+      });
+      return "failed";
+    }
+    log(`[tbank] binding state query rejected methodId=${method.id} code=${String(resp.ErrorCode ?? "?")}`, "tbank");
+    return "unavailable";
+  }
+
+  const status = typeof resp.Status === "string" ? resp.Status : "";
+  const cardId = typeof resp.CardId === "string" ? resp.CardId : "";
+  const rebillId = resp.RebillId != null ? String(resp.RebillId) : "";
+  const pan = typeof resp.Pan === "string" ? resp.Pan : "";
+  if (LIVE_BINDING_STATUSES.has(status.trim().toUpperCase())) return "in_flight";
+  const outcome = isAddCard
+    ? classifyCardBinding({ status, cardId })
+    : classifyInitBinding({ status, rebillId });
+
+  if (outcome === "failed") {
+    await storage.updatePaymentMethod(method.id, {
+      status: "failed",
+      ...bindingErrorPatch(resp),
+    });
+    return "failed";
+  }
+
+  if (outcome === "active") {
+    const label = pan ? maskPan(pan) : method.label === "Карта (привязывается…)" ? "Карта" : method.label;
+    const brand = pan ? cardBrand(pan) ?? method.brand : method.brand;
+    const last4 = extractLast4FromLabel(label);
+    const duplicate = last4
+      ? await storage.findActiveCardDuplicate(method.userId, last4, brand, method.id)
+      : undefined;
+    if (duplicate) {
+      await storage.updatePaymentMethod(method.id, {
+        status: "failed",
+        lastErrorCode: "DUPLICATE_CARD",
+        lastErrorMessage: "Эта карта уже привязана к вашему аккаунту.",
+        lastErrorDetails: null,
+      });
+      if (!isAddCard && method.paymentId) {
+        const customer = await storage.getUser(method.userId);
+        void refundVerificationCharge(cfg, {
+          methodId: method.id,
+          paymentId: method.paymentId,
+          knownStatus: status,
+          amountKopecks: method.amountKopecks ?? cfg.cardBindAmountKopecks,
+          customerEmail: customer?.email,
+          customerPhone: customer?.phone,
+        });
+      }
+      return "failed";
+    }
+
+    await storage.updatePaymentMethod(method.id, {
+      status: "active",
+      cardId: cardId || method.cardId,
+      rebillId: rebillId || method.rebillId,
+      paymentId: method.paymentId,
+      label,
+      brand,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      lastErrorDetails: null,
+    });
+    if (!isAddCard && method.paymentId) {
+      const customer = await storage.getUser(method.userId);
+      void refundVerificationCharge(cfg, {
+        methodId: method.id,
+        paymentId: method.paymentId,
+        knownStatus: status,
+        amountKopecks: method.amountKopecks ?? cfg.cardBindAmountKopecks,
+        customerEmail: customer?.email,
+        customerPhone: customer?.phone,
+      });
+    }
+    return "active";
+  }
+
+  // NEW, FORM_SHOWED, 3DS_* and AUTHORIZING are an actual acquirer-side
+  // session, not a locally guessed "fresh" row. They are the only states that
+  // legitimately protect against opening a second binding flow.
+  return "in_flight";
+}
+
+async function hasLiveCardBinding(userId: string, cfg: TbankConfig): Promise<boolean> {
+  // Resolve every local candidate, not just the newest one. Earlier hotfixes
+  // could have left more than one stale row; a new attempt is an opportunity to
+  // finalize all of them rather than letting an older phantom reappear later.
+  const pending = (await storage.listPaymentMethods(userId))
+    .filter((method) => method.type === "card" && method.status === "pending");
+  for (const method of pending) {
+    const result = await reconcilePendingCardBinding(method, cfg);
+    // On an unavailable state query we fail closed for this request rather than
+    // risk a duplicate bank-side session. A later page visit/bind retries the
+    // short bounded query; no timestamp window can turn this into a permanent
+    // local lock.
+    if (result === "in_flight" || result === "unavailable") return true;
+  }
+  return false;
+}
+
 export function registerPaymentRoutes(app: Express): void {
   // -------------- Payment methods (MVP metadata only) --------------
   // Per-user linked payment methods. No card numbers / CVC are ever accepted or
   // stored — only the method kind, a masked label, and a status. No real
   // acquiring is performed.
   app.get("/api/payment-methods", requireAuth, async (req, res) => {
-    res.json(await storage.listPaymentMethods(riderId(req)));
+    const userId = riderId(req);
+    const methods = await storage.listPaymentMethods(userId);
+    const cfg = getTbankConfig();
+    if (!cfg) return res.json(methods);
+
+    // A page visit is a return from the hosted form just as much as a webhook
+    // is. Resolve every pending card before returning the list, so abandoned
+    // rows cannot become a durable UI/database state.
+    await Promise.all(methods
+      .filter((method) => method.type === "card" && method.status === "pending")
+      .map((method) => reconcilePendingCardBinding(method, cfg)));
+    res.json(await storage.listPaymentMethods(userId));
   });
   app.post("/api/payment-methods", requireAuth, async (req, res) => {
     const parsed = linkPaymentMethodSchema.safeParse(req.body);
@@ -56,10 +233,18 @@ export function registerPaymentRoutes(app: Express): void {
     if (!method || method.userId !== userId) {
       return res.status(404).json({ error: "Способ оплаты не найден" });
     }
-    // The client uses this same unlink path to clean up a binding that has timed
-    // out locally. Do not let that delayed cleanup remove a card that a webhook
-    // resolved between the client's last list refresh and this request.
+    // The client uses this same path as a three-minute safety check. A local
+    // timer must never delete a card while T-Bank still has a live 3DS/form
+    // session: reconcile first, then keep the terminal active/failed row for
+    // the normal UI lifecycle instead of erasing evidence of the outcome.
     if (req.query?.pendingOnly === "1" && method.status !== "pending") {
+      return res.json({ ok: true, cancelled: false });
+    }
+    if (req.query?.pendingOnly === "1" && method.status === "pending"
+      && method.type === "card" && method.provider === "tbank") {
+      const cfg = getTbankConfig();
+      if (!cfg) return res.json({ ok: true, cancelled: false });
+      await reconcilePendingCardBinding(method, cfg);
       return res.json({ ok: true, cancelled: false });
     }
     const result = await unlinkPaymentMethodForUser(userId, method, clientIp(req));
@@ -101,8 +286,7 @@ export function registerPaymentRoutes(app: Express): void {
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
 
-    const blocking = await storage.getBlockingCard(user.id);
-    if (blocking) {
+    if (await hasLiveCardBinding(user.id, cfg)) {
       return res.status(409).json({ error: "Карта уже привязывается. Дождитесь завершения." });
     }
 
@@ -145,8 +329,7 @@ export function registerPaymentRoutes(app: Express): void {
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
 
-    const blocking = await storage.getBlockingCard(user.id);
-    if (blocking) {
+    if (await hasLiveCardBinding(user.id, cfg)) {
       return res.status(409).json({ error: "Карта уже привязывается. Дождитесь завершения." });
     }
 
@@ -169,8 +352,7 @@ export function registerPaymentRoutes(app: Express): void {
 
     // Не допускаем только два одновременных флоу; уже активные разные карты не
     // мешают привязать следующую.
-    const existing = await storage.getBlockingCard(user.id);
-    if (existing) {
+    if (await hasLiveCardBinding(user.id, cfg)) {
       return res.status(409).json({ error: "Карта уже привязывается. Дождитесь завершения." });
     }
 
@@ -585,216 +767,59 @@ export function registerPaymentRoutes(app: Express): void {
     res.status(200).type("text/plain").send("OK");
   });
 
-  // Refresh a pending T-Bank card binding by polling GetAddCardState. This is
-  // the recovery path when the notification webhook never arrived (or the rider
-  // closed the tab before it landed), leaving a method stuck on "pending". The
-  // rider can refresh only their OWN method; staff may refresh any. The poll
-  // signs ONLY RequestKey (see tbankGetAddCardState) and we map the acquirer's
-  // Status/CardId to our lifecycle, persisting any error fields. Returns the
-  // updated method so the UI can re-render without a separate fetch.
+  // Refresh a pending T-Bank AddCard binding. The shared reconciliation helper
+  // is also used on list/load and before a new bind, so every entry point maps
+  // the authoritative bank response to the same local lifecycle transition.
   app.post("/api/payment-methods/:id/refresh", async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
 
     const method = await storage.getPaymentMethod(Number(req.params.id));
     if (!method) return res.status(404).json({ error: "Способ оплаты не найден" });
-
     const actor = await storage.getUser(userId);
     const isStaff = actor?.role === "admin" || actor?.role === "operator";
     if (method.userId !== userId && !isStaff) {
       return res.status(404).json({ error: "Способ оплаты не найден" });
     }
-
     if (method.provider !== "tbank" || !method.requestKey) {
       return res.status(400).json({ error: "Для этого способа оплаты проверка статуса недоступна." });
     }
-    if (method.status === "active") {
-      return res.json(method); // already resolved; nothing to poll
-    }
+    if (method.status !== "pending") return res.json(method);
 
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
-
-    let resp;
-    try {
-      resp = await tbankGetAddCardState(cfg, method.requestKey);
-    } catch (err: any) {
-      return res.status(502).json({ error: err?.message ?? "Не удалось проверить статус. Попробуйте позже." });
+    if (await reconcilePendingCardBinding(method, cfg) === "unavailable") {
+      return res.status(502).json({ error: "Не удалось проверить статус. Попробуйте позже." });
     }
-
-    if (!resp.Success) {
-      // The poll itself was rejected (bad RequestKey, etc.). Surface the
-      // acquirer's reason but do NOT mark the method failed — the binding state
-      // is unknown, only our query failed.
-      return res.status(502).json(tbankErrorBody(resp));
-    }
-
-    const cardId = typeof resp.CardId === "string" ? resp.CardId : "";
-    const rebillId = resp.RebillId != null ? String(resp.RebillId) : "";
-    const status = typeof resp.Status === "string" ? resp.Status : "";
-    const pan = typeof resp.Pan === "string" ? resp.Pan : "";
-    const outcome = classifyCardBinding({ status, cardId });
-
-    if (outcome === "active") {
-      const label = pan ? maskPan(pan) : method.label === "Карта (привязывается…)" ? "Карта" : method.label;
-      const brand = pan ? cardBrand(pan) ?? method.brand : method.brand;
-      const last4 = extractLast4FromLabel(label);
-      const duplicate = last4
-        ? await storage.findActiveCardDuplicate(method.userId, last4, brand, method.id)
-        : undefined;
-      if (duplicate) {
-        log(`[tbank] rejected duplicate-card bind attempt userId=${method.userId} last4=${last4}`, "tbank");
-        const updated = await storage.updatePaymentMethod(method.id, {
-          status: "failed",
-          lastErrorCode: "DUPLICATE_CARD",
-          lastErrorMessage: "Эта карта уже привязана к вашему аккаунту.",
-          lastErrorDetails: null,
-        });
-        return res.json(updated);
-      }
-      const updated = await storage.updatePaymentMethod(method.id, {
-        status: "active",
-        cardId: cardId || method.cardId,
-        rebillId: rebillId || method.rebillId,
-        label,
-        brand,
-        lastErrorCode: null,
-        lastErrorMessage: null,
-        lastErrorDetails: null,
-      });
-      return res.json(updated);
-    }
-    if (outcome === "failed") {
-      const updated = await storage.updatePaymentMethod(method.id, {
-        status: "failed",
-        ...bindingErrorPatch(resp),
-      });
-      return res.json(updated);
-    }
-    // Still pending — return the row unchanged. In particular, do not call
-    // updatePaymentMethod here: it writes updatedAt, and a high-frequency poll
-    // must not make a pending bind look newer than its original attempt.
-    return res.json(method);
+    return res.json(await storage.getPaymentMethod(method.id));
   });
 
-  // Refresh a pending Init-bind card binding by polling GetState with the stored
-  // PaymentId. This is the recovery path for the PRIMARY binding flow
-  // (POST /api/payments/tbank/bind-card-payment): its rows carry a PaymentId but
-  // NO RequestKey, so the AddCard-only /refresh above cannot resolve them. When
-  // the notification webhook never arrives (localhost, tunnel timeout, rider
-  // closed the tab) the method would otherwise stay "pending" with no RebillId
-  // forever. The rider can refresh only their OWN method; staff may refresh any.
-  // On AUTHORIZED/CONFIRMED with a RebillId we activate the method and persist
-  // rebillId/cardId/masked PAN. Returns the updated method so the UI re-renders.
+  // Refresh a pending Init+Recurrent binding through the same reconciliation
+  // path as page load and the duplicate-bind guard.
   app.get("/api/payments/tbank/refresh-bind/:paymentMethodId", async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
 
     const method = await storage.getPaymentMethod(Number(req.params.paymentMethodId));
     if (!method) return res.status(404).json({ error: "Способ оплаты не найден" });
-
     const actor = await storage.getUser(userId);
     const isStaff = actor?.role === "admin" || actor?.role === "operator";
     if (method.userId !== userId && !isStaff) {
       return res.status(404).json({ error: "Способ оплаты не найден" });
     }
-
     if (method.provider !== "tbank" || !method.paymentId) {
       return res.status(400).json({ error: "Для этого способа оплаты проверка статуса недоступна." });
     }
-    if (method.status === "active") {
-      return res.json(method); // already resolved; nothing to poll
-    }
+    if (method.status !== "pending") return res.json(method);
 
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
-
-    let resp;
-    try {
-      resp = await tbankGetState(cfg, method.paymentId);
-    } catch (err: any) {
-      return res.status(502).json({ error: err?.message ?? "Не удалось проверить статус. Попробуйте позже." });
+    if (await reconcilePendingCardBinding(method, cfg) === "unavailable") {
+      return res.status(502).json({ error: "Не удалось проверить статус. Попробуйте позже." });
     }
-
-    if (!resp.Success) {
-      // The poll itself was rejected (bad PaymentId, etc.). Surface the
-      // acquirer's reason but do NOT mark the method failed — the binding state
-      // is unknown, only our query failed.
-      return res.status(502).json(tbankErrorBody(resp));
-    }
-
-    const status = typeof resp.Status === "string" ? resp.Status : "";
-    const rebillId = resp.RebillId != null ? String(resp.RebillId) : "";
-    const cardId = typeof resp.CardId === "string" ? resp.CardId : "";
-    const pan = typeof resp.Pan === "string" ? resp.Pan : "";
-    // resp.Success is already true here (guarded above); classify by status only.
-    const outcome = classifyInitBinding({ status, rebillId });
-
-    if (outcome === "active") {
-      const label = pan ? maskPan(pan) : method.label === "Карта (привязывается…)" ? "Карта" : method.label;
-      const brand = pan ? cardBrand(pan) ?? method.brand : method.brand;
-      const last4 = extractLast4FromLabel(label);
-      const duplicate = last4
-        ? await storage.findActiveCardDuplicate(method.userId, last4, brand, method.id)
-        : undefined;
-      if (duplicate) {
-        log(`[tbank] rejected duplicate-card bind attempt userId=${method.userId} last4=${last4}`, "tbank");
-        const updated = await storage.updatePaymentMethod(method.id, {
-          status: "failed",
-          lastErrorCode: "DUPLICATE_CARD",
-          lastErrorMessage: "Эта карта уже привязана к вашему аккаунту.",
-          lastErrorDetails: null,
-        });
-        if (method.paymentId) {
-          const customer = method.userId === actor?.id ? actor : await storage.getUser(method.userId);
-          refundVerificationCharge(cfg, {
-            methodId: method.id,
-            paymentId: method.paymentId,
-            knownStatus: status,
-            amountKopecks: method.amountKopecks ?? cfg.cardBindAmountKopecks,
-            customerEmail: customer?.email,
-            customerPhone: customer?.phone,
-          });
-        }
-        return res.json(updated);
-      }
-      const updated = await storage.updatePaymentMethod(method.id, {
-        status: "active",
-        rebillId: rebillId || method.rebillId,
-        cardId: cardId || method.cardId,
-        paymentId: method.paymentId,
-        label,
-        brand,
-        lastErrorCode: null,
-        lastErrorMessage: null,
-        lastErrorDetails: null,
-      });
-      // Reverse/refund the 1 ₽ verification charge and record the outcome so a
-      // stuck rouble is observable. `status` is the fresh GetState status.
-      if (method.paymentId) {
-        const customer = method.userId === actor?.id ? actor : await storage.getUser(method.userId);
-        refundVerificationCharge(cfg, {
-          methodId: method.id,
-          paymentId: method.paymentId,
-          knownStatus: status,
-          amountKopecks: method.amountKopecks ?? cfg.cardBindAmountKopecks,
-          customerEmail: customer?.email,
-          customerPhone: customer?.phone,
-        });
-      }
-      return res.json(updated);
-    }
-    if (outcome === "failed") {
-      const updated = await storage.updatePaymentMethod(method.id, {
-        status: "failed",
-        ...bindingErrorPatch(resp),
-      });
-      return res.json(updated);
-    }
-    // Still pending — return the row unchanged. Avoid touching updatedAt on
-    // every poll so status checks cannot prolong a bind's freshness window.
-    return res.json(method);
+    return res.json(await storage.getPaymentMethod(method.id));
   });
+
 }
 
 /**

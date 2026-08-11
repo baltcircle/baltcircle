@@ -49,11 +49,12 @@ describe("PaymentMethodsPage binding controls", () => {
     expect(source).toContain("queryClient.invalidateQueries({ queryKey: METHODS_KEY })");
   });
 
-  it("stops stale pending bindings after three minutes and reports failures once", () => {
+  it("uses the three-minute client timeout only as a non-speculative reconciliation safety net", () => {
     expect(source).toContain("const PENDING_BINDING_TIMEOUT_MS = 3 * 60 * 1_000");
     expect(source).toContain('if (method.status !== "pending") continue');
     expect(source).toContain("age !== null && age >= PENDING_BINDING_TIMEOUT_MS");
-    expect(source).toContain("Не удалось подтвердить привязку карты. Попробуйте снова.");
+    expect(source).toContain("Do not show a speculative");
+    expect(source).toContain("GetAddCardState/GetState");
     expect(source).toContain("notifiedBindingFailureIds");
     expect(source).toContain('title: "Привязка не удалась"');
     expect(source).toContain('apiRequest("DELETE", `/api/payment-methods/${method.id}?pendingOnly=1`)');
