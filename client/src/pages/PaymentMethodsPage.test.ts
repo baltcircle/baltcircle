@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { PaymentMethod } from "@shared/schema";
+import { partitionPendingBindings } from "./PaymentMethodsPage";
 
 // This project currently uses Node-only Vitest tests and does not include a DOM
 // component-test environment. Keep the binding-state contract covered directly
@@ -49,9 +51,25 @@ describe("PaymentMethodsPage binding controls", () => {
 
   it("stops stale pending bindings after three minutes and reports failures once", () => {
     expect(source).toContain("const PENDING_BINDING_TIMEOUT_MS = 3 * 60 * 1_000");
-    expect(source).toContain("now - method.createdAt < PENDING_BINDING_TIMEOUT_MS");
+    expect(source).toContain('if (method.status !== "pending") continue');
+    expect(source).toContain("age !== null && age >= PENDING_BINDING_TIMEOUT_MS");
     expect(source).toContain("Не удалось подтвердить привязку карты. Попробуйте снова.");
     expect(source).toContain("notifiedBindingFailureIds");
     expect(source).toContain('title: "Привязка не удалась"');
+  });
+
+  it("does not timeout-toast a fresh pending card on mount, even with an old active card", () => {
+    const now = Date.now();
+    const activeCard = {
+      id: 1, type: "card", label: "•••• 4242", status: "active", createdAt: now - 86_400_000,
+    } as PaymentMethod;
+    const freshPendingCard = {
+      id: 2, type: "card", label: "Карта (привязывается…)", status: "pending", createdAt: now,
+    } as PaymentMethod;
+
+    const { pollable, timedOut } = partitionPendingBindings([activeCard, freshPendingCard], now);
+
+    expect(timedOut).toEqual([]);
+    expect(pollable).toEqual([freshPendingCard]);
   });
 });
