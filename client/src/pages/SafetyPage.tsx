@@ -251,15 +251,6 @@ export function SafetyPage() {
                       )}
                     </section>
                   ))}
-
-                  {doc.reviewNote && (
-                    <p
-                      className="text-xs text-muted-foreground border-t border-card-border pt-4 mt-6"
-                      data-testid={`text-info-legal-${doc.slug}-review-note`}
-                    >
-                      {doc.reviewNote}
-                    </p>
-                  )}
                 </section>
               ))}
             </div>

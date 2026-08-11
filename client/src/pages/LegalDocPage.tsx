@@ -31,7 +31,7 @@ function LegalDoc({ doc }: { doc: LegalDoc }) {
         </header>
 
         <div className="prose prose-sm dark:prose-invert max-w-none space-y-5 text-sm leading-relaxed">
-          <p className="text-muted-foreground">Редакция MVP. Дата вступления в силу: при запуске сервиса.</p>
+          <p className="text-muted-foreground">Дата вступления в силу: при запуске сервиса.</p>
 
           {doc.sections.map((section, i) => (
             <section key={i}>
@@ -50,15 +50,6 @@ function LegalDoc({ doc }: { doc: LegalDoc }) {
               )}
             </section>
           ))}
-
-          {doc.reviewNote && (
-            <p
-              className="text-xs text-muted-foreground border-t border-card-border pt-4"
-              data-testid={`text-legal-${doc.slug}-review-note`}
-            >
-              {doc.reviewNote}
-            </p>
-          )}
         </div>
       </div>
     </OverlayShell>

@@ -120,7 +120,7 @@ export function RentPage() {
                scanState === "error" ? "QR не принят" :
                "Готов к сканированию"}
             </div>
-            <div className="opacity-80 text-xs mt-1">Имитация камеры для веб-MVP</div>
+            <div className="opacity-80 text-xs mt-1">Имитация камеры</div>
           </div>
         </Card>
 

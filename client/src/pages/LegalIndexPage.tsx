@@ -71,7 +71,7 @@ export function LegalIndexPage() {
             Условия использования сервиса TakeRide
           </h1>
           <p className="text-sm text-muted-foreground mt-2">
-            Редакция MVP. Дата вступления в силу: при запуске сервиса.
+            Дата вступления в силу: при запуске сервиса.
           </p>
         </header>
 
@@ -125,15 +125,6 @@ export function LegalIndexPage() {
                   )}
                 </section>
               ))}
-
-              {doc.reviewNote && (
-                <p
-                  className="text-xs text-muted-foreground border-t border-card-border pt-4 mt-6"
-                  data-testid={`text-legal-${doc.slug}-review-note`}
-                >
-                  {doc.reviewNote}
-                </p>
-              )}
             </section>
           ))}
         </div>
