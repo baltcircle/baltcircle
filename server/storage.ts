@@ -887,19 +887,44 @@ export class DatabaseStorage implements IStorage {
   // must belong to the rider and be active with a RebillId; otherwise the most
   // recent qualifying card is returned. Returns undefined when no usable saved
   // card exists (the caller then falls back to the hosted payment flow).
-  // Карта, которая блокирует повторную привязку:
-  //  • active — всегда (карта уже привязана);
-  //  • pending — только СВЕЖАЯ (привязка идёт прямо сейчас). Старая pending —
-  //    застрявшая привязка (webhook не дошёл) — НЕ блокирует, иначе привязка
-  //    закроется навсегда. failed не блокирует — можно пробовать снова.
+  // Карта, которая блокирует только КОНКУРЕНТНУЮ привязку: pending и свежая
+  // (привязка идёт прямо сейчас). Active-карты намеренно не блокируют новый
+  // флоу — у райдера может быть несколько разных карт. Старая pending —
+  // застрявшая привязка (webhook не дошёл) — НЕ блокирует, иначе привязка
+  // закроется навсегда. failed не блокирует — можно пробовать снова.
   async getBlockingCard(userId: string) {
     const PENDING_TTL_MS = 15 * 60 * 1000; // 15 минут
     const freshPendingSince = Date.now() - PENDING_TTL_MS;
     return (await db.select().from(paymentMethods)
-      .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.type} = 'card' AND (
-        ${paymentMethods.status} = 'active'
-        OR (${paymentMethods.status} = 'pending' AND COALESCE(${paymentMethods.updatedAt}, ${paymentMethods.createdAt}) > ${freshPendingSince})
-      )`)
+      .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.type} = 'card'
+        AND ${paymentMethods.status} = 'pending'
+        AND COALESCE(${paymentMethods.updatedAt}, ${paymentMethods.createdAt}) > ${freshPendingSince}`)
+      .orderBy(desc(paymentMethods.createdAt))
+      .limit(1))[0] as PaymentMethod | undefined;
+  }
+
+  // Detect a physical-card duplicate just before activating a pending binding.
+  // label is always produced by maskPan() as "•••• XXXX", so a four-digit suffix
+  // is a safe fingerprint without a schema change. Known brands refine the match;
+  // legacy rows with an unknown brand still match by last4 to avoid false
+  // negatives. An unknown candidate brand also falls back to last4 alone.
+  async findActiveCardDuplicate(
+    userId: string,
+    last4: string,
+    brand: string | null,
+    excludeMethodId?: number,
+  ) {
+    const excludeSql = excludeMethodId != null
+      ? sql` AND ${paymentMethods.id} != ${excludeMethodId}`
+      : sql``;
+    const brandSql = brand != null
+      ? sql` AND (${paymentMethods.brand} = ${brand} OR ${paymentMethods.brand} IS NULL)`
+      : sql``;
+    return (await db.select().from(paymentMethods)
+      .where(sql`${paymentMethods.userId} = ${userId}
+        AND ${paymentMethods.type} = 'card'
+        AND ${paymentMethods.status} = 'active'
+        AND ${paymentMethods.label} LIKE ${`%${last4}`}${brandSql}${excludeSql}`)
       .orderBy(desc(paymentMethods.createdAt))
       .limit(1))[0] as PaymentMethod | undefined;
   }
