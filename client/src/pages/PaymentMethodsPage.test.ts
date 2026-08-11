@@ -28,4 +28,30 @@ describe("PaymentMethodsPage binding controls", () => {
     expect(cardButton).toContain("disabled={busy}");
     expect(sbpButton).toContain("disabled={busy}");
   });
+
+  it("keeps pending binding methods out of the rendered methods list", () => {
+    expect(source).toContain('const visibleMethods = methods.filter((method) => method.status !== "pending")');
+    expect(source).toContain("{visibleMethods.map((m) => {");
+    expect(source).not.toContain("{methods.map((m) => {");
+    expect(source).not.toContain("button-refresh-");
+    expect(source).not.toContain("method-pending-hint-");
+    expect(source).not.toContain("Проверить статус");
+  });
+
+  it("silently polls each supported pending binding route every three seconds", () => {
+    expect(source).toContain("const PENDING_POLL_INTERVAL_MS = 3_000");
+    expect(source).toContain('`/api/payments/tbank/refresh-bind-sbp/${method.id}`');
+    expect(source).toContain('`/api/payment-methods/${method.id}/refresh`');
+    expect(source).toContain('`/api/payments/tbank/refresh-bind/${method.id}`');
+    expect(source).toContain("window.setInterval(() => void poll(), PENDING_POLL_INTERVAL_MS)");
+    expect(source).toContain("queryClient.invalidateQueries({ queryKey: METHODS_KEY })");
+  });
+
+  it("stops stale pending bindings after three minutes and reports failures once", () => {
+    expect(source).toContain("const PENDING_BINDING_TIMEOUT_MS = 3 * 60 * 1_000");
+    expect(source).toContain("now - method.createdAt < PENDING_BINDING_TIMEOUT_MS");
+    expect(source).toContain("Не удалось подтвердить привязку карты. Попробуйте снова.");
+    expect(source).toContain("notifiedBindingFailureIds");
+    expect(source).toContain('title: "Привязка не удалась"');
+  });
 });
