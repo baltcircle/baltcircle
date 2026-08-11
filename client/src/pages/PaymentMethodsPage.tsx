@@ -52,6 +52,51 @@ interface SbpBinding {
   error?: string;
 }
 
+interface PendingBindingState {
+  pollable: PaymentMethod[];
+  timedOut: PaymentMethod[];
+}
+
+// API data is normally serialized as a numeric unix-ms value by Drizzle. Keep
+// the timeout guard defensive nevertheless: a date string, seconds timestamp,
+// or malformed legacy value must never be mistaken for a three-minute-old bind.
+function createdAtMs(value: unknown): number | null {
+  const numeric = typeof value === "number"
+    ? value
+    : typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))
+      ? Number(value)
+      : NaN;
+  if (Number.isFinite(numeric)) {
+    // Unix seconds are still accepted from legacy/alternate serializers.
+    return Math.abs(numeric) < 100_000_000_000 ? numeric * 1_000 : numeric;
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+// Exported for the Node-only contract tests. In particular, active methods
+// must never participate in the timeout decision, regardless of their age.
+export function partitionPendingBindings(
+  methods: PaymentMethod[],
+  now: number,
+): PendingBindingState {
+  const pollable: PaymentMethod[] = [];
+  const timedOut: PaymentMethod[] = [];
+  for (const method of methods) {
+    if (method.status !== "pending") continue;
+    const createdAt = createdAtMs(method.createdAt);
+    const age = createdAt === null ? null : Math.max(0, now - createdAt);
+    // An invalid/unknown timestamp cannot establish a timeout. Continue
+    // background reconciliation rather than presenting a false failure.
+    if (age !== null && age >= PENDING_BINDING_TIMEOUT_MS) timedOut.push(method);
+    else pollable.push(method);
+  }
+  return { pollable, timedOut };
+}
+
 async function refreshPendingMethod(method: PaymentMethod): Promise<PaymentMethod | null> {
   let res: Response;
   if (method.type === "sbp" && method.requestKey) {
@@ -188,10 +233,8 @@ export function PaymentMethodsPage() {
   // `createdAt` is intentional here — every refresh writes `updatedAt`, which
   // must not postpone the three-minute safety valve indefinitely.
   useEffect(() => {
-    const pending = methods.filter((method) => method.status === "pending");
-    const now = Date.now();
-    const pollable = pending.filter((method) => {
-      if (now - method.createdAt < PENDING_BINDING_TIMEOUT_MS) return true;
+    const { pollable, timedOut } = partitionPendingBindings(methods, Date.now());
+    timedOut.forEach((method) => {
       if (!timedOutBindingIds.current.has(method.id)) {
         timedOutBindingIds.current.add(method.id);
         toast.toast({
@@ -201,7 +244,6 @@ export function PaymentMethodsPage() {
           variant: "destructive",
         });
       }
-      return false;
     });
     if (pollable.length === 0) return;
 
