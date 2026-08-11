@@ -19,6 +19,12 @@ export interface IUserStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByPhone(phone: string): Promise<User | undefined>;
   updateProfile(id: string, patch: UpdateProfileInput): Promise<{ user: User } | { error: string }>;
+  /**
+   * Removes direct account data while retaining immutable ride/payment ledger
+   * records under the opaque user id. The second active-ride check happens
+   * inside the write transaction to close the check/finalize race.
+   */
+  deleteAccount(userId: string): Promise<{ ok: true } | { error: "active_ride" | "not_found" }>;
   // admin user management
   listUsers(opts?: { limit?: number; offset?: number }): Promise<User[]>;
   countUsers(): Promise<number>;

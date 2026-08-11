@@ -18,6 +18,10 @@ export const users = pgTable("users", {
   consentIp: text("consent_ip"),             // best-effort client IP captured at consent time
   blockedAt: bigint("blocked_at", { mode: "number" }),          // unix ms when an operator blocked the account; null = active
   blockedReason: text("blocked_reason"),     // optional operator-supplied note shown in the admin UI
+  // Set when a rider permanently deletes their account. The row remains only
+  // as an opaque ledger reference for completed rides and financial records;
+  // all readable profile fields are anonymized at the same time.
+  deletedAt: bigint("deleted_at", { mode: "number" }),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }),          // unix ms of last profile mutation
 }, (t) => [

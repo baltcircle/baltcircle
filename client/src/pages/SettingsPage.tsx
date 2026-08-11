@@ -10,6 +10,10 @@ import { PhoneChangeModal } from "@/components/PhoneChangeModal";
 import { EmailChangeModal } from "@/components/EmailChangeModal";
 import { ArrowLeft, ChevronRight, Sun, Moon, Bell } from "lucide-react";
 import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   getPushState, subscribePush, unsubscribePush, pushStateLabel,
   type PushState,
 } from "@/lib/push";
@@ -25,6 +29,7 @@ export function SettingsPage() {
   const [pushBusy, setPushBusy] = useState(false);
   const [phoneModalOpen, setPhoneModalOpen] = useState(false);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   // Подтягиваем текущее состояние push при монтировании.
   useEffect(() => {
@@ -97,6 +102,36 @@ export function SettingsPage() {
     },
     onError: (err) => {
       toast.toast({ title: "Ошибка", description: err?.message, variant: "destructive" });
+    },
+  });
+
+  const logoutMut = useMutation<void, Error>({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/auth/logout");
+    },
+    onSuccess: () => {
+      queryClient.clear();
+      window.location.assign("/");
+    },
+    onError: (err) => {
+      toast.toast({ title: "Не удалось выйти", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteAccountMut = useMutation<void, Error>({
+    mutationFn: async () => {
+      await apiRequest("DELETE", "/api/account");
+    },
+    onSuccess: () => {
+      queryClient.clear();
+      window.location.assign("/");
+    },
+    onError: (err) => {
+      toast.toast({
+        title: "Не удалось удалить аккаунт",
+        description: err.message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -242,10 +277,56 @@ export function SettingsPage() {
             Согласие на обработку данных принято{user.consentVersion ? ` · версия ${user.consentVersion}` : ""}.
           </p>
         )}
+
+        {isRegistered && (
+          <div className="mt-5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setDeleteDialogOpen(true)}
+              className="w-full rounded-2xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 py-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors"
+              data-testid="button-delete-account"
+            >
+              <span className="text-base font-semibold text-gray-900 dark:text-white">Удалить аккаунт</span>
+              <ChevronRight className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => logoutMut.mutate()}
+              disabled={logoutMut.isPending || deleteAccountMut.isPending}
+              className="w-full mt-8 text-sm font-medium text-destructive underline underline-offset-4 disabled:opacity-50"
+              data-testid="button-logout"
+            >
+              {logoutMut.isPending ? "Выходим…" : "Выйти"}
+            </button>
+          </div>
+        )}
       </div>
 
       <PhoneChangeModal open={phoneModalOpen} onOpenChange={setPhoneModalOpen} />
       <EmailChangeModal open={emailModalOpen} onOpenChange={setEmailModalOpen} />
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent data-testid="dialog-delete-account">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить аккаунт?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие нельзя отменить. Мы отвяжем сохранённые карты и СБП, удалим данные профиля и
+              уведомления. История поездок и платежей останется в обезличенном виде для учёта.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteAccountMut.isPending}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteAccountMut.mutate()}
+              disabled={deleteAccountMut.isPending}
+              className="bg-destructive text-destructive-foreground border border-destructive-border hover:bg-destructive/90"
+              data-testid="button-confirm-delete-account"
+            >
+              {deleteAccountMut.isPending ? "Удаляем…" : "Удалить"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

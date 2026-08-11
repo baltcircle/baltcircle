@@ -21,7 +21,7 @@ import {
   TARIFFS, tariffPriceKopecks,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
-import { eq, desc, sql, gt, and, asc, inArray } from "drizzle-orm";
+import { eq, desc, sql, gt, and, asc, inArray, isNull } from "drizzle-orm";
 import { EventEmitter } from "node:events";
 import { sendToUserAsync } from "./push";
 // db client + schema bootstrap + migrations + demo seed run on import of this module.
@@ -168,12 +168,14 @@ export class DatabaseStorage implements IStorage {
 
   async getUser(id: string) {
     const u = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0] as User | undefined;
+    if (u?.deletedAt) return undefined;
     return this.withResolvedRole(u);
   }
 
   async getUserByPhone(phone: string) {
     const normalized = normalizePhone(phone);
-    const u = (await db.select().from(users).where(eq(users.phone, normalized)).limit(1))[0] as User | undefined;
+    const u = (await db.select().from(users)
+      .where(and(eq(users.phone, normalized), isNull(users.deletedAt))).limit(1))[0] as User | undefined;
     return this.withResolvedRole(u);
   }
 
@@ -190,6 +192,106 @@ export class DatabaseStorage implements IStorage {
     return { user: (await this.getUser(id))! };
   }
 
+  /**
+   * Account erasure keeps the user primary key solely as a pseudonymous
+   * reference from immutable ride/payment ledger rows. It deliberately does
+   * not delete completed rides, ride points, payments, payment orders, or the
+   * wallet, because those rows are required for accounting and audit.
+   */
+  async deleteAccount(userId: string): Promise<{ ok: true } | { error: "active_ride" | "not_found" }> {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const user = (await client.query<{ phone: string; deleted_at: number | null }>(
+        `SELECT phone, deleted_at FROM users WHERE id = $1 FOR UPDATE`,
+        [userId],
+      )).rows[0];
+      if (!user || user.deleted_at) {
+        await client.query("ROLLBACK");
+        return { error: "not_found" };
+      }
+
+      const activeRide = (await client.query(
+        `SELECT 1 FROM rides WHERE user_id = $1 AND status = 'active' LIMIT 1`,
+        [userId],
+      )).rowCount;
+      if (activeRide) {
+        await client.query("ROLLBACK");
+        return { error: "active_ride" };
+      }
+
+      const now = Date.now();
+      // Pending contact verification and OAuth/provider metadata contain direct
+      // identifiers and have no independent retention requirement.
+      await client.query(`DELETE FROM phone_change_requests WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM email_change_requests WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM oauth_identities WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM push_subscriptions WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM otp_requests WHERE phone = $1`, [user.phone]);
+
+      // Payment methods should already have been unlinked from the acquirer by
+      // the HTTP layer. This removes legacy/failed metadata if an older row was
+      // not eligible for a remote unlink.
+      await client.query(`DELETE FROM payment_methods WHERE user_id = $1`, [userId]);
+
+      // Support content can itself contain PII and is not a financial ledger.
+      // support_messages cascades from its conversation; sender_id cleanup also
+      // covers any legacy message that is not attached to a current conversation.
+      await client.query(`DELETE FROM support_tickets WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM support_conversations WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM support_messages WHERE sender_id = $1`, [userId]);
+
+      // A RebillId can authorize future charges and must never outlive the
+      // account. Keep the order itself for accounting, but sever the reusable
+      // payment-method link/token.
+      await client.query(
+        `UPDATE payment_orders
+         SET payment_method_id = NULL, rebill_id = NULL, updated_at = $2
+         WHERE user_id = $1`,
+        [userId, now],
+      );
+
+      // Users.name and users.phone are NOT NULL in the deployed schema. Replace
+      // them with non-identifying values rather than weakening historical DB
+      // constraints; email, consent IP and all other profile PII become NULL.
+      await client.query(
+        `UPDATE users
+         SET name = 'Удалённый пользователь',
+             phone = 'deleted:' || id,
+             email = NULL,
+             email_verified_at = NULL,
+             consent_accepted_at = NULL,
+             consent_version = NULL,
+             consent_ip = NULL,
+             blocked_at = NULL,
+             blocked_reason = NULL,
+             deleted_at = $2,
+             updated_at = $2
+         WHERE id = $1`,
+        [userId, now],
+      );
+
+      // Delete all persisted sessions for this user, including sessions on
+      // other devices. connect-pg-simple creates this table lazily, so account
+      // deletion must also work before the first session has been written.
+      const sessionTable = (await client.query<{ session_table: string | null }>(
+        `SELECT to_regclass('public.session')::text AS session_table`,
+      )).rows[0]?.session_table;
+      if (sessionTable) {
+        await client.query(`DELETE FROM "session" WHERE sess::jsonb ->> 'userId' = $1`, [userId]);
+      }
+
+      await client.query("COMMIT");
+      return { ok: true };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   // ---------- Admin user management ----------
   // List every registered user, newest first, with effective roles applied so
   // the admin table shows the same role the rest of the app enforces (the
@@ -198,14 +300,14 @@ export class DatabaseStorage implements IStorage {
   // given the full list is returned (preserves consumers that need every row:
   // client-side search, CSV export). The HTTP layer clamps limit to a sane max.
   async listUsers(opts?: { limit?: number; offset?: number }) {
-    let q = db.select().from(users).orderBy(desc(users.createdAt)).$dynamic();
+    let q = db.select().from(users).where(isNull(users.deletedAt)).orderBy(desc(users.createdAt)).$dynamic();
     if (opts?.limit !== undefined) q = q.limit(opts.limit).offset(opts.offset ?? 0);
     const rows = (await q) as User[];
     return rows.map((u) => this.withResolvedRole(u)!);
   }
 
   async countUsers() {
-    return Number((await pool.query("SELECT COUNT(*)::int AS c FROM users")).rows[0].c);
+    return Number((await pool.query("SELECT COUNT(*)::int AS c FROM users WHERE deleted_at IS NULL")).rows[0].c);
   }
 
   async setUserRole(id: string, role: UserRole) {
