@@ -21,9 +21,11 @@ const tbankMock = vi.hoisted(() => ({
 const bindViaVerificationPaymentMock = vi.hoisted(() => vi.fn());
 const refundVerificationChargeMock = vi.hoisted(() => vi.fn());
 const logMock = vi.hoisted(() => vi.fn());
+const loggerMock = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn() }));
 
 vi.mock("../storage", () => ({ storage: storageMock }));
 vi.mock("../index", () => ({ log: logMock }));
+vi.mock("../logger", () => ({ logger: loggerMock, log: logMock }));
 vi.mock("../context", () => ({
   riderId: vi.fn(),
   isStaffSession: vi.fn(),
@@ -367,6 +369,83 @@ describe("authoritative pending card-binding reconciliation", () => {
     },
   );
 
+  it("does not let user A's pending row block user B, who has no payment-method rows", async () => {
+    const { post } = routeApp();
+    const userAPending = pendingAddCard({ id: 41, userId: "user-a" });
+    storageMock.getUser.mockResolvedValue({
+      id: "user-b", role: "rider", email: "user-b@example.com", phone: "+79990000002",
+    });
+    storageMock.listPaymentMethods.mockImplementation(async (userId: string) => (
+      userId === "user-a" ? [userAPending] : []
+    ));
+    const res = response();
+
+    await post.get("/api/payments/tbank/bind-card")!(
+      { session: { userId: "user-b" } }, res,
+    );
+
+    expect(storageMock.listPaymentMethods).toHaveBeenCalledWith("user-b");
+    expect(tbankMock.tbankGetAddCardState).not.toHaveBeenCalled();
+    expect(res.code).toBe(200);
+    expect(bindViaVerificationPaymentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ cardBindAmountKopecks: 100 }),
+      "user-b",
+      res,
+      "user-b@example.com",
+      "+79990000002",
+    );
+  });
+
+  it("fails a whitespace-only legacy identifier locally and allows a retry without a bank call", async () => {
+    const { post } = routeApp();
+    const method = pendingAddCard({ requestKey: "   ", paymentId: "\t" });
+    storageMock.listPaymentMethods.mockResolvedValue([method]);
+    tbankMock.tbankGetAddCardState.mockRejectedValue(new Error("bank should not be called"));
+    const res = response();
+
+    await post.get("/api/payments/tbank/bind-card")!(
+      { session: { userId: "user-1" } }, res,
+    );
+
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(31, expect.objectContaining({
+      status: "failed",
+      lastErrorCode: "BINDING_IDENTIFIER_MISSING",
+    }));
+    expect(tbankMock.tbankGetAddCardState).not.toHaveBeenCalled();
+    expect(tbankMock.tbankGetState).not.toHaveBeenCalled();
+    expect(res.code).toBe(200);
+    expect(bindViaVerificationPaymentMock).toHaveBeenCalled();
+  });
+
+  it("continues reconciling later rows when one bank state call fails", async () => {
+    const { post } = routeApp();
+    const unavailable = pendingAddCard({ id: 51, requestKey: "request-unavailable" });
+    const rejected = pendingAddCard({ id: 52, requestKey: "request-rejected" });
+    storageMock.listPaymentMethods.mockResolvedValue([unavailable, rejected]);
+    tbankMock.tbankGetAddCardState
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce({ Success: true, Status: "REJECTED" });
+    const res = response();
+
+    await post.get("/api/payments/tbank/bind-card")!(
+      { session: { userId: "user-1" } }, res,
+    );
+
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(52, expect.objectContaining({
+      status: "failed",
+    }));
+    // The first row alone still safely fail-closes this single request.
+    expect(res.code).toBe(409);
+    expect(loggerMock.info).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-1",
+      pendingRows: expect.arrayContaining([
+        expect.objectContaining({ methodId: 51, reconciliation: "unavailable" }),
+        expect.objectContaining({ methodId: 52, reconciliation: "failed" }),
+      ]),
+      decision: "block",
+    }), "[tbank] card-bind guard decision");
+  });
+
   it("fails closed without an unhandled error when the bounded bank check times out", async () => {
     const { post } = routeApp();
     storageMock.listPaymentMethods.mockResolvedValue([pendingAddCard()]);
@@ -379,7 +458,10 @@ describe("authoritative pending card-binding reconciliation", () => {
 
     expect(res.code).toBe(409);
     expect(storageMock.updatePaymentMethod).not.toHaveBeenCalled();
-    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("binding state check unavailable"), "tbank");
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ methodId: 31, outcome: "unavailable" }),
+      "[tbank] card-bind state check failed",
+    );
   });
 
   it("reconciles pending cards synchronously before returning the payment-methods page", async () => {

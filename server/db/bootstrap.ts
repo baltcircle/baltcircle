@@ -21,6 +21,7 @@ import {
   ticketComments, payments, paymentMethods, paymentOrders,
   supportTickets, supportConversations, supportMessages,
 } from "@shared/schema";
+import { logger } from "../logger";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -452,6 +453,38 @@ async function runMigrations() {
   await pool.query(`ALTER TABLE bike_telemetry ALTER COLUMN y DROP NOT NULL;`);
 }
 
+// Production received malformed pending card-binding rows before the binding
+// flow reliably persisted its provider identifier. They cannot correspond to a
+// live AddCard/Init session, so resolve them once at startup instead of leaving
+// invisible rows able to permanently fail-close a rider's next bind attempt.
+// This is deliberately narrower than a TTL migration: a row with either usable
+// RequestKey or PaymentId remains untouched and is reconciled with T-Bank.
+async function cleanupStaleIdentifierlessPendingCardBindings() {
+  const now = Date.now();
+  const staleBefore = now - 60 * 60 * 1000;
+  const result = await pool.query(
+    `UPDATE payment_methods
+       SET status = 'failed',
+           last_error_code = 'STALE_CLEANUP_NO_IDENTIFIER',
+           last_error_message = 'Старая привязка не содержит идентификатор платёжного сервиса.',
+           last_error_details = NULL,
+           updated_at = $1
+     WHERE status = 'pending'
+       AND type = 'card'
+       AND created_at < $2
+       AND NULLIF(BTRIM(COALESCE(request_key, '')), '') IS NULL
+       AND NULLIF(BTRIM(COALESCE(payment_id, '')), '') IS NULL`,
+    [now, staleBefore],
+  );
+  if ((result.rowCount ?? 0) > 0) {
+    logger.warn({
+      count: result.rowCount,
+      staleBefore,
+      errorCode: "STALE_CLEANUP_NO_IDENTIFIER",
+    }, "[bootstrap] failed stale identifier-less pending card bindings");
+  }
+}
+
 const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
 
 // Bump this whenever the demo geography/seed data changes so existing databases
@@ -617,6 +650,7 @@ async function bootstrapDemoData() {
 export const bootstrapReady: Promise<void> = (async () => {
   await createSchema();
   await runMigrations();
+  await cleanupStaleIdentifierlessPendingCardBindings();
   await createIndexes();
   await bootstrapDemoData();
 })();
