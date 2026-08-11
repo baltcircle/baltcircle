@@ -1,0 +1,18 @@
+name: Debug production card-bind logs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  logs:
+    name: Extract recent card-bind decisions
+    runs-on:
+      - self-hosted
+      - baltcircle-prod
+    steps:
+      - name: Print recent card-bind diagnostics
+        run: |
+          set -o pipefail
+          docker logs baltcircle-mvp --since 6h 2>&1 \
+            | grep -E '\[tbank\] card-bind (reconciliation|state response|state check failed|reconciliation row failed|guard decision)|\[tbank\] binding state query rejected|POST /api/payments/tbank/(bind-card|bind-card-payment|add-card)' \
+            | tail -500 || true
