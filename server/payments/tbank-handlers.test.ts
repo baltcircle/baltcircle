@@ -11,6 +11,7 @@ const storageMock = vi.hoisted(() => ({
   startRide: vi.fn(),
   updateRidePaymentOrder: vi.fn(),
   findCardMethodByOrderId: vi.fn(),
+  findCardMethodByRequestKey: vi.fn(),
   findMethodByRequestKey: vi.fn(),
   findPendingCardMethod: vi.fn(),
   createPendingBindPayment: vi.fn(),
@@ -394,6 +395,7 @@ describe("handleAddCardNotification unmatched-notification guard", () => {
   it("still activates a genuinely pending method on a real match (existing behavior preserved)", async () => {
     storageMock.findPendingCardMethod.mockResolvedValue({
       id: 5,
+      type: "card",
       cardId: null,
       rebillId: null,
       brand: null,
@@ -413,7 +415,7 @@ describe("handleAddCardNotification unmatched-notification guard", () => {
 
   it("rejects a duplicate AddCard binding rather than activating a second row", async () => {
     storageMock.findPendingCardMethod.mockResolvedValue({
-      id: 6, userId: "user-1", cardId: null, rebillId: null, brand: null,
+      id: 6, userId: "user-1", type: "card", cardId: null, rebillId: null, brand: null,
     });
     storageMock.findActiveCardDuplicate.mockResolvedValue({ id: 5 });
 
@@ -432,6 +434,38 @@ describe("handleAddCardNotification unmatched-notification guard", () => {
       lastErrorDetails: null,
     });
     expect(logMock).toHaveBeenCalledWith(expect.stringContaining("last4=0777"), "tbank");
+  });
+
+  it("honors a late AddCard success for the superseded row identified by RequestKey", async () => {
+    storageMock.findCardMethodByRequestKey.mockResolvedValue({
+      id: 7,
+      userId: "user-1",
+      type: "card",
+      status: "failed",
+      requestKey: "request-old",
+      cardId: null,
+      rebillId: null,
+      brand: null,
+      lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
+    });
+    storageMock.findActiveCardDuplicate.mockResolvedValue(undefined);
+
+    await handleAddCardNotification({
+      Status: "CONFIRMED",
+      CardId: "card-old",
+      RebillId: "rebill-old",
+      CustomerKey: "user-1",
+      RequestKey: "request-old",
+      Pan: "430000******0777",
+    });
+
+    expect(storageMock.findCardMethodByRequestKey).toHaveBeenCalledWith("user-1", "request-old");
+    expect(storageMock.findPendingCardMethod).not.toHaveBeenCalled();
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(7, expect.objectContaining({
+      status: "active",
+      cardId: "card-old",
+      rebillId: "rebill-old",
+    }));
   });
 });
 
@@ -499,6 +533,63 @@ describe("card-binding duplicate protection", () => {
     expect(extractLast4FromLabel("•••• 0777")).toBe("0777");
     expect(extractLast4FromLabel("Карта")).toBeNull();
     expect(extractLast4FromLabel("•••• 777")).toBeNull();
+  });
+
+  it("honors a late AUTHORIZED+RebillId notification for an Init binding superseded locally", async () => {
+    const supersededMethod = {
+      ...pendingInitMethod,
+      id: 140,
+      status: "failed",
+      orderId: "bind-superseded",
+      paymentId: "payment-superseded",
+      lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
+    };
+    storageMock.getRidePaymentOrder.mockResolvedValue(undefined);
+    storageMock.findCardMethodByOrderId.mockResolvedValue(supersededMethod);
+    storageMock.findActiveCardDuplicate.mockResolvedValue(undefined);
+
+    await handleTbankNotification({
+      OrderId: "bind-superseded",
+      Status: "AUTHORIZED",
+      PaymentId: "payment-superseded",
+      RebillId: "rebill-superseded",
+      CardId: "card-superseded",
+      Pan: "430000******0777",
+    });
+
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(140, expect.objectContaining({
+      status: "active",
+      paymentId: "payment-superseded",
+      rebillId: "rebill-superseded",
+      cardId: "card-superseded",
+    }));
+  });
+
+  it("keeps a superseded Init binding failed when its late notification is rejected", async () => {
+    const supersededMethod = {
+      ...pendingInitMethod,
+      id: 141,
+      status: "failed",
+      orderId: "bind-superseded-rejected",
+      paymentId: "payment-superseded-rejected",
+      lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
+    };
+    storageMock.getRidePaymentOrder.mockResolvedValue(undefined);
+    storageMock.findCardMethodByOrderId.mockResolvedValue(supersededMethod);
+
+    await handleTbankNotification({
+      OrderId: "bind-superseded-rejected",
+      Status: "REJECTED",
+      PaymentId: "payment-superseded-rejected",
+      ErrorCode: "101",
+      Message: "Отказ",
+    });
+
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(141, expect.objectContaining({
+      status: "failed",
+      paymentId: "payment-superseded-rejected",
+      lastErrorCode: "101",
+    }));
   });
 });
 
