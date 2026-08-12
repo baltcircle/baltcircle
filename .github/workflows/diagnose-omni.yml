@@ -1,0 +1,19 @@
+name: Diagnose omni container (read-only)
+on:
+  workflow_dispatch: {}
+jobs:
+  diagnose:
+    runs-on: [self-hosted, baltcircle-prod]
+    steps:
+      - name: Docker state
+        run: |
+          echo "=== docker ps -a (baltcircle) ==="
+          docker ps -a --filter "name=baltcircle"
+          echo "=== baltcircle-mvp status ==="
+          docker ps --filter "name=baltcircle-mvp" --format "{{.Status}}" || true
+          echo "=== baltcircle-omni inspect ==="
+          docker inspect baltcircle-omni --format 'Created={{.Created}} Image={{.Config.Image}} State={{.State.Status}} Ports={{.NetworkSettings.Ports}}' 2>&1 || true
+          echo "=== baltcircle-omni logs (last 50) ==="
+          docker logs baltcircle-omni --tail 50 2>&1 || true
+          echo "=== port 5100 listeners on host ==="
+          (ss -ltnp 2>/dev/null | grep 5100) || (netstat -ltnp 2>/dev/null | grep 5100) || echo "no ss/netstat output"
