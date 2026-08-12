@@ -335,27 +335,25 @@ describe("authoritative pending card-binding reconciliation", () => {
     },
   );
 
-  it("uses GetState for the Init flow and resolves a rejected pending row before allowing a retry", async () => {
+  it("supersedes an Init binding without waiting for GetState before allowing a retry", async () => {
     const { post } = routeApp();
     const method = pendingAddCard({ requestKey: null, paymentId: "payment-31" });
     storageMock.listPaymentMethods.mockResolvedValue([method]);
-    tbankMock.tbankGetState.mockResolvedValue({ Success: true, Status: "DEADLINE_EXPIRED" });
     const res = response();
 
     await post.get("/api/payments/tbank/bind-card")!(
       { session: { userId: "user-1" } }, res,
     );
 
-    expect(tbankMock.tbankGetState).toHaveBeenCalledWith(
-      expect.objectContaining({ cardBindAmountKopecks: 100 }), "payment-31", 5_000,
-    );
+    expect(tbankMock.tbankGetState).not.toHaveBeenCalled();
     expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(31, expect.objectContaining({
       status: "failed",
+      lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
     }));
     expect(res.code).toBe(200);
   });
 
-  it("activates an AUTHORIZED Init binding with a RebillId before allowing a retry", async () => {
+  it("supersedes even an AUTHORIZED Init binding and leaves its late success for the webhook", async () => {
     const { post } = routeApp();
     const method = pendingAddCard({
       requestKey: null,
@@ -364,28 +362,16 @@ describe("authoritative pending card-binding reconciliation", () => {
       amountKopecks: 100,
     });
     storageMock.listPaymentMethods.mockResolvedValue([method]);
-    storageMock.findActiveCardDuplicate.mockResolvedValue(undefined);
-    tbankMock.tbankGetState.mockResolvedValue({
-      Success: true,
-      Status: "AUTHORIZED",
-      RebillId: "rebill-authorized",
-      CardId: "card-authorized",
-      Pan: "430000******0777",
-    });
     const res = response();
 
     await post.get("/api/payments/tbank/bind-card")!(
       { session: { userId: "user-1" } }, res,
     );
 
-    expect(tbankMock.tbankGetState).toHaveBeenCalledWith(
-      expect.objectContaining({ cardBindAmountKopecks: 100 }), "payment-authorized", 5_000,
-    );
+    expect(tbankMock.tbankGetState).not.toHaveBeenCalled();
     expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(31, expect.objectContaining({
-      status: "active",
-      paymentId: "payment-authorized",
-      rebillId: "rebill-authorized",
-      cardId: "card-authorized",
+      status: "failed",
+      lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
     }));
     expect(bindViaVerificationPaymentMock).toHaveBeenCalledWith(
       expect.objectContaining({ cardBindAmountKopecks: 100 }),
@@ -397,23 +383,37 @@ describe("authoritative pending card-binding reconciliation", () => {
     expect(res.code).toBe(200);
   });
 
-  it.each(["FORM_SHOWED", "3DS_CHECKING", "AUTHORIZED"])(
-    "blocks a genuine live bank-side %s session",
-    async (status) => {
-      const { post } = routeApp();
-      storageMock.listPaymentMethods.mockResolvedValue([pendingAddCard()]);
-      tbankMock.tbankGetAddCardState.mockResolvedValue({ Success: true, Status: status });
-      const res = response();
+  it("supersedes a pending NEW binding and starts a fresh bind without polling or returning 409", async () => {
+    const { post } = routeApp();
+    const oldMethod = pendingAddCard({ id: 32, requestKey: "request-old" });
+    storageMock.listPaymentMethods.mockResolvedValue([oldMethod]);
+    tbankMock.tbankGetAddCardState.mockResolvedValue({ Success: true, Status: "NEW" });
+    const res = response();
 
-      await post.get("/api/payments/tbank/bind-card")!(
-        { session: { userId: "user-1" } }, res,
-      );
+    await post.get("/api/payments/tbank/bind-card")!(
+      { session: { userId: "user-1" } }, res,
+    );
 
-      expect(res.code).toBe(409);
-      expect(res.body).toEqual({ error: "Карта уже привязывается. Дождитесь завершения." });
-      expect(storageMock.updatePaymentMethod).not.toHaveBeenCalled();
-    },
-  );
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(32, {
+      status: "failed",
+      lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
+      lastErrorMessage: "Привязка отменена: начата новая попытка.",
+      lastErrorDetails: null,
+    });
+    expect(tbankMock.tbankGetAddCardState).not.toHaveBeenCalled();
+    expect(tbankMock.tbankGetState).not.toHaveBeenCalled();
+    expect(bindViaVerificationPaymentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ cardBindAmountKopecks: 100 }),
+      "user-1",
+      res,
+      "rider@example.com",
+      "+79991234567",
+    );
+    expect(res.code).toBe(200);
+    expect(res.body).toEqual({
+      paymentUrl: "https://pay.example.test/new-bind", method: "payment", methodId: 99,
+    });
+  });
 
   it("does not let user A's pending row block user B, who has no payment-method rows", async () => {
     const { post } = routeApp();
@@ -442,7 +442,7 @@ describe("authoritative pending card-binding reconciliation", () => {
     );
   });
 
-  it("fails a whitespace-only legacy identifier locally and allows a retry without a bank call", async () => {
+  it("supersedes a malformed legacy pending row without a bank call", async () => {
     const { post } = routeApp();
     const method = pendingAddCard({ requestKey: "   ", paymentId: "\t" });
     storageMock.listPaymentMethods.mockResolvedValue([method]);
@@ -455,59 +455,12 @@ describe("authoritative pending card-binding reconciliation", () => {
 
     expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(31, expect.objectContaining({
       status: "failed",
-      lastErrorCode: "BINDING_IDENTIFIER_MISSING",
+      lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
     }));
     expect(tbankMock.tbankGetAddCardState).not.toHaveBeenCalled();
     expect(tbankMock.tbankGetState).not.toHaveBeenCalled();
     expect(res.code).toBe(200);
     expect(bindViaVerificationPaymentMock).toHaveBeenCalled();
-  });
-
-  it("continues reconciling later rows when one bank state call fails", async () => {
-    const { post } = routeApp();
-    const unavailable = pendingAddCard({ id: 51, requestKey: "request-unavailable" });
-    const rejected = pendingAddCard({ id: 52, requestKey: "request-rejected" });
-    storageMock.listPaymentMethods.mockResolvedValue([unavailable, rejected]);
-    tbankMock.tbankGetAddCardState
-      .mockRejectedValueOnce(new Error("timeout"))
-      .mockResolvedValueOnce({ Success: true, Status: "REJECTED" });
-    const res = response();
-
-    await post.get("/api/payments/tbank/bind-card")!(
-      { session: { userId: "user-1" } }, res,
-    );
-
-    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(52, expect.objectContaining({
-      status: "failed",
-    }));
-    // The first row alone still safely fail-closes this single request.
-    expect(res.code).toBe(409);
-    expect(loggerMock.info).toHaveBeenCalledWith(expect.objectContaining({
-      userId: "user-1",
-      pendingRows: expect.arrayContaining([
-        expect.objectContaining({ methodId: 51, reconciliation: "unavailable" }),
-        expect.objectContaining({ methodId: 52, reconciliation: "failed" }),
-      ]),
-      decision: "block",
-    }), "[tbank] card-bind guard decision");
-  });
-
-  it("fails closed without an unhandled error when the bounded bank check times out", async () => {
-    const { post } = routeApp();
-    storageMock.listPaymentMethods.mockResolvedValue([pendingAddCard()]);
-    tbankMock.tbankGetAddCardState.mockRejectedValue(new Error("timeout"));
-    const res = response();
-
-    await post.get("/api/payments/tbank/bind-card")!(
-      { session: { userId: "user-1" } }, res,
-    );
-
-    expect(res.code).toBe(409);
-    expect(storageMock.updatePaymentMethod).not.toHaveBeenCalled();
-    expect(loggerMock.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ methodId: 31, outcome: "unavailable" }),
-      "[tbank] card-bind state check failed",
-    );
   });
 
   it("reconciles pending cards synchronously before returning the payment-methods page", async () => {
@@ -525,5 +478,27 @@ describe("authoritative pending card-binding reconciliation", () => {
       status: "failed",
     }));
     expect(res.body).toEqual([{ ...method, status: "failed" }]);
+  });
+
+  it("returns superseded rows as failed rather than phantom pending rows from GET /api/payment-methods", async () => {
+    const { get } = routeApp();
+    const oldMethod = pendingAddCard({ id: 61, requestKey: "request-old" });
+    storageMock.listPaymentMethods
+      .mockResolvedValueOnce([oldMethod])
+      .mockResolvedValueOnce([{
+        ...oldMethod,
+        status: "failed",
+        lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
+      }]);
+    const res = response();
+
+    await get.get("/api/payment-methods")!({ session: { userId: "user-1" } }, res);
+
+    expect(res.body).toEqual([expect.objectContaining({
+      id: 61,
+      status: "failed",
+      lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
+    })]);
+    expect((res.body as Array<{ status: string }>).some((method) => method.status === "pending")).toBe(false);
   });
 });

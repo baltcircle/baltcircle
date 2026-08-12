@@ -261,26 +261,32 @@ async function reconcilePendingCardBindingsForUser(
   }));
 }
 
-async function hasLiveCardBinding(userId: string, cfg: TbankConfig): Promise<boolean> {
+// Starting another card-bind flow is an explicit product-level abandonment of
+// every previous unfinished flow. The hosted T-Bank form may still be open in
+// another tab, but the application cannot observe that reliably and must never
+// leave the rider blocked behind it. Mark the old rows terminal locally before
+// creating the next bank session. A later bank-confirmed success is still
+// accepted by the webhook handler through its stable OrderId/RequestKey
+// correlation, so supersession does not discard a successfully bound card.
+async function supersedePendingCardBindingsForUser(userId: string): Promise<void> {
   const methods = await storage.listPaymentMethods(userId);
   const pending = methods.filter((method) => method.type === "card" && method.status === "pending");
-  const results = await reconcilePendingCardBindingsForUser(userId, cfg, methods);
-  // On an unavailable state query we fail closed for this request rather than
-  // risk a duplicate bank-side session. A later page visit/bind retries the
-  // short bounded query; no timestamp window can turn this into a permanent
-  // local lock.
-  const blocked = results.some((result) => result === "in_flight" || result === "unavailable");
+  if (!pending.length) return;
+
+  await Promise.all(pending.map((method) => storage.updatePaymentMethod(method.id, {
+    status: "failed",
+    lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
+    lastErrorMessage: "Привязка отменена: начата новая попытка.",
+    lastErrorDetails: null,
+  })));
   logger.info({
     userId,
-    pendingRows: pending.map((method, index) => ({
+    supersededRows: pending.map((method) => ({
       methodId: method.id,
       requestKeyPresent: Boolean(normalizedBindingIdentifier(method.requestKey)),
       paymentIdPresent: Boolean(normalizedBindingIdentifier(method.paymentId)),
-      reconciliation: results[index],
     })),
-    decision: blocked ? "block" : "allow",
-  }, "[tbank] card-bind guard decision");
-  return blocked;
+  }, "[tbank] card-bind attempts superseded");
 }
 
 export function registerPaymentRoutes(app: Express): void {
@@ -377,9 +383,7 @@ export function registerPaymentRoutes(app: Express): void {
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
 
-    if (await hasLiveCardBinding(user.id, cfg)) {
-      return res.status(409).json({ error: "Карта уже привязывается. Дождитесь завершения." });
-    }
+    await supersedePendingCardBindingsForUser(user.id);
 
     try {
       const resp = await tbankAddCard(cfg, { customerKey: user.id });
@@ -420,9 +424,7 @@ export function registerPaymentRoutes(app: Express): void {
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
 
-    if (await hasLiveCardBinding(user.id, cfg)) {
-      return res.status(409).json({ error: "Карта уже привязывается. Дождитесь завершения." });
-    }
+    await supersedePendingCardBindingsForUser(user.id);
 
     await bindViaVerificationPayment(cfg, user.id, res, user.email, user.phone);
   });
@@ -441,11 +443,10 @@ export function registerPaymentRoutes(app: Express): void {
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
 
-    // Не допускаем только два одновременных флоу; уже активные разные карты не
-    // мешают привязать следующую.
-    if (await hasLiveCardBinding(user.id, cfg)) {
-      return res.status(409).json({ error: "Карта уже привязывается. Дождитесь завершения." });
-    }
+    // A new click explicitly supersedes every unfinished card-bind flow instead
+    // of returning 409. This is deliberately not time-based: the next attempt
+    // is usable immediately even while T-Bank still reports the old session NEW.
+    await supersedePendingCardBindingsForUser(user.id);
 
     if (cfg.cardBindMethod === "addcard") {
       // No-charge AddCard, with automatic fallback to the 1 ₽ payment inside the

@@ -352,6 +352,7 @@ export async function handleInitBindingNotification(
 export async function handleAddCardNotification(body: Record<string, unknown>): Promise<void> {
   const status = typeof body.Status === "string" ? body.Status : "";
   const customerKey = typeof body.CustomerKey === "string" ? body.CustomerKey : "";
+  const requestKey = typeof body.RequestKey === "string" ? body.RequestKey : "";
   const cardId = typeof body.CardId === "string" ? body.CardId : "";
   const rebillId = body.RebillId != null ? String(body.RebillId) : "";
   const pan = typeof body.Pan === "string" ? body.Pan : "";
@@ -370,11 +371,20 @@ export async function handleAddCardNotification(body: Record<string, unknown>): 
     );
     return;
   }
-  const pending = await storage.findPendingCardMethod(customerKey);
-  if (!pending) {
+  // Prefer RequestKey whenever T-Bank provides it. CustomerKey alone is not
+  // unique across attempts: after a new bind supersedes an old one, a late
+  // success for the old hosted form must activate its own failed row, never the
+  // newer pending row. For old notifications that do not contain RequestKey,
+  // preserve the legacy pending-row fallback; when no pending row exists we log
+  // the unmatched notification rather than guessing which historical attempt it
+  // belongs to.
+  const method = requestKey
+    ? await storage.findCardMethodByRequestKey(customerKey, requestKey)
+    : await storage.findPendingCardMethod(customerKey);
+  if (!method || method.type !== "card") {
     log(
-      `[tbank] WARN notification unmatched: CustomerKey=${customerKey} has no pending card method ` +
-        `(OrderId=${orderId || "-"} PaymentId=${paymentId || "-"} Status=${status || "-"}). ` +
+      `[tbank] WARN notification unmatched: CustomerKey=${customerKey} has no matching card method ` +
+        `(RequestKey=${requestKey || "-"} OrderId=${orderId || "-"} PaymentId=${paymentId || "-"} Status=${status || "-"}). ` +
         `Acknowledging without action — likely T-Bank's own test-dashboard traffic or a stale order; ` +
         `NOT cancelling/refunding a validly-signed payment just because it has no local match.`,
       "tbank",
@@ -385,14 +395,14 @@ export async function handleAddCardNotification(body: Record<string, unknown>): 
   const outcome = classifyCardBinding({ status, cardId });
   if (outcome === "active") {
     const label = pan ? maskPan(pan) : "Карта";
-    const brand = pan ? cardBrand(pan) ?? pending.brand : pending.brand;
+    const brand = pan ? cardBrand(pan) ?? method.brand : method.brand;
     const last4 = extractLast4FromLabel(label);
     const duplicate = last4
-      ? await storage.findActiveCardDuplicate(pending.userId, last4, brand, pending.id)
+      ? await storage.findActiveCardDuplicate(method.userId, last4, brand, method.id)
       : undefined;
     if (duplicate) {
-      log(`[tbank] rejected duplicate-card bind attempt userId=${pending.userId} last4=${last4}`, "tbank");
-      await storage.updatePaymentMethod(pending.id, {
+      log(`[tbank] rejected duplicate-card bind attempt userId=${method.userId} last4=${last4}`, "tbank");
+      await storage.updatePaymentMethod(method.id, {
         status: "failed",
         lastErrorCode: "DUPLICATE_CARD",
         lastErrorMessage: "Эта карта уже привязана к вашему аккаунту.",
@@ -400,10 +410,10 @@ export async function handleAddCardNotification(body: Record<string, unknown>): 
       });
       return;
     }
-    await storage.updatePaymentMethod(pending.id, {
+    await storage.updatePaymentMethod(method.id, {
       status: "active",
-      cardId: cardId || pending.cardId,
-      rebillId: rebillId || pending.rebillId,
+      cardId: cardId || method.cardId,
+      rebillId: rebillId || method.rebillId,
       label,
       brand,
       // AddCard binds with no charge — nothing to refund.
@@ -416,7 +426,7 @@ export async function handleAddCardNotification(body: Record<string, unknown>): 
     // An explicit rejection (or Success=false) ends the binding. Persist the
     // acquirer's error fields so the rider/support can see *why* — never a
     // secret, these come straight from T-Bank.
-    await storage.updatePaymentMethod(pending.id, {
+    await storage.updatePaymentMethod(method.id, {
       status: "failed",
       ...bindingErrorPatch(body),
     });
