@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type MouseEvent } from "react";
 import { OverlayShell } from "@/components/OverlayShell";
 import { INFO_CATEGORIES, PRIVACY_DOCS, RIDING_DOCS, type InfoDoc } from "@/lib/info";
 import { LEGAL_DOCS } from "@/lib/legal";
@@ -18,6 +18,24 @@ const INFO_INLINE_REFERENCES = [
   { text: "«Политике конфиденциальности»", anchor: "legal-privacy" },
   { text: "«Правовые документы»", anchor: "legal" },
 ] as const;
+
+// Same-page links must only scroll. Letting the browser follow `#anchor` would
+// append an entry to history for every click, requiring extra Back presses.
+function scrollToAnchor(event: MouseEvent<HTMLAnchorElement>) {
+  if (
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  ) {
+    return;
+  }
+
+  event.preventDefault();
+  const anchor = event.currentTarget.hash.slice(1);
+  document.getElementById(anchor)?.scrollIntoView({ block: "start" });
+}
 
 function renderParagraph(
   paragraph: string,
@@ -41,6 +59,7 @@ function renderParagraph(
             {before}
             <a
               href={`#${reference.anchor}`}
+              onClick={scrollToAnchor}
               className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
             >
               {reference.text}
@@ -110,6 +129,7 @@ export function SafetyPage() {
             <li>
               <a
                 href="#riding"
+                onClick={scrollToAnchor}
                 data-testid="link-info-riding"
                 className="text-xl font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
               >
@@ -119,6 +139,7 @@ export function SafetyPage() {
             <li>
               <a
                 href="#privacy"
+                onClick={scrollToAnchor}
                 data-testid="link-info-privacy"
                 className="text-xl font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
               >
@@ -128,6 +149,7 @@ export function SafetyPage() {
             <li>
               <a
                 href="#autocharge-info"
+                onClick={scrollToAnchor}
                 data-testid="link-info-autocharge"
                 className="text-xl font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
               >
@@ -137,6 +159,7 @@ export function SafetyPage() {
             <li>
               <a
                 href="#legal"
+                onClick={scrollToAnchor}
                 data-testid="link-info-legal"
                 className="text-xl font-medium leading-snug text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
               >

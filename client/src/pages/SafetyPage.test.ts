@@ -19,4 +19,13 @@ describe("SafetyPage auto-charge information", () => {
     expect(source).toContain('href="/legal#terms"');
     expect(source).toContain('href="/payment-methods"');
   });
+
+  it("scrolls internal anchors without adding browser history entries", () => {
+    expect(source).toContain("function scrollToAnchor");
+    expect(source).toContain("event.preventDefault();");
+    expect(source).toContain('document.getElementById(anchor)?.scrollIntoView({ block: "start" });');
+    expect(source).not.toContain("history.pushState");
+    expect(source).not.toContain("navigate(");
+    expect(source.match(/onClick=\{scrollToAnchor\}/g)).toHaveLength(5);
+  });
 });
