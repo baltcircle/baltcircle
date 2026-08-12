@@ -339,6 +339,14 @@ CREATE TABLE IF NOT EXISTS locks (
   last_seen_at BIGINT,
   last_battery_voltage NUMERIC,
   last_signal_strength INTEGER,
+  last_lock_state TEXT,
+  last_latitude NUMERIC,
+  last_longitude NUMERIC,
+  last_location_at BIGINT,
+  ble_key TEXT,
+  device_type_code TEXT,
+  last_alarm_type TEXT,
+  last_alarm_at BIGINT,
   notes TEXT,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
@@ -438,6 +446,18 @@ async function runMigrations() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at BIGINT;`);
   await pool.query(`ALTER TABLE parkings ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';`);
   await pool.query(`ALTER TABLE support_conversations ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'bot';`);
+  for (const col of [
+    "last_lock_state TEXT",
+    "last_latitude NUMERIC",
+    "last_longitude NUMERIC",
+    "last_location_at BIGINT",
+    "ble_key TEXT",
+    "device_type_code TEXT",
+    "last_alarm_type TEXT",
+    "last_alarm_at BIGINT",
+  ]) {
+    await pool.query(`ALTER TABLE locks ADD COLUMN IF NOT EXISTS ${col};`);
+  }
 
   // ---- OMNI smart-lock integration ----
   // Device registry lives on the bike: the TCP server maps an incoming IMEI to

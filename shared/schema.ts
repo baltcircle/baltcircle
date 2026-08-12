@@ -323,6 +323,11 @@ export const LOCK_STATUSES = [
 ] as const;
 export type LockStatus = (typeof LOCK_STATUSES)[number];
 
+// Connectivity/lifecycle status is deliberately separate from the physical
+// latch state reported by the device protocol.
+export const LOCK_STATES = ["locked", "unlocked"] as const;
+export type LockState = (typeof LOCK_STATES)[number];
+
 export const locks = pgTable("locks", {
   id: serial("id").primaryKey(),
   imei: text("imei").notNull(),
@@ -335,6 +340,15 @@ export const locks = pgTable("locks", {
   lastSeenAt: bigint("last_seen_at", { mode: "number" }),
   lastBatteryVoltage: numeric("last_battery_voltage", { mode: "number" }),
   lastSignalStrength: integer("last_signal_strength"),
+  // Gateway-owned telemetry from the Omni Horseshoe Lock TCP protocol.
+  lastLockState: text("last_lock_state"),
+  lastLatitude: numeric("last_latitude", { mode: "number" }),
+  lastLongitude: numeric("last_longitude", { mode: "number" }),
+  lastLocationAt: bigint("last_location_at", { mode: "number" }),
+  bleKey: text("ble_key"),
+  deviceTypeCode: text("device_type_code"),
+  lastAlarmType: text("last_alarm_type"),
+  lastAlarmAt: bigint("last_alarm_at", { mode: "number" }),
   notes: text("notes"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
@@ -346,11 +360,10 @@ export const locks = pgTable("locks", {
 export type Lock = typeof locks.$inferSelect;
 
 const optionalText = (max: number) => z.union([z.string().trim().max(max), z.literal("")]).optional();
-const optionalPositiveInt = z.number().int().positive().optional();
-const optionalFiniteNumber = z.number().finite().optional();
 
 // Admin registry creation accepts provisioning/inspection metadata, while
-// server-owned id and audit timestamps are never client-controlled.
+// gateway-owned telemetry, server-owned id, and audit timestamps are never
+// client-controlled.
 export const adminCreateLockSchema = z.object({
   imei: lockImeiSchema,
   macAddress: optionalText(64),
@@ -359,9 +372,6 @@ export const adminCreateLockSchema = z.object({
   firmwareVersion: optionalText(100),
   apn: optionalText(100),
   status: z.enum(LOCK_STATUSES).optional(),
-  lastSeenAt: optionalPositiveInt,
-  lastBatteryVoltage: optionalFiniteNumber,
-  lastSignalStrength: z.number().int().optional(),
   notes: optionalText(2_000),
 });
 export type AdminCreateLockInput = z.infer<typeof adminCreateLockSchema>;

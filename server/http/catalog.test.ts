@@ -134,11 +134,19 @@ describe("lock device registry admin CRUD", () => {
     bikeId: "BC-100",
     status: "installed",
     apn: "cmiot",
+    lastLockState: null,
+    lastLatitude: null,
+    lastLongitude: null,
+    lastLocationAt: null,
+    bleKey: null,
+    deviceTypeCode: null,
+    lastAlarmType: null,
+    lastAlarmAt: null,
     createdAt: 1_700_000_000_000,
     updatedAt: 1_700_000_000_000,
   };
 
-  it("lists registered locks with their status and bike binding", async () => {
+  it("lists registered locks including null protocol telemetry", async () => {
     sessionUserId = operator.id;
     storageMock.getUser.mockResolvedValue(operator);
     storageMock.listLocks.mockResolvedValue([registeredLock]);
@@ -150,7 +158,7 @@ describe("lock device registry admin CRUD", () => {
     expect(storageMock.listLocks).toHaveBeenCalledOnce();
   });
 
-  it("registers a lock with IMEI required and optional metadata", async () => {
+  it("registers a lock with IMEI required and keeps protocol telemetry gateway-owned", async () => {
     sessionUserId = operator.id;
     storageMock.getUser.mockResolvedValue(operator);
     storageMock.createLock.mockResolvedValue({ lock: registeredLock });
@@ -159,6 +167,14 @@ describe("lock device registry admin CRUD", () => {
       imei: registeredLock.imei,
       bikeId: registeredLock.bikeId,
       status: registeredLock.status,
+      lastLockState: "locked",
+      lastLatitude: 54.7104,
+      lastLongitude: 20.4522,
+      lastLocationAt: 1_700_000_000_000,
+      bleKey: "12345678",
+      deviceTypeCode: "C4",
+      lastAlarmType: "fall",
+      lastAlarmAt: 1_700_000_000_000,
     });
 
     expect(res.status).toBe(201);
