@@ -19,6 +19,7 @@ vi.mock("../db/bootstrap", () => ({
 import { OmniTcpServer, type OmniServerOptions } from "./server";
 import { MockLock } from "./mockLock";
 import { TelemetryWriter, type BikeLiveUpdate, type OmniStore, type TelemetryRow } from "./store";
+import type { OmniMessage } from "@shared/omni/protocol";
 
 const IMEI_A = "861234567890123";
 const IMEI_B = "861234567890124";
@@ -29,6 +30,8 @@ class FakeStore implements OmniStore {
   readonly telemetry: TelemetryRow[] = [];
   readonly live: BikeLiveUpdate[] = [];
   readonly onlineCalls: { imei: string; online: boolean }[] = [];
+  readonly offlineSweeps: number[] = [];
+  readonly locks = new Map<string, Record<string, unknown>>();
   resetCount = 0;
   /** Set to make findBikeIdByImei throw, simulating a database outage. */
   lookupError: Error | null = null;
@@ -65,6 +68,35 @@ class FakeStore implements OmniStore {
 
   async resetAllLocksOffline(): Promise<void> {
     this.resetCount++;
+  }
+
+  async markLocksOfflineBefore(before: number): Promise<void> {
+    this.offlineSweeps.push(before);
+  }
+
+  async persistLockReport(imei: string, message: OmniMessage, at: number): Promise<void> {
+    const row = this.locks.get(imei) ?? {};
+    Object.assign(row, { status: "active", lastSeenAt: at });
+    switch (message.type) {
+      case "checkin": Object.assign(row, { lastBatteryVoltage: message.voltageCv / 100 }); break;
+      case "heartbeat": Object.assign(row, {
+        lastLockState: message.locked ? "locked" : "unlocked",
+        lastBatteryVoltage: message.voltageCv / 100,
+        lastSignalStrength: message.signal,
+      }); break;
+      case "position":
+        if (message.fix) Object.assign(row, { lastLatitude: message.fix.lat, lastLongitude: message.fix.lng, lastLocationAt: at });
+        break;
+      case "alarm": Object.assign(row, {
+        lastAlarmType: ({ 1: "illegal_movement", 2: "fall", 6: "fall_cleared" } as Record<number, string>)[message.code] ?? String(message.code),
+        lastAlarmAt: at,
+      }); break;
+      case "lockReport": Object.assign(row, { lastLockState: "locked" }); break;
+      case "firmware": Object.assign(row, { firmwareVersion: message.firmwareVersion, deviceTypeCode: message.deviceTypeCode }); break;
+      case "iccid": Object.assign(row, { simIccid: message.simIccid }); break;
+      case "mac": Object.assign(row, { macAddress: message.macAddress }); break;
+    }
+    this.locks.set(imei, row);
   }
 
   rowsFor(cmd: string): TelemetryRow[] {
@@ -427,6 +459,52 @@ describe("acknowledgements", () => {
     expect(await device.nextCommand()).toEqual({ cmd: "L0", params: ["1", "1234", "1497689816"] });
 
     expect(server.sendToDevice(IMEI_B, "S5")).toBe(false);
+  });
+});
+
+describe("Phase 2 lock registry projection", () => {
+  it("runs a ten-minute stale-presence sweep in the background", async () => {
+    const { store } = await harness({ offlineAfterMs: 10 * 60_000, offlineSweepIntervalMs: 5 });
+    await waitFor(() => store.offlineSweeps.length > 0);
+    expect(Date.now() - store.offlineSweeps[0]).toBeGreaterThanOrEqual(10 * 60_000 - 50);
+  });
+
+  it("updates lock metadata, GPS fields, and sends required acknowledgements from real TCP frames", async () => {
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    device.sendCheckin(401);
+    device.sendHeartbeat(false, 400, 27);
+    device.sendPosition(54.7104, 20.4522);
+    expect(await device.nextCommand()).toEqual({ cmd: "Re", params: ["D0"] });
+    device.sendAlarm(1);
+    expect(await device.nextCommand()).toEqual({ cmd: "Re", params: ["W0"] });
+    device.sendRaw(device.packet("G0", ["OC32_V2.0.7", "Aug 3 2024"]));
+    device.sendRaw(device.packet("I0", ["8986001234567890123"]));
+    device.sendRaw(device.packet("M0", ["12:34:56:78:90:AB"]));
+    device.sendRaw(device.packet("L1", ["7", "1710000000", "3"]));
+    expect(await device.nextCommand()).toEqual({ cmd: "Re", params: ["L1"] });
+
+    await waitFor(() => store.locks.get(IMEI_A)?.lastLockState === "locked");
+    expect(store.locks.get(IMEI_A)).toMatchObject({
+      status: "active", lastBatteryVoltage: 4, lastSignalStrength: 27,
+      lastLatitude: 54.7104, lastLongitude: 20.4522, lastAlarmType: "illegal_movement",
+      firmwareVersion: "V2.0.7", deviceTypeCode: "OC32",
+      simIccid: "8986001234567890123", macAddress: "12:34:56:78:90:AB",
+    });
+  });
+
+  it("correlates an L0 response with the outbound unlock request", async () => {
+    const { server, store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+    const unlock = server.sendUnlockCommand(IMEI_A, "1234");
+    const command = await device.nextCommand();
+    expect(command.cmd).toBe("L0");
+    expect(command.params.slice(0, 2)).toEqual(["0", "1234"]);
+    device.sendRaw(device.packet("L0", [0, command.params[1], command.params[2]]));
+    expect(await unlock).toEqual({ success: true });
+    expect(await device.nextCommand()).toEqual({ cmd: "Re", params: ["L0"] });
   });
 });
 

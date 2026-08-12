@@ -35,6 +35,10 @@ export interface OmniServerOptions {
   maxFrameBytes?: number;
   /** Minimum spacing between persisted positionless status rows, per bike. */
   statusMinIntervalMs?: number;
+  /** Mark an active lock offline after this quiet period. */
+  offlineAfterMs?: number;
+  /** How often to scan persisted lock presence. */
+  offlineSweepIntervalMs?: number;
   writer?: TelemetryWriterOptions;
 }
 
@@ -71,6 +75,12 @@ export class OmniTcpServer {
   private readonly pending = new Set<OmniConnection>();
   private readonly imeiCache = new Map<string, CacheEntry>();
   private readonly lastStatusWrite = new Map<string, number>();
+  private readonly pendingUnlocks = new Map<string, {
+    resolve: (value: { success: boolean }) => void;
+    reject: (reason: Error) => void;
+    timer: NodeJS.Timeout;
+  }>();
+  private offlineSweepTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly options: OmniServerOptions) {
     this.log = options.logger.child({ module: "omni-tcp" });
@@ -82,6 +92,8 @@ export class OmniTcpServer {
       handshakeTimeoutMs: options.handshakeTimeoutMs ?? 60_000,
       maxFrameBytes: options.maxFrameBytes ?? 4096,
       statusMinIntervalMs: options.statusMinIntervalMs ?? 60_000,
+      offlineAfterMs: options.offlineAfterMs ?? 10 * 60_000,
+      offlineSweepIntervalMs: options.offlineSweepIntervalMs ?? 60_000,
     };
 
     this.writer = new TelemetryWriter(options.store, {
@@ -119,6 +131,8 @@ export class OmniTcpServer {
       { port: this.port, host: this.opts.host, maxConnections: this.opts.maxConnections },
       "OMNI lock TCP server listening",
     );
+    this.offlineSweepTimer = setInterval(() => void this.sweepOfflineLocks(), this.opts.offlineSweepIntervalMs);
+    this.offlineSweepTimer.unref?.();
   }
 
   /**
@@ -131,7 +145,38 @@ export class OmniTcpServer {
     return conn.send(buildServerPacket({ imei, cmd, params }));
   }
 
+  /** Send L0 and resolve when the lock echoes the same user/timestamp tuple. */
+  sendUnlockCommand(imei: string, userId: string | number): Promise<{ success: boolean }> {
+    const conn = this.byImei.get(imei);
+    if (!conn) return Promise.reject(new Error("lock is not connected"));
+    const user = String(userId);
+    if (!/^\d+$/.test(user)) return Promise.reject(new Error("user id must be an unsigned integer"));
+    const seconds = Math.floor(Date.now() / 1000);
+    const key = unlockKey(imei, user, seconds);
+    if (this.pendingUnlocks.has(key)) return Promise.reject(new Error("unlock command already pending"));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingUnlocks.delete(key);
+        reject(new Error("unlock command timed out"));
+      }, 15_000);
+      timer.unref?.();
+      this.pendingUnlocks.set(key, { resolve, reject, timer });
+      if (!conn.send(buildServerPacket({ imei, cmd: "L0", params: [0, user, seconds] }))) {
+        clearTimeout(timer);
+        this.pendingUnlocks.delete(key);
+        reject(new Error("lock socket is not writable"));
+      }
+    });
+  }
+
   async close(): Promise<void> {
+    if (this.offlineSweepTimer !== null) clearInterval(this.offlineSweepTimer);
+    this.offlineSweepTimer = null;
+    this.pendingUnlocks.forEach((pending, key) => {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("gateway is shutting down"));
+      this.pendingUnlocks.delete(key);
+    });
     // Sockets first: net.Server.close() only invokes its callback once every
     // connection has ended, so closing before tearing down the live locks would
     // never resolve.
@@ -160,8 +205,17 @@ export class OmniTcpServer {
 
   /** @internal Called by a connection once it has a valid frame with an IMEI. */
   async bind(conn: OmniConnection, imei: string): Promise<boolean> {
-    const bikeId = await this.resolveBike(imei);
-    if (bikeId === null) {
+    // The gateway registry is keyed by lock IMEI. First contact deliberately
+    // creates a `locks` row, even when the physical lock has not been assigned
+    // to a bike yet; only GPS telemetry needs a bike_id.
+    const registryEnabled = Boolean(this.options.store.ensureLock);
+    const bikeId = registryEnabled
+      ? await this.options.store.ensureLock!(imei, Date.now())
+      : await this.resolveBike(imei);
+    // Keep the pre-Phase-2 fake-store contract (and any legacy deployment that
+    // has not opted into the locks registry) fail-closed. PgOmniStore enables
+    // `ensureLock`, for which an unassigned bike is a valid registry state.
+    if (!registryEnabled && bikeId === null) {
       this.log.warn({ imei, remote: conn.remote }, "rejecting unregistered lock IMEI");
       conn.destroy("unknown_imei");
       return false;
@@ -211,16 +265,32 @@ export class OmniTcpServer {
 
     this.byImei.delete(conn.imei);
     const imei = conn.imei;
+    this.pendingUnlocks.forEach((pending, key) => {
+      if (!key.startsWith(`${imei}:`)) return;
+      clearTimeout(pending.timer);
+      this.pendingUnlocks.delete(key);
+      pending.reject(new Error(`lock disconnected: ${reason}`));
+    });
     this.options.store.setLockOnline(imei, false, Date.now())
       .catch((err) => this.log.error({ err, imei }, "failed to mark lock offline"));
     this.log.info({ imei, bikeId: conn.bikeId, connId: conn.id, reason }, "lock disconnected");
   }
 
   /** @internal */
-  record(conn: OmniConnection, message: OmniMessage, receivedAt: number): void {
+  async record(conn: OmniConnection, message: OmniMessage, receivedAt: number): Promise<void> {
     const bikeId = conn.bikeId;
     const imei = conn.imei;
-    if (!bikeId || !imei) return;
+    if (!imei) return;
+
+    if (this.options.store.persistLockReport) {
+      try {
+        await this.options.store.persistLockReport(imei, message, receivedAt);
+      } catch (err) {
+        this.log.error({ err, imei, type: message.type }, "failed to persist lock report");
+      }
+    }
+    if (message.type === "unlockResult") this.resolveUnlock(imei, message);
+    if (!bikeId) return;
 
     const built = buildTelemetry(bikeId, imei, message, receivedAt);
     if (!built) return;
@@ -234,6 +304,25 @@ export class OmniTcpServer {
     }
 
     this.writer.add(built.row, built.live);
+  }
+
+  private resolveUnlock(imei: string, message: Extract<OmniMessage, { type: "unlockResult" }>): void {
+    if (message.at === null) return;
+    const key = unlockKey(imei, message.userId, Math.floor(message.at / 1000));
+    const pending = this.pendingUnlocks.get(key);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingUnlocks.delete(key);
+    pending.resolve({ success: message.success });
+  }
+
+  private async sweepOfflineLocks(): Promise<void> {
+    if (!this.options.store.markLocksOfflineBefore) return;
+    try {
+      await this.options.store.markLocksOfflineBefore(Date.now() - this.opts.offlineAfterMs);
+    } catch (err) {
+      this.log.warn({ err }, "failed to sweep stale locks offline");
+    }
   }
 
   private async resolveBike(imei: string): Promise<string | null> {
@@ -325,7 +414,7 @@ class OmniConnection {
     return this.closed;
   }
 
-  attach(imei: string, bikeId: string): void {
+  attach(imei: string, bikeId: string | null): void {
     this.imei = imei;
     this.bikeId = bikeId;
     this.clearHandshakeTimer();
@@ -421,7 +510,7 @@ class OmniConnection {
       { connId: this.id, imei: this.imei, bikeId: this.bikeId, cmd: frame.cmd },
       "lock report",
     );
-    this.server.record(this, decoded.message, receivedAt);
+    await this.server.record(this, decoded.message, receivedAt);
 
     const ack = buildAck(frame.imei, frame.cmd, receivedAt);
     if (ack) this.send(ack);
@@ -500,7 +589,7 @@ export function buildTelemetry(
       // A "no fix" report is real information (the lock is awake but blind) but
       // has nothing to plot, so it is stored as a throttleable status row.
       if (!message.valid || !message.fix) {
-        return { row: emptyRow(bikeId, imei, "D0", receivedAt), throttleable: true };
+        return { row: emptyRow(bikeId, imei, message.cmd, receivedAt), throttleable: true };
       }
       const fix = message.fix;
       // Trust the GPS clock only when it is plausible; a lock that has not got
@@ -510,7 +599,7 @@ export function buildTelemetry(
         : receivedAt;
 
       const { x, y } = realToMap(fix.lat, fix.lng);
-      const row = emptyRow(bikeId, imei, "D0", fixedAt);
+      const row = emptyRow(bikeId, imei, message.cmd, fixedAt);
       row.lat = fix.lat;
       row.lng = fix.lng;
       row.x = x;
@@ -529,6 +618,9 @@ export function buildTelemetry(
 
     case "unlockResult":
     case "lockReport":
+    case "firmware":
+    case "iccid":
+    case "mac":
     case "other":
       // Rental lifecycle and the auxiliary command set (upgrade, BLE key, RFID,
       // beacon) are acknowledged and logged but are not position/battery
@@ -539,4 +631,8 @@ export function buildTelemetry(
 
 function truncate(text: string, max = 200): string {
   return text.length <= max ? text : `${text.slice(0, max)}...`;
+}
+
+function unlockKey(imei: string, userId: string, timestampSeconds: number): string {
+  return `${imei}:${userId}:${timestampSeconds}`;
 }

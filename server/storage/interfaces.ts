@@ -157,6 +157,7 @@ export interface IBikeStorage {
 export interface ILockStorage {
   listLocks(): Promise<Lock[]>;
   createLock(input: AdminCreateLockInput): Promise<{ lock: Lock } | { error: string }>;
+  getLock(id: number): Promise<Lock | undefined>;
   updateLock(id: number, patch: AdminUpdateLockInput): Promise<{ lock: Lock } | { error: string }>;
   decommissionLock(id: number): Promise<{ lock: Lock } | { error: string }>;
 }

@@ -48,7 +48,7 @@ function parseArgs(argv: string[]): Args {
   return {
     imeis,
     host: flags.get("host") ?? "127.0.0.1",
-    port: num("port", Number(process.env.OMNI_TCP_PORT) || 5100),
+    port: num("port", Number(process.env.LOCK_GATEWAY_PORT) || 5100),
     intervalMs: num("interval", 10_000),
     // Central Svetlogorsk, inside the operating zone this fleet runs in.
     lat: num("lat", 54.9442),

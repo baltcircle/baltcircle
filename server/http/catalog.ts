@@ -32,6 +32,7 @@ import {
   maskPan, cardBrand,
 } from "./../payments/tbank-handlers";
 import { log } from "./../index";
+import { getLockGateway } from "../omni/gateway";
 import {
   riderId, isStaffSession, canManageRide, actorName, clientIp,
   requireRole, requireAuth, requireRoleWhenConfigured,
@@ -196,6 +197,27 @@ export function registerCatalogRoutes(app: Express): void {
     const result = await storage.createLock(parsed.data);
     if ("error" in result) return res.status(result.error.includes("IMEI") ? 409 : 404).json(result);
     res.status(201).json(result.lock);
+  });
+  // Pilot-only operational control. The TCP process keeps the live socket
+  // registry, so a request is deliberately refused rather than queued if the
+  // particular lock is not currently connected.
+  app.post("/api/admin/locks/:id/unlock", requireRole("operator", "admin"), async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id < 1) return res.status(404).json({ error: "Замок не найден" });
+    const lock = await storage.getLock(id);
+    if (!lock) return res.status(404).json({ error: "Замок не найден" });
+    const gateway = getLockGateway();
+    if (!gateway) return res.status(503).json({ error: "Шлюз замков недоступен" });
+    const userId = z.coerce.string().regex(/^\d{1,10}$/).safeParse(req.body?.userId);
+    if (!userId.success) return res.status(400).json({ error: "Укажите числовой ID пользователя замка" });
+    try {
+      const result = await gateway.sendUnlockCommand(lock.imei, userId.data);
+      if (!result.success) return res.status(409).json({ error: "Замок отклонил разблокировку" });
+      res.json({ ok: true });
+    } catch (err) {
+      log(`manual lock unlock failed: ${(err as Error).message}`);
+      res.status(503).json({ error: "Замок не подключен или не ответил" });
+    }
   });
   app.patch("/api/admin/locks/:id", requireRole("operator", "admin"), async (req, res) => {
     const id = Number(req.params.id);

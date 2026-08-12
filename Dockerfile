@@ -66,6 +66,7 @@ COPY --from=build --chown=node:node /app/dist ./dist
 RUN mkdir -p /app/uploads && chown -R node:node /app/uploads
 USER node
 EXPOSE 5000
+EXPOSE 5100
 # Liveness probe against the lightweight public catalog endpoint (audit M4). Uses
 # node's built-in http client so no extra package is needed (curl is purged above).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

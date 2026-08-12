@@ -208,7 +208,7 @@ describe("payload decoding", () => {
   it("treats the documented invalid-fix report as valid framing with no position", () => {
     // §1.3.5 note 2 — empty coordinate fields, status V.
     const message = decode(`*CMDR,OM,${IMEI},200318123020,D0,0,033724.00,V,,,,,,,120517,,,N#`);
-    expect(message).toEqual({ type: "position", tracking: false, valid: false, fix: null });
+    expect(message).toEqual({ type: "position", cmd: "D0", tracking: false, valid: false, fix: null });
   });
 
   it("flags a tracking-mode position report", () => {
@@ -216,6 +216,14 @@ describe("payload decoding", () => {
       `*CMDR,OM,${IMEI},200318123020,D0,1,124458.00,A,2237.7514,N,11408.6214,E,6,0.21,151216,10,M,A#`,
     );
     expect(message.type === "position" && message.tracking).toBe(true);
+  });
+
+  it("accepts a D1 GPS-shaped tracking upload as a position", () => {
+    const message = decode(
+      `*CMDR,OM,${IMEI},200318123020,D1,1,124458.00,A,2237.7514,N,11408.6214,E,6,0.21,151216,10,M,A#`,
+    );
+    expect(message.type).toBe("position");
+    expect(message.type === "position" && message.cmd).toBe("D1");
   });
 
   it("rejects a D0 with too few fields or impossible coordinates", () => {
@@ -243,13 +251,13 @@ describe("payload decoding", () => {
     expect(decode(`*CMDR,OM,${IMEI},200318123020,W0,1#`)).toEqual({ type: "alarm", code: 1 });
   });
 
-  it("keeps unmodelled commands as generic frames instead of failing", () => {
-    // The auxiliary command set (upgrade/BLE key/RFID/beacon) must not break
-    // the connection just because we do not act on it.
+  it("decodes lock registry metadata without breaking auxiliary commands", () => {
     expect(decode(`*CMDR,OM,${IMEI},200318123020,I0,123456789AB123456789#`))
-      .toEqual({ type: "other", cmd: "I0", params: ["123456789AB123456789"] });
+      .toEqual({ type: "iccid", simIccid: "123456789AB123456789" });
     expect(decode(`*CMDR,OM,${IMEI},200318123020,G0,XX_110,Jul 4 2018#`))
-      .toEqual({ type: "other", cmd: "G0", params: ["XX_110", "Jul 4 2018"] });
+      .toEqual({ type: "firmware", deviceTypeCode: "XX", firmwareVersion: "110" });
+    expect(decode(`*CMDR,OM,${IMEI},200318123020,U0,A1,110,1101#`))
+      .toEqual({ type: "other", cmd: "U0", params: ["A1", "110", "1101"] });
   });
 });
 

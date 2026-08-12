@@ -1274,6 +1274,10 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
+  async getLock(id: number): Promise<Lock | undefined> {
+    return (await db.select().from(locks).where(eq(locks.id, id)).limit(1))[0] as Lock | undefined;
+  }
+
   async updateLock(id: number, patch: AdminUpdateLockInput): Promise<{ lock: Lock } | { error: string }> {
     const existing = (await db.select().from(locks).where(eq(locks.id, id)).limit(1))[0] as Lock | undefined;
     if (!existing) return { error: "Замок не найден" };

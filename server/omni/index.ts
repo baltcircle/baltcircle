@@ -14,6 +14,7 @@ import { bootstrapReady, pool } from "../db/bootstrap";
 import { logger } from "../logger";
 import { OmniTcpServer } from "./server";
 import { PgOmniStore } from "./store";
+import { setLockGateway } from "./gateway";
 
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -34,8 +35,8 @@ async function main(): Promise<void> {
   const server = new OmniTcpServer({
     store: new PgOmniStore(),
     logger,
-    port: envInt("OMNI_TCP_PORT", 5100),
-    host: process.env.OMNI_TCP_HOST || "0.0.0.0",
+    port: envInt("LOCK_GATEWAY_PORT", 5100),
+    host: process.env.LOCK_GATEWAY_HOST || "0.0.0.0",
     maxConnections: envInt("OMNI_MAX_CONNECTIONS", 500),
     idleTimeoutMs: envInt("OMNI_IDLE_TIMEOUT_MS", 15 * 60_000),
     statusMinIntervalMs: envInt("OMNI_STATUS_MIN_INTERVAL_MS", 60_000),
@@ -46,6 +47,7 @@ async function main(): Promise<void> {
   });
 
   await server.listen();
+  setLockGateway(server);
 
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
@@ -56,6 +58,7 @@ async function main(): Promise<void> {
       // close() flushes buffered telemetry before the process exits, so a
       // deploy does not lose the last few seconds of reports.
       await server.close();
+      setLockGateway(null);
       await pool.end();
     } catch (err) {
       logger.error({ err }, "error during shutdown");
