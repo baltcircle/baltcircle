@@ -148,6 +148,52 @@ describe("payment-method unlink", () => {
     expect(res.code).toBe(200);
     expect(res.body).toEqual({ ok: true, cancelled: false });
   });
+
+  it("removes a live pending Init binding before the next bind guard can inspect it", async () => {
+    const { del, post } = routeApp();
+    let rows = [{
+      id: 153, userId: "user-1", provider: "tbank", type: "card", status: "pending",
+      requestKey: null, paymentId: "payment-153", cardId: null, customerKey: "user-1",
+      label: "Карта (привязывается…)",
+    }];
+    storageMock.getPaymentMethod.mockImplementation(async (id: number) => (
+      rows.find((method) => method.id === id)
+    ));
+    storageMock.listPaymentMethods.mockImplementation(async (userId: string) => (
+      rows.filter((method) => method.userId === userId)
+    ));
+    storageMock.unlinkPaymentMethod.mockImplementation(async (userId: string, id: number) => {
+      const before = rows.length;
+      rows = rows.filter((method) => method.userId !== userId || method.id !== id);
+      return rows.length !== before;
+    });
+    // This is the exact production state: the bank still reports NEW, but the
+    // rider's timed-out/manual pending cleanup must remove the local lock.
+    tbankMock.tbankGetState.mockResolvedValue({ Success: true, Status: "NEW", ErrorCode: "0" });
+
+    const deleteRes = response();
+    await del.get("/api/payment-methods/:id")!(
+      {
+        session: { userId: "user-1" }, params: { id: "153" }, query: { pendingOnly: "1" },
+        headers: {}, ip: "203.0.113.10", socket: {},
+      },
+      deleteRes,
+    );
+
+    expect(deleteRes.code).toBe(200);
+    expect(deleteRes.body).toEqual({ ok: true, cancelled: true });
+    expect(storageMock.unlinkPaymentMethod).toHaveBeenCalledWith("user-1", 153);
+    expect(rows).toEqual([]);
+
+    const bindRes = response();
+    await post.get("/api/payments/tbank/bind-card")!(
+      { session: { userId: "user-1" } },
+      bindRes,
+    );
+
+    expect(bindRes.code).toBe(200);
+    expect(bindViaVerificationPaymentMock).toHaveBeenCalled();
+  });
 });
 
 describe("T-Bank polling activation duplicate protection", () => {

@@ -320,6 +320,28 @@ describe("handleTbankNotification routing", () => {
     expect(logMock).toHaveBeenCalledWith(expect.stringContaining("WARN"), "tbank");
   });
 
+  it("does not resurrect a manually removed Init binding when its delayed notification arrives", async () => {
+    // A successful DELETE hard-removes the row. The delayed webhook must only
+    // correlate an existing row and never create or re-mark a pending method.
+    storageMock.getRidePaymentOrder.mockResolvedValue(undefined);
+    storageMock.findCardMethodByOrderId.mockResolvedValue(undefined);
+    storageMock.findMethodByRequestKey.mockResolvedValue(undefined);
+    storageMock.findPendingCardMethod.mockResolvedValue(undefined);
+
+    await handleTbankNotification({
+      OrderId: "bind-153",
+      PaymentId: "payment-153",
+      Status: "CONFIRMED",
+      RebillId: "rebill-153",
+      CardId: "card-153",
+      CustomerKey: "user-1",
+    }, makeCfg());
+
+    expect(storageMock.findCardMethodByOrderId).toHaveBeenCalledWith("bind-153");
+    expect(storageMock.updatePaymentMethod).not.toHaveBeenCalled();
+    expect(storageMock.createPendingBindPayment).not.toHaveBeenCalled();
+  });
+
   it("still processes a real, known order normally when both an unmatched-style Amount and a genuine OrderId are present", async () => {
     // Sanity check that the new unmatched-notification guard does not regress the
     // existing, legitimate path: a notification for an order that DOES exist
