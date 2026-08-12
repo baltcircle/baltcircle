@@ -311,19 +311,32 @@ export function registerPaymentRoutes(app: Express): void {
     if (!method || method.userId !== userId) {
       return res.status(404).json({ error: "Способ оплаты не найден" });
     }
-    // The client uses this same path as a three-minute safety check. A local
-    // timer must never delete a card while T-Bank still has a live 3DS/form
-    // session: reconcile first, then keep the terminal active/failed row for
-    // the normal UI lifecycle instead of erasing evidence of the outcome.
+    // The client uses this same path as a three-minute safety check. Reconcile
+    // first so a webhook/poll which has just resolved the method to active or
+    // failed wins over stale client data. A row that is STILL pending is an
+    // explicit cancellation: hard-delete the local lock even if T-Bank reports
+    // a live form/3DS session. Otherwise DELETE would return 200 while leaving
+    // the exact pending row that the next bind guard blocks on.
     if (req.query?.pendingOnly === "1" && method.status !== "pending") {
       return res.json({ ok: true, cancelled: false });
     }
     if (req.query?.pendingOnly === "1" && method.status === "pending"
       && method.type === "card" && method.provider === "tbank") {
       const cfg = getTbankConfig();
-      if (!cfg) return res.json({ ok: true, cancelled: false });
-      await reconcilePendingCardBinding(method, cfg);
-      return res.json({ ok: true, cancelled: false });
+      if (cfg) await reconcilePendingCardBinding(method, cfg);
+
+      // Re-read after reconciliation: do not remove a card which was just
+      // activated/failed, but do remove a row still pending (including NEW).
+      // `unlinkPaymentMethod` is a completed hard delete before its promise
+      // resolves; handlers only update correlated existing rows and never
+      // recreate one, so a delayed T-Bank notification cannot resurrect it.
+      const current = await storage.getPaymentMethod(method.id);
+      if (!current) return res.json({ ok: true, cancelled: true });
+      if (current.status !== "pending") return res.json({ ok: true, cancelled: false });
+
+      const result = await unlinkPaymentMethodForUser(userId, current, clientIp(req));
+      if (!result.ok) return res.status(result.status).json({ error: result.error });
+      return res.json({ ok: true, cancelled: true });
     }
     const result = await unlinkPaymentMethodForUser(userId, method, clientIp(req));
     if (!result.ok) return res.status(result.status).json({ error: result.error });

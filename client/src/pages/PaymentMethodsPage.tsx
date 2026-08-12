@@ -245,10 +245,10 @@ export function PaymentMethodsPage() {
       if (!timedOutBindingIds.current.has(method.id)) {
         timedOutBindingIds.current.add(method.id);
         // This is only a secondary safety check. For T-Bank cards the server
-        // first synchronously asks GetAddCardState/GetState and refuses to
-        // delete a genuinely live bank-side form/3DS session; a terminal
-        // outcome becomes active/failed and is shown on the next list refresh.
-        // The legacy/SBP cleanup remains idempotent. Do not show a speculative
+        // first synchronously asks GetAddCardState/GetState: a just-resolved
+        // active/failed row is retained, while a still-pending row is
+        // explicitly cancelled so it cannot remain a local bind lock. The
+        // legacy/SBP cleanup remains idempotent. Do not show a speculative
         // timeout failure before the authoritative response says it failed.
         void cancelTimedOutPendingMethod(method)
           .then(() => queryClient.invalidateQueries({ queryKey: METHODS_KEY }))
