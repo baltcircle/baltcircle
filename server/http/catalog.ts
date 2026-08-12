@@ -11,7 +11,7 @@ import {
   adminCreateBikeSchema, adminUpdateBikeSchema,
   createTicketSchema, updateTicketSchema, addTicketCommentSchema,
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
-  UNASSIGNED_LOCK_TTL_MS,
+  UNASSIGNED_LOCK_TTL_MS, adminCreateLockSchema, adminUpdateLockSchema,
 } from "@shared/schema";
 import type { PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
 import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./../sms";
@@ -179,6 +179,42 @@ export function registerCatalogRoutes(app: Express): void {
   app.get("/api/admin/locks/unassigned", requireRole("operator", "admin"), async (_req, res) => {
     const seenSince = Date.now() - UNASSIGNED_LOCK_TTL_MS;
     res.json(await storage.listUnassignedLocks(seenSince));
+  });
+
+  // -------------- Admin: lock device registry (Phase 1) --------------
+  // This only owns registered-device metadata. The OMNI TCP gateway is
+  // intentionally outside this API and will update telemetry in a later phase.
+  app.get("/api/admin/locks", requireRole("operator", "admin"), async (_req, res) => {
+    res.json(await storage.listLocks());
+  });
+  app.post("/api/admin/locks", requireRole("operator", "admin"), async (req, res) => {
+    const parsed = adminCreateLockSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+    const result = await storage.createLock(parsed.data);
+    if ("error" in result) return res.status(result.error.includes("IMEI") ? 409 : 404).json(result);
+    res.status(201).json(result.lock);
+  });
+  app.patch("/api/admin/locks/:id", requireRole("operator", "admin"), async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id < 1) return res.status(404).json({ error: "Замок не найден" });
+    const parsed = adminUpdateLockSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+    const result = await storage.updateLock(id, parsed.data);
+    if ("error" in result) return res.status(404).json(result);
+    res.json(result.lock);
+  });
+  app.delete("/api/admin/locks/:id", requireRole("operator", "admin"), async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id < 1) return res.status(404).json({ error: "Замок не найден" });
+    const result = await storage.decommissionLock(id);
+    if ("error" in result) return res.status(404).json(result);
+    res.json(result.lock);
   });
   app.post("/api/admin/bikes/:id/archive", requireRole("operator", "admin"), async (req, res) => {
     const result = await storage.archiveBike(String(req.params.id));

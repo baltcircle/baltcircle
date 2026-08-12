@@ -12,6 +12,10 @@ import type { Server } from "node:http";
 const storageMock = vi.hoisted(() => ({
   getUser: vi.fn(),
   listUnassignedLocks: vi.fn(),
+  listLocks: vi.fn(),
+  createLock: vi.fn(),
+  updateLock: vi.fn(),
+  decommissionLock: vi.fn(),
 }));
 
 vi.mock("../storage", () => ({
@@ -33,6 +37,7 @@ import { registerCatalogRoutes } from "./catalog";
 let sessionUserId: string | null = null;
 
 const app = express();
+app.use(express.json());
 app.use((req, _res, next) => {
   (req as any).session = sessionUserId ? { userId: sessionUserId } : {};
   next();
@@ -61,6 +66,16 @@ beforeEach(() => {
 async function getLocks(): Promise<{ status: number; body: any }> {
   if (!server) await start();
   const res = await fetch(`${baseUrl}/api/admin/locks/unassigned`);
+  return { status: res.status, body: await res.json() };
+}
+
+async function lockRequest(path: string, method = "GET", body?: unknown): Promise<{ status: number; body: any }> {
+  if (!server) await start();
+  const res = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
   return { status: res.status, body: await res.json() };
 }
 
@@ -108,5 +123,103 @@ describe("GET /api/admin/locks/unassigned", () => {
     const [cutoff] = storageMock.listUnassignedLocks.mock.calls[0];
     expect(cutoff).toBeGreaterThanOrEqual(before - day);
     expect(cutoff).toBeLessThanOrEqual(after - day);
+  });
+});
+
+describe("lock device registry admin CRUD", () => {
+  const operator = { id: "operator-1", role: "operator" };
+  const registeredLock = {
+    id: 7,
+    imei: "861234567890123",
+    bikeId: "BC-100",
+    status: "installed",
+    apn: "cmiot",
+    lastLockState: null,
+    lastLatitude: null,
+    lastLongitude: null,
+    lastLocationAt: null,
+    bleKey: null,
+    deviceTypeCode: null,
+    lastAlarmType: null,
+    lastAlarmAt: null,
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_000_000,
+  };
+
+  it("lists registered locks including null protocol telemetry", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.listLocks.mockResolvedValue([registeredLock]);
+
+    const res = await lockRequest("/api/admin/locks");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([registeredLock]);
+    expect(storageMock.listLocks).toHaveBeenCalledOnce();
+  });
+
+  it("registers a lock with IMEI required and keeps protocol telemetry gateway-owned", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.createLock.mockResolvedValue({ lock: registeredLock });
+
+    const res = await lockRequest("/api/admin/locks", "POST", {
+      imei: registeredLock.imei,
+      bikeId: registeredLock.bikeId,
+      status: registeredLock.status,
+      lastLockState: "locked",
+      lastLatitude: 54.7104,
+      lastLongitude: 20.4522,
+      lastLocationAt: 1_700_000_000_000,
+      bleKey: "12345678",
+      deviceTypeCode: "C4",
+      lastAlarmType: "fall",
+      lastAlarmAt: 1_700_000_000_000,
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual(registeredLock);
+    expect(storageMock.createLock).toHaveBeenCalledWith({
+      imei: registeredLock.imei,
+      bikeId: registeredLock.bikeId,
+      status: registeredLock.status,
+    });
+  });
+
+  it("rejects a duplicate IMEI with a conflict", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.createLock.mockResolvedValue({ error: "Замок с таким IMEI уже зарегистрирован" });
+
+    const res = await lockRequest("/api/admin/locks", "POST", { imei: registeredLock.imei });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("IMEI");
+  });
+
+  it("returns not found when updating a missing lock", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.updateLock.mockResolvedValue({ error: "Замок не найден" });
+
+    const res = await lockRequest("/api/admin/locks/999", "PATCH", { status: "offline" });
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Замок не найден" });
+    expect(storageMock.updateLock).toHaveBeenCalledWith(999, { status: "offline" });
+  });
+
+  it("soft-deletes by moving a lock to decommissioned", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.decommissionLock.mockResolvedValue({
+      lock: { ...registeredLock, status: "decommissioned" },
+    });
+
+    const res = await lockRequest("/api/admin/locks/7", "DELETE");
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("decommissioned");
+    expect(storageMock.decommissionLock).toHaveBeenCalledWith(7);
   });
 });

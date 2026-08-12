@@ -1,4 +1,4 @@
-import { pgTable, text, integer, bigint, doublePrecision, boolean, serial, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, bigint, doublePrecision, boolean, serial, numeric, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -303,6 +303,88 @@ export const unassignedLocks = pgTable("unassigned_locks", {
 });
 export type UnassignedLock = typeof unassignedLocks.$inferSelect;
 
+/** An OMNI IMEI as it appears on the wire: exactly 15 digits (protocol §1.1). */
+export const lockImeiSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{15}$/, "IMEI замка: ровно 15 цифр");
+
+/* ------- LOCK DEVICE REGISTRY ------- */
+// The registry is deliberately separate from the legacy bikes.lock_imei field.
+// A registered device can exist before installation, and later protocol work
+// will resolve incoming IMEIs through this table without changing this admin
+// CRUD contract.
+//
+// The app convention is unix-millisecond BIGINT values for timestamps (rather
+// than PostgreSQL TIMESTAMP), so they remain consistent with the rest of the
+// operational schema and JavaScript Date.now().
+export const LOCK_STATUSES = [
+  "unregistered", "installed", "active", "offline", "decommissioned",
+] as const;
+export type LockStatus = (typeof LOCK_STATUSES)[number];
+
+// Connectivity/lifecycle status is deliberately separate from the physical
+// latch state reported by the device protocol.
+export const LOCK_STATES = ["locked", "unlocked"] as const;
+export type LockState = (typeof LOCK_STATES)[number];
+
+export const locks = pgTable("locks", {
+  id: serial("id").primaryKey(),
+  imei: text("imei").notNull(),
+  macAddress: text("mac_address"),
+  bikeId: text("bike_id").references(() => bikes.id, { onDelete: "set null" }),
+  simIccid: text("sim_iccid"),
+  firmwareVersion: text("firmware_version"),
+  apn: text("apn").notNull().default("cmiot"),
+  status: text("status").notNull().default("unregistered"),
+  lastSeenAt: bigint("last_seen_at", { mode: "number" }),
+  lastBatteryVoltage: numeric("last_battery_voltage", { mode: "number" }),
+  lastSignalStrength: integer("last_signal_strength"),
+  // Gateway-owned telemetry from the Omni Horseshoe Lock TCP protocol.
+  lastLockState: text("last_lock_state"),
+  lastLatitude: numeric("last_latitude", { mode: "number" }),
+  lastLongitude: numeric("last_longitude", { mode: "number" }),
+  lastLocationAt: bigint("last_location_at", { mode: "number" }),
+  bleKey: text("ble_key"),
+  deviceTypeCode: text("device_type_code"),
+  lastAlarmType: text("last_alarm_type"),
+  lastAlarmAt: bigint("last_alarm_at", { mode: "number" }),
+  notes: text("notes"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+}, (t) => [
+  uniqueIndex("idx_locks_imei").on(t.imei),
+  index("idx_locks_bike_id").on(t.bikeId),
+  index("idx_locks_status").on(t.status),
+]);
+export type Lock = typeof locks.$inferSelect;
+
+const optionalText = (max: number) => z.union([z.string().trim().max(max), z.literal("")]).optional();
+
+// Admin registry creation accepts provisioning/inspection metadata, while
+// gateway-owned telemetry, server-owned id, and audit timestamps are never
+// client-controlled.
+export const adminCreateLockSchema = z.object({
+  imei: lockImeiSchema,
+  macAddress: optionalText(64),
+  bikeId: optionalText(20),
+  simIccid: optionalText(32),
+  firmwareVersion: optionalText(100),
+  apn: optionalText(100),
+  status: z.enum(LOCK_STATUSES).optional(),
+  notes: optionalText(2_000),
+});
+export type AdminCreateLockInput = z.infer<typeof adminCreateLockSchema>;
+
+// Binding, lifecycle, and operator notes are the only mutable registry fields
+// in Phase 1. Telemetry/provisioning mutation belongs to the future gateway.
+export const adminUpdateLockSchema = z.object({
+  bikeId: optionalText(20),
+  status: z.enum(LOCK_STATUSES).optional(),
+  notes: optionalText(2_000),
+});
+export type AdminUpdateLockInput = z.infer<typeof adminUpdateLockSchema>;
+
 /** A sighting older than this is neither offered to operators nor kept. */
 export const UNASSIGNED_LOCK_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -312,12 +394,6 @@ export const UNASSIGNED_LOCK_TTL_MS = 24 * 60 * 60 * 1000;
  * expired rows are pruned on write, which keeps room for real locks.
  */
 export const UNASSIGNED_LOCK_MAX_ROWS = 500;
-
-/** An OMNI IMEI as it appears on the wire: exactly 15 digits (protocol §1.1). */
-export const lockImeiSchema = z
-  .string()
-  .trim()
-  .regex(/^\d{15}$/, "IMEI замка: ровно 15 цифр");
 
 // Admin: create a bike. Id/model required; status defaults to available. Map
 // coordinates are optional (default to a station/centre server-side). Battery

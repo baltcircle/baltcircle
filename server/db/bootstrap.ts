@@ -17,7 +17,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import type { PgTable } from "drizzle-orm/pg-core";
 import {
-  users, oauthIdentities, pushSubscriptions, bikes, rides, tickets,
+  users, oauthIdentities, pushSubscriptions, bikes, locks, rides, tickets,
   ticketComments, payments, paymentMethods, paymentOrders,
   supportTickets, supportConversations, supportMessages,
 } from "@shared/schema";
@@ -325,6 +325,32 @@ CREATE TABLE IF NOT EXISTS unassigned_locks (
   first_seen BIGINT NOT NULL,
   last_seen BIGINT NOT NULL
 );
+-- Device registry for provisioned OMNI locks. It is independent from the
+-- discovery buffer above: locks can be registered before being fitted to a bike.
+CREATE TABLE IF NOT EXISTS locks (
+  id SERIAL PRIMARY KEY,
+  imei TEXT NOT NULL,
+  mac_address TEXT,
+  bike_id TEXT REFERENCES bikes(id) ON DELETE SET NULL,
+  sim_iccid TEXT,
+  firmware_version TEXT,
+  apn TEXT NOT NULL DEFAULT 'cmiot',
+  status TEXT NOT NULL DEFAULT 'unregistered',
+  last_seen_at BIGINT,
+  last_battery_voltage NUMERIC,
+  last_signal_strength INTEGER,
+  last_lock_state TEXT,
+  last_latitude NUMERIC,
+  last_longitude NUMERIC,
+  last_location_at BIGINT,
+  ble_key TEXT,
+  device_type_code TEXT,
+  last_alarm_type TEXT,
+  last_alarm_at BIGINT,
+  notes TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -360,7 +386,7 @@ CREATE TABLE IF NOT EXISTS support_messages (
 // duplicate indexes). `ride_points` is created by raw SQL above (it has no
 // Drizzle table), so its index is kept as an explicit statement here.
 const INDEXED_TABLES: PgTable[] = [
-  users, oauthIdentities, pushSubscriptions, bikes, rides, tickets,
+  users, oauthIdentities, pushSubscriptions, bikes, locks, rides, tickets,
   ticketComments, payments, paymentMethods, paymentOrders,
   supportTickets, supportConversations, supportMessages,
 ];
@@ -420,6 +446,18 @@ async function runMigrations() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at BIGINT;`);
   await pool.query(`ALTER TABLE parkings ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';`);
   await pool.query(`ALTER TABLE support_conversations ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'bot';`);
+  for (const col of [
+    "last_lock_state TEXT",
+    "last_latitude NUMERIC",
+    "last_longitude NUMERIC",
+    "last_location_at BIGINT",
+    "ble_key TEXT",
+    "device_type_code TEXT",
+    "last_alarm_type TEXT",
+    "last_alarm_at BIGINT",
+  ]) {
+    await pool.query(`ALTER TABLE locks ADD COLUMN IF NOT EXISTS ${col};`);
+  }
 
   // ---- OMNI smart-lock integration ----
   // Device registry lives on the bike: the TCP server maps an incoming IMEI to

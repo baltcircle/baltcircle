@@ -13,6 +13,7 @@ import type {
   SupportTicketStatus, PaymentOrder, AdminCreateBikeInput, AdminUpdateBikeInput,
   CreateTicketInput, UpdateTicketInput, AdminCreateParkingInput, AdminUpdateParkingInput,
   SupportConversation, SupportMessage, SupportMessageRole, AdminSupportConversationRow,
+  Lock, AdminCreateLockInput, AdminUpdateLockInput,
 } from "@shared/schema";
 
 export interface IUserStorage {
@@ -153,6 +154,13 @@ export interface IBikeStorage {
   listUnassignedLocks(seenSinceMs: number): Promise<{ imei: string; lastSeen: number }[]>;
 }
 
+export interface ILockStorage {
+  listLocks(): Promise<Lock[]>;
+  createLock(input: AdminCreateLockInput): Promise<{ lock: Lock } | { error: string }>;
+  updateLock(id: number, patch: AdminUpdateLockInput): Promise<{ lock: Lock } | { error: string }>;
+  decommissionLock(id: number): Promise<{ lock: Lock } | { error: string }>;
+}
+
 export interface IParkingStorage {
   listParkings(opts?: { includeInactive?: boolean; includeArchived?: boolean }): Promise<Parking[]>;
   getParking(id: string): Promise<Parking | undefined>;
@@ -225,6 +233,7 @@ export interface IStorage
     IPaymentMethodStorage,
     ISupportStorage,
     IBikeStorage,
+    ILockStorage,
     IParkingStorage,
     IRideStorage,
     IWalletStorage,
