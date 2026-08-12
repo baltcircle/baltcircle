@@ -102,19 +102,6 @@ export function SafetyPage() {
   return (
     <OverlayShell title="Информация">
       <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-safety">
-        <header className="mb-6">
-          <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
-            Информация
-          </div>
-          <h1 className="font-display text-xl font-light leading-tight mt-1">
-            Безопасность, данные и правовые документы
-          </h1>
-          <p className="text-sm text-muted-foreground mt-2">
-            Здесь собраны рекомендации по безопасной поездке, информация о данных и полные
-            тексты правовых документов TakeRide.
-          </p>
-        </header>
-
         <nav
           aria-label="Содержание раздела информации"
           className="mb-8"
