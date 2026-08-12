@@ -16,3 +16,6 @@ jobs:
           docker logs baltcircle-mvp --since 6h 2>&1 \
             | grep -E '\[tbank\] card-bind (reconciliation|state response|state check failed|reconciliation row failed|guard decision)|\[tbank\] binding state query rejected|POST /api/payments/tbank/(bind-card|bind-card-payment|add-card)' \
             | tail -500 || true
+      - name: Print raw recent application context
+        run: |
+          docker logs baltcircle-mvp --since 2h 2>&1 | tail -2000 || true
