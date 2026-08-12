@@ -20,6 +20,7 @@ import sbpLogo from "@/assets/payment-icons/sbp.svg";
 const METHODS_KEY = ["/api/payment-methods"];
 const PENDING_POLL_INTERVAL_MS = 3_000;
 const PENDING_BINDING_TIMEOUT_MS = 3 * 60 * 1_000;
+const SUPERSEDED_BINDING_ERROR_CODE = "SUPERSEDED_BY_NEW_ATTEMPT";
 const ACCEPTED_PAYMENT_METHODS = [
   { src: visaLogo, alt: "Visa" },
   { src: mastercardLogo, alt: "Mastercard" },
@@ -55,6 +56,20 @@ interface SbpBinding {
 interface PendingBindingState {
   pollable: PaymentMethod[];
   timedOut: PaymentMethod[];
+}
+
+// Superseding a pending bind is normal retry bookkeeping, not a rider-facing
+// failure. Keep the old row out of the UI while retaining genuine bank errors.
+export function isSupersededBindingFailure(method: Pick<PaymentMethod, "status" | "lastErrorCode">): boolean {
+  return method.status === "failed" && method.lastErrorCode === SUPERSEDED_BINDING_ERROR_CODE;
+}
+
+export function visiblePaymentMethods(methods: PaymentMethod[]): PaymentMethod[] {
+  return methods.filter((method) => method.status !== "pending" && !isSupersededBindingFailure(method));
+}
+
+export function shouldNotifyBindingFailure(method: Pick<PaymentMethod, "status" | "lastErrorCode">): boolean {
+  return method.status === "failed" && !isSupersededBindingFailure(method);
 }
 
 // API data is normally serialized as a numeric unix-ms value by Drizzle. Keep
@@ -133,7 +148,7 @@ export function PaymentMethodsPage() {
 
   const methodsQ = useQuery<PaymentMethod[]>({ queryKey: METHODS_KEY });
   const methods = methodsQ.data ?? [];
-  const visibleMethods = methods.filter((method) => method.status !== "pending");
+  const visibleMethods = visiblePaymentMethods(methods);
 
   // Probe whether real T-Bank acquiring is configured. When it is not, we show a
   // "Платежи настраиваются" notice instead of offering a flow that would 503.
@@ -145,7 +160,7 @@ export function PaymentMethodsPage() {
   useEffect(() => {
     const previousPending = pendingBindingIds.current;
     methods
-      .filter((method) => method.status === "failed" && previousPending.has(method.id))
+      .filter((method) => shouldNotifyBindingFailure(method) && previousPending.has(method.id))
       .forEach((method) => {
         if (!notifiedBindingFailureIds.current.has(method.id)) {
           notifiedBindingFailureIds.current.add(method.id);
@@ -281,7 +296,7 @@ export function PaymentMethodsPage() {
       refreshed.forEach((method) => {
         if (!method) return;
         if (method.status === "failed") {
-          if (!notifiedBindingFailureIds.current.has(method.id)) {
+          if (shouldNotifyBindingFailure(method) && !notifiedBindingFailureIds.current.has(method.id)) {
             notifiedBindingFailureIds.current.add(method.id);
             toast.toast({
               title: "Привязка не удалась",

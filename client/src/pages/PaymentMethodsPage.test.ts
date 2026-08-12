@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PaymentMethod } from "@shared/schema";
-import { partitionPendingBindings } from "./PaymentMethodsPage";
+import {
+  isSupersededBindingFailure,
+  partitionPendingBindings,
+  shouldNotifyBindingFailure,
+  visiblePaymentMethods,
+} from "./PaymentMethodsPage";
 
 // This project currently uses Node-only Vitest tests and does not include a DOM
 // component-test environment. Keep the binding-state contract covered directly
@@ -32,12 +37,36 @@ describe("PaymentMethodsPage binding controls", () => {
   });
 
   it("keeps pending binding methods out of the rendered methods list", () => {
-    expect(source).toContain('const visibleMethods = methods.filter((method) => method.status !== "pending")');
+    expect(source).toContain("const visibleMethods = visiblePaymentMethods(methods)");
     expect(source).toContain("{visibleMethods.map((m) => {");
     expect(source).not.toContain("{methods.map((m) => {");
     expect(source).not.toContain("button-refresh-");
     expect(source).not.toContain("method-pending-hint-");
     expect(source).not.toContain("Проверить статус");
+  });
+
+  it("hides and does not notify the benign superseded bind failure while preserving genuine failures", () => {
+    const superseded = {
+      id: 5,
+      type: "card",
+      label: "Карта (привязывается…)",
+      status: "failed",
+      lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
+    } as PaymentMethod;
+    const rejected = {
+      id: 6,
+      type: "card",
+      label: "•••• 4242",
+      status: "failed",
+      lastErrorCode: "BANK_REJECTED",
+    } as PaymentMethod;
+
+    expect(isSupersededBindingFailure(superseded)).toBe(true);
+    expect(visiblePaymentMethods([superseded, rejected])).toEqual([rejected]);
+    expect(shouldNotifyBindingFailure(superseded)).toBe(false);
+    expect(shouldNotifyBindingFailure(rejected)).toBe(true);
+    expect(source).toContain("shouldNotifyBindingFailure(method) && previousPending.has(method.id)");
+    expect(source).toContain("if (shouldNotifyBindingFailure(method) && !notifiedBindingFailureIds.current.has(method.id))");
   });
 
   it("silently polls each supported pending binding route every three seconds", () => {
