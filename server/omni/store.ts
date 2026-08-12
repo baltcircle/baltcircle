@@ -9,8 +9,13 @@
 // checking in on a 4-minute cadence do not turn into 100-200 individual
 // INSERTs: reports accumulate in memory and land as one multi-row statement per
 // flush window.
-import { UNASSIGNED_LOCK_MAX_ROWS, UNASSIGNED_LOCK_TTL_MS } from "@shared/schema";
+import type { OmniMessage } from "@shared/omni/protocol";
 import { pool } from "../db/bootstrap";
+
+// Keep the public TCP process decoupled from the full Drizzle schema graph: it
+// is started before HTTP routes and should only need the constants it owns.
+const UNASSIGNED_LOCK_TTL_MS = 24 * 60 * 60 * 1000;
+const UNASSIGNED_LOCK_MAX_ROWS = 500;
 
 /** One accepted device report, already validated and projected. */
 export interface TelemetryRow {
@@ -56,6 +61,14 @@ export interface OmniStore {
   setLockOnline(imei: string, online: boolean, at: number): Promise<void>;
   /** Clear stale online flags left behind by a previous process. */
   resetAllLocksOffline(): Promise<void>;
+  /**
+   * Gateway-owned device registry projection. Optional during the transition
+   * from the original bike.lock_imei ingest; production PgOmniStore implements
+   * it and test doubles can stay focused on TCP framing.
+   */
+  ensureLock?(imei: string, at: number): Promise<string | null>;
+  persistLockReport?(imei: string, message: OmniMessage, at: number): Promise<void>;
+  markLocksOfflineBefore?(before: number): Promise<void>;
 }
 
 const TELEMETRY_COLUMNS = [
@@ -69,11 +82,73 @@ const MAX_INSERT_ROWS = Math.floor(65535 / TELEMETRY_COLUMNS.length);
 
 export class PgOmniStore implements OmniStore {
   async findBikeIdByImei(imei: string): Promise<string | null> {
-    const rows = (await pool.query<{ id: string }>(
-      "SELECT id FROM bikes WHERE lock_imei = $1 LIMIT 1",
+    const rows = (await pool.query<{ bike_id: string | null }>(
+      "SELECT bike_id FROM locks WHERE imei = $1 LIMIT 1",
       [imei],
     )).rows;
-    return rows.length > 0 ? rows[0].id : null;
+    return rows[0]?.bike_id ?? null;
+  }
+
+  /** Create a discovery/registry row on first contact and refresh connectivity. */
+  async ensureLock(imei: string, at: number): Promise<string | null> {
+    const result = await pool.query<{ bike_id: string | null }>(
+      `INSERT INTO locks (imei, status, last_seen_at, created_at, updated_at)
+       VALUES ($1, 'active', $2, $2, $2)
+       ON CONFLICT (imei) DO UPDATE SET
+         status = CASE WHEN locks.status = 'decommissioned' THEN locks.status ELSE 'active' END,
+         last_seen_at = GREATEST(COALESCE(locks.last_seen_at, 0), EXCLUDED.last_seen_at),
+         updated_at = EXCLUDED.updated_at
+       RETURNING bike_id`,
+      [imei, at],
+    );
+    return result.rows[0]?.bike_id ?? null;
+  }
+
+  async persistLockReport(imei: string, message: OmniMessage, at: number): Promise<void> {
+    const base = `status = CASE WHEN status = 'decommissioned' THEN status ELSE 'active' END,
+      last_seen_at = GREATEST(COALESCE(last_seen_at, 0), $2), updated_at = $2`;
+    const voltage = (cv: number) => cv / 100;
+    switch (message.type) {
+      case "checkin":
+        await pool.query(`UPDATE locks SET ${base}, last_battery_voltage = $3 WHERE imei = $1`,
+          [imei, at, voltage(message.voltageCv)]);
+        return;
+      case "heartbeat":
+        await pool.query(`UPDATE locks SET ${base}, last_lock_state = $3,
+          last_battery_voltage = $4, last_signal_strength = $5 WHERE imei = $1`,
+          [imei, at, message.locked ? "locked" : "unlocked", voltage(message.voltageCv), message.signal]);
+        return;
+      case "position":
+        if (message.valid && message.fix) {
+          await pool.query(`UPDATE locks SET ${base}, last_latitude = $3,
+            last_longitude = $4, last_location_at = $2 WHERE imei = $1`,
+            [imei, at, message.fix.lat, message.fix.lng]);
+        } else {
+          await pool.query(`UPDATE locks SET ${base} WHERE imei = $1`, [imei, at]);
+        }
+        return;
+      case "alarm": {
+        const alarmType = ({ 1: "illegal_movement", 2: "fall", 6: "fall_cleared" } as Record<number, string>)[message.code] ?? String(message.code);
+        await pool.query(`UPDATE locks SET ${base}, last_alarm_type = $3, last_alarm_at = $2 WHERE imei = $1`,
+          [imei, at, alarmType]);
+        return;
+      }
+      case "lockReport":
+        await pool.query(`UPDATE locks SET ${base}, last_lock_state = 'locked' WHERE imei = $1`, [imei, at]);
+        return;
+      case "firmware":
+        await pool.query(`UPDATE locks SET ${base}, firmware_version = $3, device_type_code = $4 WHERE imei = $1`,
+          [imei, at, message.firmwareVersion, message.deviceTypeCode]);
+        return;
+      case "iccid":
+        await pool.query(`UPDATE locks SET ${base}, sim_iccid = $3 WHERE imei = $1`, [imei, at, message.simIccid]);
+        return;
+      case "mac":
+        await pool.query(`UPDATE locks SET ${base}, mac_address = $3 WHERE imei = $1`, [imei, at, message.macAddress]);
+        return;
+      default:
+        await pool.query(`UPDATE locks SET ${base} WHERE imei = $1`, [imei, at]);
+    }
   }
 
   /**
@@ -177,6 +252,12 @@ export class PgOmniStore implements OmniStore {
    */
   async setLockOnline(imei: string, online: boolean, at: number): Promise<void> {
     await pool.query(
+      `UPDATE locks SET status = CASE WHEN status = 'decommissioned' THEN status ELSE $2 END,
+        last_seen_at = CASE WHEN $2 = 'active' THEN GREATEST(COALESCE(last_seen_at, 0), $3) ELSE last_seen_at END,
+        updated_at = $3 WHERE imei = $1`,
+      [imei, online ? "active" : "offline", at],
+    );
+    await pool.query(
       `UPDATE bikes SET lock_online = $2, lock_last_seen = $3
         WHERE lock_imei = $1 AND (lock_last_seen IS NULL OR lock_last_seen <= $3)`,
       [imei, online, at],
@@ -184,7 +265,16 @@ export class PgOmniStore implements OmniStore {
   }
 
   async resetAllLocksOffline(): Promise<void> {
+    await pool.query(`UPDATE locks SET status = 'offline', updated_at = $1 WHERE status = 'active'`, [Date.now()]);
     await pool.query("UPDATE bikes SET lock_online = FALSE WHERE lock_online = TRUE");
+  }
+
+  async markLocksOfflineBefore(before: number): Promise<void> {
+    await pool.query(
+      `UPDATE locks SET status = 'offline', updated_at = $2
+        WHERE status = 'active' AND last_seen_at IS NOT NULL AND last_seen_at < $1`,
+      [before, Date.now()],
+    );
   }
 }
 

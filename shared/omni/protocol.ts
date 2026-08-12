@@ -246,13 +246,17 @@ export type OmniMessage =
   /** §1.3.7 — lock information response. */
   | { type: "status"; voltageCv: number; signal: number; satellites: number; locked: boolean }
   /** §1.3.5 — position report (solicited or from tracking mode). */
-  | { type: "position"; tracking: boolean; valid: boolean; fix: GpsFix | null }
+  | { type: "position"; cmd: "D0" | "D1"; tracking: boolean; valid: boolean; fix: GpsFix | null }
   /** §1.3.3 — result of a server-issued unlock. */
   | { type: "unlockResult"; success: boolean; userId: string; at: number | null }
   /** §1.3.4 — the lock was closed; ends a rental. */
   | { type: "lockReport"; userId: string; at: number | null; rideMinutes: number | null }
   /** §1.3.10 — 1 illegal movement, 2 fall, 6 fall cleared. */
   | { type: "alarm"; code: number }
+  /** §1.3.9 / §1.1.35 / §1.3.16 device metadata responses. */
+  | { type: "firmware"; deviceTypeCode: string; firmwareVersion: string }
+  | { type: "iccid"; simIccid: string }
+  | { type: "mac"; macAddress: string }
   /** Recognised frame we do not act on (upgrade, BLE key, RFID, beacon, ...). */
   | { type: "other"; cmd: string; params: string[] };
 
@@ -365,16 +369,25 @@ export function decodeMessage(frame: OmniFrame): DecodeResult {
       return { ok: true, message: { type: "status", voltageCv, signal, satellites, locked: lock === 1 } };
     }
 
-    case "D0": {
+    case "D0":
+    case "D1": {
       // 13 fields (§1.3.5). An invalid fix still fills the arity with empties,
       // e.g. `D0,0,033724.00,V,,,,,,,120517,,,N` — that is a well-formed packet
       // reporting "no fix", not a malformed one.
+      // D1 is documented as the tracking-interval command. Some lock firmware
+      // uploads its tracking fixes under D1 using the same payload as D0, while
+      // others reply to the interval-setting command with just `D1,<seconds>`.
+      // The latter is auxiliary chatter; only the position-shaped form reaches
+      // the position pipeline.
+      if (frame.cmd === "D1" && p.length < 13) {
+        return { ok: true, message: { type: "other", cmd: frame.cmd, params: p } };
+      }
       if (p.length < 13) return { ok: false, reason: "bad_position_arity" };
       const trackingFlag = int(p[0]);
       if (trackingFlag !== 0 && trackingFlag !== 1) return { ok: false, reason: "bad_tracking_flag" };
       const tracking = trackingFlag === 1;
       const valid = p[2].toUpperCase() === "A";
-      if (!valid) return { ok: true, message: { type: "position", tracking, valid: false, fix: null } };
+      if (!valid) return { ok: true, message: { type: "position", cmd: frame.cmd, tracking, valid: false, fix: null } };
 
       // The hemisphere letters also say which axis each field is, so insist the
       // latitude field carries N/S and the longitude field E/W. Without this a
@@ -388,7 +401,7 @@ export function decodeMessage(frame: OmniFrame): DecodeResult {
       return {
         ok: true,
         message: {
-          type: "position",
+          type: "position", cmd: frame.cmd,
           tracking,
           valid: true,
           fix: {
@@ -426,6 +439,28 @@ export function decodeMessage(frame: OmniFrame): DecodeResult {
       const code = inRange(int(p[0]), 0, 255);
       if (code === null) return { ok: false, reason: "bad_alarm_code" };
       return { ok: true, message: { type: "alarm", code } };
+    }
+
+    case "G0": {
+      // The protocol's `XX_110` example is device code + firmware version in
+      // one field (§1.3.9): `XX` identifies the lock hardware and `110` means
+      // software V1.1.0. Keep the vendor string after the separator verbatim;
+      // the optional second field is a build date, not the version itself.
+      const [deviceTypeCode = "", firmwareVersion = ""] = (p[0] ?? "").trim().split("_", 2);
+      if (!deviceTypeCode || !firmwareVersion) return { ok: false, reason: "bad_firmware" };
+      return { ok: true, message: { type: "firmware", deviceTypeCode, firmwareVersion } };
+    }
+
+    case "I0": {
+      const simIccid = (p[0] ?? "").trim();
+      if (!simIccid) return { ok: false, reason: "bad_iccid" };
+      return { ok: true, message: { type: "iccid", simIccid } };
+    }
+
+    case "M0": {
+      const macAddress = (p[0] ?? "").trim();
+      if (!macAddress) return { ok: false, reason: "bad_mac" };
+      return { ok: true, message: { type: "mac", macAddress } };
     }
 
     default:

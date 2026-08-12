@@ -11,6 +11,9 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import { logger, log } from "./logger";
+import { OmniTcpServer } from "./omni/server";
+import { PgOmniStore } from "./omni/store";
+import { setLockGateway } from "./omni/gateway";
 
 // Re-exported so existing `import { log } from "../index"` call sites keep
 // working now that the implementation lives in server/logger.ts (audit L6).
@@ -172,6 +175,36 @@ app.use((req, res, next) => {
   // request (routes touch storage on the first hit). bootstrapReady resolves
   // once the async bootstrap in server/db/bootstrap.ts has completed.
   await bootstrapReady;
+
+  // The gateway is a standalone TCP listener (not an HTTP route), but it shares
+  // this process so the authenticated pilot-control endpoint can address its
+  // in-memory socket registry without a second control plane.
+  const configuredGatewayPort = Number(process.env.LOCK_GATEWAY_PORT || "5100");
+  const gatewayInt = (name: string, fallback: number) => {
+    const value = Number(process.env[name]);
+    return Number.isInteger(value) && value >= 0 ? value : fallback;
+  };
+  const lockGateway = new OmniTcpServer({
+    store: new PgOmniStore(),
+    logger,
+    port: Number.isInteger(configuredGatewayPort) && configuredGatewayPort > 0 ? configuredGatewayPort : 5100,
+    host: process.env.LOCK_GATEWAY_HOST || "0.0.0.0",
+    maxConnections: gatewayInt("OMNI_MAX_CONNECTIONS", 500),
+    idleTimeoutMs: gatewayInt("OMNI_IDLE_TIMEOUT_MS", 15 * 60_000),
+    statusMinIntervalMs: gatewayInt("OMNI_STATUS_MIN_INTERVAL_MS", 60_000),
+    writer: {
+      flushIntervalMs: gatewayInt("OMNI_FLUSH_INTERVAL_MS", 2_000),
+      maxBatchRows: gatewayInt("OMNI_MAX_BATCH_ROWS", 500),
+    },
+  });
+  await lockGateway.listen();
+  setLockGateway(lockGateway);
+  const stopLockGateway = () => {
+    setLockGateway(null);
+    void lockGateway.close().catch((err) => logger.error({ err }, "failed to stop lock gateway"));
+  };
+  process.once("SIGTERM", stopLockGateway);
+  process.once("SIGINT", stopLockGateway);
 
   // Статика вложений чата поддержки. Локальный диск MVP; при переезде на
   // Yandex Object Storage — URL-ы абсолютные, блок можно будет убрать.

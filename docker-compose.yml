@@ -76,10 +76,13 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_CONTACT: ${VAPID_CONTACT:-mailto:no-reply@takeride.ru}
+      LOCK_GATEWAY_PORT: ${LOCK_GATEWAY_PORT:-5100}
+      LOCK_GATEWAY_HOST: ${LOCK_GATEWAY_HOST:-0.0.0.0}
     ports:
       # Bind only to loopback so the app is reachable through nginx on the same
       # host, not exposed on all interfaces to the outside world (audit L8).
       - "127.0.0.1:5000:5000"
+      - "${LOCK_GATEWAY_PORT:-5100}:${LOCK_GATEWAY_PORT:-5100}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -90,51 +93,3 @@ services:
       # bind mount — при рестарте контейнера файлы сохраняются.
       # Позже будет заменено на Yandex Object Storage.
       - /home/yc-user/uploads:/app/uploads
-
-  # OMNI smart-lock TCP ingest. Same image, different entry point
-  # (dist/omni.cjs, built alongside dist/index.cjs by script/build.ts) and its
-  # own container, because the locks hold persistent TCP sockets: redeploying the
-  # web app must not disconnect the fleet, and a lock firmware problem must not
-  # take the website down. Both processes share the managed database and its
-  # idempotent schema bootstrap.
-  baltcircle-omni:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: baltcircle-omni
-    restart: unless-stopped
-    command: ["node", "dist/omni.cjs"]
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
-      # Listen port for lock connections. This is OUR listen socket, not device
-      # config: the IP/port/APN each lock dials is flashed on the lock itself
-      # (over BLE on the sample units, at the factory for a bulk order), so no
-      # device endpoint is configured here. Change this only in lockstep with
-      # what the locks are flashed to dial.
-      OMNI_TCP_PORT: ${OMNI_TCP_PORT:-5100}
-      OMNI_MAX_CONNECTIONS: ${OMNI_MAX_CONNECTIONS:-500}
-      OMNI_IDLE_TIMEOUT_MS: ${OMNI_IDLE_TIMEOUT_MS:-900000}
-      OMNI_STATUS_MIN_INTERVAL_MS: ${OMNI_STATUS_MIN_INTERVAL_MS:-60000}
-      OMNI_FLUSH_INTERVAL_MS: ${OMNI_FLUSH_INTERVAL_MS:-2000}
-      OMNI_MAX_BATCH_ROWS: ${OMNI_MAX_BATCH_ROWS:-500}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-    ports:
-      # Unlike the web app (loopback-only behind nginx), this must be reachable
-      # from the mobile networks the locks sit on, so it binds all interfaces.
-      # The cloud security group has to allow the port inbound as well.
-      - "${OMNI_TCP_PORT:-5100}:${OMNI_TCP_PORT:-5100}"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    # Liveness: the process is healthy when it is accepting TCP connections.
-    # There is no HTTP surface to probe, so this opens a socket and hangs up.
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "const s=require('net').connect(Number(process.env.OMNI_TCP_PORT||5100),'127.0.0.1',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1))"
-      interval: 30s
-      timeout: 5s
-      start_period: 20s
-      retries: 3

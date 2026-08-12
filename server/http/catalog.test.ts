@@ -14,6 +14,7 @@ const storageMock = vi.hoisted(() => ({
   listUnassignedLocks: vi.fn(),
   listLocks: vi.fn(),
   createLock: vi.fn(),
+  getLock: vi.fn(),
   updateLock: vi.fn(),
   decommissionLock: vi.fn(),
 }));
@@ -31,6 +32,7 @@ vi.mock("../sms", () => ({
 vi.mock("../push", () => ({ sendToUserAsync: vi.fn() }));
 
 import { registerCatalogRoutes } from "./catalog";
+import { setLockGateway } from "../omni/gateway";
 
 // The session is normally installed by express-session; the guard only ever
 // reads req.session.userId, so a test sets it directly via a header.
@@ -60,6 +62,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  setLockGateway(null);
   sessionUserId = null;
 });
 
@@ -195,6 +198,20 @@ describe("lock device registry admin CRUD", () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toContain("IMEI");
+  });
+
+  it("sends an operator's manual unlock through the live gateway", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.getLock.mockResolvedValue(registeredLock);
+    const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+    setLockGateway({ sendUnlockCommand } as any);
+
+    const res = await lockRequest("/api/admin/locks/7/unlock", "POST", { userId: "1234" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(sendUnlockCommand).toHaveBeenCalledWith(registeredLock.imei, "1234");
   });
 
   it("returns not found when updating a missing lock", async () => {
