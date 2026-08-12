@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type MouseEvent } from "react";
 import { OverlayShell } from "@/components/OverlayShell";
 import { LEGAL_DOCS } from "@/lib/legal";
 
@@ -16,6 +16,24 @@ const INLINE_REFERENCES = [
   { text: "Политикой конфиденциальности", anchor: "privacy" },
   { text: "Согласия на обработку персональных данных", anchor: "consent" },
 ] as const;
+
+// Keep navigation between sections out of browser history so one Back press
+// always leaves the document page, regardless of how many anchors were used.
+function scrollToAnchor(event: MouseEvent<HTMLAnchorElement>) {
+  if (
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  ) {
+    return;
+  }
+
+  event.preventDefault();
+  const anchor = event.currentTarget.hash.slice(1);
+  document.getElementById(anchor)?.scrollIntoView({ block: "start" });
+}
 
 function renderParagraph(paragraph: string) {
   const references = INLINE_REFERENCES
@@ -36,6 +54,7 @@ function renderParagraph(paragraph: string) {
             {before}
             <a
               href={`#${reference.anchor}`}
+              onClick={scrollToAnchor}
               className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
             >
               {reference.text}
@@ -87,6 +106,7 @@ export function LegalIndexPage() {
               <li key={document.slug}>
                 <a
                   href={`#${document.slug}`}
+                  onClick={scrollToAnchor}
                   data-testid={`link-legal-${document.slug}`}
                   className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
                 >
