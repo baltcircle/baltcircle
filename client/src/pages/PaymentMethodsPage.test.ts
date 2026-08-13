@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PaymentMethod } from "@shared/schema";
 import {
+  isAbandonedBindingFailure,
   isSupersededBindingFailure,
   partitionPendingBindings,
   shouldNotifyBindingFailure,
@@ -67,6 +68,29 @@ describe("PaymentMethodsPage binding controls", () => {
     expect(shouldNotifyBindingFailure(rejected)).toBe(true);
     expect(source).toContain("shouldNotifyBindingFailure(method) && previousPending.has(method.id)");
     expect(source).toContain("if (shouldNotifyBindingFailure(method) && !notifiedBindingFailureIds.current.has(method.id))");
+  });
+
+  it("hides and does not notify an explicitly cancelled binding", () => {
+    const cancelled = {
+      id: 7,
+      type: "card",
+      label: "Карта (привязывается…)",
+      status: "failed",
+      lastErrorCode: "BINDING_CANCELLED",
+    } as PaymentMethod;
+    const rejected = {
+      id: 8,
+      type: "card",
+      label: "•••• 4242",
+      status: "failed",
+      lastErrorCode: "BANK_REJECTED",
+    } as PaymentMethod;
+
+    expect(isSupersededBindingFailure(cancelled)).toBe(false);
+    expect(isAbandonedBindingFailure(cancelled)).toBe(true);
+    expect(visiblePaymentMethods([cancelled, rejected])).toEqual([rejected]);
+    expect(shouldNotifyBindingFailure(cancelled)).toBe(false);
+    expect(shouldNotifyBindingFailure(rejected)).toBe(true);
   });
 
   it("silently polls each supported pending binding route every three seconds", () => {

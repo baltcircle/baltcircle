@@ -54,6 +54,16 @@ vi.mock("../payments/tbank-handlers", () => ({
   tbankErrorBody: vi.fn(),
   handleTbankNotification: vi.fn(),
   bindingErrorPatch: vi.fn(() => ({})),
+  terminalBindingFailurePatch: vi.fn((body: { Status?: unknown }) => {
+    const status = typeof body.Status === "string" ? body.Status.trim().toUpperCase() : "";
+    return status === "CANCELED" || status === "CANCELLED"
+      ? {
+        lastErrorCode: "BINDING_CANCELLED",
+        lastErrorMessage: "Привязка отменена.",
+        lastErrorDetails: null,
+      }
+      : {};
+  }),
   refundVerificationCharge: refundVerificationChargeMock,
   bindViaVerificationPayment: bindViaVerificationPaymentMock,
   maskPan: (pan: string) => `•••• ${pan.replace(/\D/g, "").slice(-4)}`,
@@ -478,6 +488,36 @@ describe("authoritative pending card-binding reconciliation", () => {
       status: "failed",
     }));
     expect(res.body).toEqual([{ ...method, status: "failed" }]);
+  });
+
+  it("marks a cancelled Init binding as a benign cancellation during list reconciliation", async () => {
+    const { get } = routeApp();
+    const method = pendingAddCard({ requestKey: null, paymentId: "payment-cancelled" });
+    storageMock.listPaymentMethods
+      .mockResolvedValueOnce([method])
+      .mockResolvedValueOnce([{
+        ...method,
+        status: "failed",
+        lastErrorCode: "BINDING_CANCELLED",
+        lastErrorMessage: "Привязка отменена.",
+        lastErrorDetails: null,
+      }]);
+    tbankMock.tbankGetState.mockResolvedValue({ Success: true, Status: "CANCELED", ErrorCode: "0" });
+    const res = response();
+
+    await get.get("/api/payment-methods")!({ session: { userId: "user-1" } }, res);
+
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(31, {
+      status: "failed",
+      lastErrorCode: "BINDING_CANCELLED",
+      lastErrorMessage: "Привязка отменена.",
+      lastErrorDetails: null,
+    });
+    expect(res.body).toEqual([expect.objectContaining({
+      id: 31,
+      status: "failed",
+      lastErrorCode: "BINDING_CANCELLED",
+    })]);
   });
 
   it("returns superseded rows as failed rather than phantom pending rows from GET /api/payment-methods", async () => {

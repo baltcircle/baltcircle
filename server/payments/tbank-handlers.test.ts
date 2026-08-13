@@ -591,6 +591,32 @@ describe("card-binding duplicate protection", () => {
       lastErrorCode: "101",
     }));
   });
+
+  it("records a cancelled Init binding as a benign cancellation when the webhook arrives first", async () => {
+    const method = {
+      ...pendingInitMethod,
+      status: "pending",
+      orderId: "bind-cancelled",
+      paymentId: "payment-cancelled",
+    };
+    storageMock.getRidePaymentOrder.mockResolvedValue(undefined);
+    storageMock.findCardMethodByOrderId.mockResolvedValue(method);
+
+    await handleTbankNotification({
+      OrderId: "bind-cancelled",
+      Status: "CANCELLED",
+      PaymentId: "payment-cancelled",
+      ErrorCode: "0",
+    });
+
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(138, {
+      status: "failed",
+      paymentId: "payment-cancelled",
+      lastErrorCode: "BINDING_CANCELLED",
+      lastErrorMessage: "Привязка отменена.",
+      lastErrorDetails: null,
+    });
+  });
 });
 
 // Regression coverage for the CustomerKey-collision investigation: the actual
