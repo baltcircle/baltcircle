@@ -21,6 +21,7 @@ const METHODS_KEY = ["/api/payment-methods"];
 const PENDING_POLL_INTERVAL_MS = 3_000;
 const PENDING_BINDING_TIMEOUT_MS = 3 * 60 * 1_000;
 const SUPERSEDED_BINDING_ERROR_CODE = "SUPERSEDED_BY_NEW_ATTEMPT";
+const CANCELLED_BINDING_ERROR_CODE = "BINDING_CANCELLED";
 const ACCEPTED_PAYMENT_METHODS = [
   { src: visaLogo, alt: "Visa" },
   { src: mastercardLogo, alt: "Mastercard" },
@@ -64,12 +65,21 @@ export function isSupersededBindingFailure(method: Pick<PaymentMethod, "status" 
   return method.status === "failed" && method.lastErrorCode === SUPERSEDED_BINDING_ERROR_CODE;
 }
 
+// A local supersession and a terminal cancellation from T-Bank both mean that
+// no payment method was added. Keep those bookkeeping rows out of the list and
+// suppress failure toasts, while preserving actual bank rejections.
+export function isAbandonedBindingFailure(method: Pick<PaymentMethod, "status" | "lastErrorCode">): boolean {
+  return method.status === "failed"
+    && (method.lastErrorCode === SUPERSEDED_BINDING_ERROR_CODE
+      || method.lastErrorCode === CANCELLED_BINDING_ERROR_CODE);
+}
+
 export function visiblePaymentMethods(methods: PaymentMethod[]): PaymentMethod[] {
-  return methods.filter((method) => method.status !== "pending" && !isSupersededBindingFailure(method));
+  return methods.filter((method) => method.status !== "pending" && !isAbandonedBindingFailure(method));
 }
 
 export function shouldNotifyBindingFailure(method: Pick<PaymentMethod, "status" | "lastErrorCode">): boolean {
-  return method.status === "failed" && !isSupersededBindingFailure(method);
+  return method.status === "failed" && !isAbandonedBindingFailure(method);
 }
 
 // API data is normally serialized as a numeric unix-ms value by Drizzle. Keep
@@ -347,14 +357,11 @@ export function PaymentMethodsPage() {
       if (e.origin !== window.location.origin) return;
       const d = e.data;
       if (!d || d.type !== "tbank:done") return;
-      // Явный отказ — сразу показываем ошибку и закрываем.
+      // The return URL is only a hint: obtain the authoritative terminal state
+      // from the server before deciding whether this was a cancellation or a
+      // genuine bank decline. In particular, a T-Bank cancel must not create a
+      // scary local failure toast before reconciliation can hide it.
       if (d.hasSuccess && !d.success) {
-        const code = d.errorCode;
-        toast.toast({
-          title: "Не удалось привязать карту",
-          description: code && code !== "0" ? `Банк вернул код ${code}.` : "Привязка карты была отклонена.",
-          variant: "destructive",
-        });
         setTbankBind(null);
         queryClient.invalidateQueries({ queryKey: METHODS_KEY });
         return;

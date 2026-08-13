@@ -28,7 +28,7 @@ import type { TbankConfig } from "./../tbank";
 import {
   startRideForPaidOrder, tbankErrorBody, handleTbankNotification,
   bindingErrorPatch, refundVerificationCharge, bindViaVerificationPayment,
-  maskPan, cardBrand, extractLast4FromLabel,
+  maskPan, cardBrand, extractLast4FromLabel, terminalBindingFailurePatch,
 } from "./../payments/tbank-handlers";
 import { log } from "./../index";
 import { logger } from "./../logger";
@@ -164,7 +164,7 @@ async function reconcilePendingCardBinding(
   if (outcome === "failed") {
     await storage.updatePaymentMethod(method.id, {
       status: "failed",
-      ...bindingErrorPatch(resp),
+      ...terminalBindingFailurePatch(resp),
     });
     return "failed";
   }

@@ -698,6 +698,16 @@ const FAILED_BINDING_STATUSES: readonly string[] = [
   "CANCELLED",
 ];
 
+// T-Bank reports an abandoned hosted form as CANCELED/CANCELLED. This is
+// distinct from a declined/rejected payment: the binding is terminal and should
+// be removed from the rider's pending-flow UI without presenting it as a card
+// error. Keep the spelling variants together with the lifecycle classifier so
+// reconciliation and notification handling cannot drift.
+export function isCancelledBindingStatus(status?: string): boolean {
+  const normalized = (status || "").trim().toUpperCase();
+  return normalized === "CANCELED" || normalized === "CANCELLED";
+}
+
 export function classifyCardBinding(args: {
   status?: string;
   cardId?: string;

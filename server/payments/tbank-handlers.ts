@@ -3,7 +3,7 @@ import { storage } from "../storage";
 import type { PaymentMethod, PaymentOrder } from "@shared/schema";
 import {
   classifyCardBinding, classifyInitBinding, classifyRidePayment,
-  classifyAccountBinding,
+  classifyAccountBinding, isCancelledBindingStatus,
   tbankInitBindCard, verifyNotificationToken, generateBindOrderId,
   tbankRefundVerificationCharge,
 } from "../tbank";
@@ -329,7 +329,7 @@ export async function handleInitBindingNotification(
     await storage.updatePaymentMethod(method.id, {
       status: "failed",
       paymentId: paymentId || method.paymentId,
-      ...bindingErrorPatch(body),
+      ...terminalBindingFailurePatch(body),
     });
   }
   // Otherwise an intermediate state — leave pending; a later notification
@@ -428,7 +428,7 @@ export async function handleAddCardNotification(body: Record<string, unknown>): 
     // secret, these come straight from T-Bank.
     await storage.updatePaymentMethod(method.id, {
       status: "failed",
-      ...bindingErrorPatch(body),
+      ...terminalBindingFailurePatch(body),
     });
   }
   // Otherwise an intermediate state — leave the method pending; the rider can
@@ -451,6 +451,26 @@ export function bindingErrorPatch(body: {
     lastErrorMessage: str(body.Message),
     lastErrorDetails: str(body.Details),
   };
+}
+
+// A cancelled hosted card-bind form is normal abandonment, not a bank decline.
+// Store a stable local code even when T-Bank sends ErrorCode=0, so the payment
+// methods UI can hide it using the same non-actionable terminal-row convention
+// as superseded attempts. Rejections retain the acquirer's error detail.
+export function terminalBindingFailurePatch(body: {
+  Status?: unknown;
+  ErrorCode?: unknown;
+  Message?: unknown;
+  Details?: unknown;
+}): Pick<PaymentMethod, "lastErrorCode" | "lastErrorMessage" | "lastErrorDetails"> {
+  if (isCancelledBindingStatus(typeof body.Status === "string" ? body.Status : undefined)) {
+    return {
+      lastErrorCode: "BINDING_CANCELLED",
+      lastErrorMessage: "Привязка отменена.",
+      lastErrorDetails: null,
+    };
+  }
+  return bindingErrorPatch(body);
 }
 
 // Reverse/refund the 1 rouble verification charge for a just-activated card
