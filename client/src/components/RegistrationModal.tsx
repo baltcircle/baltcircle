@@ -179,7 +179,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
           </DialogTitle>
           <DialogDescription>
             {step === "contact"
-              ? "Укажите имя и номер телефона. Мы отправим SMS с кодом подтверждения. Данные карты не запрашиваются."
+              ? "Укажите имя и номер телефона. Мы отправим SMS с кодом подтверждения."
               : `Введите код из SMS, отправленного на ${verifiedPhone}.`}
           </DialogDescription>
         </DialogHeader>
@@ -229,7 +229,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
               <Label htmlFor="consent" className="text-xs font-normal leading-snug text-muted-foreground">
                 Я принимаю{" "}
                 <a
-                  href="/legal#terms"
+                  href="/safety#legal-terms"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline hover:text-foreground"
@@ -239,7 +239,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
                 </a>{" "}
                 и даю согласие на обработку персональных данных в соответствии с{" "}
                 <a
-                  href="/legal/privacy"
+                  href="/safety#legal-privacy"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline hover:text-foreground"
@@ -249,7 +249,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
                 </a>{" "}
                 и{" "}
                 <a
-                  href="/legal/consent"
+                  href="/safety#legal-consent"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline hover:text-foreground"
