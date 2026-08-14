@@ -11,6 +11,14 @@ import {
 const IMEI = "862596083776074";
 const source = readFileSync(resolve(process.cwd(), "client/src/pages/BikesPage.tsx"), "utf8");
 
+describe("bound lock IMEI column", () => {
+  it("renders the bound lock IMEI and shows a dash when no IMEI is bound", () => {
+    expect(source).toContain('<TableHead>Замок ID</TableHead>');
+    expect(source).toContain('{b.lockImei || "—"}');
+    expect(source).not.toContain('{b.lockId || "—"}');
+  });
+});
+
 describe("bike lock picker", () => {
   it("selects and submits the numeric IMEI instead of the display text", () => {
     const [option] = lockPickerOptions([{ imei: IMEI, lastSeen: Date.now() }], null);
