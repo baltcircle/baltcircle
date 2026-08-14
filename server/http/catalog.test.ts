@@ -11,6 +11,7 @@ import type { Server } from "node:http";
 
 const storageMock = vi.hoisted(() => ({
   getUser: vi.fn(),
+  listBikes: vi.fn(),
   listUnassignedLocks: vi.fn(),
   listLocks: vi.fn(),
   createLock: vi.fn(),
@@ -121,6 +122,30 @@ describe("GET /api/admin/locks/unassigned", () => {
     await getLocks();
 
     expect(storageMock.listUnassignedLocks).toHaveBeenCalledWith();
+  });
+});
+
+describe("GET /api/admin/bikes", () => {
+  it("includes the telemetry-owned lockLastSeen snapshot", async () => {
+    sessionUserId = "operator-bike-list";
+    storageMock.getUser.mockResolvedValue({ id: sessionUserId, role: "operator" });
+    storageMock.listBikes.mockResolvedValue([{
+      id: "BC-100",
+      battery: 73,
+      lockImei: "862596083776074",
+      lockLastSeen: 1_700_000_000_000,
+    }]);
+
+    const res = await lockRequest("/api/admin/bikes");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([expect.objectContaining({
+      id: "BC-100",
+      battery: 73,
+      lockImei: "862596083776074",
+      lockLastSeen: 1_700_000_000_000,
+    })]);
+    expect(storageMock.listBikes).toHaveBeenCalledWith({ includeArchived: true });
   });
 });
 
