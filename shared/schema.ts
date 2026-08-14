@@ -447,6 +447,7 @@ export const parkings = pgTable("parkings", {
   lng: doublePrecision("lng").notNull(),
   capacity: integer("capacity").notNull(),
   occupied: integer("occupied").notNull(),
+  radius: integer("radius").notNull().default(30), // matching radius in metres
   status: text("status").notNull().default("active"), // active | inactive
   notes: text("notes"),                  // operator instructions / free-text
   archivedAt: bigint("archived_at", { mode: "number" }),    // unix ms when archived; null = live
@@ -478,6 +479,7 @@ export const adminCreateParkingSchema = z.object({
   lng: z.number().finite(),
   capacity: z.number().int().min(0).max(1000).default(10),
   occupied: z.number().int().min(0).max(1000).default(0),
+  radius: z.number().int().min(1).max(1000).default(30),
   status: z.enum(PARKING_STATUSES).default("active"),
   notes: z.union([z.string().trim().max(500), z.literal("")]).optional(),
 });
@@ -491,6 +493,7 @@ export const adminUpdateParkingSchema = z.object({
   lng: z.number().finite().optional(),
   capacity: z.number().int().min(0).max(1000).optional(),
   occupied: z.number().int().min(0).max(1000).optional(),
+  radius: z.number().int().min(1).max(1000).optional(),
   status: z.enum(PARKING_STATUSES).optional(),
   notes: z.union([z.string().trim().max(500), z.literal("")]).optional(),
 }).refine((v) => Object.keys(v).length > 0, { message: "Нет изменений" });

@@ -19,7 +19,7 @@ import { CONSENT_VERSION } from "@shared/schema";
 import { randomUUID, createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import {
   PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES, MAP_W, MAP_H,
-  TARIFFS, tariffPriceKopecks,
+  TARIFFS, tariffPriceKopecks, findNearestParkingWithinRadius,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
 import { eq, desc, sql, gt, and, asc, inArray, isNull } from "drizzle-orm";
@@ -1218,6 +1218,12 @@ export class DatabaseStorage implements IStorage {
     return this.getBike(id);
   }
 
+  /** Replaces a bike's parking reference from its latest stored lock position. */
+  private async recalculateBikeParking(bike: Pick<Bike, "id" | "lat" | "lng">): Promise<void> {
+    const match = findNearestParkingWithinRadius(bike.lat, bike.lng, await this.listParkings());
+    await this.updateBike(bike.id, { parkingId: match?.id ?? null });
+  }
+
   // ---------- Bikes: admin CRUD (staff only) ----------
   // Normalize an optional string field: trim, and treat "" as null so blank
   // form inputs clear the column rather than storing an empty string.
@@ -1421,6 +1427,13 @@ export class DatabaseStorage implements IStorage {
       if (this.isUniqueViolation(err)) return { error: DatabaseStorage.LOCK_TAKEN };
       throw err;
     }
+    // A manual transition into the rental pool uses the lock's current position,
+    // not the operator-selected parking. This deliberately overwrites any
+    // parkingId supplied in the same PATCH; the regular parking picker remains
+    // available for overrides when the bike is not transitioning to available.
+    if (patch.status === "available" && existing.status !== "available") {
+      await this.recalculateBikeParking(existing);
+    }
     if (swappingLock) {
       if (existing.lockImei) await this.syncLockRegistryBinding(existing.lockImei, null);
       await this.syncLockRegistryBinding(set.lockImei!, id);
@@ -1503,6 +1516,7 @@ export class DatabaseStorage implements IStorage {
       lng: input.lng,
       capacity: input.capacity,
       occupied,
+      radius: input.radius,
       status: input.status,
       notes: this.optStr(input.notes),
       archivedAt: null,
@@ -1523,6 +1537,7 @@ export class DatabaseStorage implements IStorage {
     if (patch.lng !== undefined) set.lng = patch.lng;
     if (patch.capacity !== undefined) set.capacity = patch.capacity;
     if (patch.occupied !== undefined) set.occupied = patch.occupied;
+    if (patch.radius !== undefined) set.radius = patch.radius;
     if (patch.status !== undefined) set.status = patch.status;
     if (patch.notes !== undefined) set.notes = this.optStr(patch.notes);
     // Keep occupied within the (possibly new) capacity bound.
@@ -1779,6 +1794,16 @@ export class DatabaseStorage implements IStorage {
         track: JSON.stringify(track),
       }).where(eq(rides.id, rideId));
       await tx.update(bikes).set({ status: "available", lat: last[1], lng: last[0], lastSeen: endedAt, idleHours: 0 } as any)
+        .where(eq(bikes.id, r.bikeId));
+      // Assignment is based only on live, active parkings. Keep it inside the
+      // ride-completion transaction, so the bike never becomes available with
+      // an outdated parking reference if the transaction rolls back.
+      const parkingMatch = findNearestParkingWithinRadius(
+        last[1],
+        last[0],
+        (await tx.select().from(parkings)) as Parking[],
+      );
+      await tx.update(bikes).set({ parkingId: parkingMatch?.id ?? null } as any)
         .where(eq(bikes.id, r.bikeId));
 
       // Only the overage is charged at end — the base tariff was already paid at
@@ -2041,6 +2066,7 @@ export class DatabaseStorage implements IStorage {
       const bike = await this.getBike(existing.bikeId);
       if (bike && bike.status === "maintenance") {
         await this.updateBike(bike.id, { status: "available" });
+        await this.recalculateBikeParking(bike);
         await this.addEvent(id, actor, `Велосипед ${bike.id} возвращён в доступные`, "event");
       }
     }

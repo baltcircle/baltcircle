@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS parkings (
   city TEXT NOT NULL DEFAULT '',
   lat DOUBLE PRECISION NOT NULL, lng DOUBLE PRECISION NOT NULL,
   capacity INTEGER NOT NULL, occupied INTEGER NOT NULL,
+  radius INTEGER NOT NULL DEFAULT 30,
   status TEXT NOT NULL DEFAULT 'active',
   notes TEXT,
   archived_at BIGINT,
@@ -445,6 +446,7 @@ async function runMigrations() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at BIGINT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at BIGINT;`);
   await pool.query(`ALTER TABLE parkings ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';`);
+  await pool.query(`ALTER TABLE parkings ADD COLUMN IF NOT EXISTS radius INTEGER NOT NULL DEFAULT 30;`);
   await pool.query(`ALTER TABLE support_conversations ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'bot';`);
   for (const col of [
     "last_lock_state TEXT",
@@ -579,8 +581,8 @@ async function populateDemoData(client: pg.PoolClient) {
     const occupied = Math.min(p.capacity, Math.floor(rng() * p.capacity * 0.9));
     const city = p.name.split("·")[0].trim();
     await client.query(
-      `INSERT INTO parkings (id, name, city, lat, lng, capacity, occupied, status, notes, archived_at, seed, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'active',NULL,NULL,TRUE,$8,NULL)
+      `INSERT INTO parkings (id, name, city, lat, lng, capacity, occupied, radius, status, notes, archived_at, seed, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,30,'active',NULL,NULL,TRUE,$8,NULL)
        ON CONFLICT (id) DO UPDATE SET
          name=EXCLUDED.name, city=EXCLUDED.city, lat=EXCLUDED.lat, lng=EXCLUDED.lng,
          capacity=EXCLUDED.capacity, occupied=EXCLUDED.occupied, status='active',
