@@ -72,6 +72,23 @@ const createInput = {
   id: "BC-01", lockImei: IMEI, model: "City", status: "available" as const, battery: 100,
 };
 
+describe("available lock discovery", () => {
+  it("returns an active unbound registry lock and excludes decommissioned locks", async () => {
+    const activeUnboundLock = { imei: IMEI, lastSeen: 1_700_000_000_000 };
+    poolMock.query.mockResolvedValueOnce({ rows: [activeUnboundLock] });
+
+    const result = await storage.listUnassignedLocks();
+
+    expect(result).toEqual([activeUnboundLock]);
+    const [sql, params] = poolMock.query.mock.calls[0];
+    expect(sql).toContain("FROM locks");
+    expect(sql).toContain("bike_id IS NULL");
+    expect(sql).toContain("status <> 'decommissioned'");
+    expect(sql).not.toContain("FROM unassigned_locks");
+    expect(params).toBeUndefined();
+  });
+});
+
 describe("createBike lock binding", () => {
   it("drops the discovery row once the lock is bound to a bike", async () => {
     selectResults = [[], [bikeRow()]];
@@ -83,6 +100,10 @@ describe("createBike lock binding", () => {
       String(sql).includes("DELETE FROM unassigned_locks"));
     expect(deletes).toHaveLength(1);
     expect(deletes[0][1]).toEqual([IMEI]);
+    expect(poolMock.query).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE locks SET bike_id = $2"),
+      [IMEI, "BC-01", expect.any(Number)],
+    );
   });
 
   it("reports a lock taken by another bike instead of throwing", async () => {
@@ -151,18 +172,29 @@ describe("adminUpdateBike lock binding", () => {
   });
 });
 
-describe("listUnassignedLocks", () => {
-  it("filters by recency and excludes locks already fitted to a bike", async () => {
-    poolMock.query.mockResolvedValue({ rows: [{ imei: IMEI, lastSeen: 42 }] });
+describe("updateLock provisioning metadata", () => {
+  it("persists ICCID, APN, MAC address, and firmware version", async () => {
+    const existing = { id: 7, imei: IMEI };
+    const patch = {
+      simIccid: "8970101829255631812-9",
+      apn: "cmiot",
+      macAddress: "12:34:56:78:90:AB",
+      firmwareVersion: "OC32_110",
+    };
+    selectResults = [[existing]];
+    const setSpy = vi.fn();
+    dbMock.update.mockImplementation(() => {
+      const chain: any = {
+        set: (value: unknown) => { setSpy(value); return chain; },
+        where: () => chain,
+        returning: () => Promise.resolve([{ ...existing, ...patch }]),
+      };
+      return chain;
+    });
 
-    const rows = await storage.listUnassignedLocks(1_000);
+    const result = await storage.updateLock(7, patch);
 
-    expect(rows).toEqual([{ imei: IMEI, lastSeen: 42 }]);
-    const [sql, params] = poolMock.query.mock.calls[0];
-    expect(params).toEqual([1_000]);
-    // The anti-join is the whole point of the endpoint: a sighting row survives
-    // assignment, so an assigned IMEI must be filtered out by the query itself.
-    expect(String(sql)).toMatch(/NOT EXISTS[\s\S]*bikes[\s\S]*lock_imei/);
-    expect(String(sql)).toContain("last_seen >= $1");
+    expect(result).toEqual({ lock: { ...existing, ...patch } });
+    expect(setSpy).toHaveBeenCalledWith(expect.objectContaining(patch));
   });
 });

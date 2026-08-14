@@ -11,7 +11,7 @@ import {
   adminCreateBikeSchema, adminUpdateBikeSchema,
   createTicketSchema, updateTicketSchema, addTicketCommentSchema,
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
-  UNASSIGNED_LOCK_TTL_MS, adminCreateLockSchema, adminUpdateLockSchema,
+  adminCreateLockSchema, adminUpdateLockSchema,
 } from "@shared/schema";
 import type { PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
 import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./../sms";
@@ -174,12 +174,11 @@ export function registerCatalogRoutes(app: Express): void {
   });
 
   // -------------- Admin: smart lock discovery --------------
-  // Locks that have connected to the OMNI TCP ingest but are not fitted to any
-  // bike. The ingest refuses telemetry from an unregistered IMEI, so this is the
-  // only way an operator learns which physical locks are powered on and free.
+  // Any registry lock not fitted to a bike is eligible for selection. Connectivity
+  // is deliberately not part of binding eligibility: a lock may be active,
+  // installed, unregistered, or offline while awaiting installation.
   app.get("/api/admin/locks/unassigned", requireRole("operator", "admin"), async (_req, res) => {
-    const seenSince = Date.now() - UNASSIGNED_LOCK_TTL_MS;
-    res.json(await storage.listUnassignedLocks(seenSince));
+    res.json(await storage.listUnassignedLocks());
   });
 
   // -------------- Admin: lock device registry (Phase 1) --------------

@@ -1227,21 +1227,20 @@ export class DatabaseStorage implements IStorage {
     return t.length > 0 ? t : null;
   }
 
-  // Locks that dialled in recently but are not fitted to a bike, newest first.
-  //
-  // The anti-join is the point: a sighting row is only a hint left by the TCP
-  // ingest and is not deleted the instant a lock is assigned, so an IMEI that
-  // now belongs to a bike must be filtered out here rather than trusted. The
-  // recency window drops locks that have gone quiet (returned, unpowered,
-  // spoofed once) without needing a scheduled prune.
-  async listUnassignedLocks(seenSinceMs: number): Promise<{ imei: string; lastSeen: number }[]> {
+  // Any registry lock not fitted to a bike is eligible for binding, regardless
+  // of connectivity. The TCP gateway creates a registry row directly, so the
+  // legacy unassigned_locks discovery buffer cannot be the source of this list.
+  // Keep the anti-join while legacy bike.lock_imei bindings exist: it prevents a
+  // pre-registry bike binding from being offered again before its registry row is
+  // next synchronized.
+  async listUnassignedLocks(): Promise<{ imei: string; lastSeen: number | null }[]> {
     return (await pool.query(
-      `SELECT u.imei, u.last_seen AS "lastSeen" FROM unassigned_locks u
-        WHERE u.last_seen >= $1
-          AND NOT EXISTS (SELECT 1 FROM bikes b WHERE b.lock_imei = u.imei)
-        ORDER BY u.last_seen DESC`,
-      [seenSinceMs],
-    )).rows as { imei: string; lastSeen: number }[];
+      `SELECT l.imei, l.last_seen_at AS "lastSeen" FROM locks l
+        WHERE l.bike_id IS NULL
+          AND l.status <> 'decommissioned'
+          AND NOT EXISTS (SELECT 1 FROM bikes b WHERE b.lock_imei = l.imei)
+        ORDER BY l.last_seen_at DESC NULLS LAST, l.created_at DESC`,
+    )).rows as { imei: string; lastSeen: number | null }[];
   }
 
   // ---------- Lock device registry: admin CRUD ----------
@@ -1288,6 +1287,10 @@ export class DatabaseStorage implements IStorage {
       if (bikeId && !await this.getBike(bikeId)) return { error: "Велосипед не найден" };
       set.bikeId = bikeId;
     }
+    if (patch.macAddress !== undefined) set.macAddress = this.optStr(patch.macAddress);
+    if (patch.simIccid !== undefined) set.simIccid = this.optStr(patch.simIccid);
+    if (patch.firmwareVersion !== undefined) set.firmwareVersion = this.optStr(patch.firmwareVersion);
+    if (patch.apn !== undefined) set.apn = this.optStr(patch.apn) ?? "cmiot";
     if (patch.status !== undefined) set.status = patch.status;
     if (patch.notes !== undefined) set.notes = this.optStr(patch.notes);
 
@@ -1361,6 +1364,7 @@ export class DatabaseStorage implements IStorage {
       if (this.isUniqueViolation(err)) return { error: DatabaseStorage.LOCK_TAKEN };
       throw err;
     }
+    await this.syncLockRegistryBinding(lockImei, id);
     await this.forgetUnassignedLock(lockImei);
     this.invalidateBikesCache();
     return { bike: (await this.getBike(id))! };
@@ -1375,6 +1379,16 @@ export class DatabaseStorage implements IStorage {
     } catch {
       /* ignore */
     }
+  }
+
+  // Keep the registry's explicit bike_id relationship in step with the legacy
+  // bikes.lock_imei binding. Rows may be absent for old/manual bindings, so an
+  // UPDATE affecting zero rows is intentional and must not reject the bike save.
+  private async syncLockRegistryBinding(imei: string, bikeId: string | null): Promise<void> {
+    await pool.query(
+      `UPDATE locks SET bike_id = $2, updated_at = $3 WHERE imei = $1`,
+      [imei, bikeId, Date.now()],
+    );
   }
 
   async adminUpdateBike(id: string, patch: AdminUpdateBikeInput) {
@@ -1407,7 +1421,11 @@ export class DatabaseStorage implements IStorage {
       if (this.isUniqueViolation(err)) return { error: DatabaseStorage.LOCK_TAKEN };
       throw err;
     }
-    if (swappingLock) await this.forgetUnassignedLock(set.lockImei!);
+    if (swappingLock) {
+      if (existing.lockImei) await this.syncLockRegistryBinding(existing.lockImei, null);
+      await this.syncLockRegistryBinding(set.lockImei!, id);
+      await this.forgetUnassignedLock(set.lockImei!);
+    }
     this.invalidateBikesCache();
     return { bike: (await this.getBike(id))! };
   }
