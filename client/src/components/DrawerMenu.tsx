@@ -1,5 +1,6 @@
 import { LifeBuoy, Wallet, Route, ShieldCheck, Shield, ChevronRight, Bike } from "lucide-react";
 import { Logo } from "@/components/Logo";
+import { RegistrationModal } from "@/components/RegistrationModal";
 import { Link } from "wouter";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useQuery } from "@tanstack/react-query";
@@ -47,6 +48,7 @@ function MenuItem({
 
 export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0 }: Props) {
   const { user, isStaff, isRegistered } = useCurrentUser();
+  const [registrationOpen, setRegistrationOpen] = useState(false);
 
   // Если меню восстановлено открытым на первом рендере — первый кадр без
   // transition (панель сразу на месте, без slide-in), потом включаем transition
@@ -88,6 +90,42 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
 
   const rides = ridesQ.data ?? [];
   const totalKm = (rides.reduce((sum, r) => sum + (r.distanceM ?? 0), 0) / 1000).toFixed(1);
+  const profileCard = (
+    <>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-3 min-w-0">
+          <Logo compact className="h-10 w-10 shrink-0" />
+          <div className="min-w-0">
+            <h2 className="text-2xl font-semibold text-sidebar-foreground leading-tight truncate">
+              {isRegistered ? user?.name ?? "Гость" : "Войти"}
+            </h2>
+            {user?.phone && (
+              <p className="text-sm text-sidebar-foreground/70 mt-0.5">{user.phone}</p>
+            )}
+          </div>
+        </div>
+        <ChevronRight className="w-5 h-5 text-sidebar-foreground/70 shrink-0 mt-1.5" />
+      </div>
+
+      {/* Stats */}
+      <div className="flex gap-6 mt-4">
+        <div className="flex items-center gap-2">
+          <Route className="w-7 h-7 text-primary shrink-0" strokeWidth={2.5} />
+          <div>
+            <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums leading-none">{totalKm}</p>
+            <p className="text-xs text-sidebar-foreground/70 uppercase tracking-wide mt-1">Километры</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Bike className="w-7 h-7 text-primary shrink-0" strokeWidth={2.5} />
+          <div>
+            <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums leading-none">{rides.length}</p>
+            <p className="text-xs text-sidebar-foreground/70 uppercase tracking-wide mt-1">Поездки</p>
+          </div>
+        </div>
+      </div>
+    </>
+  );
 
   return (
     <>
@@ -108,47 +146,28 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        {/* User info block — кликабельный, ведёт в /settings.
+        {/* User info block — для гостя открывает регистрацию, для вошедшего ведёт в /settings.
          * Крестик закрытия убран — меню закрывается тапом по затемнению.
          * pt поднимает профиль к верху, но не под status bar. */}
-        <Link
-          href="/settings"
-          className="mx-4 block rounded-2xl hover:bg-black/10 transition-colors px-2 py-2"
-          style={{ marginTop: "max(env(safe-area-inset-top, 0px), 24px)" }}
-        >
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-3 min-w-0">
-              <Logo compact className="h-10 w-10 shrink-0" />
-              <div className="min-w-0">
-                <h2 className="text-2xl font-semibold text-sidebar-foreground leading-tight truncate">
-                  {user?.name ?? "Гость"}
-                </h2>
-                {user?.phone && (
-                  <p className="text-sm text-sidebar-foreground/70 mt-0.5">{user.phone}</p>
-                )}
-              </div>
-            </div>
-            <ChevronRight className="w-5 h-5 text-sidebar-foreground/70 shrink-0 mt-1.5" />
-          </div>
-
-          {/* Stats */}
-          <div className="flex gap-6 mt-4">
-            <div className="flex items-center gap-2">
-              <Route className="w-7 h-7 text-primary shrink-0" strokeWidth={2.5} />
-              <div>
-                <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums leading-none">{totalKm}</p>
-                <p className="text-xs text-sidebar-foreground/70 uppercase tracking-wide mt-1">Километры</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Bike className="w-7 h-7 text-primary shrink-0" strokeWidth={2.5} />
-              <div>
-                <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums leading-none">{rides.length}</p>
-                <p className="text-xs text-sidebar-foreground/70 uppercase tracking-wide mt-1">Поездки</p>
-              </div>
-            </div>
-          </div>
-        </Link>
+        {isRegistered ? (
+          <Link
+            href="/settings"
+            className="mx-4 block rounded-2xl hover:bg-black/10 transition-colors px-2 py-2"
+            style={{ marginTop: "max(env(safe-area-inset-top, 0px), 24px)" }}
+          >
+            {profileCard}
+          </Link>
+        ) : (
+          <button
+            type="button"
+            data-testid="button-drawer-guest-login"
+            onClick={() => setRegistrationOpen(true)}
+            className="mx-4 block w-[calc(100%-2rem)] rounded-2xl hover:bg-black/10 transition-colors px-2 py-2 text-left"
+            style={{ marginTop: "max(env(safe-area-inset-top, 0px), 24px)" }}
+          >
+            {profileCard}
+          </button>
+        )}
 
         {/* Divider */}
         <div className="mx-4 mt-3 mb-2 h-px bg-sidebar-foreground/15" />
@@ -181,6 +200,7 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
           )}
         </nav>
       </div>
+      <RegistrationModal open={registrationOpen} onOpenChange={setRegistrationOpen} />
     </>
   );
 }

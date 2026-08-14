@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, queryClient, API_BASE } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { Send, Paperclip, X as XIcon, ImageIcon, Loader2 } from "lucide-react";
+import { Send, Paperclip, X as XIcon, ImageIcon, Loader2, LifeBuoy } from "lucide-react";
 
 const CHAT_KEY = ["/api/support/chat"];
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -183,8 +183,12 @@ export function SupportPage() {
     return (
       <OverlayShell title="Помощь">
         <div className="px-4 py-6 max-w-2xl mx-auto space-y-3" data-testid="page-support">
-          <Card className="p-4">
-            <div className="text-sm">Войдите в аккаунт, чтобы написать в поддержку.</div>
+          <Card className="p-10 text-center" data-testid="empty-support-guest">
+            <LifeBuoy className="w-10 h-10 mx-auto opacity-40 mb-3" />
+            <div className="font-display text-lg font-light mb-1">Поддержка доступна после входа</div>
+            <div className="text-sm text-muted-foreground mb-6">
+              Войдите в аккаунт, чтобы написать в поддержку.
+            </div>
           </Card>
         </div>
       </OverlayShell>

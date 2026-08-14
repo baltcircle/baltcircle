@@ -1,13 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
 import { OverlayShell } from "@/components/OverlayShell";
 import type { Ride } from "@shared/schema";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { fmtDate, fmtDistance, fmtDuration, fmtRub, fmtTariff } from "@/lib/format";
 import { apiRequest } from "@/lib/queryClient";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { Route, Clock, MapPin, Receipt, LogIn } from "lucide-react";
+import { Route, Clock, MapPin, Receipt } from "lucide-react";
 
 export function RidesPage() {
   // История поездок — приватные данные конкретного пользователя. Гостям её не
@@ -47,11 +45,6 @@ export function RidesPage() {
             <div className="text-sm text-muted-foreground mb-6">
               Войдите в аккаунт, чтобы видеть свои завершённые поездки, дистанцию и стоимость.
             </div>
-            <Link href="/settings">
-              <Button data-testid="button-login-from-rides" className="gap-2">
-                <LogIn className="w-4 h-4" /> Войти
-              </Button>
-            </Link>
           </Card>
         </div>
       </OverlayShell>
