@@ -6,7 +6,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { bikeQrLink } from "@/lib/format";
+import { bikeQrLink, fmtRelative } from "@/lib/format";
 import { qrToSvg } from "@/lib/qrcode";
 import { BikeQr } from "@/components/BikeQr";
 import { Card } from "@/components/ui/card";
@@ -53,11 +53,10 @@ const STATUS_TONE: Record<BikeStatus, string> = {
   archived: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
 };
 
-type FormState = {
+export type BikeSaveForm = {
   id: string;
   model: string;
   status: BikeStatus;
-  battery: string;
   serial: string;
   lockId: string;
   lockImei: string;
@@ -65,12 +64,66 @@ type FormState = {
   notes: string;
 };
 
-const emptyForm: FormState = {
-  id: "", model: "", status: "available", battery: "100",
+const emptyForm: BikeSaveForm = {
+  id: "", model: "", status: "available",
   serial: "", lockId: "", lockImei: "", parkingId: "", notes: "",
 };
 
 const UNASSIGNED_LOCKS_KEY = ["/api/admin/locks/unassigned"] as const;
+
+export type LockBatterySnapshot = {
+  battery: number;
+  lockImei: string | null;
+  lockLastSeen: number | null;
+};
+
+/**
+ * The bike snapshot is populated by lock telemetry. Do not surface the schema
+ * default (100%) as a live reading until the bound lock has actually reported.
+ */
+export function liveLockBatteryDisplay(snapshot: LockBatterySnapshot): {
+  value: string;
+  freshness: string;
+} {
+  if (!snapshot.lockImei || !snapshot.lockLastSeen) {
+    return { value: "—", freshness: "Нет данных" };
+  }
+
+  return {
+    value: `${snapshot.battery}%`,
+    freshness: `обновлено ${fmtRelative(snapshot.lockLastSeen)}`,
+  };
+}
+
+/**
+ * Battery is deliberately absent: it is a telemetry-owned bike snapshot, not
+ * an operator-editable field. Creation uses the existing server schema default
+ * of 100% until the newly bound lock reports its real charge.
+ */
+export function buildBikeSavePayload(
+  form: BikeSaveForm,
+  editing: Pick<Bike, "id" | "lockImei"> | null,
+) {
+  const common = {
+    model: form.model,
+    status: form.status,
+    serial: form.serial,
+    lockId: form.lockId,
+    parkingId: form.parkingId === "none" ? "" : form.parkingId,
+    notes: form.notes,
+  };
+
+  if (editing) {
+    // Only send the lock when it actually changed: an untouched edit must not
+    // look like a lock swap (which resets the lock's live state server-side).
+    const lockPatch = form.lockImei && form.lockImei !== editing.lockImei
+      ? { lockImei: form.lockImei }
+      : {};
+    return { ...common, ...lockPatch };
+  }
+
+  return { id: form.id, lockImei: form.lockImei, ...common };
+}
 
 /** A non-decommissioned registry lock that is not fitted to a bike. */
 type UnassignedLock = { imei: string; lastSeen: number | null };
@@ -110,7 +163,7 @@ export function BikesPage() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Bike | null>(null);
-  const [form, setForm] = useState<FormState>(emptyForm);
+  const [form, setForm] = useState<BikeSaveForm>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
 
   const [qrBike, setQrBike] = useState<Bike | null>(null);
@@ -145,6 +198,14 @@ export function BikesPage() {
 
   const archivedCount = bikes.filter((b) => b.status === "archived").length;
   const { page, setPage, pageCount, pageItems } = useClientPagination(filtered);
+  // A lock selected for a pending swap has not reported for this bike yet, so
+  // never show the old lock's charge as though it were the selected lock's data.
+  const displayedLock = editing?.lockImei === form.lockImei ? editing : null;
+  const lockBattery = liveLockBatteryDisplay({
+    battery: displayedLock?.battery ?? 0,
+    lockImei: displayedLock?.lockImei ?? null,
+    lockLastSeen: displayedLock?.lockLastSeen ?? null,
+  });
 
   // ---------- Mutations ----------
   const saveMut = useMutation({
@@ -213,7 +274,6 @@ export function BikesPage() {
       id: b.id,
       model: b.model,
       status: b.status as BikeStatus,
-      battery: String(b.battery),
       serial: b.serial ?? "",
       lockId: b.lockId ?? "",
       lockImei: b.lockImei ?? "",
@@ -226,34 +286,15 @@ export function BikesPage() {
 
   const submitForm = () => {
     setFormError(null);
-    const battery = Number(form.battery);
-    if (!Number.isFinite(battery) || battery < 0 || battery > 100) {
-      setFormError("Заряд должен быть числом 0–100");
-      return;
-    }
-    const common = {
-      model: form.model,
-      status: form.status,
-      battery,
-      serial: form.serial,
-      lockId: form.lockId,
-      parkingId: form.parkingId === "none" ? "" : form.parkingId,
-      notes: form.notes,
-    };
     if (editing) {
-      // Only send the lock when it actually changed: an untouched edit must not
-      // look like a lock swap (which resets the lock's live state server-side).
-      const lockPatch = form.lockImei && form.lockImei !== editing.lockImei
-        ? { lockImei: form.lockImei }
-        : {};
-      saveMut.mutate({ editingId: editing.id, body: { ...common, ...lockPatch } });
+      saveMut.mutate({ editingId: editing.id, body: buildBikeSavePayload(form, editing) });
       return;
     }
     if (!form.lockImei) {
       setFormError("Выберите замок — без него велосипед нельзя отследить");
       return;
     }
-    saveMut.mutate({ editingId: null, body: { id: form.id, lockImei: form.lockImei, ...common } });
+    saveMut.mutate({ editingId: null, body: buildBikeSavePayload(form, null) });
   };
 
   // ---------- Loading / error ----------
@@ -446,12 +487,16 @@ export function BikesPage() {
                 </Select>
               </Field>
               <Field label="Заряд замка, %">
-                <Input
-                  type="number" min={0} max={100}
-                  value={form.battery}
-                  onChange={(e) => setForm((f) => ({ ...f, battery: e.target.value }))}
-                  data-testid="input-bike-battery"
-                />
+                <div
+                  className="rounded-md border border-input bg-muted/50 px-3 py-2 text-sm tabular-nums"
+                  data-testid="display-bike-battery"
+                  aria-label={`Заряд замка: ${lockBattery.value}`}
+                >
+                  {lockBattery.value}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground" data-testid="text-bike-battery-freshness">
+                  {lockBattery.freshness}
+                </p>
               </Field>
             </div>
             <LockPicker
