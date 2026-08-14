@@ -385,7 +385,7 @@ export function BikesPage() {
                     {STATUS_LABEL[b.status as BikeStatus] ?? b.status}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-sm text-muted-foreground font-mono">{b.lockId || "—"}</TableCell>
+                <TableCell className="text-sm text-muted-foreground font-mono">{b.lockImei || "—"}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">{parkingName(b.parkingId)}</TableCell>
                 <TableCell className="text-sm text-muted-foreground font-mono">{b.serial || "—"}</TableCell>
                 <TableCell>
