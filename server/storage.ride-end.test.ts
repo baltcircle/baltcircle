@@ -54,7 +54,7 @@ describe("endRide charge confirmation push", () => {
   it("confirms the successful ride-end overage amount to the rider", async () => {
     const activeRide = makeRide();
     const completedRide = makeRide({ endedAt: NOW.getTime(), cost: 70000, status: "completed" });
-    const selectResults = [[activeRide], [{ userId: "user-1", balance: 100000 }], [completedRide]];
+    const selectResults = [[activeRide], [], [{ userId: "user-1", balance: 100000 }], [completedRide]];
     const tx: any = {
       select: vi.fn(() => {
         const rows = selectResults.shift() ?? [];
@@ -62,6 +62,7 @@ describe("endRide charge confirmation push", () => {
           from: () => chain,
           where: () => chain,
           limit: () => Promise.resolve(rows),
+          then: (resolve: (value: unknown[]) => unknown, reject?: (reason: unknown) => unknown) => Promise.resolve(rows).then(resolve, reject),
         };
         return chain;
       }),

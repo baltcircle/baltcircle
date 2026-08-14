@@ -445,3 +445,51 @@ export function checkZoneState(x: number, y: number) {
   if (!pointInPolygon(p, OPERATING_ZONE)) return { kind: "out", name: "Вне зоны обслуживания" };
   return { kind: "ok", name: "В зоне обслуживания" };
 }
+
+
+/** Great-circle distance between two WGS84 latitude/longitude points, in metres. */
+export function haversineM(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const earthRadiusM = 6_371_000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadiusM * Math.asin(Math.sqrt(a));
+}
+
+/** The parking fields needed for automatic assignment. Coordinates use map storage space. */
+export type ParkingForRadiusMatch = {
+  id: string;
+  lat: number;
+  lng: number;
+  radius: number;
+  status: string;
+  archivedAt: number | null;
+};
+
+/**
+ * Finds the nearest active, non-archived parking whose own radius includes the
+ * stored map-space point. Both points are converted to WGS84 before the
+ * haversine calculation so the configured radius remains metres.
+ */
+export function findNearestParkingWithinRadius<T extends ParkingForRadiusMatch>(
+  lat: number,
+  lng: number,
+  parkingRows: readonly T[],
+): T | null {
+  const [bikeLat, bikeLng] = mapToReal(lng, lat);
+  let nearest: T | null = null;
+  let nearestDistanceM = Infinity;
+
+  for (const parking of parkingRows) {
+    if (parking.archivedAt !== null || parking.status !== "active") continue;
+    const [parkingLat, parkingLng] = mapToReal(parking.lng, parking.lat);
+    const distanceM = haversineM(bikeLat, bikeLng, parkingLat, parkingLng);
+    if (distanceM <= parking.radius && distanceM < nearestDistanceM) {
+      nearest = parking;
+      nearestDistanceM = distanceM;
+    }
+  }
+  return nearest;
+}

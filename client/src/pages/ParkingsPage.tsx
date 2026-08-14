@@ -52,6 +52,7 @@ type FormState = {
   city: string;
   capacity: string;
   occupied: string;
+  radius: string;
   status: ParkingStatus;
   notes: string;
   // Stored in abstract map space (x = lng field, y = lat field).
@@ -60,7 +61,7 @@ type FormState = {
 };
 
 const emptyForm: FormState = {
-  id: "", name: "", city: "", capacity: "10", occupied: "0", status: "active",
+  id: "", name: "", city: "", capacity: "10", occupied: "0", radius: "30", status: "active",
   notes: "", x: 500, y: 350,
 };
 
@@ -122,6 +123,7 @@ export function ParkingsPage() {
     lat: form.y, lng: form.x,
     capacity: Number(form.capacity) || 0,
     occupied: Number(form.occupied) || 0,
+    radius: Number(form.radius) || 30,
     status: form.status,
     notes: null, archivedAt: null, seed: false, createdAt: null, updatedAt: null,
   };
@@ -214,6 +216,7 @@ export function ParkingsPage() {
       city: p.city ?? "",
       capacity: String(p.capacity),
       occupied: String(p.occupied),
+      radius: String(p.radius),
       status: p.status as ParkingStatus,
       notes: p.notes ?? "",
       x: p.lng,
@@ -251,6 +254,11 @@ export function ParkingsPage() {
       setFormError("Вместимость должна быть числом ≥ 0");
       return;
     }
+    const radius = Number(form.radius);
+    if (!Number.isInteger(radius) || radius < 1 || radius > 1000) {
+      setFormError("Радиус должен быть целым числом от 1 до 1000 м");
+      return;
+    }
     if (form.name.trim().length < 2) {
       setFormError("Укажите название (минимум 2 символа)");
       return;
@@ -265,6 +273,7 @@ export function ParkingsPage() {
       lat: form.y,
       lng: form.x,
       capacity,
+      radius,
       // occupied больше не вводится вручную — считается на сервере от велосипедов.
       status: form.status,
       notes: form.notes,
@@ -534,6 +543,14 @@ export function ParkingsPage() {
                     value={form.capacity}
                     onChange={(e) => setForm((f) => ({ ...f, capacity: e.target.value }))}
                     data-testid="input-parking-capacity"
+                  />
+                </Field>
+                <Field label="Радиус (м)">
+                  <Input
+                    type="number" min={1} max={1000}
+                    value={form.radius}
+                    onChange={(e) => setForm((f) => ({ ...f, radius: e.target.value }))}
+                    data-testid="input-parking-radius"
                   />
                 </Field>
               </div>
