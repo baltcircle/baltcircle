@@ -86,6 +86,12 @@ describe("PaymentMethodsPage binding controls", () => {
     expect(visiblePaymentMethods([cancelled, rejected])).toEqual([rejected]);
   });
 
+  it("shows only the failed status label without an inline bank-error detail", () => {
+    expect(source).toContain('return { text: "Ошибка привязки", cls: "text-red-500" }');
+    expect(source).not.toContain("method-error-");
+    expect(source).not.toContain("{m.status === \"failed\" && err && (");
+  });
+
   it("does not show a toast for any terminal card-bind failure", () => {
     const fetchedFailureEffect = source.slice(
       source.indexOf("// A webhook can update the list"),

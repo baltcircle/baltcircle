@@ -464,7 +464,6 @@ export function PaymentMethodsPage() {
             <ul className="divide-y divide-gray-100 dark:divide-zinc-700" data-testid="methods-list">
               {visibleMethods.map((m) => {
                 const st = statusLabel(m.status);
-                const err = methodError(m);
                 return (
                   <li
                     key={m.id}
@@ -497,15 +496,6 @@ export function PaymentMethodsPage() {
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
-                    {m.status === "failed" && err && (
-                      <div
-                        className="mt-2 text-xs text-red-500 flex items-start gap-1.5"
-                        data-testid={`method-error-${m.id}`}
-                      >
-                        <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                        <span>{err}</span>
-                      </div>
-                    )}
                   </li>
                 );
               })}
