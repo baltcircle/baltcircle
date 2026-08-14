@@ -20,8 +20,6 @@ import sbpLogo from "@/assets/payment-icons/sbp.svg";
 const METHODS_KEY = ["/api/payment-methods"];
 const PENDING_POLL_INTERVAL_MS = 3_000;
 const PENDING_BINDING_TIMEOUT_MS = 3 * 60 * 1_000;
-const SUPERSEDED_BINDING_ERROR_CODE = "SUPERSEDED_BY_NEW_ATTEMPT";
-const CANCELLED_BINDING_ERROR_CODE = "BINDING_CANCELLED";
 const ACCEPTED_PAYMENT_METHODS = [
   { src: visaLogo, alt: "Visa" },
   { src: mastercardLogo, alt: "Mastercard" },
@@ -59,23 +57,8 @@ interface PendingBindingState {
   timedOut: PaymentMethod[];
 }
 
-// Superseding a pending bind is normal retry bookkeeping, not a rider-facing
-// failure. Keep the old row out of the UI while retaining genuine bank errors.
-export function isSupersededBindingFailure(method: Pick<PaymentMethod, "status" | "lastErrorCode">): boolean {
-  return method.status === "failed" && method.lastErrorCode === SUPERSEDED_BINDING_ERROR_CODE;
-}
-
-// A local supersession and a terminal cancellation from T-Bank both mean that
-// no payment method was added. Keep those bookkeeping rows out of the list and
-// suppress failure toasts, while preserving actual bank rejections.
-export function isAbandonedBindingFailure(method: Pick<PaymentMethod, "status" | "lastErrorCode">): boolean {
-  return method.status === "failed"
-    && (method.lastErrorCode === SUPERSEDED_BINDING_ERROR_CODE
-      || method.lastErrorCode === CANCELLED_BINDING_ERROR_CODE);
-}
-
 export function visiblePaymentMethods(methods: PaymentMethod[]): PaymentMethod[] {
-  return methods.filter((method) => method.status !== "pending" && !isAbandonedBindingFailure(method));
+  return methods.filter((method) => method.status !== "pending" && method.status !== "failed");
 }
 
 // API data is normally serialized as a numeric unix-ms value by Drizzle. Keep
@@ -162,8 +145,8 @@ export function PaymentMethodsPage() {
 
   // A webhook can update the list between poll responses. Detect a pending →
   // failed transition in fetched data too, so the binding modal reflects the
-  // authoritative terminal state. Terminal bind failures remain visible in the
-  // methods list but deliberately do not produce a page-level notification.
+  // authoritative terminal state. Terminal bind failures update an open binding
+  // modal but do not produce a page-level notification or persistent list row.
   useEffect(() => {
     const previousPending = pendingBindingIds.current;
     methods
@@ -295,8 +278,8 @@ export function PaymentMethodsPage() {
       refreshed.forEach((method) => {
         if (!method) return;
         if (method.status === "failed") {
-          // The failed row/modal state communicates the result without a
-          // disruptive toast, regardless of the bank's terminal status.
+          // Keep an open SBP modal in context without a disruptive toast; failed
+          // bindings never remain as persistent payment-method list rows.
           if (tbankBind?.methodId === method.id) setTbankBind(null);
           setSbpBinding((binding) =>
             binding?.methodId === method.id
