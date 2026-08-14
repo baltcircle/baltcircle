@@ -3,8 +3,6 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PaymentMethod } from "@shared/schema";
 import {
-  isAbandonedBindingFailure,
-  isSupersededBindingFailure,
   partitionPendingBindings,
   visiblePaymentMethods,
 } from "./PaymentMethodsPage";
@@ -45,7 +43,7 @@ describe("PaymentMethodsPage binding controls", () => {
     expect(source).not.toContain("Проверить статус");
   });
 
-  it("hides the benign superseded bind failure while preserving genuine failures", () => {
+  it("hides every failed binding, including generic bank rejections", () => {
     const superseded = {
       id: 5,
       type: "card",
@@ -53,41 +51,44 @@ describe("PaymentMethodsPage binding controls", () => {
       status: "failed",
       lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
     } as PaymentMethod;
-    const rejected = {
-      id: 6,
-      type: "card",
-      label: "•••• 4242",
-      status: "failed",
-      lastErrorCode: "BANK_REJECTED",
-    } as PaymentMethod;
-
-    expect(isSupersededBindingFailure(superseded)).toBe(true);
-    expect(visiblePaymentMethods([superseded, rejected])).toEqual([rejected]);
-  });
-
-  it("hides an explicitly cancelled binding", () => {
     const cancelled = {
-      id: 7,
+      id: 6,
       type: "card",
       label: "Карта (привязывается…)",
       status: "failed",
       lastErrorCode: "BINDING_CANCELLED",
     } as PaymentMethod;
-    const rejected = {
+    const authFail = {
+      id: 7,
+      type: "card",
+      label: "Карта (привязывается…)",
+      status: "failed",
+      lastErrorCode: "AUTH_FAIL",
+    } as PaymentMethod;
+    const noErrorCode = {
       id: 8,
       type: "card",
       label: "•••• 4242",
       status: "failed",
-      lastErrorCode: "BANK_REJECTED",
+      lastErrorCode: null,
+    } as PaymentMethod;
+    const active = {
+      id: 9,
+      type: "card",
+      label: "•••• 4242",
+      status: "active",
+    } as PaymentMethod;
+    const pending = {
+      id: 10,
+      type: "sbp",
+      label: "Счёт СБП (привязывается…)",
+      status: "pending",
     } as PaymentMethod;
 
-    expect(isSupersededBindingFailure(cancelled)).toBe(false);
-    expect(isAbandonedBindingFailure(cancelled)).toBe(true);
-    expect(visiblePaymentMethods([cancelled, rejected])).toEqual([rejected]);
+    expect(visiblePaymentMethods([superseded, cancelled, authFail, noErrorCode, active, pending])).toEqual([active]);
   });
 
-  it("shows only the failed status label without an inline bank-error detail", () => {
-    expect(source).toContain('return { text: "Ошибка привязки", cls: "text-red-500" }');
+  it("does not render an inline bank-error detail", () => {
     expect(source).not.toContain("method-error-");
     expect(source).not.toContain("{m.status === \"failed\" && err && (");
   });
