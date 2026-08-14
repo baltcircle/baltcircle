@@ -150,8 +150,8 @@ export interface IBikeStorage {
   adminUpdateBike(id: string, patch: AdminUpdateBikeInput): Promise<{ bike: Bike } | { error: string }>;
   archiveBike(id: string): Promise<{ bike: Bike } | { error: string }>;
   deleteBike(id: string): Promise<{ ok: true } | { error: string; archived?: Bike }>;
-  // OMNI locks seen by the TCP ingest but not yet fitted to a bike.
-  listUnassignedLocks(seenSinceMs: number): Promise<{ imei: string; lastSeen: number }[]>;
+  // Registry locks that have not yet been fitted to a bike.
+  listUnassignedLocks(): Promise<{ imei: string; lastSeen: number | null }[]>;
 }
 
 export interface ILockStorage {

@@ -113,19 +113,14 @@ describe("GET /api/admin/locks/unassigned", () => {
     expect(res.body).toEqual([{ imei: "861234567890123", lastSeen: 1_700_000_000_000 }]);
   });
 
-  it("asks the storage layer only for locks seen within the last day", async () => {
+  it("asks storage for every eligible registry lock regardless of last-seen time", async () => {
     sessionUserId = "u3";
     storageMock.getUser.mockResolvedValue({ id: "u3", role: "admin" });
     storageMock.listUnassignedLocks.mockResolvedValue([]);
 
-    const day = 24 * 60 * 60 * 1000;
-    const before = Date.now();
     await getLocks();
-    const after = Date.now();
 
-    const [cutoff] = storageMock.listUnassignedLocks.mock.calls[0];
-    expect(cutoff).toBeGreaterThanOrEqual(before - day);
-    expect(cutoff).toBeLessThanOrEqual(after - day);
+    expect(storageMock.listUnassignedLocks).toHaveBeenCalledWith();
   });
 });
 
@@ -224,6 +219,24 @@ describe("lock device registry admin CRUD", () => {
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: "Замок не найден" });
     expect(storageMock.updateLock).toHaveBeenCalledWith(999, { status: "offline" });
+  });
+
+  it("updates lock provisioning metadata", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    const patch = {
+      simIccid: "8970101829255631812-9",
+      apn: "cmiot",
+      macAddress: "12:34:56:78:90:AB",
+      firmwareVersion: "OC32_110",
+    };
+    storageMock.updateLock.mockResolvedValue({ lock: { ...registeredLock, ...patch } });
+
+    const res = await lockRequest("/api/admin/locks/7", "PATCH", patch);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject(patch);
+    expect(storageMock.updateLock).toHaveBeenCalledWith(7, patch);
   });
 
   it("soft-deletes by moving a lock to decommissioned", async () => {

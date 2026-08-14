@@ -376,10 +376,14 @@ export const adminCreateLockSchema = z.object({
 });
 export type AdminCreateLockInput = z.infer<typeof adminCreateLockSchema>;
 
-// Binding, lifecycle, and operator notes are the only mutable registry fields
-// in Phase 1. Telemetry/provisioning mutation belongs to the future gateway.
+// Binding, lifecycle, operator notes, and manually recorded provisioning metadata
+// are mutable. Gateway-owned telemetry remains outside the admin contract.
 export const adminUpdateLockSchema = z.object({
   bikeId: optionalText(20),
+  macAddress: optionalText(64),
+  simIccid: optionalText(32),
+  firmwareVersion: optionalText(100),
+  apn: optionalText(100),
   status: z.enum(LOCK_STATUSES).optional(),
   notes: optionalText(2_000),
 });

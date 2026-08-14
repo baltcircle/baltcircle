@@ -72,8 +72,8 @@ const emptyForm: FormState = {
 
 const UNASSIGNED_LOCKS_KEY = ["/api/admin/locks/unassigned"] as const;
 
-/** A lock that has connected to the TCP ingest but is not fitted to a bike. */
-type UnassignedLock = { imei: string; lastSeen: number };
+/** A non-decommissioned registry lock that is not fitted to a bike. */
+type UnassignedLock = { imei: string; lastSeen: number | null };
 
 export function BikesPage() {
   const toast = useToast();
@@ -519,11 +519,9 @@ export function BikesPage() {
 /**
  * Picks the physical lock a bike is fitted with.
  *
- * The options come from locks that have connected to the TCP ingest but are not
- * bound to a bike yet — there is no other way to learn a lock's IMEI, since the
- * ingest refuses telemetry from an unregistered device. An empty list is the
- * normal state right after opening the form, so it gets an explanation and a
- * retry rather than a silent empty dropdown.
+ * The options come from every non-decommissioned registry lock not bound to a
+ * bike. A lock does not need to be online to be installed, so its last-seen
+ * timestamp may be absent.
  */
 function LockPicker({
   value, onChange, locks, loading, onRefresh, currentImei, required,
@@ -542,7 +540,10 @@ function LockPicker({
     ...(currentImei ? [{ imei: currentImei, label: `IMEI ${currentImei} — текущий` }] : []),
     ...locks
       .filter((l) => l.imei !== currentImei)
-      .map((l) => ({ imei: l.imei, label: `IMEI ${l.imei} — виден ${fmtRelative(l.lastSeen)}` })),
+      .map((l) => ({
+        imei: l.imei,
+        label: `IMEI ${l.imei} — ${l.lastSeen == null ? "ещё не подключался" : `виден ${fmtRelative(l.lastSeen)}`}`,
+      })),
   ];
 
   // Deliberately not wrapped in <Field>: that renders a <label>, and a click
@@ -556,8 +557,8 @@ function LockPicker({
       {options.length === 0 ? (
         <div className="rounded-md border border-dashed p-3 space-y-2" data-testid="lock-picker-empty">
           <p className="text-xs text-muted-foreground">
-            Свободных замков пока не видно — включите замок и дождитесь,
-            пока он подключится к серверу.
+            Свободных замков пока нет. Зарегистрируйте замок или проверьте, что
+            он не назначен другому велосипеду.
           </p>
           <Button type="button" size="sm" variant="outline" onClick={onRefresh} disabled={loading}
             data-testid="button-locks-refresh">
