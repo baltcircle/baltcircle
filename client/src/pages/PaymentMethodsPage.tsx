@@ -78,10 +78,6 @@ export function visiblePaymentMethods(methods: PaymentMethod[]): PaymentMethod[]
   return methods.filter((method) => method.status !== "pending" && !isAbandonedBindingFailure(method));
 }
 
-export function shouldNotifyBindingFailure(method: Pick<PaymentMethod, "status" | "lastErrorCode">): boolean {
-  return method.status === "failed" && !isAbandonedBindingFailure(method);
-}
-
 // API data is normally serialized as a numeric unix-ms value by Drizzle. Keep
 // the timeout guard defensive nevertheless: a date string, seconds timestamp,
 // or malformed legacy value must never be mistaken for a three-minute-old bind.
@@ -152,7 +148,6 @@ export function PaymentMethodsPage() {
   // pending-запись для polling. null — модалка закрыта.
   const [tbankBind, setTbankBind] = useState<{ methodId: number; url: string } | null>(null);
   const timedOutBindingIds = useRef(new Set<number>());
-  const notifiedBindingFailureIds = useRef(new Set<number>());
   const pendingBindingIds = useRef(new Set<number>());
   const lastPendingPollAt = useRef(0);
 
@@ -166,20 +161,14 @@ export function PaymentMethodsPage() {
   const tbankConfigured = cfgQ.data?.configured === true;
 
   // A webhook can update the list between poll responses. Detect a pending →
-  // failed transition in fetched data too, so a failure never remains silent.
+  // failed transition in fetched data too, so the binding modal reflects the
+  // authoritative terminal state. Terminal bind failures remain visible in the
+  // methods list but deliberately do not produce a page-level notification.
   useEffect(() => {
     const previousPending = pendingBindingIds.current;
     methods
-      .filter((method) => shouldNotifyBindingFailure(method) && previousPending.has(method.id))
+      .filter((method) => method.status === "failed" && previousPending.has(method.id))
       .forEach((method) => {
-        if (!notifiedBindingFailureIds.current.has(method.id)) {
-          notifiedBindingFailureIds.current.add(method.id);
-          toast.toast({
-            title: "Привязка не удалась",
-            description: methodError(method),
-            variant: "destructive",
-          });
-        }
         if (tbankBind?.methodId === method.id) setTbankBind(null);
         setSbpBinding((binding) =>
           binding?.methodId === method.id
@@ -306,14 +295,8 @@ export function PaymentMethodsPage() {
       refreshed.forEach((method) => {
         if (!method) return;
         if (method.status === "failed") {
-          if (shouldNotifyBindingFailure(method) && !notifiedBindingFailureIds.current.has(method.id)) {
-            notifiedBindingFailureIds.current.add(method.id);
-            toast.toast({
-              title: "Привязка не удалась",
-              description: methodError(method),
-              variant: "destructive",
-            });
-          }
+          // The failed row/modal state communicates the result without a
+          // disruptive toast, regardless of the bank's terminal status.
           if (tbankBind?.methodId === method.id) setTbankBind(null);
           setSbpBinding((binding) =>
             binding?.methodId === method.id

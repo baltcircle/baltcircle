@@ -6,7 +6,6 @@ import {
   isAbandonedBindingFailure,
   isSupersededBindingFailure,
   partitionPendingBindings,
-  shouldNotifyBindingFailure,
   visiblePaymentMethods,
 } from "./PaymentMethodsPage";
 
@@ -46,7 +45,7 @@ describe("PaymentMethodsPage binding controls", () => {
     expect(source).not.toContain("Проверить статус");
   });
 
-  it("hides and does not notify the benign superseded bind failure while preserving genuine failures", () => {
+  it("hides the benign superseded bind failure while preserving genuine failures", () => {
     const superseded = {
       id: 5,
       type: "card",
@@ -64,13 +63,9 @@ describe("PaymentMethodsPage binding controls", () => {
 
     expect(isSupersededBindingFailure(superseded)).toBe(true);
     expect(visiblePaymentMethods([superseded, rejected])).toEqual([rejected]);
-    expect(shouldNotifyBindingFailure(superseded)).toBe(false);
-    expect(shouldNotifyBindingFailure(rejected)).toBe(true);
-    expect(source).toContain("shouldNotifyBindingFailure(method) && previousPending.has(method.id)");
-    expect(source).toContain("if (shouldNotifyBindingFailure(method) && !notifiedBindingFailureIds.current.has(method.id))");
   });
 
-  it("hides and does not notify an explicitly cancelled binding", () => {
+  it("hides an explicitly cancelled binding", () => {
     const cancelled = {
       id: 7,
       type: "card",
@@ -89,8 +84,24 @@ describe("PaymentMethodsPage binding controls", () => {
     expect(isSupersededBindingFailure(cancelled)).toBe(false);
     expect(isAbandonedBindingFailure(cancelled)).toBe(true);
     expect(visiblePaymentMethods([cancelled, rejected])).toEqual([rejected]);
-    expect(shouldNotifyBindingFailure(cancelled)).toBe(false);
-    expect(shouldNotifyBindingFailure(rejected)).toBe(true);
+  });
+
+  it("does not show a toast for any terminal card-bind failure", () => {
+    const fetchedFailureEffect = source.slice(
+      source.indexOf("// A webhook can update the list"),
+      source.indexOf("// Start a real T-Bank card binding"),
+    );
+    const pollingFailureEffect = source.slice(
+      source.indexOf("// Keep pending bindings out of the list"),
+      source.indexOf("// Привязка карты через МОДАЛЬНЫЙ iframe"),
+    );
+
+    expect(fetchedFailureEffect).toContain('method.status === "failed"');
+    expect(pollingFailureEffect).toContain('method.status === "failed"');
+    expect(fetchedFailureEffect).not.toContain("toast.toast");
+    expect(pollingFailureEffect).not.toContain("toast.toast");
+    expect(source).not.toContain('title: "Привязка не удалась"');
+    expect(source).not.toContain("shouldNotifyBindingFailure");
   });
 
   it("silently polls each supported pending binding route every three seconds", () => {
@@ -108,8 +119,6 @@ describe("PaymentMethodsPage binding controls", () => {
     expect(source).toContain("age !== null && age >= PENDING_BINDING_TIMEOUT_MS");
     expect(source).toContain("Do not show a speculative");
     expect(source).toContain("GetAddCardState/GetState");
-    expect(source).toContain("notifiedBindingFailureIds");
-    expect(source).toContain('title: "Привязка не удалась"');
     expect(source).toContain('apiRequest("DELETE", `/api/payment-methods/${method.id}?pendingOnly=1`)');
   });
 
