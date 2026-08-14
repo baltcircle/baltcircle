@@ -6,7 +6,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { bikeQrLink, fmtRelative } from "@/lib/format";
+import { bikeQrLink } from "@/lib/format";
 import { qrToSvg } from "@/lib/qrcode";
 import { BikeQr } from "@/components/BikeQr";
 import { Card } from "@/components/ui/card";
@@ -74,6 +74,25 @@ const UNASSIGNED_LOCKS_KEY = ["/api/admin/locks/unassigned"] as const;
 
 /** A non-decommissioned registry lock that is not fitted to a bike. */
 type UnassignedLock = { imei: string; lastSeen: number | null };
+
+export type LockPickerOption = {
+  /** The exact 15-digit IMEI submitted when an operator selects this option. */
+  value: string;
+  /** The operator-facing lock name. Keep this to the numeric IMEI only. */
+  label: string;
+};
+
+export function lockPickerOptions(
+  locks: UnassignedLock[],
+  currentImei: string | null,
+): LockPickerOption[] {
+  return [
+    ...(currentImei ? [{ value: currentImei, label: currentImei }] : []),
+    ...locks
+      .filter((lock) => lock.imei !== currentImei)
+      .map((lock) => ({ value: lock.imei, label: lock.imei })),
+  ];
+}
 
 export function BikesPage() {
   const toast = useToast();
@@ -536,15 +555,7 @@ function LockPicker({
 }) {
   // On edit the bike's own lock is (correctly) absent from the unassigned list,
   // but it must stay selectable or saving would look like removing the lock.
-  const options: { imei: string; label: string }[] = [
-    ...(currentImei ? [{ imei: currentImei, label: `IMEI ${currentImei} — текущий` }] : []),
-    ...locks
-      .filter((l) => l.imei !== currentImei)
-      .map((l) => ({
-        imei: l.imei,
-        label: `IMEI ${l.imei} — ${l.lastSeen == null ? "ещё не подключался" : `виден ${fmtRelative(l.lastSeen)}`}`,
-      })),
-  ];
+  const options = lockPickerOptions(locks, currentImei);
 
   // Deliberately not wrapped in <Field>: that renders a <label>, and a click
   // anywhere on a label activates the control inside it — which here would be
@@ -573,7 +584,7 @@ function LockPicker({
             </SelectTrigger>
             <SelectContent>
               {options.map((o) => (
-                <SelectItem key={o.imei} value={o.imei} data-testid={`lock-option-${o.imei}`}>
+                <SelectItem key={o.value} value={o.value} data-testid={`lock-option-${o.value}`}>
                   {o.label}
                 </SelectItem>
               ))}
