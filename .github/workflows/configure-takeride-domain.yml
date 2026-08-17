@@ -32,6 +32,7 @@ jobs:
       - name: Bootstrap HTTP-only config for ACME challenge
         run: |
           set -euo pipefail
+          nginx -v
           sudo mkdir -p /var/www/certbot
           sudo tee /etc/nginx/sites-available/baltcircle > /dev/null <<'EOF'
           server {
