@@ -557,6 +557,18 @@ export function generateSavedCardRideOrderId(): string {
   return `TRSC-${ts}-${rand.slice(0, 6)}`; // e.g. TRSC-lk3p9q2-a8f1zq (~20 chars)
 }
 
+// Build a compact, collision-resistant OrderId for a wallet top-up payment
+// (audit CRITICAL #1 fix). Same constraints as the other generators — <= 50
+// chars, ASCII latin/digits/dash only. A distinct "TRWT" (TakeRide Wallet
+// Top-up) prefix lets the notification handler tell a wallet credit apart
+// from a ride payment / card-binding order at a glance.
+export function generateWalletTopupOrderId(): string {
+  const ts = Date.now().toString(36); // ~8 chars through year ~2059
+  let rand = "";
+  while (rand.length < 6) rand += randomInt(36).toString(36);
+  return `TRWT-${ts}-${rand.slice(0, 6)}`; // e.g. TRWT-lk3p9q2-a8f1zq (~20 chars)
+}
+
 export interface InitSavedCardChargeInput {
   // Our order id for this saved-card charge (unique per attempt, <= 50 chars).
   orderId: string;

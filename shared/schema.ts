@@ -816,6 +816,45 @@ export const rideChargeSavedCardSchema = z.object({
 });
 export type RideChargeSavedCardInput = z.infer<typeof rideChargeSavedCardSchema>;
 
+/* ------- PAYMENT ORDERS (T-Bank wallet top-up) ------- */
+// One row per "pay now, credit wallet once confirmed" attempt (audit CRITICAL
+// #1 fix). The wallet balance is credited ONLY by the notification webhook
+// once T-Bank confirms the charge (see server/payments/tbank-handlers.ts ->
+// handleWalletTopupNotification) — never synchronously from the client-facing
+// init route. This mirrors the ride payment_orders flow above; kept as its own
+// table (rather than reusing payment_orders) because a top-up has no
+// bike/tariff/ride, and payment_orders.bike_id/tariff_id are NOT NULL.
+export const walletTopupOrders = pgTable("wallet_topup_orders", {
+  id: serial("id").primaryKey(),
+  orderId: text("order_id").notNull().unique(),   // our Init OrderId (<= 50 chars, echoed in notifications)
+  userId: text("user_id").notNull(),
+  amountKopecks: integer("amount_kopecks").notNull(),
+  paymentId: text("payment_id"),                  // T-Bank PaymentId returned by Init
+  paymentUrl: text("payment_url"),                // hosted PaymentURL the rider opens (not a secret)
+  status: text("status").notNull().default("pending"), // pending | paid | failed
+  lastErrorCode: text("last_error_code"),
+  lastErrorMessage: text("last_error_message"),
+  lastErrorDetails: text("last_error_details"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }),
+}, (t) => [
+  index("idx_wto_order").on(t.orderId),
+  index("idx_wto_user").on(t.userId),
+  index("idx_wto_payment").on(t.paymentId),
+]);
+export type WalletTopupOrder = typeof walletTopupOrders.$inferSelect;
+export type WalletTopupOrderStatus = "pending" | "paid" | "failed";
+
+// Client chooses how much to top up (in roubles); the server converts to
+// kopecks and this is the ONLY client-supplied number in the whole flow — it
+// is bounded here and re-validated nowhere else because it is the rider
+// topping up their OWN wallet with their OWN money via a real T-Bank charge,
+// not a price that could be manipulated to underpay for something.
+export const walletTopupInitSchema = z.object({
+  amount: z.number().positive().max(50000, "Максимум 50 000 ₽ за один платёж"),
+});
+export type WalletTopupInitInput = z.infer<typeof walletTopupInitSchema>;
+
 /* ------- SUPPORT TICKETS (rider help requests) ------- */
 // Lightweight contact form persistence for the current user. Riders can submit
 // a subject + message; staff handling happens out-of-band for the MVP.

@@ -7,7 +7,7 @@ import {
   adminSetRoleSchema, adminSetBlockedSchema,
   phoneChangeStartSchema, phoneChangeVerifySchema,
   linkPaymentMethodSchema, createSupportTicketSchema, rideInitPaymentSchema,
-  rideChargeSavedCardSchema,
+  rideChargeSavedCardSchema, walletTopupInitSchema,
   adminCreateBikeSchema, adminUpdateBikeSchema,
   createTicketSchema, updateTicketSchema, addTicketCommentSchema,
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
@@ -20,6 +20,7 @@ import {
   verifyNotificationToken,
   tbankInitRidePayment, generateRideOrderId, classifyRidePayment,
   tbankInitSavedCardCharge, tbankCharge, generateSavedCardRideOrderId,
+  generateWalletTopupOrderId,
   tbankGetState,
   tbankAddAccountQr, tbankGetAddAccountQrState, tbankRemoveCard,
   generateSbpBindOrderId, extractQrPayload, classifyAccountBinding,
@@ -818,6 +819,88 @@ export function registerPaymentRoutes(app: Express): void {
       // Acquirer failure detail (non-secret values only) so the result page can
       // show WHY a payment was declined — code/message/details for debugging
       // test-card issues, plus a short human message in `error` for the headline.
+      error: order.lastErrorMessage ?? undefined,
+      errorCode: order.lastErrorCode ?? undefined,
+      errorMessage: order.lastErrorMessage ?? undefined,
+      errorDetails: order.lastErrorDetails ?? undefined,
+    });
+  });
+
+  // Start a wallet top-up via a real T-Bank charge (audit CRITICAL #1 fix).
+  // Replaces the old POST /api/wallet/topup, which credited the wallet
+  // straight from a client-supplied amount with NO payment step — any
+  // authenticated rider could mint arbitrary balance. The rider pays on
+  // T-Bank's hosted form; the balance is only credited once the notification
+  // webhook confirms the charge (see handleWalletTopupNotification).
+  app.post("/api/payments/tbank/wallet/init", paymentLimiter, async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Требуется вход" });
+    const user = await storage.getUser(userId);
+    if (!user) return res.status(401).json({ error: "Требуется вход" });
+    if (user.blockedAt) {
+      return res.status(403).json({ error: "Аккаунт заблокирован. Обратитесь в поддержку." });
+    }
+
+    const parsed = walletTopupInitSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+
+    // amount arrives in roubles (rider-facing unit); everything downstream
+    // (order row, T-Bank Init, wallet ledger) works in kopecks.
+    const amountKopecks = Math.round(parsed.data.amount * 100);
+
+    const cfg = getTbankConfig();
+    if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
+
+    // Unique per attempt and <= 50 chars (T-Bank Init rejects longer with 212).
+    const orderId = generateWalletTopupOrderId();
+
+    try {
+      const resp = await tbankInitRidePayment(cfg, {
+        orderId,
+        amountKopecks,
+        customerKey: user.id,
+        description: "Пополнение баланса TakeRide",
+        customerEmail: user.email,
+        customerPhone: user.phone,
+        successUrl: `${cfg.publicAppUrl}/payment-result?orderId=${encodeURIComponent(orderId)}`,
+        failUrl: `${cfg.publicAppUrl}/payment-result?orderId=${encodeURIComponent(orderId)}`,
+        notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
+      });
+      if (!resp.Success || !resp.PaymentURL) {
+        return res.status(502).json(tbankErrorBody(resp));
+      }
+      try {
+        const order = await storage.createWalletTopupOrder({ orderId, userId: user.id, amountKopecks });
+        await storage.updateWalletTopupOrder(order.id, {
+          paymentId: resp.PaymentId != null ? String(resp.PaymentId) : null,
+          paymentUrl: resp.PaymentURL,
+        });
+      } catch (dbErr) {
+        log(`[tbank] failed to persist wallet topup order: ${(dbErr as Error)?.message ?? "?"}`, "tbank");
+        return res.status(500).json({ error: "Не удалось сохранить заказ оплаты. Попробуйте позже." });
+      }
+      res.json({ orderId, paymentUrl: resp.PaymentURL, amountKopecks });
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message ?? "Не удалось создать оплату. Попробуйте позже." });
+    }
+  });
+
+  // Status of a wallet top-up order for the post-redirect result page. The
+  // rider may only read their OWN order.
+  app.get("/api/payments/tbank/wallet/:orderId", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Требуется вход" });
+    const order = await storage.getWalletTopupOrder(req.params.orderId);
+    if (!order || order.userId !== userId) {
+      return res.status(404).json({ error: "Заказ не найден" });
+    }
+    res.json({
+      orderId: order.orderId,
+      status: order.status,
+      amountKopecks: order.amountKopecks,
       error: order.lastErrorMessage ?? undefined,
       errorCode: order.lastErrorCode ?? undefined,
       errorMessage: order.lastErrorMessage ?? undefined,

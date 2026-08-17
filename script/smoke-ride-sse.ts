@@ -161,7 +161,7 @@ async function main() {
   assert(f0 === "null", "initial SSE frame is null (no active ride)");
 
   // Top up the wallet so the internal (non-prepaid) ride debit succeeds.
-  res = await fetch(`${BASE}/api/wallet/topup`, {
+  res = await fetch(`${BASE}/api/wallet/dev-credit`, {
     method: "POST",
     headers: { "Content-Type": "application/json", cookie },
     body: JSON.stringify({ amount: 1000 }),

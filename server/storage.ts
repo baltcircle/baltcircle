@@ -1,7 +1,7 @@
 import {
   bikes, locks, parkings, zones, rides, tickets, ticketComments, payments, wallet, mapObjects, users,
   otpRequests, phoneChangeRequests, emailChangeRequests, oauthIdentities,
-  paymentMethods, supportTickets, paymentOrders,
+  paymentMethods, supportTickets, paymentOrders, walletTopupOrders,
   supportConversations, supportMessages,
   TICKET_CLOSED_STATUSES,
 } from "@shared/schema";
@@ -13,7 +13,7 @@ import type {
   AdminCreateBikeInput, AdminUpdateBikeInput, CreateTicketInput, UpdateTicketInput,
   AdminCreateParkingInput, AdminUpdateParkingInput,
   SupportConversation, SupportMessage, SupportMessageRole, AdminSupportConversationRow,
-  Lock, AdminCreateLockInput, AdminUpdateLockInput,
+  Lock, AdminCreateLockInput, AdminUpdateLockInput, WalletTopupOrder,
 } from "@shared/schema";
 import { CONSENT_VERSION } from "@shared/schema";
 import { randomUUID, createHmac, randomInt, timingSafeEqual } from "node:crypto";
@@ -1045,6 +1045,37 @@ export class DatabaseStorage implements IStorage {
       | undefined;
   }
 
+  // ---------- T-Bank wallet top-up orders (audit CRITICAL #1 fix) ----------
+  // Create a pending top-up order when the rider starts the pay-then-credit
+  // flow. The wallet balance is NOT touched here — only the confirmed
+  // notification webhook (handleWalletTopupNotification) ever calls topUp().
+  async createWalletTopupOrder(input: { orderId: string; userId: string; amountKopecks: number }) {
+    const now = Date.now();
+    return (await db.insert(walletTopupOrders).values({
+      orderId: input.orderId,
+      userId: input.userId,
+      amountKopecks: input.amountKopecks,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    } as any).returning())[0] as WalletTopupOrder;
+  }
+
+  async getWalletTopupOrder(orderId: string) {
+    return (await db.select().from(walletTopupOrders)
+      .where(eq(walletTopupOrders.orderId, orderId))
+      .limit(1))[0] as WalletTopupOrder | undefined;
+  }
+
+  async updateWalletTopupOrder(id: number, patch: Partial<WalletTopupOrder>) {
+    const set: Record<string, unknown> = { ...patch, updatedAt: Date.now() };
+    delete set.id;
+    await db.update(walletTopupOrders).set(set as any).where(eq(walletTopupOrders.id, id));
+    return (await db.select().from(walletTopupOrders).where(eq(walletTopupOrders.id, id)).limit(1))[0] as
+      | WalletTopupOrder
+      | undefined;
+  }
+
   // ---------- Support tickets ----------
   async listSupportTickets(userId: string) {
     return (await db.select().from(supportTickets)
@@ -1632,54 +1663,97 @@ export class DatabaseStorage implements IStorage {
     const costKopecks = tariffDef ? tariffPriceKopecks(tariffDef) : 0;
 
     // Atomic: re-check the bike/rider state and claim the bike inside ONE
-    // transaction. Without this, two concurrent requests could both pass the
-    // availability/active-ride checks and each insert a ride for the same bike
-    // (double-booking). The transaction serialises the check-and-claim so the
-    // second caller sees the bike already "rented" / the rider already riding.
-    const result = await db.transaction(async (tx) => {
-      const bike = (await tx.select().from(bikes).where(eq(bikes.id, bikeId)).limit(1))[0] as Bike | undefined;
-      if (!bike) return { error: "Велосипед не найден" };
-      if (bike.status !== "available" && bike.status !== "reserved") {
-        return { error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` };
-      }
-      if (bike.battery < 18) return { error: "Низкий заряд замка, выберите другой велосипед" };
-      const active = (await tx.select().from(rides)
-        .where(sql`${rides.userId} = ${userId} AND ${rides.status} = 'active'`)
-        .limit(1))[0] as Ride | undefined;
-      if (active) return { error: "У вас уже есть активная поездка" };
+    // transaction. A bare SELECT inside a transaction does NOT lock the row
+    // under Postgres' default READ COMMITTED isolation — two concurrent
+    // requests could both read bike.status = 'available' before either
+    // commits and both proceed to insert a ride for the same bike
+    // (double-booking, audit CRITICAL #4). `.for("update")` takes a row lock
+    // on SELECT, so the second transaction blocks here until the first
+    // commits, then re-reads the now-current ("rented") row and correctly
+    // bails out below — it never reaches the insert.
+    //
+    // Belt-and-suspenders: `idx_rides_active_bike` / `idx_rides_active_user`
+    // (partial UNIQUE indexes, server/db/bootstrap.ts) make a second active
+    // ride for the same bike or rider impossible at the database level too,
+    // so a future code path that bypasses this lock still cannot double-book
+    // — it gets a unique-violation instead, caught below.
+    const result = await (async () => {
+      try {
+        return await db.transaction(async (tx) => {
+          const bike = (await tx.select().from(bikes).where(eq(bikes.id, bikeId)).for("update").limit(1))[0] as Bike | undefined;
+          if (!bike) return { error: "Велосипед не найден" };
+          if (bike.status !== "available" && bike.status !== "reserved") {
+            return { error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` };
+          }
+          if (bike.battery < 18) return { error: "Низкий заряд замка, выберите другой велосипед" };
+          // No row to lock here (the rider may have zero rides), so this read
+          // alone cannot be made race-proof the same way — idx_rides_active_user
+          // is what actually closes this half of the race; a loser lands on the
+          // unique-violation catch below instead of this friendly early return.
+          const active = (await tx.select().from(rides)
+            .where(sql`${rides.userId} = ${userId} AND ${rides.status} = 'active'`)
+            .limit(1))[0] as Ride | undefined;
+          if (active) return { error: "У вас уже есть активная поездка" };
 
-      // Internal (non-prepaid) flow: debit the tariff price from the wallet up
-      // front, inside the same transaction so a failure rolls the ride back.
-      if (!prepaid && costKopecks > 0) {
-        let w = (await tx.select().from(wallet).where(eq(wallet.userId, userId)).limit(1))[0] as Wallet | undefined;
-        if (!w) {
-          await tx.insert(wallet).values({ userId, balance: 0, activeTariff: "payg", tariffExpiresAt: null } as any);
-          w = { userId, balance: 0 } as Wallet;
-        }
-        if (w.balance < costKopecks) {
-          return { error: "Недостаточно средств на балансе" };
-        }
-        await tx.update(wallet).set({ balance: w.balance - costKopecks }).where(eq(wallet.userId, userId));
-        await tx.insert(payments).values({
-          userId, amount: -costKopecks, kind: "ride_charge",
-          description: `Аренда ${bikeId} • ${tariffDef?.name ?? tariff}`, createdAt: Date.now(),
+          // Internal (non-prepaid) flow: debit the tariff price from the wallet up
+          // front, inside the same transaction so a failure rolls the ride back.
+          //
+          // The debit itself is a single conditional UPDATE (balance = balance -
+          // cost WHERE balance >= cost), not a SELECT-then-UPDATE in app code
+          // (audit CRITICAL #5). Reading `w.balance` into a JS variable and
+          // writing back `w.balance - cost` is a classic lost-update race: a
+          // concurrent top-up or an overage charge from another ride ending at
+          // the same instant reads the same stale balance, and whichever UPDATE
+          // commits last silently overwrites the other's change. A single
+          // atomic SQL expression has no such window — Postgres computes
+          // `balance - cost` from the current row under the row's own update,
+          // so two concurrent debits/credits against the same wallet always
+          // both apply, in some serial order, never one clobbering the other.
+          if (!prepaid && costKopecks > 0) {
+            await tx.execute(sql`
+              INSERT INTO wallet (user_id, balance, active_tariff, tariff_expires_at)
+              VALUES (${userId}, 0, 'payg', NULL)
+              ON CONFLICT (user_id) DO NOTHING
+            `);
+            const debited = await tx.execute(sql`
+              UPDATE wallet SET balance = balance - ${costKopecks}
+              WHERE user_id = ${userId} AND balance >= ${costKopecks}
+              RETURNING balance
+            `);
+            if (debited.rows.length === 0) {
+              return { error: "Недостаточно средств на балансе" };
+            }
+            await tx.insert(payments).values({
+              userId, amount: -costKopecks, kind: "ride_charge",
+              description: `Аренда ${bikeId} • ${tariffDef?.name ?? tariff}`, createdAt: Date.now(),
+            });
+          }
+
+          const startedAt = Date.now();
+          const track: [number, number, number][] = [[bike.lng, bike.lat, startedAt]];
+          const row = (await tx.insert(rides).values({
+            bikeId, userId, startedAt,
+            startLat: bike.lat, startLng: bike.lng,
+            track: JSON.stringify(track), distanceM: 0, cost: costKopecks, tariff, status: "active",
+          }).returning())[0] as Ride;
+          await tx.update(bikes).set({ status: "rented", updatedAt: Date.now() } as any)
+            .where(eq(bikes.id, bikeId));
+          // Seed the append-only points table with the start point so the live
+          // track (hydrated from ride_points) is never empty for a fresh ride.
+          await tx.execute(sql`INSERT INTO ride_points (ride_id, x, y, t) VALUES (${row.id}, ${bike.lng}, ${bike.lat}, ${startedAt})`);
+          return row;
         });
+      } catch (err) {
+        // idx_rides_active_bike / idx_rides_active_user (server/db/bootstrap.ts)
+        // are the database-level backstop for this race; this only fires if the
+        // FOR UPDATE lock above was somehow bypassed — still fail closed with a
+        // friendly message instead of a raw 500.
+        if (this.isUniqueViolation(err)) {
+          return { error: "Не удалось начать поездку — велосипед уже забронирован или у вас уже есть активная поездка" };
+        }
+        throw err;
       }
-
-      const startedAt = Date.now();
-      const track: [number, number, number][] = [[bike.lng, bike.lat, startedAt]];
-      const row = (await tx.insert(rides).values({
-        bikeId, userId, startedAt,
-        startLat: bike.lat, startLng: bike.lng,
-        track: JSON.stringify(track), distanceM: 0, cost: costKopecks, tariff, status: "active",
-      }).returning())[0] as Ride;
-      await tx.update(bikes).set({ status: "rented", updatedAt: Date.now() } as any)
-        .where(eq(bikes.id, bikeId));
-      // Seed the append-only points table with the start point so the live
-      // track (hydrated from ride_points) is never empty for a fresh ride.
-      await tx.execute(sql`INSERT INTO ride_points (ride_id, x, y, t) VALUES (${row.id}, ${bike.lng}, ${bike.lat}, ${startedAt})`);
-      return row;
-    });
+    })();
     // A successful start flipped a bike to "rented" → the public list is stale.
     // Only fire side effects on the success shape (a Ride row, not an error).
     if (result && !("error" in result)) {
@@ -1810,12 +1884,21 @@ export class DatabaseStorage implements IStorage {
       // start (wallet debit or T-Bank). Debit the wallet for the extra hours,
       // inside the same tx so it rolls back with everything else on failure.
       if (overageKopecks > 0) {
-        let w = (await tx.select().from(wallet).where(eq(wallet.userId, r.userId)).limit(1))[0] as Wallet | undefined;
-        if (!w) {
-          await tx.insert(wallet).values({ userId: r.userId, balance: 0, activeTariff: "payg", tariffExpiresAt: null } as any);
-          w = { userId: r.userId, balance: 0 } as Wallet;
-        }
-        await tx.update(wallet).set({ balance: w.balance - overageKopecks }).where(eq(wallet.userId, r.userId));
+        // Same atomic-decrement pattern as startRide's wallet debit (audit
+        // CRITICAL #5): a single UPDATE ... SET balance = balance - N,
+        // never a SELECT-then-UPDATE round trip through a JS variable. The
+        // rider still owes the overage even if the balance goes negative
+        // (unlike startRide there is no balance check — the ride is already
+        // over and must be settled), so this UPDATE is unconditional; the
+        // wallet-creation UPSERT just guarantees a row exists to decrement.
+        await tx.execute(sql`
+          INSERT INTO wallet (user_id, balance, active_tariff, tariff_expires_at)
+          VALUES (${r.userId}, 0, 'payg', NULL)
+          ON CONFLICT (user_id) DO NOTHING
+        `);
+        await tx.execute(sql`
+          UPDATE wallet SET balance = balance - ${overageKopecks} WHERE user_id = ${r.userId}
+        `);
         await tx.insert(payments).values({
           userId: r.userId, amount: -overageKopecks, kind: "ride_charge",
           description: `Продление аренды ${r.bikeId} • +${extraHours} ч`, createdAt: endedAt,

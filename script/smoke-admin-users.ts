@@ -173,7 +173,7 @@ async function main() {
   assert(unblocked.blockedAt === null, "blockedAt cleared on unblock");
 
   // Internal start debits the hourly tariff price up front, so fund the wallet.
-  res = await fetch(`${BASE}/api/wallet/topup`, {
+  res = await fetch(`${BASE}/api/wallet/dev-credit`, {
     method: "POST",
     headers: { "Content-Type": "application/json", cookie: rider.cookie },
     body: JSON.stringify({ amount: 1000 }),

@@ -54,7 +54,10 @@ describe("endRide charge confirmation push", () => {
   it("confirms the successful ride-end overage amount to the rider", async () => {
     const activeRide = makeRide();
     const completedRide = makeRide({ endedAt: NOW.getTime(), cost: 70000, status: "completed" });
-    const selectResults = [[activeRide], [], [{ userId: "user-1", balance: 100000 }], [completedRide]];
+    // Wallet debit for the overage is now a raw tx.execute(sql`UPDATE ...`)
+    // (audit CRITICAL #5 — atomic decrement, no SELECT-then-UPDATE round trip),
+    // so it no longer shows up as a tx.select()/tx.update() call here.
+    const selectResults = [[activeRide], [], [completedRide]];
     const tx: any = {
       select: vi.fn(() => {
         const rows = selectResults.shift() ?? [];
@@ -71,6 +74,7 @@ describe("endRide charge confirmation push", () => {
         return chain;
       }),
       insert: vi.fn(() => ({ values: () => Promise.resolve() })),
+      execute: vi.fn(() => Promise.resolve({ rows: [] })),
     };
     dbMock.transaction.mockImplementation(async (callback: (transaction: typeof tx) => Promise<unknown>) =>
       callback(tx));

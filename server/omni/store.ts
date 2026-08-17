@@ -47,6 +47,16 @@ export interface BikeLiveUpdate {
   batteryPct?: number;
 }
 
+/**
+ * Outcome of resolving a connecting IMEI against the pre-provisioned device
+ * registry. `authorized: false` is the fail-closed default for anything the
+ * registry does not vouch for — an IMEI it has never seen, or one an admin
+ * has explicitly decommissioned (audit F-01/F-03/F-09).
+ */
+export type LockAuthResult =
+  | { authorized: true; bikeId: string | null }
+  | { authorized: false; reason: "unknown" | "decommissioned" };
+
 export interface OmniStore {
   /** Resolve an IMEI to the bike it is fitted to, or null if unregistered. */
   findBikeIdByImei(imei: string): Promise<string | null>;
@@ -62,11 +72,16 @@ export interface OmniStore {
   /** Clear stale online flags left behind by a previous process. */
   resetAllLocksOffline(): Promise<void>;
   /**
-   * Gateway-owned device registry projection. Optional during the transition
-   * from the original bike.lock_imei ingest; production PgOmniStore implements
-   * it and test doubles can stay focused on TCP framing.
+   * Gateway-owned device registry projection. MUST be read-only with respect
+   * to authorisation: a row is never created here, only looked up and its
+   * connectivity bookkeeping refreshed. Provisioning a device is an explicit
+   * admin action (`POST /api/admin/locks`) — dialling in must never be
+   * sufficient on its own to grant a socket access to the fleet. Optional
+   * during the transition from the original bike.lock_imei ingest; production
+   * PgOmniStore always implements it and test doubles can stay focused on TCP
+   * framing.
    */
-  ensureLock?(imei: string, at: number): Promise<string | null>;
+  resolveLock?(imei: string, at: number): Promise<LockAuthResult>;
   persistLockReport?(imei: string, message: OmniMessage, at: number): Promise<void>;
   markLocksOfflineBefore?(before: number): Promise<void>;
 }
@@ -89,19 +104,34 @@ export class PgOmniStore implements OmniStore {
     return rows[0]?.bike_id ?? null;
   }
 
-  /** Create a discovery/registry row on first contact and refresh connectivity. */
-  async ensureLock(imei: string, at: number): Promise<string | null> {
-    const result = await pool.query<{ bike_id: string | null }>(
-      `INSERT INTO locks (imei, status, last_seen_at, created_at, updated_at)
-       VALUES ($1, 'active', $2, $2, $2)
-       ON CONFLICT (imei) DO UPDATE SET
-         status = CASE WHEN locks.status = 'decommissioned' THEN locks.status ELSE 'active' END,
-         last_seen_at = GREATEST(COALESCE(locks.last_seen_at, 0), EXCLUDED.last_seen_at),
-         updated_at = EXCLUDED.updated_at
+  /**
+   * Fail-closed device authorisation (audit F-01/F-03/F-09). Looks up a
+   * pre-provisioned `locks` row — it never creates one. An IMEI with no row
+   * at all, or whose row is `decommissioned`, is rejected outright; nothing
+   * else about the connection is touched.
+   *
+   * The update re-checks `status != 'decommissioned'` instead of trusting the
+   * status read a moment earlier, so a decommission that lands concurrently
+   * with a device dialling in still closes the socket rather than losing the
+   * race and authorising it.
+   */
+  async resolveLock(imei: string, at: number): Promise<LockAuthResult> {
+    const existing = await pool.query<{ bike_id: string | null; status: string }>(
+      "SELECT bike_id, status FROM locks WHERE imei = $1 LIMIT 1",
+      [imei],
+    );
+    const row = existing.rows[0];
+    if (!row) return { authorized: false, reason: "unknown" };
+    if (row.status === "decommissioned") return { authorized: false, reason: "decommissioned" };
+
+    const updated = await pool.query<{ bike_id: string | null }>(
+      `UPDATE locks SET status = 'active', last_seen_at = GREATEST(COALESCE(last_seen_at, 0), $2), updated_at = $2
+       WHERE imei = $1 AND status != 'decommissioned'
        RETURNING bike_id`,
       [imei, at],
     );
-    return result.rows[0]?.bike_id ?? null;
+    if (!updated.rows[0]) return { authorized: false, reason: "decommissioned" };
+    return { authorized: true, bikeId: updated.rows[0].bike_id };
   }
 
   async persistLockReport(imei: string, message: OmniMessage, at: number): Promise<void> {

@@ -96,12 +96,21 @@ async function main() {
     res = await fetch(`${BASE}${path}`, { method });
     assert(res.status === 401, `${method} ${path} without a session returns 401`);
   }
-  res = await fetch(`${BASE}/api/wallet/topup`, {
+  // Real payment-verified top-up entrypoint (audit CRITICAL #1 fix) must
+  // require a session just like the dev-only fixture below.
+  res = await fetch(`${BASE}/api/payments/tbank/wallet/init`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ amount: 100 }),
   });
-  assert(res.status === 401, "POST /api/wallet/topup without a session returns 401");
+  assert(res.status === 401, "POST /api/payments/tbank/wallet/init without a session returns 401");
+
+  res = await fetch(`${BASE}/api/wallet/dev-credit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ amount: 100 }),
+  });
+  assert(res.status === 401, "POST /api/wallet/dev-credit without a session returns 401");
 
   // 2a. Phone change requires a session.
   res = await fetch(`${BASE}/api/users/me/phone/start`, {

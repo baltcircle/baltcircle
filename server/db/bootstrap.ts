@@ -18,7 +18,7 @@ import { getTableConfig } from "drizzle-orm/pg-core";
 import type { PgTable } from "drizzle-orm/pg-core";
 import {
   users, oauthIdentities, pushSubscriptions, bikes, locks, rides, tickets,
-  ticketComments, payments, paymentMethods, paymentOrders,
+  ticketComments, payments, paymentMethods, paymentOrders, walletTopupOrders,
   supportTickets, supportConversations, supportMessages,
 } from "@shared/schema";
 import { logger } from "../logger";
@@ -271,6 +271,23 @@ CREATE TABLE IF NOT EXISTS payment_orders (
   created_at BIGINT NOT NULL,
   updated_at BIGINT
 );
+-- Wallet top-up orders paid via a real T-Bank charge (audit CRITICAL #1 fix).
+-- The wallet balance is credited ONLY once the signed notification webhook
+-- confirms this order as paid — see server/payments/tbank-handlers.ts.
+CREATE TABLE IF NOT EXISTS wallet_topup_orders (
+  id SERIAL PRIMARY KEY,
+  order_id TEXT NOT NULL UNIQUE,
+  user_id TEXT NOT NULL,
+  amount_kopecks INTEGER NOT NULL,
+  payment_id TEXT,
+  payment_url TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  last_error_code TEXT,
+  last_error_message TEXT,
+  last_error_details TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT
+);
 CREATE TABLE IF NOT EXISTS ride_points (
   id SERIAL PRIMARY KEY,
   ride_id INTEGER NOT NULL,
@@ -388,7 +405,7 @@ CREATE TABLE IF NOT EXISTS support_messages (
 // Drizzle table), so its index is kept as an explicit statement here.
 const INDEXED_TABLES: PgTable[] = [
   users, oauthIdentities, pushSubscriptions, bikes, locks, rides, tickets,
-  ticketComments, payments, paymentMethods, paymentOrders,
+  ticketComments, payments, paymentMethods, paymentOrders, walletTopupOrders,
   supportTickets, supportConversations, supportMessages,
 ];
 
@@ -433,6 +450,47 @@ async function createIndexes() {
   // because the column is NULL for every bike without a smart lock fitted.
   await pool.query(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_bikes_lock_imei ON bikes (lock_imei) WHERE lock_imei IS NOT NULL;`,
+  );
+  await createRideRaceGuardIndexes();
+}
+
+// Database-level backstop for the startRide double-booking race (audit
+// CRITICAL #4): storage.ts now serialises the check-and-claim with
+// SELECT ... FOR UPDATE, but that guard lives entirely in application code —
+// if it is ever weakened by a future change, these partial UNIQUE indexes
+// make a second simultaneously active ride for the same bike, or the same
+// rider, impossible for Postgres to accept at all.
+//
+// Creating a UNIQUE index fails outright if the table already violates it, so
+// pre-existing duplicate active rides (exactly what the race being fixed here
+// could have produced) are resolved first — keep the most recently started
+// ride active and cancel the rest, then free any bike left stuck "rented"
+// with no active ride pointing at it. Every statement here is idempotent: on
+// a healthy database each one matches zero rows on every subsequent boot.
+async function createRideRaceGuardIndexes() {
+  await pool.query(`
+    UPDATE rides SET status = 'cancelled'
+    WHERE status = 'active' AND id NOT IN (
+      SELECT DISTINCT ON (bike_id) id FROM rides
+      WHERE status = 'active' ORDER BY bike_id, started_at DESC, id DESC
+    )
+  `);
+  await pool.query(`
+    UPDATE rides SET status = 'cancelled'
+    WHERE status = 'active' AND id NOT IN (
+      SELECT DISTINCT ON (user_id) id FROM rides
+      WHERE status = 'active' ORDER BY user_id, started_at DESC, id DESC
+    )
+  `);
+  await pool.query(`
+    UPDATE bikes SET status = 'available'
+    WHERE status = 'rented' AND id NOT IN (SELECT bike_id FROM rides WHERE status = 'active')
+  `);
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_active_bike ON rides (bike_id) WHERE status = 'active';`,
+  );
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_active_user ON rides (user_id) WHERE status = 'active';`,
   );
 }
 

@@ -1,6 +1,6 @@
 import type { Response } from "express";
 import { storage } from "../storage";
-import type { PaymentMethod, PaymentOrder } from "@shared/schema";
+import type { PaymentMethod, PaymentOrder, WalletTopupOrder } from "@shared/schema";
 import {
   classifyCardBinding, classifyInitBinding, classifyRidePayment,
   classifyAccountBinding, isCancelledBindingStatus,
@@ -135,6 +135,15 @@ export async function handleTbankNotification(body: Record<string, unknown>, cfg
       return;
     }
 
+    // Wallet top-up (audit CRITICAL #1 fix): correlate by our OrderId. Distinct
+    // "TRWT-" prefix and dedicated table mean this can never collide with a
+    // ride order or a card-binding order.
+    const topupOrder = await storage.getWalletTopupOrder(orderId);
+    if (topupOrder) {
+      await handleWalletTopupNotification(topupOrder, body);
+      return;
+    }
+
     // Init binding path: correlate by our OrderId. A matching card_binding row
     // means this is a verification payment, not a ride/topup payment.
     const byOrder = await storage.findCardMethodByOrderId(orderId);
@@ -245,6 +254,62 @@ export async function handleRidePaymentNotification(
       url: "/payment-methods",
       tag: `ride:${order.orderId}`,
       data: { kind: "ride-payment-failed", orderId: order.orderId },
+    });
+  }
+  // Otherwise an intermediate state — leave pending; a later CONFIRMED resolves it.
+}
+
+// Resolve a wallet top-up order from a notification (audit CRITICAL #1 fix).
+// On the first AUTHORIZED/CONFIRMED we credit the wallet exactly once via
+// storage.topUp() and mark the order paid — this is now the ONLY code path
+// that can ever increase a rider's wallet balance from a top-up (the old
+// direct-credit HTTP endpoint has been removed, see server/http/wallet.ts).
+// Idempotent: a duplicate notification for an already-paid order is a no-op,
+// so a retried webhook can never double-credit the wallet. On an explicit
+// rejection the order is marked failed; no money moves. Intermediate states
+// stay pending until a later terminal notification arrives.
+export async function handleWalletTopupNotification(
+  order: WalletTopupOrder,
+  body: Record<string, unknown>,
+): Promise<void> {
+  if (order.status === "paid") return; // already resolved — idempotent
+
+  const status = typeof body.Status === "string" ? body.Status : "";
+  const paymentId = body.PaymentId != null ? String(body.PaymentId) : "";
+  const success = body.Success === false ? false : undefined;
+  // classifyRidePayment is a generic AUTHORIZED/CONFIRMED-vs-REJECTED
+  // classifier despite its ride-specific name — no wallet-specific logic is
+  // needed, so it is reused as-is rather than duplicated.
+  const outcome = classifyRidePayment({ status, success });
+
+  if (outcome === "paid") {
+    await storage.topUp(order.userId, order.amountKopecks);
+    await storage.updateWalletTopupOrder(order.id, {
+      status: "paid",
+      paymentId: paymentId || order.paymentId,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      lastErrorDetails: null,
+    });
+    sendToUserAsync(order.userId, {
+      title: "Баланс пополнен",
+      body: `Кошелёк пополнен на ${(order.amountKopecks / 100).toFixed(2)} ₽.`,
+      url: "/wallet",
+      tag: `wallet-topup:${order.orderId}`,
+      data: { kind: "wallet-topup-paid", orderId: order.orderId },
+    });
+  } else if (outcome === "failed") {
+    await storage.updateWalletTopupOrder(order.id, {
+      status: "failed",
+      paymentId: paymentId || order.paymentId,
+      ...bindingErrorPatch(body),
+    });
+    sendToUserAsync(order.userId, {
+      title: "Пополнение не прошло",
+      body: "Не удалось пополнить баланс. Проверьте карту и попробуйте ещё раз.",
+      url: "/wallet",
+      tag: `wallet-topup:${order.orderId}`,
+      data: { kind: "wallet-topup-failed", orderId: order.orderId },
     });
   }
   // Otherwise an intermediate state — leave pending; a later CONFIRMED resolves it.

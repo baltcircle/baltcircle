@@ -40,7 +40,25 @@ import {
 export function registerWalletRoutes(app: Express): void {
   // -------------- Wallet / Payments --------------
   app.get("/api/wallet", requireAuth, async (req, res) => res.json(await storage.getWallet(riderId(req))));
-  app.post("/api/wallet/topup", requireAuth, async (req, res) => {
+  // SECURITY (audit CRITICAL #1): this used to credit the wallet directly
+  // from a client-supplied `amount` with NO payment verification whatsoever
+  // — any authenticated rider could mint unlimited balance with a single
+  // request. The real, payment-verified top-up flow now lives at
+  // POST /api/payments/tbank/wallet/init (server/http/payments.ts): the
+  // rider pays on T-Bank's hosted form and the balance is credited only once
+  // the signed notification webhook confirms the charge
+  // (handleWalletTopupNotification in server/payments/tbank-handlers.ts).
+  //
+  // This path is kept ONLY as a fixture for local dev / smoke tests that need
+  // to seed a wallet balance without exercising real payments. It is
+  // double-gated so it can NEVER run in production even if NODE_ENV is
+  // misconfigured: a live T-Bank terminal is always configured in real
+  // production, and isTbankConfigured() being true alone is enough to disable
+  // it, on top of the explicit NODE_ENV check.
+  app.post("/api/wallet/dev-credit", requireAuth, async (req, res) => {
+    if (process.env.NODE_ENV === "production" || isTbankConfigured()) {
+      return res.status(404).json({ error: "Not found" });
+    }
     const schema = z.object({ amount: z.number().positive().max(50000) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });

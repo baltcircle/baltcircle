@@ -16,7 +16,7 @@ import {
   parseDeviceFrame, type OmniMessage,
 } from "@shared/omni/protocol";
 import {
-  TelemetryWriter, type BikeLiveUpdate, type OmniStore, type TelemetryRow,
+  TelemetryWriter, type BikeLiveUpdate, type LockAuthResult, type OmniStore, type TelemetryRow,
   type TelemetryWriterOptions,
 } from "./store";
 
@@ -56,7 +56,7 @@ const IMEI_NEGATIVE_TTL_MS = 300_000;
 const IMEI_CACHE_MAX_ENTRIES = 5_000;
 
 interface CacheEntry {
-  bikeId: string | null;
+  result: LockAuthResult;
   expiresAt: number;
 }
 
@@ -205,21 +205,21 @@ export class OmniTcpServer {
 
   /** @internal Called by a connection once it has a valid frame with an IMEI. */
   async bind(conn: OmniConnection, imei: string): Promise<boolean> {
-    // The gateway registry is keyed by lock IMEI. First contact deliberately
-    // creates a `locks` row, even when the physical lock has not been assigned
-    // to a bike yet; only GPS telemetry needs a bike_id.
-    const registryEnabled = Boolean(this.options.store.ensureLock);
-    const bikeId = registryEnabled
-      ? await this.options.store.ensureLock!(imei, Date.now())
-      : await this.resolveBike(imei);
-    // Keep the pre-Phase-2 fake-store contract (and any legacy deployment that
-    // has not opted into the locks registry) fail-closed. PgOmniStore enables
-    // `ensureLock`, for which an unassigned bike is a valid registry state.
-    if (!registryEnabled && bikeId === null) {
-      this.log.warn({ imei, remote: conn.remote }, "rejecting unregistered lock IMEI");
-      conn.destroy("unknown_imei");
+    // A device is never authorised just by dialling in: `resolveAuth` only
+    // ever reads a `locks` row an admin already created via
+    // `POST /api/admin/locks` (fail-closed — audit F-01/F-03/F-09). Unknown
+    // and decommissioned IMEIs are rejected before the socket ever reaches
+    // the registry, so a bike is only ever attached when it is a genuinely
+    // provisioned device (an unassigned bike_id on a provisioned row is still
+    // a valid, authorised state — only telemetry needs a bike_id).
+    const auth = await this.resolveAuth(imei);
+    if (!auth.authorized) {
+      this.log.warn({ imei, remote: conn.remote, reason: auth.reason }, "rejecting unauthorized lock IMEI");
+      conn.destroy(auth.reason === "decommissioned" ? "decommissioned_imei" : "unknown_imei");
       return false;
     }
+    const bikeId = auth.bikeId;
+
     if (conn.isClosed) {
       // The socket went away during the IMEI lookup. Registering it now would
       // park a dead connection in the registry forever: release() has already
@@ -325,25 +325,39 @@ export class OmniTcpServer {
     }
   }
 
-  private async resolveBike(imei: string): Promise<string | null> {
+  /**
+   * Single fail-closed IMEI resolver used by every connection, negative-cached
+   * so a spoofed or scanning IMEI cannot force a database round-trip on every
+   * reconnect (audit F-05). Prefers the store's registry lookup (`resolveLock`,
+   * which never creates a row) and falls back to a plain bike_id lookup for
+   * stores that have not adopted the registry — wrapped in the same
+   * fail-closed shape so `bind()` only ever branches on `authorized`.
+   */
+  private async resolveAuth(imei: string): Promise<LockAuthResult> {
     const now = Date.now();
     const hit = this.imeiCache.get(imei);
-    if (hit && hit.expiresAt > now) return hit.bikeId;
+    if (hit && hit.expiresAt > now) return hit.result;
 
-    let bikeId: string | null = null;
+    let result: LockAuthResult;
     try {
-      bikeId = await this.options.store.findBikeIdByImei(imei);
+      if (this.options.store.resolveLock) {
+        result = await this.options.store.resolveLock(imei, now);
+      } else {
+        const bikeId = await this.options.store.findBikeIdByImei(imei);
+        result = bikeId !== null ? { authorized: true, bikeId } : { authorized: false, reason: "unknown" };
+      }
     } catch (err) {
       this.log.error({ err, imei }, "IMEI lookup failed");
-      return null;
+      return { authorized: false, reason: "unknown" };
     }
+
     if (this.imeiCache.size >= IMEI_CACHE_MAX_ENTRIES) this.imeiCache.clear();
     this.imeiCache.set(imei, {
-      bikeId,
-      expiresAt: now + (bikeId ? IMEI_CACHE_TTL_MS : IMEI_NEGATIVE_TTL_MS),
+      result,
+      expiresAt: now + (result.authorized ? IMEI_CACHE_TTL_MS : IMEI_NEGATIVE_TTL_MS),
     });
-    if (bikeId === null) this.noteUnassigned(imei, now);
-    return bikeId;
+    if (!result.authorized && result.reason === "unknown") this.noteUnassigned(imei, now);
+    return result;
   }
 
   /**

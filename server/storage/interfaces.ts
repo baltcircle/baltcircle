@@ -13,7 +13,7 @@ import type {
   SupportTicketStatus, PaymentOrder, AdminCreateBikeInput, AdminUpdateBikeInput,
   CreateTicketInput, UpdateTicketInput, AdminCreateParkingInput, AdminUpdateParkingInput,
   SupportConversation, SupportMessage, SupportMessageRole, AdminSupportConversationRow,
-  Lock, AdminCreateLockInput, AdminUpdateLockInput,
+  Lock, AdminCreateLockInput, AdminUpdateLockInput, WalletTopupOrder,
 } from "@shared/schema";
 
 export interface IUserStorage {
@@ -189,9 +189,17 @@ export interface IRideStorage {
 
 export interface IWalletStorage {
   getWallet(userId: string): Promise<Wallet>;
+  // Credits the wallet atomically. Callers MUST gate this behind a confirmed
+  // real payment (T-Bank webhook, see handleWalletTopupNotification) or an
+  // explicit non-production test fixture — never behind a bare client request
+  // (audit CRITICAL #1: this used to be reachable directly from HTTP).
   topUp(userId: string, amount: number): Promise<{ wallet: Wallet; payment: Payment }>;
   purchaseTariff(userId: string, tariff: string, price: number, durationMs: number): Promise<{ wallet: Wallet; payment: Payment }>;
   listPayments(userId: string): Promise<Payment[]>;
+  // T-Bank wallet top-up orders (pay now, credit balance once confirmed)
+  createWalletTopupOrder(input: { orderId: string; userId: string; amountKopecks: number }): Promise<WalletTopupOrder>;
+  getWalletTopupOrder(orderId: string): Promise<WalletTopupOrder | undefined>;
+  updateWalletTopupOrder(id: number, patch: Partial<WalletTopupOrder>): Promise<WalletTopupOrder | undefined>;
 }
 
 export interface ITicketStorage {

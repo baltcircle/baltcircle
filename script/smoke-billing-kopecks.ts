@@ -150,11 +150,15 @@ async function main() {
   let wallet = await (await fetch(`${BASE}/api/wallet`, { headers: { cookie: cookie! } })).json();
   assert(wallet.balance === 0, "fresh wallet balance is 0 kopecks");
 
-  // Top up 1000 ₽. Client sends rubles; server stores kopecks (×100).
-  res = await fetch(`${BASE}/api/wallet/topup`, {
+  // Top up 1000 ₽ via the dev-only fixture (T-Bank is deliberately
+  // unconfigured in this smoke run, see TBANK_PASSWORD above — the real
+  // POST /api/payments/tbank/wallet/init flow needs a live acquirer and is
+  // covered separately by the tbank smoke suite). Client sends rubles;
+  // server stores kopecks (×100).
+  res = await fetch(`${BASE}/api/wallet/dev-credit`, {
     method: "POST", headers: auth, body: JSON.stringify({ amount: 1000 }),
   });
-  assert(res.status === 200, "topup returns 200");
+  assert(res.status === 200, "dev-credit topup returns 200");
   const topupBody = await res.json();
   assert(topupBody.wallet.balance === 100000, "1000 ₽ top-up stored as 100000 kopecks");
   assert(topupBody.payment.amount === 100000, "top-up payment amount is 100000 kopecks");

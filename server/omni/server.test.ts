@@ -18,24 +18,32 @@ vi.mock("../db/bootstrap", () => ({
 
 import { OmniTcpServer, type OmniServerOptions } from "./server";
 import { MockLock } from "./mockLock";
-import { TelemetryWriter, type BikeLiveUpdate, type OmniStore, type TelemetryRow } from "./store";
+import { TelemetryWriter, type BikeLiveUpdate, type LockAuthResult, type OmniStore, type TelemetryRow } from "./store";
 import type { OmniMessage } from "@shared/omni/protocol";
 
 const IMEI_A = "861234567890123";
 const IMEI_B = "861234567890124";
 const UNKNOWN_IMEI = "869999999999999";
+const DECOMMISSIONED_IMEI = "861234567890199";
 
 class FakeStore implements OmniStore {
-  readonly bikes = new Map<string, string>([[IMEI_A, "bike-a"], [IMEI_B, "bike-b"]]);
+  /** Pre-provisioned device registry — mirrors the admin-created `locks` table.
+   *  Only IMEIs present here are ever authorized (audit F-01/F-03/F-09);
+   *  UNKNOWN_IMEI is deliberately absent to exercise the fail-closed path. */
+  readonly registry = new Map<string, { bikeId: string | null; status: string }>([
+    [IMEI_A, { bikeId: "bike-a", status: "active" }],
+    [IMEI_B, { bikeId: "bike-b", status: "active" }],
+    [DECOMMISSIONED_IMEI, { bikeId: "bike-old", status: "decommissioned" }],
+  ]);
   readonly telemetry: TelemetryRow[] = [];
   readonly live: BikeLiveUpdate[] = [];
   readonly onlineCalls: { imei: string; online: boolean }[] = [];
   readonly offlineSweeps: number[] = [];
   readonly locks = new Map<string, Record<string, unknown>>();
   resetCount = 0;
-  /** Set to make findBikeIdByImei throw, simulating a database outage. */
+  /** Set to make resolveLock/findBikeIdByImei throw, simulating a database outage. */
   lookupError: Error | null = null;
-  /** Set to stall findBikeIdByImei, so a test can act during the lookup. */
+  /** Set to stall resolveLock/findBikeIdByImei, so a test can act during the lookup. */
   lookupGate: Promise<void> | null = null;
   /** Sightings of locks not fitted to a bike, keyed by IMEI. */
   readonly sightings = new Map<string, { firstSeen: number; lastSeen: number }>();
@@ -45,7 +53,18 @@ class FakeStore implements OmniStore {
   async findBikeIdByImei(imei: string): Promise<string | null> {
     if (this.lookupGate) await this.lookupGate;
     if (this.lookupError) throw this.lookupError;
-    return this.bikes.get(imei) ?? null;
+    return this.registry.get(imei)?.bikeId ?? null;
+  }
+
+  /** Fail-closed registry lookup — mirrors PgOmniStore.resolveLock: never
+   *  creates a row, rejects anything not pre-provisioned or decommissioned. */
+  async resolveLock(imei: string): Promise<LockAuthResult> {
+    if (this.lookupGate) await this.lookupGate;
+    if (this.lookupError) throw this.lookupError;
+    const row = this.registry.get(imei);
+    if (!row) return { authorized: false, reason: "unknown" };
+    if (row.status === "decommissioned") return { authorized: false, reason: "decommissioned" };
+    return { authorized: true, bikeId: row.bikeId };
   }
 
   async recordUnassignedLock(imei: string, at: number): Promise<void> {
@@ -219,7 +238,7 @@ describe("connection lifecycle", () => {
 
   it("does not re-query the database for a rejected IMEI on every reconnect", async () => {
     const { server, store, lock } = await harness();
-    const spy = vi.spyOn(store, "findBikeIdByImei");
+    const spy = vi.spyOn(store, "resolveLock");
 
     for (let i = 0; i < 3; i++) {
       const device = await lock(UNKNOWN_IMEI);
@@ -229,6 +248,30 @@ describe("connection lifecycle", () => {
 
     expect(spy).toHaveBeenCalledTimes(1);
   });
+
+  it("rejects a decommissioned IMEI without persisting anything", async () => {
+    const { server, store, lock } = await harness();
+    const device = await lock(DECOMMISSIONED_IMEI);
+
+    device.sendCheckin();
+
+    await waitFor(() => server.connectionCount === 0);
+    expect(store.onlineCalls).toEqual([]);
+    expect(store.telemetry).toEqual([]);
+  });
+
+  it("does not treat a decommissioned IMEI as a discoverable sighting", async () => {
+    const { server, store, lock } = await harness();
+    const device = await lock(DECOMMISSIONED_IMEI);
+
+    device.sendCheckin();
+
+    await waitFor(() => server.connectionCount === 0);
+    // Decommissioning is a deliberate admin action, not an unknown device —
+    // it must never resurface in the unassigned-locks discovery list.
+    expect(store.sightings.has(DECOMMISSIONED_IMEI)).toBe(false);
+  });
+
 
   it("records a sighting of an unregistered lock so it can be assigned later", async () => {
     const { server, store, lock } = await harness();

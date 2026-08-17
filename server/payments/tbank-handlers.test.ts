@@ -19,6 +19,11 @@ const storageMock = vi.hoisted(() => ({
   updatePaymentMethod: vi.fn(),
   findActiveCardDuplicate: vi.fn(),
   claimRefund: vi.fn(),
+  // Consulted first in handleTbankNotification's routing (CRITICAL #1's
+  // wallet top-up path) — defaults to "no matching top-up order" so the
+  // routing tests below fall through to the ride/card-binding paths they
+  // actually exercise.
+  getWalletTopupOrder: vi.fn(),
 }));
 
 // tbankRefundVerificationCharge is the ONLY function in server/tbank.ts that ever
