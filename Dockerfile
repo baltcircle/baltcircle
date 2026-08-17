@@ -68,6 +68,20 @@ COPY --from=build --chown=node:node /app/dist ./dist
 # bundled into dist/index.cjs.
 COPY --from=build --chown=node:node /app/migrations ./migrations
 RUN mkdir -p /app/uploads && chown -R node:node /app/uploads
+# Strip the npm CLI (and corepack) from the runtime image (audit HIGH #22).
+# This process only ever runs `node dist/index.cjs` directly — npm/npx are
+# never invoked at runtime, they only matter at build time (already done in
+# the `deps`/`build` stages above) and in the throwaway migration container
+# in deploy.yml (a separate, unrelated node:20-bookworm-slim invocation).
+# The bundled npm CLI ships its own vendored dependencies (tar, minimatch,
+# sigstore, ip-address, etc.) that are entirely unrelated to this app's
+# package.json/package-lock.json — Trivy flagged CVE-2026-59873 (tar,
+# CRITICAL) and several HIGH CVEs in that vendored code on 2026-08-17.
+# Since none of it is reachable from our running process, removing it
+# outright closes the finding at the root instead of chasing per-CVE
+# ignores that would need to be revisited on every npm release.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+  /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 USER node
 EXPOSE 5000
 EXPOSE 5100
