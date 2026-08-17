@@ -21,7 +21,17 @@ jobs:
         run: npm test
 
   build:
-    runs-on: [self-hosted, baltcircle-prod]
+    # GitHub-hosted, NOT the self-hosted production runner (audit CRITICAL:
+    # this job runs on every pull_request, including from forks, before any
+    # review. `docker build` executes arbitrary RUN instructions from the
+    # PR's own Dockerfile/context; running that against the prod VM's Docker
+    # daemon handed untrusted PR code a path onto the production host. A
+    # GitHub-hosted runner is a fresh, isolated, torn-down-after-the-job VM
+    # with Docker preinstalled — same validation (does the image still
+    # build?), zero access to production. The prod self-hosted runner is now
+    # only used by deploy.yml, which triggers on trusted `push` to `main`
+    # after review, never on unreviewed PR branches.
+    runs-on: ubuntu-latest
     # No `contents: write` — the build log is published as an Actions artifact
     # instead of being self-committed back into the repo (audit M1).
     steps:

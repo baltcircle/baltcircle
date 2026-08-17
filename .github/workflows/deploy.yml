@@ -16,6 +16,15 @@ jobs:
     runs-on:
       - self-hosted
       - baltcircle-prod
+    # Ties this job to a GitHub Environment named "production" (audit
+    # CRITICAL, same finding as build-check.yml's runner move). The YAML
+    # alone does not enforce anything — required-reviewer/branch-restriction
+    # rules must be configured once in GitHub: Settings → Environments →
+    # production → add required reviewers and restrict to the `main` branch.
+    # Once configured, every run of this job (the only workflow left that
+    # touches the self-hosted prod runner) pauses for an explicit human
+    # approval before it can reach the production Docker daemon.
+    environment: production
 
     steps:
       # The one-shot migration step below mounts the runner workspace into a
