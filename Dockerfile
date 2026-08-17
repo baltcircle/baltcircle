@@ -39,7 +39,15 @@ ENV PORT=5000
 # stale trust info) via the standard Debian/Ubuntu update-ca-certificates
 # mechanism: any cert placed under /usr/local/share/ca-certificates/*.crt is
 # picked up and merged into /etc/ssl/certs/ca-certificates.crt.
+# `apt-get upgrade` runs here too (audit HIGH #22): the base image digest
+# above is pinned for reproducible app-layer builds, but Debian keeps
+# shipping security patches for OS packages (e.g. libcap2, libgnutls30)
+# under the SAME digest's tag over time. Upgrading at build time picks up
+# those patches without floating the base digest itself — the trade-off is
+# that this layer is only as fresh as the Debian mirror on build day, so
+# the scheduled security-scan.yml run (daily) is what catches drift again.
 RUN apt-get update \
+  && apt-get upgrade -y \
   && apt-get install -y --no-install-recommends curl ca-certificates \
   && curl -fsSL -o /usr/local/share/ca-certificates/yc-root.crt https://storage.yandexcloud.net/cloud-certs/CA.pem \
   && apt-get purge -y curl && apt-get autoremove -y \
