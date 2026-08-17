@@ -37,6 +37,11 @@ services:
       # SESSION_SECRET when unset.
       OTP_SECRET: ${OTP_SECRET:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
+      # AES-256-GCM master key for encrypting T-Bank RebillId/AccountToken at
+      # rest (payment_methods table). REQUIRED in production — the app throws
+      # on first payment-method write if unset. Read from the host env (set by
+      # the deploy workflow from the GitHub `PAYMENT_TOKEN_KEY` secret).
+      PAYMENT_TOKEN_KEY: ${PAYMENT_TOKEN_KEY:-}
       # Comma-separated list of phone numbers granted the admin role. Temporary
       # bootstrap until a role-admin UI exists. Read from the host env (set by
       # the deploy workflow from a GitHub secret). Empty -> no auto-admins.

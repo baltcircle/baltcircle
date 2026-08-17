@@ -25,6 +25,7 @@ import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/bi
 import { eq, desc, sql, gt, and, asc, inArray, isNull } from "drizzle-orm";
 import { EventEmitter } from "node:events";
 import { sendToUserAsync } from "./push";
+import { encryptToken, decryptToken, hashTokenForLookup } from "./crypto/payment-tokens";
 import { getLockGateway } from "./omni/gateway";
 import { log } from "./logger";
 // db client + schema bootstrap + migrations + demo seed run on import of this module.
@@ -78,6 +79,18 @@ function generateOtp(): string {
   // 6-digit numeric code (000000–999999) — matches the SMS copy and UI input.
   // Zero-padded so every code is exactly six digits (audit M6).
   return String(randomInt(0, 1_000_000)).padStart(6, "0");
+}
+
+// Payment-method rows store RebillId/AccountToken encrypted at rest (audit
+// HIGH #9, see server/crypto/payment-tokens.ts). Every read path funnels
+// through these so the rest of the app keeps working with plaintext values
+// in memory — only the DB ever sees ciphertext.
+function decryptPaymentMethodRow<T extends PaymentMethod | undefined>(row: T): T {
+  if (!row) return row;
+  return { ...row, rebillId: decryptToken(row.rebillId), accountToken: decryptToken(row.accountToken) };
+}
+function decryptPaymentMethodRows(rows: PaymentMethod[]): PaymentMethod[] {
+  return rows.map((r) => decryptPaymentMethodRow(r));
 }
 
 function safeEqualHex(a: string, b: string): boolean {
@@ -721,9 +734,9 @@ export class DatabaseStorage implements IStorage {
 
   // ---------- Payment methods (MVP metadata only) ----------
   async listPaymentMethods(userId: string) {
-    return (await db.select().from(paymentMethods)
+    return decryptPaymentMethodRows((await db.select().from(paymentMethods)
       .where(eq(paymentMethods.userId, userId))
-      .orderBy(desc(paymentMethods.createdAt))) as PaymentMethod[];
+      .orderBy(desc(paymentMethods.createdAt))) as PaymentMethod[]);
   }
 
   // Link a method. Label/status are derived server-side so no card data can be
@@ -816,49 +829,49 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPaymentMethod(id: number) {
-    return (await db.select().from(paymentMethods).where(eq(paymentMethods.id, id)).limit(1))[0] as
+    return decryptPaymentMethodRow((await db.select().from(paymentMethods).where(eq(paymentMethods.id, id)).limit(1))[0] as
       | PaymentMethod
-      | undefined;
+      | undefined);
   }
 
   // The most recent pending T-Bank card binding for a user. Used by the
   // notification handler to attach the confirmed card to the binding the rider
   // just started.
   async findPendingCardMethod(userId: string) {
-    return (await db.select().from(paymentMethods)
+    return decryptPaymentMethodRow((await db.select().from(paymentMethods)
       .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.provider} = 'tbank' AND ${paymentMethods.status} = 'pending'`)
       .orderBy(desc(paymentMethods.createdAt))
-      .limit(1))[0] as PaymentMethod | undefined;
+      .limit(1))[0] as PaymentMethod | undefined);
   }
 
   // Locate a T-Bank card-binding method by the Init OrderId echoed back in the
   // payment notification. This is how the webhook correlates a verification
   // payment to the pending method (the Init flow has no RequestKey).
   async findCardMethodByOrderId(orderId: string) {
-    return (await db.select().from(paymentMethods)
+    return decryptPaymentMethodRow((await db.select().from(paymentMethods)
       .where(sql`${paymentMethods.provider} = 'tbank' AND ${paymentMethods.orderId} = ${orderId}`)
       .orderBy(desc(paymentMethods.createdAt))
-      .limit(1))[0] as PaymentMethod | undefined;
+      .limit(1))[0] as PaymentMethod | undefined);
   }
 
   // Locate a user's T-Bank card method by its AddCard RequestKey. Used to
   // resolve the method a rider was redirected back from (the Success/Fail URL
   // carries the RequestKey) so we can refresh exactly that binding.
   async findCardMethodByRequestKey(userId: string, requestKey: string) {
-    return (await db.select().from(paymentMethods)
+    return decryptPaymentMethodRow((await db.select().from(paymentMethods)
       .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.provider} = 'tbank' AND ${paymentMethods.requestKey} = ${requestKey}`)
       .orderBy(desc(paymentMethods.createdAt))
-      .limit(1))[0] as PaymentMethod | undefined;
+      .limit(1))[0] as PaymentMethod | undefined);
   }
 
   // Locate any T-Bank method by RequestKey alone (no user scope). The SBP
   // binding notification carries a RequestKey but not our user id, so this is
   // how the webhook attaches the AccountToken to the right pending row.
   async findMethodByRequestKey(requestKey: string) {
-    return (await db.select().from(paymentMethods)
+    return decryptPaymentMethodRow((await db.select().from(paymentMethods)
       .where(sql`${paymentMethods.provider} = 'tbank' AND ${paymentMethods.requestKey} = ${requestKey}`)
       .orderBy(desc(paymentMethods.createdAt))
-      .limit(1))[0] as PaymentMethod | undefined;
+      .limit(1))[0] as PaymentMethod | undefined);
   }
 
   // Resolve the rider's saved SBP account eligible for a recurring charge: an
@@ -870,10 +883,10 @@ export class DatabaseStorage implements IStorage {
       if (m.provider !== "tbank" || m.status !== "active" || !m.accountToken) return undefined;
       return m;
     }
-    return (await db.select().from(paymentMethods)
+    return decryptPaymentMethodRow((await db.select().from(paymentMethods)
       .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.provider} = 'tbank' AND ${paymentMethods.status} = 'active' AND ${paymentMethods.accountToken} IS NOT NULL AND ${paymentMethods.accountToken} != ''`)
       .orderBy(desc(paymentMethods.createdAt))
-      .limit(1))[0] as PaymentMethod | undefined;
+      .limit(1))[0] as PaymentMethod | undefined);
   }
 
   // Atomically claim the right to reverse/refund a card-binding verification
@@ -922,8 +935,24 @@ export class DatabaseStorage implements IStorage {
   async updatePaymentMethod(id: number, patch: Partial<PaymentMethod>) {
     const set: Record<string, unknown> = { ...patch, updatedAt: Date.now() };
     delete set.id;
+    // Audit HIGH #9: encrypt RebillId/AccountToken before they ever touch the
+    // DB — this is the single write path for both fields, so every caller
+    // (webhook handlers, refresh routes) is covered without changes on their
+    // end. The blind-index (hash) column is derived alongside so the dedup
+    // lookup below — and getActiveSavedCard/getActiveSavedSbp's NOT NULL
+    // checks — keep working without ever decrypting a whole table scan.
+    if ("rebillId" in set) {
+      const plain = typeof set.rebillId === "string" ? set.rebillId.trim() : "";
+      set.rebillId = plain ? encryptToken(plain) : null;
+      set.rebillIdHash = plain ? hashTokenForLookup(plain) : null;
+    }
+    if ("accountToken" in set) {
+      const plain = typeof set.accountToken === "string" ? set.accountToken.trim() : "";
+      set.accountToken = plain ? encryptToken(plain) : null;
+      set.accountTokenHash = plain ? hashTokenForLookup(plain) : null;
+    }
     await db.update(paymentMethods).set(set as any).where(eq(paymentMethods.id, id));
-    const updated = await this.getPaymentMethod(id);
+    const updated = await this.getPaymentMethod(id); // decrypted — see decryptPaymentMethodRow
 
     // Дедупликация: одна и та же физическая карта при повторной привязке возвращает
     // тот же T-Bank CardId (или RebillId). Когда метод становится active с таким
@@ -937,7 +966,9 @@ export class DatabaseStorage implements IStorage {
         try {
           const conds = [] as any[];
           if (cardId) conds.push(sql`${paymentMethods.cardId} = ${cardId}`);
-          if (rebillId) conds.push(sql`${paymentMethods.rebillId} = ${rebillId}`);
+          // rebillId is encrypted at rest with a random IV, so it can't be matched
+          // by equality — compare via the deterministic blind index instead.
+          if (rebillId) conds.push(sql`${paymentMethods.rebillIdHash} = ${hashTokenForLookup(rebillId)}`);
           const idMatch = conds.length === 1 ? conds[0] : sql`(${conds[0]} OR ${conds[1]})`;
           await db.delete(paymentMethods).where(
             and(
@@ -983,7 +1014,9 @@ export class DatabaseStorage implements IStorage {
         amountKopecks: input.amountKopecks,
         source: input.source ?? "hosted",
         paymentMethodId: input.paymentMethodId ?? null,
-        rebillId: input.rebillId ?? null,
+        // Write-once audit-trail copy (never read back) — encrypted at rest
+        // for defense-in-depth consistency with payment_methods (audit HIGH #9).
+        rebillId: input.rebillId ? encryptToken(input.rebillId) : null,
         idempotencyKey: input.idempotencyKey ?? null,
         status: "pending",
         createdAt: now,
@@ -1031,7 +1064,9 @@ export class DatabaseStorage implements IStorage {
         amountKopecks: input.amountKopecks,
         source: input.source ?? "hosted",
         paymentMethodId: input.paymentMethodId ?? null,
-        rebillId: input.rebillId ?? null,
+        // Write-once audit-trail copy (never read back) — encrypted at rest
+        // for defense-in-depth consistency with payment_methods (audit HIGH #9).
+        rebillId: input.rebillId ? encryptToken(input.rebillId) : null,
         idempotencyKey: input.idempotencyKey,
         status: "pending",
         createdAt: now,
@@ -1075,13 +1110,13 @@ export class DatabaseStorage implements IStorage {
     const brandSql = brand != null
       ? sql` AND (${paymentMethods.brand} = ${brand} OR ${paymentMethods.brand} IS NULL)`
       : sql``;
-    return (await db.select().from(paymentMethods)
+    return decryptPaymentMethodRow((await db.select().from(paymentMethods)
       .where(sql`${paymentMethods.userId} = ${userId}
         AND ${paymentMethods.type} = 'card'
         AND ${paymentMethods.status} = 'active'
         AND ${paymentMethods.label} LIKE ${`%${last4}`}${brandSql}${excludeSql}`)
       .orderBy(desc(paymentMethods.createdAt))
-      .limit(1))[0] as PaymentMethod | undefined;
+      .limit(1))[0] as PaymentMethod | undefined);
   }
 
   async getActiveSavedCard(userId: string, paymentMethodId?: number) {
@@ -1091,10 +1126,10 @@ export class DatabaseStorage implements IStorage {
       if (m.provider !== "tbank" || m.status !== "active" || !m.rebillId) return undefined;
       return m;
     }
-    return (await db.select().from(paymentMethods)
+    return decryptPaymentMethodRow((await db.select().from(paymentMethods)
       .where(sql`${paymentMethods.userId} = ${userId} AND ${paymentMethods.provider} = 'tbank' AND ${paymentMethods.status} = 'active' AND ${paymentMethods.rebillId} IS NOT NULL AND ${paymentMethods.rebillId} != ''`)
       .orderBy(desc(paymentMethods.createdAt))
-      .limit(1))[0] as PaymentMethod | undefined;
+      .limit(1))[0] as PaymentMethod | undefined);
   }
 
   async getRidePaymentOrder(orderId: string) {

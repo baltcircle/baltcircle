@@ -722,13 +722,22 @@ export const paymentMethods = pgTable("payment_methods", {
   provider: text("provider"),                // "tbank" for real bindings; null for legacy MVP rows
   customerKey: text("customer_key"),         // T-Bank CustomerKey (== our user id)
   cardId: text("card_id"),                   // T-Bank CardId once the card is bound
-  rebillId: text("rebill_id"),               // T-Bank RebillId for recurring charges (if returned)
+  // T-Bank RebillId for recurring charges (if returned). A bearer token — whoever
+  // holds it can make the acquirer pull money from the rider's card. Encrypted at
+  // rest (audit HIGH #9, AES-256-GCM — see server/crypto/payment-tokens.ts); the
+  // storage layer decrypts on read so the rest of the app still sees plaintext.
+  rebillId: text("rebill_id"),
+  // Deterministic HMAC blind index of the decrypted rebillId, used for exact-match
+  // lookups (e.g. same-card dedup) that can't run against the encrypted column.
+  rebillIdHash: text("rebill_id_hash"),
   requestKey: text("request_key"),           // AddCard / AddAccountQr RequestKey, to correlate the binding & poll GetAddCardState / GetAddAccountQrState
   // SBP (СБП) account binding: the AccountToken issued by the payer's bank after
   // a successful AddAccountQr. It is the СБП analogue of a card's RebillId — the
   // recurring token we pass to ChargeQr to debit the linked account. Populated
-  // from the binding notification (never a secret card number).
-  accountToken: text("account_token"),       // T-Bank AccountToken for SBP recurring charges (ChargeQr)
+  // from the binding notification (never a secret card number). Same encrypted-
+  // at-rest treatment as rebillId (audit HIGH #9).
+  accountToken: text("account_token"),
+  accountTokenHash: text("account_token_hash"), // blind index, mirrors rebillIdHash
   // ----- Init+Recurrent verification-payment binding (the primary path) -----
   purpose: text("purpose"),                  // "card_binding" for the Init verification payment; null otherwise
   orderId: text("order_id"),                 // our Init OrderId, echoed back in notifications to correlate
@@ -754,6 +763,8 @@ export const paymentMethods = pgTable("payment_methods", {
   index("idx_pm_user_provider_status").on(t.userId, t.provider, t.status),
   index("idx_pm_order").on(t.orderId),
   index("idx_pm_request_key").on(t.requestKey),
+  index("idx_pm_rebill_hash").on(t.rebillIdHash),
+  index("idx_pm_account_hash").on(t.accountTokenHash),
 ]);
 export type PaymentMethod = typeof paymentMethods.$inferSelect;
 

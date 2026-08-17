@@ -228,8 +228,10 @@ CREATE TABLE IF NOT EXISTS payment_methods (
   customer_key TEXT,
   card_id TEXT,
   rebill_id TEXT,
+  rebill_id_hash TEXT,
   request_key TEXT,
   account_token TEXT,
+  account_token_hash TEXT,
   purpose TEXT,
   order_id TEXT,
   payment_id TEXT,
@@ -547,6 +549,13 @@ async function runMigrations() {
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_po_user_idempotency ON payment_orders (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL;`,
   );
 
+  // Audit HIGH #9: RebillId/AccountToken are now encrypted at rest (see
+  // server/crypto/payment-tokens.ts). These columns predate that change on
+  // any database bootstrapped before it, and the blind-index columns used for
+  // equality lookups (card/account dedup) are brand new either way.
+  await pool.query(`ALTER TABLE payment_methods ADD COLUMN IF NOT EXISTS rebill_id_hash TEXT;`);
+  await pool.query(`ALTER TABLE payment_methods ADD COLUMN IF NOT EXISTS account_token_hash TEXT;`);
+
   // bike_telemetry was originally created (unreleased, PR #83) for a generic
   // HTTP webhook as (bike_id, x, y, t) with x/y NOT NULL. The real devices speak
   // TCP and send positionless check-ins, so widen the row and drop the NOT NULL
@@ -569,6 +578,47 @@ async function runMigrations() {
   }
   await pool.query(`ALTER TABLE bike_telemetry ALTER COLUMN x DROP NOT NULL;`);
   await pool.query(`ALTER TABLE bike_telemetry ALTER COLUMN y DROP NOT NULL;`);
+}
+
+// Audit HIGH #9: one-time backfill that encrypts any RebillId/AccountToken
+// rows written before payment-token encryption existed, and fills in their
+// blind-index (hash) columns so the card/account dedup lookup in
+// updatePaymentMethod keeps working for them. Idempotent and cheap to re-run
+// on every boot — it only touches rows whose value doesn't yet carry the
+// "v1:" ciphertext prefix, so already-encrypted rows are skipped untouched.
+async function encryptLegacyPaymentTokens() {
+  const { encryptToken, hashTokenForLookup } = await import("../crypto/payment-tokens");
+  const rows = await pool.query<{ id: number; rebill_id: string | null; account_token: string | null }>(
+    `SELECT id, rebill_id, account_token FROM payment_methods
+       WHERE (rebill_id IS NOT NULL AND rebill_id != '' AND rebill_id NOT LIKE 'v1:%')
+          OR (account_token IS NOT NULL AND account_token != '' AND account_token NOT LIKE 'v1:%')`,
+  );
+  if (rows.rowCount === 0) return;
+  let migrated = 0;
+  for (const row of rows.rows) {
+    const rebillPlain = row.rebill_id && !row.rebill_id.startsWith("v1:") ? row.rebill_id : null;
+    const accountPlain = row.account_token && !row.account_token.startsWith("v1:") ? row.account_token : null;
+    if (!rebillPlain && !accountPlain) continue;
+    await pool.query(
+      `UPDATE payment_methods SET
+         rebill_id = COALESCE($1, rebill_id),
+         rebill_id_hash = COALESCE($2, rebill_id_hash),
+         account_token = COALESCE($3, account_token),
+         account_token_hash = COALESCE($4, account_token_hash)
+       WHERE id = $5`,
+      [
+        rebillPlain ? encryptToken(rebillPlain) : null,
+        rebillPlain ? hashTokenForLookup(rebillPlain) : null,
+        accountPlain ? encryptToken(accountPlain) : null,
+        accountPlain ? hashTokenForLookup(accountPlain) : null,
+        row.id,
+      ],
+    );
+    migrated += 1;
+  }
+  if (migrated > 0) {
+    logger.info({ migrated }, "encryptLegacyPaymentTokens: encrypted plaintext RebillId/AccountToken rows at rest");
+  }
 }
 
 // Production received malformed pending card-binding rows before the binding
@@ -769,6 +819,7 @@ export const bootstrapReady: Promise<void> = (async () => {
   await createSchema();
   await runMigrations();
   await cleanupStaleIdentifierlessPendingCardBindings();
+  await encryptLegacyPaymentTokens();
   await createIndexes();
   await bootstrapDemoData();
 })();

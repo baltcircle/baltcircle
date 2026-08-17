@@ -139,6 +139,7 @@ jobs:
           SIGMASMS_SENDER: ${{ secrets.SIGMASMS_SENDER }}
           OTP_SECRET: ${{ secrets.OTP_SECRET }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          PAYMENT_TOKEN_KEY: ${{ secrets.PAYMENT_TOKEN_KEY }}
           ADMIN_PHONE_NUMBERS: ${{ secrets.ADMIN_PHONE_NUMBERS }}
           TBANK_TERMINAL_KEY: ${{ secrets.TBANK_TERMINAL_KEY }}
           TBANK_PASSWORD: ${{ secrets.TBANK_PASSWORD }}
