@@ -33,6 +33,26 @@ export interface OmniServerOptions {
   handshakeTimeoutMs?: number;
   /** Largest single frame accepted before the connection is treated as hostile. */
   maxFrameBytes?: number;
+  /**
+   * New-connection admission control per source IP (audit F-05). Locks may
+   * share carrier CGNAT, so this caps the *rate* of new connection attempts
+   * rather than concurrent sockets per IP — a legitimate fleet behind one
+   * CGNAT IP can still hold many concurrent connections, it just cannot
+   * open new ones faster than this.
+   */
+  maxNewConnectionsPerIp?: number;
+  /** Sliding window over which `maxNewConnectionsPerIp` is enforced. */
+  newConnectionWindowMs?: number;
+  /**
+   * Per-connection frame-rate limiter (audit F-06): sustained token-bucket
+   * refill rate. Real firmware heartbeats every ~4 min and position-tracks at
+   * most every few seconds, so this has an order of magnitude of headroom
+   * while still bounding how much CPU/DB write amplification one abusive or
+   * malfunctioning socket can cause.
+   */
+  maxFramesPerSecond?: number;
+  /** Token-bucket burst capacity, so a batch of frames coalesced by TCP after a brief stall is not mistaken for a flood. */
+  frameBucketCapacity?: number;
   /** Minimum spacing between persisted positionless status rows, per bike. */
   statusMinIntervalMs?: number;
   /** Mark an active lock offline after this quiet period. */
@@ -54,6 +74,8 @@ const IMEI_NEGATIVE_TTL_MS = 300_000;
  * needs one entry per lock, and re-resolving after a flush costs one query.
  */
 const IMEI_CACHE_MAX_ENTRIES = 5_000;
+/** Cap on distinct source-IP buckets tracked for connection-rate limiting. */
+const CONNECTION_ATTEMPT_MAX_ENTRIES = 5_000;
 
 interface CacheEntry {
   result: LockAuthResult;
@@ -74,12 +96,22 @@ export class OmniTcpServer {
   /** Sockets accepted but not yet bound to a device. */
   private readonly pending = new Set<OmniConnection>();
   private readonly imeiCache = new Map<string, CacheEntry>();
+  /** Fixed-window new-connection counters, keyed by normalised source IP. */
+  private readonly connectionAttempts = new Map<string, { count: number; windowStart: number }>();
   private readonly lastStatusWrite = new Map<string, number>();
   private readonly pendingUnlocks = new Map<string, {
     resolve: (value: { success: boolean }) => void;
     reject: (reason: Error) => void;
     timer: NodeJS.Timeout;
+    imei: string;
   }>();
+  /**
+   * True per-IMEI mutex (audit F-07): `pendingUnlocks` is keyed by
+   * imei+user+second, so two different user/second tuples targeting the same
+   * lock were never mutually exclusive. This set is the single source of
+   * truth for "a command is currently outstanding for this lock".
+   */
+  private readonly imeiCommandInFlight = new Set<string>();
   private offlineSweepTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly options: OmniServerOptions) {
@@ -91,6 +123,10 @@ export class OmniTcpServer {
       idleTimeoutMs: options.idleTimeoutMs ?? 15 * 60_000,
       handshakeTimeoutMs: options.handshakeTimeoutMs ?? 60_000,
       maxFrameBytes: options.maxFrameBytes ?? 4096,
+      maxNewConnectionsPerIp: options.maxNewConnectionsPerIp ?? 20,
+      newConnectionWindowMs: options.newConnectionWindowMs ?? 60_000,
+      maxFramesPerSecond: options.maxFramesPerSecond ?? 5,
+      frameBucketCapacity: options.frameBucketCapacity ?? 20,
       statusMinIntervalMs: options.statusMinIntervalMs ?? 60_000,
       offlineAfterMs: options.offlineAfterMs ?? 10 * 60_000,
       offlineSweepIntervalMs: options.offlineSweepIntervalMs ?? 60_000,
@@ -151,20 +187,35 @@ export class OmniTcpServer {
     if (!conn) return Promise.reject(new Error("lock is not connected"));
     const user = String(userId);
     if (!/^\d+$/.test(user)) return Promise.reject(new Error("user id must be an unsigned integer"));
+    // F-07: serialize on the lock itself, not on the user/second tuple — two
+    // requests for the same IMEI (e.g. a rider's self-service start racing an
+    // operator's manual unlock) must never both be in flight at once.
+    if (this.imeiCommandInFlight.has(imei)) {
+      return Promise.reject(new Error("a command is already pending for this lock"));
+    }
     const seconds = Math.floor(Date.now() / 1000);
     const key = unlockKey(imei, user, seconds);
     if (this.pendingUnlocks.has(key)) return Promise.reject(new Error("unlock command already pending"));
+    this.imeiCommandInFlight.add(imei);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const settle = (fn: () => void) => {
         this.pendingUnlocks.delete(key);
-        reject(new Error("unlock command timed out"));
+        this.imeiCommandInFlight.delete(imei);
+        fn();
+      };
+      const timer = setTimeout(() => {
+        settle(() => reject(new Error("unlock command timed out")));
       }, 15_000);
       timer.unref?.();
-      this.pendingUnlocks.set(key, { resolve, reject, timer });
+      this.pendingUnlocks.set(key, {
+        resolve: (value) => settle(() => resolve(value)),
+        reject: (err) => settle(() => reject(err)),
+        timer,
+        imei,
+      });
       if (!conn.send(buildServerPacket({ imei, cmd: "L0", params: [0, user, seconds] }))) {
         clearTimeout(timer);
-        this.pendingUnlocks.delete(key);
-        reject(new Error("lock socket is not writable"));
+        settle(() => reject(new Error("lock socket is not writable")));
       }
     });
   }
@@ -191,6 +242,15 @@ export class OmniTcpServer {
   // -------------------------------------------------------------------------
 
   private accept(socket: Socket): void {
+    const ip = normalizeIp(socket.remoteAddress);
+    if (this.isNewConnectionRateLimited(ip)) {
+      this.log.warn(
+        { remote: ip, limit: this.opts.maxNewConnectionsPerIp, windowMs: this.opts.newConnectionWindowMs },
+        "connection refused: source IP exceeded new-connection rate limit",
+      );
+      socket.destroy();
+      return;
+    }
     if (this.connectionCount >= this.opts.maxConnections) {
       this.log.warn(
         { remote: socket.remoteAddress, connections: this.connectionCount },
@@ -201,6 +261,32 @@ export class OmniTcpServer {
     }
     const conn = new OmniConnection(socket, this, this.log, this.opts);
     this.pending.add(conn);
+  }
+
+  /**
+   * Fixed-window counter per source IP (audit F-05). A single misbehaving or
+   * spoofing source dialling in repeatedly must not be able to burn CPU/DB on
+   * IMEI lookups or exhaust the global connection cap for everyone else.
+   */
+  private isNewConnectionRateLimited(ip: string): boolean {
+    const now = Date.now();
+    if (this.connectionAttempts.size >= CONNECTION_ATTEMPT_MAX_ENTRIES) {
+      // Sweep expired buckets first so a legitimate traffic spike (e.g. a mass
+      // reconnect after a network blip) does not get everyone's counters reset
+      // early just because many distinct IPs are active at once.
+      this.connectionAttempts.forEach((entry, key) => {
+        if (now - entry.windowStart > this.opts.newConnectionWindowMs) this.connectionAttempts.delete(key);
+      });
+      if (this.connectionAttempts.size >= CONNECTION_ATTEMPT_MAX_ENTRIES) this.connectionAttempts.clear();
+    }
+
+    const entry = this.connectionAttempts.get(ip);
+    if (!entry || now - entry.windowStart > this.opts.newConnectionWindowMs) {
+      this.connectionAttempts.set(ip, { count: 1, windowStart: now });
+      return false;
+    }
+    entry.count += 1;
+    return entry.count > this.opts.maxNewConnectionsPerIp;
   }
 
   /** @internal Called by a connection once it has a valid frame with an IMEI. */
@@ -389,6 +475,10 @@ class OmniConnection {
   private binding: Promise<boolean> | null = null;
   private closed = false;
 
+  /** Token-bucket state for the F-06 per-connection frame-rate limiter. */
+  private frameTokens: number;
+  private frameTokensRefilledAt: number;
+
   constructor(
     private readonly socket: Socket,
     private readonly server: OmniTcpServer,
@@ -397,8 +487,12 @@ class OmniConnection {
       idleTimeoutMs: number;
       handshakeTimeoutMs: number;
       maxFrameBytes: number;
+      maxFramesPerSecond: number;
+      frameBucketCapacity: number;
     },
   ) {
+    this.frameTokens = opts.frameBucketCapacity;
+    this.frameTokensRefilledAt = Date.now();
     this.remote = `${socket.remoteAddress ?? "?"}:${socket.remotePort ?? 0}`;
     this.framer = new OmniFramer(opts.maxFrameBytes);
 
@@ -472,12 +566,40 @@ class OmniConnection {
         this.destroy(event.reason);
         return;
       }
+      // F-06: cap the sustained decode/persist rate per socket. A single
+      // connection sending frames faster than any real lock could must not be
+      // able to turn into a CPU or database write-amplification attack just
+      // because it passed the IMEI/frame-format checks.
+      if (!this.takeFrameToken()) {
+        this.log.warn(
+          { connId: this.id, imei: this.imei, remote: this.remote },
+          "frame rate limit exceeded, closing lock socket",
+        );
+        this.destroy("frame_rate_exceeded");
+        return;
+      }
       // Each frame is handled in isolation: one malformed packet is logged and
       // skipped, it must not tear down a healthy connection or the process.
       this.handleFrame(event.text).catch((err) => {
         this.log.error({ err, connId: this.id, imei: this.imei }, "unhandled frame error");
       });
     }
+  }
+
+  /** Refills by elapsed time, then attempts to spend one token. */
+  private takeFrameToken(): boolean {
+    const now = Date.now();
+    const elapsedSec = (now - this.frameTokensRefilledAt) / 1000;
+    if (elapsedSec > 0) {
+      this.frameTokens = Math.min(
+        this.opts.frameBucketCapacity,
+        this.frameTokens + elapsedSec * this.opts.maxFramesPerSecond,
+      );
+      this.frameTokensRefilledAt = now;
+    }
+    if (this.frameTokens < 1) return false;
+    this.frameTokens -= 1;
+    return true;
   }
 
   private async handleFrame(text: string): Promise<void> {
@@ -649,4 +771,14 @@ function truncate(text: string, max = 200): string {
 
 function unlockKey(imei: string, userId: string, timestampSeconds: number): string {
   return `${imei}:${userId}:${timestampSeconds}`;
+}
+
+/**
+ * Node reports IPv4 peers on a dual-stack listener as IPv4-mapped IPv6
+ * (`::ffff:1.2.3.4`). Without normalising, the same physical source would
+ * split its attempts across two different rate-limit buckets.
+ */
+function normalizeIp(remoteAddress: string | undefined): string {
+  if (!remoteAddress) return "unknown";
+  return remoteAddress.startsWith("::ffff:") ? remoteAddress.slice(7) : remoteAddress;
 }

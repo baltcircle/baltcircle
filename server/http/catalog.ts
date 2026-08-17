@@ -209,6 +209,22 @@ export function registerCatalogRoutes(app: Express): void {
     if (!gateway) return res.status(503).json({ error: "Шлюз замков недоступен" });
     const userId = z.coerce.string().regex(/^\d{1,10}$/).safeParse(req.body?.userId);
     if (!userId.success) return res.status(400).json({ error: "Укажите числовой ID пользователя замка" });
+    // F-07: a bike mid-ride for a different rider must not be silently opened
+    // by this pilot-only control. `force: true` is an explicit, logged override
+    // for genuine ops situations (stuck lock, support call), never the default.
+    if (lock.bikeId) {
+      const activeRide = await storage.getActiveRideForBike(lock.bikeId);
+      if (activeRide && activeRide.userId !== userId.data && req.body?.force !== true) {
+        log(
+          `manual lock unlock refused: lock ${id} bike ${lock.bikeId} has active ride ${activeRide.id} ` +
+          `for user ${activeRide.userId}, requested userId ${userId.data} without force`,
+        );
+        return res.status(409).json({
+          error: "На велосипеде активна чужая поездка. Повторите запрос с force=true, если это осознанное решение",
+          activeRideId: activeRide.id,
+        });
+      }
+    }
     try {
       const result = await gateway.sendUnlockCommand(lock.imei, userId.data);
       if (!result.success) return res.status(409).json({ error: "Замок отклонил разблокировку" });

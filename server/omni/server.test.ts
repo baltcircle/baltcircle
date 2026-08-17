@@ -23,6 +23,7 @@ import type { OmniMessage } from "@shared/omni/protocol";
 
 const IMEI_A = "861234567890123";
 const IMEI_B = "861234567890124";
+const IMEI_C = "861234567890125";
 const UNKNOWN_IMEI = "869999999999999";
 const DECOMMISSIONED_IMEI = "861234567890199";
 
@@ -33,6 +34,7 @@ class FakeStore implements OmniStore {
   readonly registry = new Map<string, { bikeId: string | null; status: string }>([
     [IMEI_A, { bikeId: "bike-a", status: "active" }],
     [IMEI_B, { bikeId: "bike-b", status: "active" }],
+    [IMEI_C, { bikeId: "bike-c", status: "active" }],
     [DECOMMISSIONED_IMEI, { bikeId: "bike-old", status: "decommissioned" }],
   ]);
   readonly telemetry: TelemetryRow[] = [];
@@ -348,6 +350,45 @@ describe("connection lifecycle", () => {
     expect(store.onlineCalls).toEqual([{ imei: IMEI_A, online: true }]);
   });
 
+  it("refuses new connections from a source IP that exceeds the rate limit (audit F-05)", async () => {
+    // All MockLock instances dial in from 127.0.0.1, so a tight limit here
+    // exercises the per-source-IP bucket without waiting out the window.
+    const { server, store, lock } = await harness({ maxNewConnectionsPerIp: 2, newConnectionWindowMs: 60_000 });
+
+    const first = await lock(IMEI_A);
+    first.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    const second = await lock(IMEI_B);
+    second.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 2);
+
+    // Third connection attempt from the same IP within the window is over the
+    // cap: the listener must destroy it at accept time, before any IMEI lookup.
+    const third = await lock(IMEI_C);
+    expect(() => third.sendCheckin()).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(server.connectionCount).toBe(2);
+    expect(store.onlineCalls).toEqual([
+      { imei: IMEI_A, online: true },
+      { imei: IMEI_B, online: true },
+    ]);
+  });
+
+  it("closes a connection that sustains a frame rate above the configured limit (audit F-06)", async () => {
+    const { server, store, lock } = await harness({ maxFramesPerSecond: 2, frameBucketCapacity: 3 });
+    const device = await lock(IMEI_A);
+
+    // Burst well past the 3-token bucket in one tight loop — no meaningful
+    // time passes between iterations, so refill is negligible.
+    for (let i = 0; i < 6; i++) device.sendCheckin();
+
+    await waitFor(() => server.connectionCount === 0);
+    // Only the frames spent from the initial burst budget before the limiter
+    // tripped and destroyed the socket were ever persisted.
+    expect(store.rowsFor("Q0").length).toBeLessThanOrEqual(3);
+  });
+
   it("does not register a socket that closed while its IMEI was being looked up", async () => {
     const { server, store, lock } = await harness();
     let openGate = () => {};
@@ -548,6 +589,32 @@ describe("Phase 2 lock registry projection", () => {
     device.sendRaw(device.packet("L0", [0, command.params[1], command.params[2]]));
     expect(await unlock).toEqual({ success: true });
     expect(await device.nextCommand()).toEqual({ cmd: "Re", params: ["L0"] });
+  });
+
+  it("refuses a second unlock command for the same lock while one is already pending (audit F-07)", async () => {
+    const { server, store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    // Two different user/second tuples targeting the same IMEI — the old
+    // key (imei+user+second) would treat these as unrelated and let both
+    // race the lock. The mutex must reject the second immediately.
+    const first = server.sendUnlockCommand(IMEI_A, "1234");
+    await expect(server.sendUnlockCommand(IMEI_A, "5678")).rejects.toThrow(
+      /already pending/,
+    );
+
+    const command = await device.nextCommand();
+    device.sendRaw(device.packet("L0", [0, command.params[1], command.params[2]]));
+    expect(await first).toEqual({ success: true });
+    expect(await device.nextCommand()).toEqual({ cmd: "Re", params: ["L0"] });
+
+    // Once the first command settles, the lock is free again.
+    const second = server.sendUnlockCommand(IMEI_A, "5678");
+    const command2 = await device.nextCommand();
+    device.sendRaw(device.packet("L0", [0, command2.params[1], command2.params[2]]));
+    expect(await second).toEqual({ success: true });
   });
 });
 

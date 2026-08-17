@@ -163,9 +163,25 @@ export class PgOmniStore implements OmniStore {
           [imei, at, alarmType]);
         return;
       }
-      case "lockReport":
+      case "lockReport": {
         await pool.query(`UPDATE locks SET ${base}, last_lock_state = 'locked' WHERE imei = $1`, [imei, at]);
+        // Audit F-04: this is a device-autonomous report of a physical close
+        // that already happened — there is no way for the server to have
+        // prevented it. If a ride is still "active" on this lock's bike, the
+        // rider closed the lock without the app ending the ride; flag it for
+        // ops (dashboard/admin API) without touching ride/bike lifecycle.
+        // `physically_locked_at IS NULL` keeps the FIRST occurrence, not the
+        // latest, so the discrepancy's start time is preserved.
+        const bikeId = await this.findBikeIdByImei(imei);
+        if (bikeId) {
+          await pool.query(
+            `UPDATE rides SET physically_locked_at = $1
+             WHERE bike_id = $2 AND status = 'active' AND physically_locked_at IS NULL`,
+            [at, bikeId],
+          );
+        }
         return;
+      }
       case "firmware":
         await pool.query(`UPDATE locks SET ${base}, firmware_version = $3, device_type_code = $4 WHERE imei = $1`,
           [imei, at, message.firmwareVersion, message.deviceTypeCode]);

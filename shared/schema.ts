@@ -567,6 +567,11 @@ export const rides = pgTable("rides", {
   cost: integer("cost").notNull().default(0),   // stored in kopecks (integer) — never float rubles
   tariff: text("tariff").notNull(),
   status: text("status").notNull(),   // active | completed | cancelled
+  // Set when the OMNI lock reports a physical close (L1) while this ride was
+  // still "active" — i.e. the rider closed the lock without the app calling
+  // /api/rides/:id/end (audit F-04). Ops-visibility only; never auto-set the
+  // ride to completed/cancelled from this.
+  physicallyLockedAt: bigint("physically_locked_at", { mode: "number" }),
 }, (t) => [
   index("idx_rides_user_status").on(t.userId, t.status),
   index("idx_rides_user").on(t.userId),

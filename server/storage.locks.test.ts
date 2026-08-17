@@ -198,3 +198,22 @@ describe("updateLock provisioning metadata", () => {
     expect(setSpy).toHaveBeenCalledWith(expect.objectContaining(patch));
   });
 });
+
+describe("getActiveRideForBike (audit F-07)", () => {
+  it("returns the active ride row for a bike", async () => {
+    const ride = { id: 42, bikeId: "BC-01", userId: "rider-9", status: "active" };
+    selectResults = [[ride]];
+
+    const result = await storage.getActiveRideForBike("BC-01");
+
+    expect(result).toEqual(ride);
+  });
+
+  it("returns undefined when the bike has no active ride", async () => {
+    selectResults = [[]];
+
+    const result = await storage.getActiveRideForBike("BC-01");
+
+    expect(result).toBeUndefined();
+  });
+});

@@ -527,6 +527,15 @@ async function runMigrations() {
   await pool.query(`ALTER TABLE bikes ADD COLUMN IF NOT EXISTS lock_online BOOLEAN NOT NULL DEFAULT FALSE;`);
   await pool.query(`ALTER TABLE bikes ADD COLUMN IF NOT EXISTS lock_last_seen BIGINT;`);
 
+  // Audit F-04: a physical lock-close (L1) is a fait-accompli device report,
+  // not a request the server can veto — there is no back-channel to prevent
+  // it. So instead of pretending the ride lifecycle controls the hardware, we
+  // only record when a close happened while a ride was still "active" (the
+  // rider closed the lock without the app calling /api/rides/:id/end), for
+  // ops visibility. Deliberately NOT auto-ending/pausing the ride here — that
+  // is the future pause feature's job once its status/columns exist.
+  await pool.query(`ALTER TABLE rides ADD COLUMN IF NOT EXISTS physically_locked_at BIGINT;`);
+
   // bike_telemetry was originally created (unreleased, PR #83) for a generic
   // HTTP webhook as (bike_id, x, y, t) with x/y NOT NULL. The real devices speak
   // TCP and send positionless check-ins, so widen the row and drop the NOT NULL

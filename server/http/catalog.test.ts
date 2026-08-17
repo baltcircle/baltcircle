@@ -18,6 +18,7 @@ const storageMock = vi.hoisted(() => ({
   getLock: vi.fn(),
   updateLock: vi.fn(),
   decommissionLock: vi.fn(),
+  getActiveRideForBike: vi.fn(),
 }));
 
 vi.mock("../storage", () => ({
@@ -224,6 +225,7 @@ describe("lock device registry admin CRUD", () => {
     sessionUserId = operator.id;
     storageMock.getUser.mockResolvedValue(operator);
     storageMock.getLock.mockResolvedValue(registeredLock);
+    storageMock.getActiveRideForBike.mockResolvedValue(undefined);
     const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
     setLockGateway({ sendUnlockCommand } as any);
 
@@ -231,6 +233,49 @@ describe("lock device registry admin CRUD", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
+    expect(sendUnlockCommand).toHaveBeenCalledWith(registeredLock.imei, "1234");
+  });
+
+  it("refuses a manual unlock when a different rider has an active ride on the bike (audit F-07)", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.getLock.mockResolvedValue(registeredLock);
+    storageMock.getActiveRideForBike.mockResolvedValue({ id: 42, bikeId: "BC-100", userId: "rider-9", status: "active" });
+    const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+    setLockGateway({ sendUnlockCommand } as any);
+
+    const res = await lockRequest("/api/admin/locks/7/unlock", "POST", { userId: "1234" });
+
+    expect(res.status).toBe(409);
+    expect(res.body.activeRideId).toBe(42);
+    expect(sendUnlockCommand).not.toHaveBeenCalled();
+  });
+
+  it("allows a forced manual unlock despite a different rider's active ride (audit F-07)", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.getLock.mockResolvedValue(registeredLock);
+    storageMock.getActiveRideForBike.mockResolvedValue({ id: 42, bikeId: "BC-100", userId: "rider-9", status: "active" });
+    const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+    setLockGateway({ sendUnlockCommand } as any);
+
+    const res = await lockRequest("/api/admin/locks/7/unlock", "POST", { userId: "1234", force: true });
+
+    expect(res.status).toBe(200);
+    expect(sendUnlockCommand).toHaveBeenCalledWith(registeredLock.imei, "1234");
+  });
+
+  it("allows a manual unlock when the active ride belongs to the same rider (audit F-07)", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.getLock.mockResolvedValue(registeredLock);
+    storageMock.getActiveRideForBike.mockResolvedValue({ id: 42, bikeId: "BC-100", userId: "1234", status: "active" });
+    const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+    setLockGateway({ sendUnlockCommand } as any);
+
+    const res = await lockRequest("/api/admin/locks/7/unlock", "POST", { userId: "1234" });
+
+    expect(res.status).toBe(200);
     expect(sendUnlockCommand).toHaveBeenCalledWith(registeredLock.imei, "1234");
   });
 

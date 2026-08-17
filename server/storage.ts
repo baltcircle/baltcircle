@@ -25,6 +25,8 @@ import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/bi
 import { eq, desc, sql, gt, and, asc, inArray, isNull } from "drizzle-orm";
 import { EventEmitter } from "node:events";
 import { sendToUserAsync } from "./push";
+import { getLockGateway } from "./omni/gateway";
+import { log } from "./logger";
 // db client + schema bootstrap + migrations + demo seed run on import of this module.
 // bootstrapReady MUST be awaited before serving requests (server entrypoint does this).
 import { db, pool, bootstrapReady } from "./db/bootstrap";
@@ -1314,6 +1316,17 @@ export class DatabaseStorage implements IStorage {
     return (await db.select().from(locks).where(eq(locks.id, id)).limit(1))[0] as Lock | undefined;
   }
 
+  /**
+   * The current active ride on a bike, if any (audit F-07). Used to stop the
+   * admin manual-unlock endpoint from physically opening a bike that is
+   * mid-ride for a different rider unless the operator explicitly forces it.
+   */
+  async getActiveRideForBike(bikeId: string): Promise<Ride | undefined> {
+    return (await db.select().from(rides)
+      .where(and(eq(rides.bikeId, bikeId), eq(rides.status, "active")))
+      .limit(1))[0] as Ride | undefined;
+  }
+
   async updateLock(id: number, patch: AdminUpdateLockInput): Promise<{ lock: Lock } | { error: string }> {
     const existing = (await db.select().from(locks).where(eq(locks.id, id)).limit(1))[0] as Lock | undefined;
     if (!existing) return { error: "Замок не найден" };
@@ -1677,11 +1690,15 @@ export class DatabaseStorage implements IStorage {
     // ride for the same bike or rider impossible at the database level too,
     // so a future code path that bypasses this lock still cannot double-book
     // — it gets a unique-violation instead, caught below.
+    // Captured from inside the transaction so the post-commit unlock step below
+    // (audit F-04) knows which physical lock to address without re-querying.
+    let lockImei: string | null = null;
     const result = await (async () => {
       try {
         return await db.transaction(async (tx) => {
           const bike = (await tx.select().from(bikes).where(eq(bikes.id, bikeId)).for("update").limit(1))[0] as Bike | undefined;
           if (!bike) return { error: "Велосипед не найден" };
+          lockImei = bike.lockImei ?? null;
           if (bike.status !== "available" && bike.status !== "reserved") {
             return { error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` };
           }
@@ -1759,8 +1776,67 @@ export class DatabaseStorage implements IStorage {
     if (result && !("error" in result)) {
       this.invalidateBikesCache();
       rideEvents.emit(userId, "start" as RideEventReason);
+
+      // Audit F-04: the DB transaction above is only half of "starting a ride" —
+      // a bike fitted with a smart lock (lockImei set) must actually be physically
+      // unlocked, or the rider is charged for a bike they cannot open. Dispatch
+      // the unlock AFTER commit (so we never unlock a bike that failed the
+      // eligibility/wallet checks), and compensate fully if the lock doesn't
+      // confirm — never leave a charged rider with a bike still locked.
+      //
+      // Bikes with no lockImei (legacy/manual fleet, not yet fitted with a smart
+      // lock) skip this entirely — there is nothing to command.
+      if (lockImei) {
+        let unlocked = false;
+        try {
+          const gateway = getLockGateway();
+          if (!gateway) throw new Error("OMNI gateway is not running");
+          const outcome = await gateway.sendUnlockCommand(lockImei, userId);
+          unlocked = outcome.success;
+        } catch (err) {
+          log(`startRide: unlock failed imei=${lockImei} ride=${result.id}: ${(err as Error).message}`);
+        }
+        if (!unlocked) {
+          await this.abortUnstartedRide(result.id, { refundKopecks: !prepaid ? costKopecks : 0 });
+          return { error: "Замок не отвечает — выберите другой велосипед или попробуйте через минуту" };
+        }
+      }
     }
     return result;
+  }
+
+  // Compensating rollback for a ride that was created (and, for the internal
+  // wallet flow, already paid) but whose physical lock never confirmed the
+  // unlock (audit F-04). Idempotent — a no-op if the ride is no longer active
+  // (e.g. a concurrent caller already resolved it), so it is always safe to
+  // call even if invoked twice.
+  //
+  // Only refunds the internal wallet debit: a `prepaid` (T-Bank) ride passes
+  // refundKopecks = 0 here because the external charge already succeeded on
+  // T-Bank's side before startRide ran — reversing that is a real Refund/Cancel
+  // API call, not a local ledger credit, and today failures of that kind are
+  // deliberately left for manual/support reconciliation, matching how this
+  // codebase already treats other post-payment startRide failures (e.g. the
+  // bike being taken in a race) in server/payments/tbank-handlers.ts.
+  private async abortUnstartedRide(rideId: number, opts: { refundKopecks: number }) {
+    const outcome = await db.transaction(async (tx) => {
+      const ride = (await tx.select().from(rides).where(eq(rides.id, rideId)).for("update").limit(1))[0] as Ride | undefined;
+      if (!ride || ride.status !== "active") return null;
+      await tx.update(rides).set({ status: "cancelled", endedAt: Date.now() } as any).where(eq(rides.id, rideId));
+      await tx.update(bikes).set({ status: "available", updatedAt: Date.now() } as any).where(eq(bikes.id, ride.bikeId));
+      if (opts.refundKopecks > 0) {
+        await tx.execute(sql`UPDATE wallet SET balance = balance + ${opts.refundKopecks} WHERE user_id = ${ride.userId}`);
+        await tx.insert(payments).values({
+          userId: ride.userId, amount: opts.refundKopecks, kind: "ride_charge",
+          description: `Возврат за поездку ${ride.bikeId} — замок не открылся`, createdAt: Date.now(),
+        });
+      }
+      return ride;
+    });
+    if (outcome) {
+      this.invalidateBikesCache();
+      rideEvents.emit(outcome.userId, "end" as RideEventReason);
+    }
   }
 
   async appendRidePoint(rideId: number, x: number, y: number) {
