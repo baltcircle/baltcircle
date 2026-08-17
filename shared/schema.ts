@@ -788,6 +788,12 @@ export const paymentOrders = pgTable("payment_orders", {
   rebillId: text("rebill_id"),                    // RebillId used for the saved-card charge
   status: text("status").notNull().default("pending"), // pending | paid | failed
   rideId: integer("ride_id"),                     // set once the paid ride is started
+  // Client-supplied idempotency token (audit HIGH #2): a retried /ride/init or
+  // /ride/charge-saved-card request carries the SAME key, letting the server
+  // replay the original order instead of creating a second payment/charge. A
+  // partial UNIQUE index on (user_id, idempotency_key) (see server/db/bootstrap.ts)
+  // is the actual database-level guarantee; this column just carries the value.
+  idempotencyKey: text("idempotency_key"),
   // Last acquirer error (notification/Init), non-secret values only.
   lastErrorCode: text("last_error_code"),
   lastErrorMessage: text("last_error_message"),

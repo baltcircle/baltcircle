@@ -536,6 +536,17 @@ async function runMigrations() {
   // is the future pause feature's job once its status/columns exist.
   await pool.query(`ALTER TABLE rides ADD COLUMN IF NOT EXISTS physically_locked_at BIGINT;`);
 
+  // Audit HIGH #2: client-supplied idempotency key for /ride/init and
+  // /ride/charge-saved-card so a retried request (double-click, network drop +
+  // resubmit) replays the original payment order instead of creating a second
+  // T-Bank charge. The partial UNIQUE index (skipping NULL) is the actual
+  // guarantee — application code can race on the read, but Postgres rejects a
+  // second INSERT with the same (user_id, idempotency_key) outright.
+  await pool.query(`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS idempotency_key TEXT;`);
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_po_user_idempotency ON payment_orders (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL;`,
+  );
+
   // bike_telemetry was originally created (unreleased, PR #83) for a generic
   // HTTP webhook as (bike_id, x, y, t) with x/y NOT NULL. The real devices speak
   // TCP and send positionless check-ins, so widen the row and drop the NOT NULL

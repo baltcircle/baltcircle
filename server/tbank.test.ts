@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildReceipt,
   classifyInitBinding,
+  classifyRidePayment,
   computeToken,
   tbankInitRidePayment,
   tbankInitSavedCardCharge,
@@ -72,6 +73,29 @@ describe("classifyInitBinding", () => {
       status: "AUTHORIZED",
       rebillId: "rebill-authorized",
     })).toBe("active");
+  });
+});
+
+describe("classifyRidePayment (audit HIGH #1)", () => {
+  it("treats AUTHORIZED as still pending, NOT paid — it is only a held auth, not a capture", () => {
+    expect(classifyRidePayment({ status: "AUTHORIZED" })).toBe("pending");
+  });
+
+  it("treats CONFIRMED as paid — the charge has actually been captured", () => {
+    expect(classifyRidePayment({ status: "CONFIRMED" })).toBe("paid");
+  });
+
+  it("treats COMPLETED as paid", () => {
+    expect(classifyRidePayment({ status: "COMPLETED" })).toBe("paid");
+  });
+
+  it("treats an explicit rejection as failed", () => {
+    expect(classifyRidePayment({ status: "REJECTED" })).toBe("failed");
+    expect(classifyRidePayment({ status: "AUTHORIZED", success: false })).toBe("failed");
+  });
+
+  it("treats an intermediate status as pending", () => {
+    expect(classifyRidePayment({ status: "FORM_SHOWED" })).toBe("pending");
   });
 });
 

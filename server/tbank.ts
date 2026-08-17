@@ -518,8 +518,9 @@ export interface InitRidePaymentInput {
 // Create an ordinary (one-off) payment via /Init for a ride. Unlike the
 // card-binding path this sends NO Recurrent=Y and expects NO RebillId back —
 // the rider simply pays the tariff up front on T-Bank's hosted form (PAN/CVC
-// never reach us). On CONFIRMED/AUTHORIZED the notification webhook starts the
-// ride. Returns the PaymentURL the rider opens.
+// never reach us). On CONFIRMED the notification webhook starts the ride
+// (AUTHORIZED is only a held auth and does not start it — audit HIGH #1).
+// Returns the PaymentURL the rider opens.
 //
 // Token correctness: Init signs only ROOT-LEVEL scalar params. We sign and send
 // exactly the documented Init fields (TerminalKey is injected by signedPost),
@@ -629,9 +630,11 @@ export interface ChargeInput {
 
 // Debit a saved card via /Charge using the PaymentId from Init plus the stored
 // RebillId. No card data is involved — the RebillId is the recurring token. On
-// success the response Status is AUTHORIZED/CONFIRMED (synchronous capture);
-// classifyRidePayment maps those to "paid". A deferred/3DS charge returns a
-// non-terminal status and the result arrives later on the NotificationURL.
+// a one-stage/auto-capture terminal the response Status reaches CONFIRMED
+// synchronously; classifyRidePayment only maps CONFIRMED to "paid" (AUTHORIZED
+// is a held auth, treated as still pending — audit HIGH #1). A deferred/3DS
+// charge returns a non-terminal status and the result arrives later on the
+// NotificationURL.
 //
 // Token correctness: Charge signs only ROOT-LEVEL scalar params (TerminalKey is
 // injected by signedPost); we sign and send exactly PaymentId + RebillId so the
@@ -643,11 +646,17 @@ export async function tbankCharge(cfg: TbankConfig, input: ChargeInput): Promise
   });
 }
 
-// Map an ordinary ride-payment notification/state to our order lifecycle. The
-// payment is "paid" once it reaches AUTHORIZED or CONFIRMED (we start the ride
-// on either — AUTHORIZED is a held auth, CONFIRMED a captured one; for the MVP
-// both mean the rider has committed funds). It is "failed" on an explicit
-// terminal rejection or Success=false; everything else is still in flight.
+// Map an ordinary ride-payment notification/state to our order lifecycle.
+// AUTHORIZED is only a HELD auth — the acquirer has reserved the funds but not
+// captured them, and a hold can still be reversed/expire without ever being
+// captured (audit HIGH #1). We therefore only treat the payment as "paid" once
+// it reaches a captured/terminal-success state (CONFIRMED, or COMPLETED which
+// some T-Bank flows use interchangeably). AUTHORIZED now falls through to
+// "pending" — the rider's money is held but the ride does not start until the
+// capture is confirmed (by webhook or GetState), matching a one-stage/
+// auto-capture terminal where CONFIRMED reliably follows AUTHORIZED within
+// seconds. It is "failed" on an explicit terminal rejection or Success=false;
+// everything else (including AUTHORIZED) is still in flight.
 export type RidePaymentOutcome = "paid" | "failed" | "pending";
 
 export function classifyRidePayment(args: {
@@ -655,7 +664,7 @@ export function classifyRidePayment(args: {
   success?: boolean;
 }): RidePaymentOutcome {
   const status = (args.status || "").trim().toUpperCase();
-  if (status === "AUTHORIZED" || status === "CONFIRMED") return "paid";
+  if (status === "CONFIRMED" || status === "COMPLETED") return "paid";
   if (args.success === false || FAILED_BINDING_STATUSES.includes(status)) {
     return "failed";
   }
@@ -1001,8 +1010,9 @@ export interface ChargeQrInput {
 
 // Debit a bound SBP account via /ChargeQr using PaymentId + AccountToken. No
 // account data beyond the opaque token is involved. On success the response
-// Status is AUTHORIZED/CONFIRMED (classifyRidePayment maps those to "paid"); a
-// deferred result arrives later on the NotificationURL. Signs and sends exactly
+// Status reaches CONFIRMED (classifyRidePayment maps only CONFIRMED to "paid";
+// AUTHORIZED is a held auth and stays "pending" — audit HIGH #1); a deferred
+// result arrives later on the NotificationURL. Signs and sends exactly
 // PaymentId + AccountToken (avoids code 204).
 export async function tbankChargeQr(
   cfg: TbankConfig,

@@ -52,6 +52,21 @@ const LIVE_BINDING_STATUSES = new Set([
 
 type BindingReconciliation = "active" | "failed" | "in_flight" | "unavailable";
 
+// Audit HIGH #2: /ride/init and /ride/charge-saved-card require a client
+// idempotency key so a retried request (double-click, network drop + resend)
+// replays the original order/charge instead of creating a second one. Only
+// the web client in this repo calls these routes, so the header can be a hard
+// requirement rather than an optional best-effort hint.
+const IDEMPOTENCY_KEY_MAX_LEN = 100;
+
+function readIdempotencyKey(req: Request): { key: string } | { error: string } {
+  const raw = req.get("Idempotency-Key");
+  const key = typeof raw === "string" ? raw.trim() : "";
+  if (!key) return { error: "Отсутствует заголовок Idempotency-Key" };
+  if (key.length > IDEMPOTENCY_KEY_MAX_LEN) return { error: "Некорректный Idempotency-Key" };
+  return { key };
+}
+
 function failedBindingPatch(body: Record<string, unknown>, fallback: string) {
   const patch = bindingErrorPatch(body);
   return {
@@ -617,10 +632,26 @@ export function registerPaymentRoutes(app: Express): void {
       return res.status(403).json({ error: "Аккаунт заблокирован. Обратитесь в поддержку." });
     }
 
+    const idem = readIdempotencyKey(req);
+    if ("error" in idem) return res.status(400).json({ error: idem.error });
+
     const parsed = rideInitPaymentSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
       return res.status(400).json({ error: msg });
+    }
+
+    // Idempotency check BEFORE any bike/tariff/T-Bank work (audit HIGH #2): a
+    // retried request with the SAME key replays the original order exactly,
+    // even if the bike meanwhile became unavailable to a fresh request.
+    const existingByKey = await storage.getRidePaymentOrderByIdempotencyKey(userId, idem.key);
+    if (existingByKey) {
+      return res.json({
+        orderId: existingByKey.orderId,
+        paymentUrl: existingByKey.paymentUrl,
+        amountKopecks: existingByKey.amountKopecks,
+        status: existingByKey.status,
+      });
     }
 
     const bike = await storage.getBike(parsed.data.bikeId);
@@ -658,13 +689,28 @@ export function registerPaymentRoutes(app: Express): void {
         return res.status(502).json(tbankErrorBody(resp));
       }
       try {
+        // createRidePaymentOrder itself absorbs a unique-violation race on
+        // (userId, idempotencyKey) and returns the winning row instead of
+        // throwing (audit HIGH #2) — T-Bank Init has no financial side effect,
+        // so a rare true-concurrency double-Init is harmless waste, not risk.
         const order = await storage.createRidePaymentOrder({
           orderId,
           userId: user.id,
           bikeId: bike.id,
           tariffId: tariffDef.id,
           amountKopecks,
+          idempotencyKey: idem.key,
         });
+        if (order.orderId !== orderId) {
+          // Lost the race: a concurrent identical request already has a row.
+          // Replay ITS data rather than updating/overwriting it.
+          return res.json({
+            orderId: order.orderId,
+            paymentUrl: order.paymentUrl,
+            amountKopecks: order.amountKopecks,
+            status: order.status,
+          });
+        }
         await storage.updateRidePaymentOrder(order.id, {
           paymentId: resp.PaymentId != null ? String(resp.PaymentId) : null,
           paymentUrl: resp.PaymentURL,
@@ -676,7 +722,7 @@ export function registerPaymentRoutes(app: Express): void {
         log(`[tbank] failed to persist ride payment order: ${(dbErr as Error)?.message ?? "?"}`, "tbank");
         return res.status(500).json({ error: "Не удалось сохранить заказ оплаты. Попробуйте позже." });
       }
-      res.json({ orderId, paymentUrl: resp.PaymentURL, amountKopecks });
+      res.json({ orderId, paymentUrl: resp.PaymentURL, amountKopecks, status: "pending" });
     } catch (err: any) {
       res.status(502).json({ error: err?.message ?? "Не удалось создать оплату. Попробуйте позже." });
     }
@@ -686,10 +732,12 @@ export function registerPaymentRoutes(app: Express): void {
   // chosen tariff — the recurring (merchant-initiated) flow, no hosted form. We
   // validate the rider/bike/tariff exactly like ride/init, resolve the price
   // server-side, then run Init + Charge against the saved card's RebillId. On a
-  // synchronous CONFIRMED/AUTHORIZED we start the ride immediately and return it.
-  // On a deferred state we leave the order pending and the notification webhook
-  // finishes it. On failure we surface the acquirer's sanitized reason and leave
-  // the bike available. No card data is ever touched — only the RebillId token.
+  // synchronous CONFIRMED we start the ride immediately and return it. AUTHORIZED
+  // is only a held auth (audit HIGH #1) — like any other non-terminal state it
+  // leaves the order pending and the notification webhook finishes it once the
+  // charge is actually captured. On failure we surface the acquirer's sanitized
+  // reason and leave the bike available. No card data is ever touched — only
+  // the RebillId token.
   app.post("/api/payments/tbank/ride/charge-saved-card", paymentLimiter, async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ error: "Требуется вход" });
@@ -699,10 +747,40 @@ export function registerPaymentRoutes(app: Express): void {
       return res.status(403).json({ error: "Аккаунт заблокирован. Обратитесь в поддержку." });
     }
 
+    const idem = readIdempotencyKey(req);
+    if ("error" in idem) return res.status(400).json({ error: idem.error });
+
     const parsed = rideChargeSavedCardSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
       return res.status(400).json({ error: msg });
+    }
+
+    // Idempotency check BEFORE any bike/tariff validation or acquirer call
+    // (audit HIGH #2). A retry must NEVER re-run Init+Charge — unlike
+    // /ride/init, Charge moves real money, so replay-before-anything-else is
+    // mandatory here, not just an optimization.
+    const existingByKey = await storage.getRidePaymentOrderByIdempotencyKey(userId, idem.key);
+    if (existingByKey) {
+      if (existingByKey.status === "paid") {
+        return res.json({
+          orderId: existingByKey.orderId,
+          status: "paid",
+          rideId: existingByKey.rideId,
+          amountKopecks: existingByKey.amountKopecks,
+        });
+      }
+      if (existingByKey.status === "failed") {
+        return res.status(402).json(tbankErrorBody({
+          ErrorCode: existingByKey.lastErrorCode ?? undefined,
+          Message: existingByKey.lastErrorMessage ?? undefined,
+          Details: existingByKey.lastErrorDetails ?? undefined,
+        }));
+      }
+      // "pending": either still resolving (e.g. deferred 3DS) or reserved by a
+      // racing sibling that hasn't called Charge yet — either way, do NOT charge
+      // again. The client already knows how to poll GET .../ride/:orderId.
+      return res.json({ orderId: existingByKey.orderId, status: "pending", amountKopecks: existingByKey.amountKopecks });
     }
 
     const bike = await storage.getBike(parsed.data.bikeId);
@@ -730,6 +808,44 @@ export function registerPaymentRoutes(app: Express): void {
 
     const orderId = generateSavedCardRideOrderId();
 
+    // Reserve the order row BEFORE touching the acquirer (audit HIGH #2): if a
+    // concurrent request with the SAME idempotency key raced us here, exactly
+    // one of them wins the DB insert and calls Init+Charge — the loser must
+    // return the winner's (still-pending) state instead of charging again.
+    let order: PaymentOrder;
+    try {
+      const reserved = await storage.reserveRidePaymentOrder({
+        orderId,
+        userId: user.id,
+        bikeId: bike.id,
+        tariffId: tariffDef.id,
+        amountKopecks,
+        source: "saved_card",
+        paymentMethodId: card.id,
+        rebillId: card.rebillId,
+        idempotencyKey: idem.key,
+      });
+      if (!reserved.created) {
+        // Lost the race — do not call Init/Charge; report the winner's state.
+        const o = reserved.order;
+        if (o.status === "paid") {
+          return res.json({ orderId: o.orderId, status: "paid", rideId: o.rideId, amountKopecks: o.amountKopecks });
+        }
+        if (o.status === "failed") {
+          return res.status(402).json(tbankErrorBody({
+            ErrorCode: o.lastErrorCode ?? undefined,
+            Message: o.lastErrorMessage ?? undefined,
+            Details: o.lastErrorDetails ?? undefined,
+          }));
+        }
+        return res.json({ orderId: o.orderId, status: "pending", amountKopecks: o.amountKopecks });
+      }
+      order = reserved.order;
+    } catch (dbErr) {
+      log(`[tbank] failed to reserve saved-card order: ${(dbErr as Error)?.message ?? "?"}`, "tbank");
+      return res.status(500).json({ error: "Не удалось сохранить заказ оплаты. Попробуйте позже." });
+    }
+
     try {
       // Step 1: Init registers the payment object and yields a PaymentId.
       const init = await tbankInitSavedCardCharge(cfg, {
@@ -742,24 +858,15 @@ export function registerPaymentRoutes(app: Express): void {
         notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
       });
       if (!init.Success || init.PaymentId == null) {
+        await storage.updateRidePaymentOrder(order.id, { status: "failed", ...bindingErrorPatch(init) });
         return res.status(502).json(tbankErrorBody(init));
       }
       const paymentId = String(init.PaymentId);
 
-      // Persist the pending order BEFORE charging so a confirming webhook that
-      // races our synchronous response can correlate by OrderId.
-      let order: PaymentOrder;
+      // Persist the PaymentId on the already-reserved order BEFORE charging so a
+      // confirming webhook that races our synchronous response can correlate by
+      // OrderId.
       try {
-        order = await storage.createRidePaymentOrder({
-          orderId,
-          userId: user.id,
-          bikeId: bike.id,
-          tariffId: tariffDef.id,
-          amountKopecks,
-          source: "saved_card",
-          paymentMethodId: card.id,
-          rebillId: card.rebillId,
-        });
         await storage.updateRidePaymentOrder(order.id, { paymentId });
       } catch (dbErr) {
         log(`[tbank] failed to persist saved-card order: ${(dbErr as Error)?.message ?? "?"}`, "tbank");

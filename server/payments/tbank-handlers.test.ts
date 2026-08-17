@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { PaymentOrder } from "@shared/schema";
+import type { PaymentOrder, WalletTopupOrder } from "@shared/schema";
 
 // The handlers under test touch the DB via the `storage` singleton and fire push
 // notifications; both are mocked so these run as pure unit tests with no live
@@ -24,6 +24,8 @@ const storageMock = vi.hoisted(() => ({
   // routing tests below fall through to the ride/card-binding paths they
   // actually exercise.
   getWalletTopupOrder: vi.fn(),
+  topUp: vi.fn(),
+  updateWalletTopupOrder: vi.fn(),
 }));
 
 // tbankRefundVerificationCharge is the ONLY function in server/tbank.ts that ever
@@ -50,6 +52,7 @@ vi.mock("../tbank", async () => {
 import {
   startRideForPaidOrder,
   handleRidePaymentNotification,
+  handleWalletTopupNotification,
   handleTbankNotification,
   handleAddCardNotification,
   handleInitBindingNotification,
@@ -87,6 +90,24 @@ function makeOrder(overrides: Partial<PaymentOrder> = {}): PaymentOrder {
     lastErrorDetails: null,
     ...(overrides as any),
   } as PaymentOrder;
+}
+
+function makeWalletOrder(overrides: Partial<WalletTopupOrder> = {}): WalletTopupOrder {
+  return {
+    id: 1,
+    orderId: "wallet-abc",
+    userId: "user-1",
+    amountKopecks: 50000,
+    paymentId: null,
+    paymentUrl: null,
+    status: "pending",
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    lastErrorDetails: null,
+    createdAt: Date.now(),
+    updatedAt: null,
+    ...(overrides as any),
+  } as WalletTopupOrder;
 }
 
 beforeEach(() => {
@@ -184,6 +205,16 @@ describe("handleRidePaymentNotification", () => {
     expect(storageMock.updateRidePaymentOrder).not.toHaveBeenCalled();
   });
 
+  it("does NOT start the ride on a mere AUTHORIZED hold (audit HIGH #1)", async () => {
+    await handleRidePaymentNotification(makeOrder(), {
+      Status: "AUTHORIZED",
+      PaymentId: "pay-1",
+    });
+
+    expect(storageMock.startRide).not.toHaveBeenCalled();
+    expect(storageMock.updateRidePaymentOrder).not.toHaveBeenCalled();
+  });
+
   it("processing a duplicate CONFIRMED for an already-paid order is a no-op (webhook retry safety)", async () => {
     // First delivery: pending -> paid.
     storageMock.getActiveRide.mockResolvedValue(undefined);
@@ -199,6 +230,54 @@ describe("handleRidePaymentNotification", () => {
       PaymentId: "pay-1",
     });
     expect(storageMock.startRide).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleWalletTopupNotification (audit HIGH #1)", () => {
+  it("credits the wallet on a CONFIRMED notification", async () => {
+    await handleWalletTopupNotification(makeWalletOrder(), {
+      Status: "CONFIRMED",
+      PaymentId: "pay-1",
+    });
+
+    expect(storageMock.topUp).toHaveBeenCalledWith("user-1", 50000);
+    expect(storageMock.updateWalletTopupOrder).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ status: "paid" }),
+    );
+  });
+
+  it("does NOT credit the wallet on a mere AUTHORIZED hold — a hold can be reversed/expire uncaptured", async () => {
+    await handleWalletTopupNotification(makeWalletOrder(), {
+      Status: "AUTHORIZED",
+      PaymentId: "pay-1",
+    });
+
+    expect(storageMock.topUp).not.toHaveBeenCalled();
+    expect(storageMock.updateWalletTopupOrder).not.toHaveBeenCalled();
+  });
+
+  it("marks the order failed on a REJECTED notification without crediting the wallet", async () => {
+    await handleWalletTopupNotification(makeWalletOrder(), {
+      Status: "REJECTED",
+      PaymentId: "pay-1",
+      ErrorCode: "101",
+    });
+
+    expect(storageMock.topUp).not.toHaveBeenCalled();
+    expect(storageMock.updateWalletTopupOrder).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ status: "failed" }),
+    );
+  });
+
+  it("is idempotent — a duplicate notification for an already-paid order never double-credits", async () => {
+    await handleWalletTopupNotification(makeWalletOrder({ status: "paid" }), {
+      Status: "CONFIRMED",
+      PaymentId: "pay-1",
+    });
+
+    expect(storageMock.topUp).not.toHaveBeenCalled();
   });
 });
 

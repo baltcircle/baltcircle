@@ -214,10 +214,12 @@ export async function handleSbpBindingNotification(
 }
 
 // Resolve an ordinary ride-payment order from a notification. On the first
-// AUTHORIZED/CONFIRMED we start the ride (idempotently — a duplicate
-// notification re-uses the already-started ride and never double-charges or
-// double-starts) and record the rideId. On an explicit rejection we mark the
-// order failed and leave the bike available. Intermediate states stay pending.
+// CONFIRMED we start the ride (idempotently — a duplicate notification
+// re-uses the already-started ride and never double-charges or double-starts)
+// and record the rideId. AUTHORIZED is only a held auth and is treated as
+// still pending, NOT as paid (audit HIGH #1) — the ride only starts once the
+// charge is actually captured. On an explicit rejection we mark the order
+// failed and leave the bike available. Intermediate states stay pending.
 export async function handleRidePaymentNotification(
   order: PaymentOrder,
   body: Record<string, unknown>,
@@ -260,10 +262,13 @@ export async function handleRidePaymentNotification(
 }
 
 // Resolve a wallet top-up order from a notification (audit CRITICAL #1 fix).
-// On the first AUTHORIZED/CONFIRMED we credit the wallet exactly once via
-// storage.topUp() and mark the order paid — this is now the ONLY code path
-// that can ever increase a rider's wallet balance from a top-up (the old
-// direct-credit HTTP endpoint has been removed, see server/http/wallet.ts).
+// On the first CONFIRMED we credit the wallet exactly once via storage.topUp()
+// and mark the order paid — this is now the ONLY code path that can ever
+// increase a rider's wallet balance from a top-up (the old direct-credit HTTP
+// endpoint has been removed, see server/http/wallet.ts). AUTHORIZED is only a
+// held auth and must NOT credit the wallet (audit HIGH #1) — a hold can still
+// be reversed/expire without ever being captured, which would otherwise let a
+// rider spend money that was never actually taken.
 // Idempotent: a duplicate notification for an already-paid order is a no-op,
 // so a retried webhook can never double-credit the wallet. On an explicit
 // rejection the order is marked failed; no money moves. Intermediate states
@@ -277,9 +282,9 @@ export async function handleWalletTopupNotification(
   const status = typeof body.Status === "string" ? body.Status : "";
   const paymentId = body.PaymentId != null ? String(body.PaymentId) : "";
   const success = body.Success === false ? false : undefined;
-  // classifyRidePayment is a generic AUTHORIZED/CONFIRMED-vs-REJECTED
-  // classifier despite its ride-specific name — no wallet-specific logic is
-  // needed, so it is reused as-is rather than duplicated.
+  // classifyRidePayment is a generic CONFIRMED-vs-REJECTED classifier despite
+  // its ride-specific name — no wallet-specific logic is needed, so it is
+  // reused as-is rather than duplicated.
   const outcome = classifyRidePayment({ status, success });
 
   if (outcome === "paid") {

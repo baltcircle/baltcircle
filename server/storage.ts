@@ -971,21 +971,86 @@ export class DatabaseStorage implements IStorage {
     source?: "hosted" | "saved_card";
     paymentMethodId?: number;
     rebillId?: string;
+    idempotencyKey?: string;
   }) {
     const now = Date.now();
-    return (await db.insert(paymentOrders).values({
-      orderId: input.orderId,
-      userId: input.userId,
-      bikeId: input.bikeId,
-      tariffId: input.tariffId,
-      amountKopecks: input.amountKopecks,
-      source: input.source ?? "hosted",
-      paymentMethodId: input.paymentMethodId ?? null,
-      rebillId: input.rebillId ?? null,
-      status: "pending",
-      createdAt: now,
-      updatedAt: now,
-    } as any).returning())[0] as PaymentOrder;
+    try {
+      return (await db.insert(paymentOrders).values({
+        orderId: input.orderId,
+        userId: input.userId,
+        bikeId: input.bikeId,
+        tariffId: input.tariffId,
+        amountKopecks: input.amountKopecks,
+        source: input.source ?? "hosted",
+        paymentMethodId: input.paymentMethodId ?? null,
+        rebillId: input.rebillId ?? null,
+        idempotencyKey: input.idempotencyKey ?? null,
+        status: "pending",
+        createdAt: now,
+        updatedAt: now,
+      } as any).returning())[0] as PaymentOrder;
+    } catch (err) {
+      // A concurrent request carrying the SAME (userId, idempotencyKey) won the
+      // race for the partial unique index (audit HIGH #2) — return its row so
+      // the loser replays the winner's order instead of a 500.
+      if (input.idempotencyKey && this.isUniqueViolation(err)) {
+        const existing = await this.getRidePaymentOrderByIdempotencyKey(input.userId, input.idempotencyKey);
+        if (existing) return existing;
+      }
+      throw err;
+    }
+  }
+
+  // Reserve a ride-payment-order row for a client idempotency key BEFORE the
+  // caller talks to the acquirer (audit HIGH #2) — used by the saved-card
+  // charge route, where a duplicate call would move real money a second time.
+  // `created: false` means a row for this exact (userId, idempotencyKey)
+  // already existed (either a prior attempt, or a racing sibling that won the
+  // unique-index race); the caller MUST replay that row's state and MUST NOT
+  // call tbankInit/tbankCharge again.
+  async reserveRidePaymentOrder(input: {
+    orderId: string;
+    userId: string;
+    bikeId: string;
+    tariffId: string;
+    amountKopecks: number;
+    source?: "hosted" | "saved_card";
+    paymentMethodId?: number;
+    rebillId?: string;
+    idempotencyKey: string;
+  }): Promise<{ order: PaymentOrder; created: boolean }> {
+    const existing = await this.getRidePaymentOrderByIdempotencyKey(input.userId, input.idempotencyKey);
+    if (existing) return { order: existing, created: false };
+    const now = Date.now();
+    try {
+      const order = (await db.insert(paymentOrders).values({
+        orderId: input.orderId,
+        userId: input.userId,
+        bikeId: input.bikeId,
+        tariffId: input.tariffId,
+        amountKopecks: input.amountKopecks,
+        source: input.source ?? "hosted",
+        paymentMethodId: input.paymentMethodId ?? null,
+        rebillId: input.rebillId ?? null,
+        idempotencyKey: input.idempotencyKey,
+        status: "pending",
+        createdAt: now,
+        updatedAt: now,
+      } as any).returning())[0] as PaymentOrder;
+      return { order, created: true };
+    } catch (err) {
+      if (this.isUniqueViolation(err)) {
+        const raced = await this.getRidePaymentOrderByIdempotencyKey(input.userId, input.idempotencyKey);
+        if (raced) return { order: raced, created: false };
+      }
+      throw err;
+    }
+  }
+
+  async getRidePaymentOrderByIdempotencyKey(userId: string, idempotencyKey: string) {
+    return (await db.select().from(paymentOrders)
+      .where(sql`${paymentOrders.userId} = ${userId} AND ${paymentOrders.idempotencyKey} = ${idempotencyKey}`)
+      .limit(1))[0] as PaymentOrder | undefined;
   }
 
   // Resolve the rider's saved T-Bank card eligible for a recurring charge: an

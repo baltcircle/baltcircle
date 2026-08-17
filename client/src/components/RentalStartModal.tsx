@@ -28,8 +28,9 @@ interface Props {
 
 interface RideInitResponse {
   orderId: string;
-  paymentUrl: string;
+  paymentUrl: string | null;
   amountKopecks: number;
+  status?: "pending" | "paid" | "failed";
 }
 
 interface ChargeSavedCardResponse {
@@ -53,6 +54,17 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
       setUseOtherCard(false);
     }
   }, [open]);
+
+  // Idempotency key for /ride/init and /ride/charge-saved-card (audit HIGH
+  // #2): retrying the SAME payment attempt (double-click, network drop) must
+  // reuse this key so the server replays the original order instead of
+  // charging twice. A genuinely NEW attempt — modal reopened, tariff changed,
+  // or payment method switched — gets a fresh key so it isn't stuck replaying
+  // a stale/failed result.
+  const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
+  useEffect(() => {
+    setIdemKey(crypto.randomUUID());
+  }, [open, tariff, useOtherCard]);
 
   // Whether real T-Bank acquiring is configured. When it isn't, we surface a
   // clear "payments are being set up" message instead of offering a flow that
@@ -84,10 +96,33 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
       const res = await apiRequest("POST", "/api/payments/tbank/ride/init", {
         bikeId: bike.id,
         tariffId: tariff,
-      });
+      }, { "Idempotency-Key": idemKey });
       return res.json();
     },
     onSuccess: (data) => {
+      if (data.status === "paid") {
+        // Rare replay case: this idempotency key already resolved to a paid
+        // order (e.g. rider hit Back after paying, then re-submitted). Don't
+        // redirect to a stale/expired T-Bank URL — route straight into the ride.
+        queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+        onOpenChange(false);
+        navigate("/rent");
+        return;
+      }
+      if (data.status === "failed") {
+        // This key already resolved to a declined/abandoned payment — its
+        // paymentUrl is stale. Force a fresh attempt instead of redirecting.
+        setIdemKey(crypto.randomUUID());
+        toast.toast({ title: "Оплата не состоялась", description: "Попробуйте ещё раз.", variant: "destructive" });
+        return;
+      }
+      if (!data.paymentUrl) {
+        // Reserved by a racing duplicate request but T-Bank hasn't answered yet.
+        // Extremely rare (true simultaneous double-submit); ask the rider to
+        // retry in a moment rather than crashing on a null redirect.
+        toast.toast({ title: "Оплата обрабатывается", description: "Попробуйте ещё раз через несколько секунд." });
+        return;
+      }
       // Hand off to T-Bank's hosted payment page. The rider returns to
       // /payment-result?orderId=… afterwards. Use location.replace (NOT href) so
       // the T-Bank form REPLACES the current history entry instead of pushing a
@@ -96,6 +131,8 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
       window.location.replace(data.paymentUrl);
     },
     onError: (err) => {
+      // Fresh key for the next attempt — don't get stuck replaying this failure.
+      setIdemKey(crypto.randomUUID());
       toast.toast({ title: "Не удалось перейти к оплате", description: cleanErr(err), variant: "destructive" });
     },
   });
@@ -111,7 +148,7 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
         bikeId: bike.id,
         tariffId: tariff,
         paymentMethodId: savedCard?.id,
-      });
+      }, { "Idempotency-Key": idemKey });
       return res.json();
     },
     onSuccess: (data) => {
@@ -126,6 +163,9 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
       }
     },
     onError: (err) => {
+      // Fresh key for the next attempt — a replay would just re-return this
+      // same decline instead of letting the rider try a fresh charge.
+      setIdemKey(crypto.randomUUID());
       toast.toast({ title: "Не удалось списать оплату", description: cleanErr(err), variant: "destructive" });
     },
   });
