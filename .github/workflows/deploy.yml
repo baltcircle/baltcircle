@@ -11,8 +11,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Audit HIGH #19: this job used to run ONLY on pull_request (build-check.yml),
+  # so a direct push to `main` (or a merge of a branch whose head commit was
+  # never itself checked) could reach the self-hosted prod runner with zero
+  # verification. Gating `deploy` on this job closes that gap: every push to
+  # main now re-runs type-check, unit tests and a dependency-vulnerability
+  # audit on a disposable GitHub-hosted runner before the prod Docker daemon
+  # is ever touched. Full SAST/secret-scan/image-scan/SBOM is tracked
+  # separately (audit HIGH #22) — this gate is intentionally the fast/cheap
+  # subset that must never regress on the exact commit being deployed.
+  test:
+    name: Type-check, unit tests, dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test
+      - name: Dependency vulnerability audit
+        run: npm audit --audit-level=high
+
   deploy:
     name: Deploy on Yandex Cloud VM
+    needs: test
     runs-on:
       - self-hosted
       - baltcircle-prod
@@ -159,7 +187,28 @@ jobs:
           VAPID_CONTACT: ${{ secrets.VAPID_CONTACT }}
         run: |
           set -e
+          # Audit HIGH #19: tag the currently-running image before replacing it,
+          # so a bad deploy can be rolled back automatically if the smoke test
+          # below fails. Uses whatever image name/tag `compose build` actually
+          # produces (derived from the `name:` key in docker-compose.yml) instead
+          # of a hardcoded string, so this keeps working if the project/service
+          # name ever changes.
+          IMAGE=$(docker compose config --images | head -1)
+          echo "DEPLOY_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+            docker tag "$IMAGE" "${IMAGE}-rollback"
+            echo "✅ Backed up current image as ${IMAGE}-rollback"
+            echo "HAS_ROLLBACK=1" >> "$GITHUB_ENV"
+          else
+            echo "ℹ️ No previous image found (first deploy) — nothing to roll back to."
+            echo "HAS_ROLLBACK=0" >> "$GITHUB_ENV"
+          fi
+
           docker compose up -d --build --force-recreate --remove-orphans
+          # Keep the just-tagged rollback image out of prune's reach (it has no
+          # dangling <none> tag once retagged, but be explicit with -f anyway
+          # since prune only removes UNUSED images and the rollback tag keeps
+          # the old layer referenced until the next successful deploy retags it).
           docker image prune -f
           docker ps --filter "name=baltcircle"
 
@@ -184,6 +233,32 @@ jobs:
           wait_for http://127.0.0.1:5000/api/bikes "bikes API"
           wait_for http://127.0.0.1:5000/api/parkings "parkings API"
 
+      # Audit HIGH #19: automatic rollback. Same backup→apply→verify→rollback
+      # pattern already proven tonight in configure-takeride-domain.yml. Only
+      # runs if an earlier step failed AND a rollback image actually exists
+      # (first-ever deploy has nothing to roll back to). Still exits 1 so the
+      # run is correctly reported as failed in CI even when recovery succeeds.
+      - name: Rollback to previous image on failure
+        if: failure() && env.HAS_ROLLBACK == '1'
+        run: |
+          set +e
+          echo "🔙 Deploy or smoke test failed — rolling back to previous image..."
+          docker tag "${DEPLOY_IMAGE}-rollback" "$DEPLOY_IMAGE"
+          docker compose up -d --no-build --force-recreate --remove-orphans
+
+          deadline=$(( $(date +%s) + 120 ))
+          until curl --fail --silent --max-time 10 http://127.0.0.1:5000 >/dev/null; do
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "❌ CRITICAL: rollback image ALSO failed the health check — manual intervention required now."
+              docker ps -a --filter "name=baltcircle"
+              exit 1
+            fi
+            echo "Waiting for rolled-back app to become healthy..."
+            sleep 5
+          done
+          echo "✅ Rollback successful — previous version is healthy and serving traffic again."
+          exit 1
+
       - name: Notify on success
         if: success()
         run: |
@@ -196,6 +271,11 @@ jobs:
         run: |
           echo "❌ Деплой завершился с ошибкой: $(date '+%Y-%m-%d %H:%M:%S')"
           echo "Коммит: ${{ github.sha }}"
+          if [ "${HAS_ROLLBACK:-0}" = "1" ]; then
+            echo "ℹ️ Автооткат на предыдущий образ был выполнен шагом выше — см. его результат."
+          else
+            echo "⚠️ Откатывать было нечего — это первый деплой либо сбой произошёл до этапа сборки образа."
+          fi
           echo "===== docker ps ====="
           docker ps -a --filter "name=baltcircle" || true
           echo "===== app container logs (last 200) ====="
