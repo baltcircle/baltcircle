@@ -1,0 +1,108 @@
+name: Security Scan
+
+# Audit HIGH #22 — SCA / secret-scan / image-scan / SBOM / monitoring.
+# Deliberately a SEPARATE workflow from deploy.yml: this is a detection and
+# reporting layer, not a deploy gate (deploy.yml's own `test` job, added for
+# HIGH #19, already gates deploys on tsc/vitest/npm-audit). Running on a
+# daily schedule in addition to push/PR is what makes this "monitoring"
+# rather than a one-off check — it keeps re-scanning unchanged code and the
+# unchanged base image for vulnerabilities disclosed AFTER the last push.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 4 * * *" # daily, 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history — catch secrets committed in the past, not just HEAD
+      - name: Run gitleaks
+        # Pinned to an exact patch tag (not a floating @v2) after the
+        # aquasecurity/trivy-action supply-chain compromise (see image-scan
+        # job below) showed floating tags on third-party actions can be
+        # force-pushed to malicious commits. Public repo — no license needed.
+        uses: gitleaks/gitleaks-action@v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependency-audit:
+    name: Dependency vulnerability audit (npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+
+  image-scan:
+    name: Container image scan + SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # required to upload SARIF to the Security tab
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image for scanning
+        run: docker build -t baltcircle-scan:latest .
+
+      # aquasecurity/trivy-action was compromised 2026-03-19: a threat actor
+      # force-pushed 76 of 77 version tags to a credential-stealing malicious
+      # entrypoint.sh (GHSA-69fq-xp46-6x23). v0.35.0 is the confirmed clean
+      # release. Pinned by full commit SHA, NOT a mutable tag — a tag can be
+      # force-pushed again by anyone who compromises the org a second time,
+      # a commit SHA cannot. Only bump this SHA deliberately, after checking
+      # https://github.com/aquasecurity/trivy-action/security/advisories.
+      - name: Trivy scan — upload SARIF to Security tab
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: baltcircle-scan:latest
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload Trivy results to Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Trivy scan — fail the job on CRITICAL/HIGH
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: baltcircle-scan:latest
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Generate SBOM (CycloneDX)
+        if: always()
+        uses: anchore/sbom-action@v0.20.8
+        with:
+          image: baltcircle-scan:latest
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+
+      - name: Upload SBOM artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.cyclonedx.json
+          retention-days: 90

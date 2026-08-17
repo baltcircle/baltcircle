@@ -1,0 +1,41 @@
+name: CodeQL
+
+# Audit HIGH #22 — static application security testing (SAST).
+# Runs on every PR/push to main (catches new code) AND on a weekly schedule
+# (catches newly-published CodeQL query packs / vulnerability classes against
+# code that hasn't changed — the "monitoring" part of the audit item).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1" # Monday 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # required to upload results to the Security tab
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # First-party GitHub action, floating major tag (@v4) is GitHub's own
+      # recommended usage — unlike third-party actions (see security-scan.yml
+      # for why those are pinned by commit SHA instead).
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:javascript-typescript"

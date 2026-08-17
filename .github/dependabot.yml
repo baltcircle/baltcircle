@@ -1,0 +1,38 @@
+# Audit HIGH #22 — automated dependency updates (SCA follow-through).
+# npm audit (deploy.yml + security-scan.yml) only DETECTS known vulnerable
+# versions already in package-lock.json; Dependabot is what actually opens
+# PRs to bump them, so vulnerabilities get fixed instead of just flagged.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      # Bundle low-risk bumps into one PR instead of one-PR-per-package noise.
+      # Majors (breaking changes) are intentionally excluded from the group so
+      # they still surface as individual, clearly-labelled PRs for review.
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "ci(deps)"
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(docker)"
