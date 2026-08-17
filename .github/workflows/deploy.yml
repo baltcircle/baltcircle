@@ -135,6 +135,7 @@ jobs:
           VITE_YANDEX_MAPS_API_KEY: ${{ secrets.VITE_YANDEX_MAPS_API_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SMS_PROVIDER: ${{ secrets.SMS_PROVIDER }}
+          SMSRU_API_ID: ${{ secrets.SMSRU_API_ID }}
           SIGMASMS_TOKEN: ${{ secrets.SIGMASMS_TOKEN }}
           SIGMASMS_SENDER: ${{ secrets.SIGMASMS_SENDER }}
           OTP_SECRET: ${{ secrets.OTP_SECRET }}
