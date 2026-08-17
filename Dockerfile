@@ -63,6 +63,10 @@ ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 COPY --from=build --chown=node:node /app/package*.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
+# Versioned Drizzle migrations (audit HIGH #17): applied at runtime by
+# server/db/migrate.ts, read from disk relative to process.cwd() (/app), not
+# bundled into dist/index.cjs.
+COPY --from=build --chown=node:node /app/migrations ./migrations
 RUN mkdir -p /app/uploads && chown -R node:node /app/uploads
 USER node
 EXPOSE 5000

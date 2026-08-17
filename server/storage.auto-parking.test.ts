@@ -75,6 +75,9 @@ describe("automatic parking assignment on availability transitions", () => {
         return chain;
       }),
       insert: vi.fn(() => ({ values: () => Promise.resolve() })),
+      // Audit HIGH #15: endRide now loads ride_points via tx.execute() (was a
+      // separate pool.query) — the tx mock must implement it too.
+      execute: vi.fn(() => Promise.resolve({ rows: [] })),
     };
     dbMock.transaction.mockImplementation((callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx));
 
@@ -95,6 +98,9 @@ describe("automatic parking assignment on availability transitions", () => {
         return chain;
       }),
       insert: vi.fn(() => ({ values: () => Promise.resolve() })),
+      // Audit HIGH #15: endRide now loads ride_points via tx.execute() (was a
+      // separate pool.query) — the tx mock must implement it too.
+      execute: vi.fn(() => Promise.resolve({ rows: [] })),
     };
     dbMock.transaction.mockImplementation((callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx));
 

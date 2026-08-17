@@ -13,447 +13,35 @@ import {
   PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES,
   TARIFFS, tariffPriceKopecks,
 } from "@shared/geo";
-import { drizzle } from "drizzle-orm/node-postgres";
-import { getTableConfig } from "drizzle-orm/pg-core";
-import type { PgTable } from "drizzle-orm/pg-core";
-import {
-  users, oauthIdentities, pushSubscriptions, bikes, locks, rides, tickets,
-  ticketComments, payments, paymentMethods, paymentOrders, walletTopupOrders,
-  supportTickets, supportConversations, supportMessages,
-} from "@shared/schema";
 import { logger } from "../logger";
-import pg from "pg";
-
-const { Pool } = pg;
-
-// unix-ms timestamps and kopecks amounts are plain JS numbers in the app, so
-// tell node-postgres to parse Postgres BIGINT (OID 20) as a Number instead of a
-// string. Every bigint we store (Date.now(), kopecks) is well within
-// Number.MAX_SAFE_INTEGER, so this is lossless for this workload.
-pg.types.setTypeParser(20, (val) => (val === null ? null : Number(val)));
-
-const connectionString =
-  process.env.DATABASE_URL || "postgresql://postgres@127.0.0.1:5433/baltcircle";
-
-// A single shared pool for the whole process. max is generous enough for the
-// concurrent ride/payment/session load at 300 bikes but bounded so a burst
-// can't exhaust the managed-Postgres connection limit.
-export const pool = new Pool({
-  connectionString,
-  max: Number(process.env.PG_POOL_MAX || 10),
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 10_000,
-});
-
-export const db = drizzle(pool);
+import { runSchemaMigrations } from "./migrate";
+import type pg from "pg";
+export { pool, db } from "./client";
+import { pool } from "./client";
 
 // ---------- Schema bootstrap ----------
-// Every table carries its full current column set. serial for autoincrement
-// PKs, bigint for unix-ms timestamps + kopecks, double precision for map
-// coordinates, boolean for flags. All CREATE ... IF NOT EXISTS so re-running on
-// an already-migrated database is a safe no-op.
-async function createSchema() {
-  await pool.query(`
-CREATE TABLE IF NOT EXISTS bikes (
-  id TEXT PRIMARY KEY,
-  model TEXT NOT NULL,
-  status TEXT NOT NULL,
-  battery INTEGER NOT NULL,
-  lat DOUBLE PRECISION NOT NULL,
-  lng DOUBLE PRECISION NOT NULL,
-  last_seen BIGINT NOT NULL,
-  idle_hours DOUBLE PRECISION NOT NULL,
-  flagged BOOLEAN NOT NULL DEFAULT FALSE,
-  serial TEXT,
-  lock_id TEXT,
-  lock_imei TEXT,
-  lock_online BOOLEAN NOT NULL DEFAULT FALSE,
-  lock_last_seen BIGINT,
-  parking_id TEXT,
-  notes TEXT,
-  seed BOOLEAN NOT NULL DEFAULT FALSE
-);
-CREATE TABLE IF NOT EXISTS parkings (
-  id TEXT PRIMARY KEY, name TEXT NOT NULL,
-  city TEXT NOT NULL DEFAULT '',
-  lat DOUBLE PRECISION NOT NULL, lng DOUBLE PRECISION NOT NULL,
-  capacity INTEGER NOT NULL, occupied INTEGER NOT NULL,
-  radius INTEGER NOT NULL DEFAULT 30,
-  status TEXT NOT NULL DEFAULT 'active',
-  notes TEXT,
-  archived_at BIGINT,
-  seed BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at BIGINT,
-  updated_at BIGINT
-);
-CREATE TABLE IF NOT EXISTS zones (
-  id TEXT PRIMARY KEY, name TEXT NOT NULL,
-  kind TEXT NOT NULL, polygon TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS rides (
-  id SERIAL PRIMARY KEY,
-  bike_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  started_at BIGINT NOT NULL,
-  ended_at BIGINT,
-  start_lat DOUBLE PRECISION NOT NULL,
-  start_lng DOUBLE PRECISION NOT NULL,
-  end_lat DOUBLE PRECISION, end_lng DOUBLE PRECISION,
-  track TEXT NOT NULL,
-  distance_m DOUBLE PRECISION NOT NULL DEFAULT 0,
-  cost INTEGER NOT NULL DEFAULT 0,
-  tariff TEXT NOT NULL,
-  status TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS tickets (
-  id SERIAL PRIMARY KEY,
-  bike_id TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  priority TEXT NOT NULL DEFAULT 'medium',
-  title TEXT NOT NULL DEFAULT '',
-  message TEXT NOT NULL,
-  assignee TEXT,
-  status TEXT NOT NULL,
-  created_at BIGINT NOT NULL,
-  updated_at BIGINT,
-  closed_at BIGINT
-);
-CREATE TABLE IF NOT EXISTS ticket_comments (
-  id SERIAL PRIMARY KEY,
-  ticket_id INTEGER NOT NULL,
-  author TEXT NOT NULL,
-  body TEXT NOT NULL,
-  kind TEXT NOT NULL DEFAULT 'comment',
-  created_at BIGINT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS payments (
-  id SERIAL PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  amount INTEGER NOT NULL,
-  kind TEXT NOT NULL,
-  description TEXT NOT NULL,
-  created_at BIGINT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS wallet (
-  user_id TEXT PRIMARY KEY,
-  balance INTEGER NOT NULL DEFAULT 0,
-  active_tariff TEXT NOT NULL DEFAULT 'payg',
-  tariff_expires_at BIGINT
-);
-CREATE TABLE IF NOT EXISTS map_objects (
-  id SERIAL PRIMARY KEY,
-  name TEXT NOT NULL,
-  type TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  color TEXT NOT NULL DEFAULT '#1d6f8e',
-  points TEXT NOT NULL,
-  active BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at BIGINT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  phone TEXT NOT NULL,
-  email TEXT,
-  email_verified_at BIGINT,
-  role TEXT NOT NULL DEFAULT 'rider',
-  consent_accepted_at BIGINT,
-  consent_version TEXT,
-  consent_ip TEXT,
-  blocked_at BIGINT,
-  blocked_reason TEXT,
-  deleted_at BIGINT,
-  created_at BIGINT NOT NULL,
-  updated_at BIGINT
-);
-CREATE TABLE IF NOT EXISTS otp_requests (
-  phone TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  code_hash TEXT NOT NULL,
-  expires_at BIGINT NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  last_sent_at BIGINT NOT NULL,
-  consumed BOOLEAN NOT NULL DEFAULT FALSE,
-  provider TEXT,
-  provider_message_id TEXT,
-  provider_status TEXT,
-  provider_error TEXT,
-  provider_checked_at BIGINT
-);
-CREATE TABLE IF NOT EXISTS phone_change_requests (
-  user_id TEXT PRIMARY KEY,
-  new_phone TEXT NOT NULL,
-  code_hash TEXT NOT NULL,
-  expires_at BIGINT NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  last_sent_at BIGINT NOT NULL,
-  consumed BOOLEAN NOT NULL DEFAULT FALSE
-);
-CREATE TABLE IF NOT EXISTS email_change_requests (
-  user_id TEXT PRIMARY KEY,
-  new_email TEXT NOT NULL,
-  code_hash TEXT NOT NULL,
-  expires_at BIGINT NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  last_sent_at BIGINT NOT NULL,
-  consumed BOOLEAN NOT NULL DEFAULT FALSE
-);
-CREATE TABLE IF NOT EXISTS oauth_identities (
-  id SERIAL PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  provider TEXT NOT NULL,
-  subject TEXT NOT NULL,
-  email TEXT,
-  display_name TEXT,
-  created_at BIGINT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS push_subscriptions (
-  id SERIAL PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  endpoint TEXT NOT NULL,
-  p256dh TEXT NOT NULL,
-  auth_key TEXT NOT NULL,
-  user_agent TEXT,
-  created_at BIGINT NOT NULL,
-  last_success_at BIGINT
-);
-CREATE TABLE IF NOT EXISTS payment_methods (
-  id SERIAL PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  type TEXT NOT NULL,
-  label TEXT NOT NULL,
-  brand TEXT,
-  status TEXT NOT NULL DEFAULT 'linked',
-  provider TEXT,
-  customer_key TEXT,
-  card_id TEXT,
-  rebill_id TEXT,
-  rebill_id_hash TEXT,
-  request_key TEXT,
-  account_token TEXT,
-  account_token_hash TEXT,
-  purpose TEXT,
-  order_id TEXT,
-  payment_id TEXT,
-  payment_url TEXT,
-  amount_kopecks INTEGER,
-  refund_status TEXT,
-  refund_error TEXT,
-  last_error_code TEXT,
-  last_error_message TEXT,
-  last_error_details TEXT,
-  created_at BIGINT NOT NULL,
-  updated_at BIGINT
-);
-CREATE TABLE IF NOT EXISTS support_tickets (
-  id SERIAL PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  subject TEXT NOT NULL,
-  message TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'open',
-  created_at BIGINT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS payment_orders (
-  id SERIAL PRIMARY KEY,
-  order_id TEXT NOT NULL UNIQUE,
-  user_id TEXT NOT NULL,
-  bike_id TEXT NOT NULL,
-  tariff_id TEXT NOT NULL,
-  amount_kopecks INTEGER NOT NULL,
-  payment_id TEXT,
-  payment_url TEXT,
-  source TEXT NOT NULL DEFAULT 'hosted',
-  payment_method_id INTEGER,
-  rebill_id TEXT,
-  status TEXT NOT NULL DEFAULT 'pending',
-  ride_id INTEGER,
-  last_error_code TEXT,
-  last_error_message TEXT,
-  last_error_details TEXT,
-  created_at BIGINT NOT NULL,
-  updated_at BIGINT
-);
--- Wallet top-up orders paid via a real T-Bank charge (audit CRITICAL #1 fix).
--- The wallet balance is credited ONLY once the signed notification webhook
--- confirms this order as paid — see server/payments/tbank-handlers.ts.
-CREATE TABLE IF NOT EXISTS wallet_topup_orders (
-  id SERIAL PRIMARY KEY,
-  order_id TEXT NOT NULL UNIQUE,
-  user_id TEXT NOT NULL,
-  amount_kopecks INTEGER NOT NULL,
-  payment_id TEXT,
-  payment_url TEXT,
-  status TEXT NOT NULL DEFAULT 'pending',
-  last_error_code TEXT,
-  last_error_message TEXT,
-  last_error_details TEXT,
-  created_at BIGINT NOT NULL,
-  updated_at BIGINT
-);
-CREATE TABLE IF NOT EXISTS ride_points (
-  id SERIAL PRIMARY KEY,
-  ride_id INTEGER NOT NULL,
-  x DOUBLE PRECISION NOT NULL,
-  y DOUBLE PRECISION NOT NULL,
-  t BIGINT NOT NULL
-);
--- Onboard OMNI smart-lock reports (wire protocol in shared/omni/protocol.ts).
--- Independent of any rider's phone: the lock keeps reporting even while the
--- phone screen is locked, so an active ride's track can be reconstructed here
--- without the gaps that browser watchPosition leaves.
---
--- One row per accepted device report, written in batches by the TCP ingest
--- server. The cmd column is the OMNI command that produced the row and decides
--- which columns are populated:
---   D0 (position)  -> x/y/lat/lng/satellites/hdop/altitude_m
---   Q0 (check-in)  -> voltage_cv/battery_pct
---   H0 (heartbeat) -> voltage_cv/battery_pct/signal_level/locked
---   S5 (status)    -> as H0, plus satellites
---   W0 (alarm)     -> alarm_code
--- Everything except bike_id/cmd/t is therefore nullable: a check-in carries no
--- position, and a position report carries no voltage.
---
--- x/y are abstract map space (matching ride_points), projected from the
--- device's WGS84 fix at ingest; the raw lat/lng is kept alongside so a bad
--- projection can be diagnosed and reprocessed without losing the source fix.
-CREATE TABLE IF NOT EXISTS bike_telemetry (
-  id SERIAL PRIMARY KEY,
-  bike_id TEXT NOT NULL,
-  imei TEXT,
-  cmd TEXT NOT NULL DEFAULT 'D0',
-  t BIGINT NOT NULL,
-  x DOUBLE PRECISION,
-  y DOUBLE PRECISION,
-  lat DOUBLE PRECISION,
-  lng DOUBLE PRECISION,
-  satellites INTEGER,
-  hdop DOUBLE PRECISION,
-  altitude_m DOUBLE PRECISION,
-  voltage_cv INTEGER,
-  battery_pct INTEGER,
-  signal_level INTEGER,
-  locked BOOLEAN,
-  alarm_code INTEGER
-);
--- Locks that have dialled in over TCP but are not fitted to any bike yet.
--- Purely a discovery buffer so an operator can pick a real IMEI when creating a
--- bike; the registry of record stays bikes.lock_imei. Rows are capped and
--- pruned by age on write (see server/omni/store.ts) because the lock port is
--- public and IMEIs are spoofable.
-CREATE TABLE IF NOT EXISTS unassigned_locks (
-  imei TEXT PRIMARY KEY,
-  first_seen BIGINT NOT NULL,
-  last_seen BIGINT NOT NULL
-);
--- Device registry for provisioned OMNI locks. It is independent from the
--- discovery buffer above: locks can be registered before being fitted to a bike.
-CREATE TABLE IF NOT EXISTS locks (
-  id SERIAL PRIMARY KEY,
-  imei TEXT NOT NULL,
-  mac_address TEXT,
-  bike_id TEXT REFERENCES bikes(id) ON DELETE SET NULL,
-  sim_iccid TEXT,
-  firmware_version TEXT,
-  apn TEXT NOT NULL DEFAULT 'cmiot',
-  status TEXT NOT NULL DEFAULT 'unregistered',
-  last_seen_at BIGINT,
-  last_battery_voltage NUMERIC,
-  last_signal_strength INTEGER,
-  last_lock_state TEXT,
-  last_latitude NUMERIC,
-  last_longitude NUMERIC,
-  last_location_at BIGINT,
-  ble_key TEXT,
-  device_type_code TEXT,
-  last_alarm_type TEXT,
-  last_alarm_at BIGINT,
-  notes TEXT,
-  created_at BIGINT NOT NULL,
-  updated_at BIGINT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS meta (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS support_conversations (
-  id SERIAL PRIMARY KEY,
-  user_id TEXT NOT NULL UNIQUE,
-  mode TEXT NOT NULL DEFAULT 'bot',
-  last_message_at BIGINT,
-  user_unread_count INTEGER NOT NULL DEFAULT 0,
-  operator_unread_count INTEGER NOT NULL DEFAULT 0,
-  created_at BIGINT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS support_messages (
-  id SERIAL PRIMARY KEY,
-  conversation_id INTEGER NOT NULL REFERENCES support_conversations(id) ON DELETE CASCADE,
-  sender_role TEXT NOT NULL,
-  sender_id TEXT,
-  body TEXT NOT NULL DEFAULT '',
-  attachment_url TEXT,
-  attachment_mime TEXT,
-  read_at BIGINT,
-  created_at BIGINT NOT NULL
-);
-`);
-}
+// Historical ad-hoc `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE ... ADD COLUMN
+// IF NOT EXISTS` bootstrap has been retired in favour of versioned Drizzle
+// migrations (see server/db/migrate.ts + migrations/). The full schema is
+// created/altered exclusively by runSchemaMigrations() now.
 
-// ---------- Performance indexes ----------
-// The hot-path indexes are declared as first-class Drizzle definitions on their
-// tables in shared/schema.ts (audit M8) — this is the single source of truth.
-// We derive the CREATE INDEX DDL from those definitions via getTableConfig so
-// the two never drift, and emit `IF NOT EXISTS` so re-runs are idempotent (no
-// duplicate indexes). `ride_points` is created by raw SQL above (it has no
-// Drizzle table), so its index is kept as an explicit statement here.
-const INDEXED_TABLES: PgTable[] = [
-  users, oauthIdentities, pushSubscriptions, bikes, locks, rides, tickets,
-  ticketComments, payments, paymentMethods, paymentOrders, walletTopupOrders,
-  supportTickets, supportConversations, supportMessages,
-];
-
-function quoteIdent(name: string): string {
-  return `"${name.replace(/"/g, '""')}"`;
-}
-
-async function createIndexes() {
-  for (const table of INDEXED_TABLES) {
-    const { name: tableName, indexes } = getTableConfig(table);
-    for (const idx of indexes) {
-      const cfg = idx.config;
-      const cols = cfg.columns
-        .map((c: any) => {
-          const order = c.indexConfig?.order === "desc" ? " DESC" : "";
-          return `${quoteIdent(c.name)}${order}`;
-        })
-        .join(", ");
-      const unique = cfg.unique ? "UNIQUE " : "";
-      await pool.query(
-        `CREATE ${unique}INDEX IF NOT EXISTS ${quoteIdent(cfg.name!)} ON ${quoteIdent(tableName)} (${cols});`,
-      );
-    }
-  }
-  // ride_points has no Drizzle table (raw SQL only) — keep its index explicit.
-  await pool.query(
-    `CREATE INDEX IF NOT EXISTS idx_ride_points_ride ON ride_points (ride_id, id);`,
-  );
-  // bike_telemetry (raw SQL only): the ride-track query filters by bike + time
-  // window, so index on (bike_id, t).
-  await pool.query(
-    `CREATE INDEX IF NOT EXISTS idx_bike_telemetry_bike_t ON bike_telemetry (bike_id, t);`,
-  );
-  // Most rows are positionless check-ins/heartbeats, but the ride-track query
-  // only ever wants rows that carry a fix. A partial index keeps that scan off
-  // the status rows entirely.
-  await pool.query(
-    `CREATE INDEX IF NOT EXISTS idx_bike_telemetry_pos ON bike_telemetry (bike_id, t) WHERE x IS NOT NULL;`,
-  );
-  // The OMNI TCP server resolves an incoming connection by IMEI on every new
-  // socket, and two bikes must never claim the same lock. Partial UNIQUE
-  // because the column is NULL for every bike without a smart lock fitted.
-  await pool.query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_bikes_lock_imei ON bikes (lock_imei) WHERE lock_imei IS NOT NULL;`,
-  );
+// ---------- Runtime data-integrity guards ----------
+// Every structural index (including the hot-path ones on rides/users/bikes/
+// payment tables) is now a first-class Drizzle definition in shared/schema.ts
+// and is created/altered exclusively by versioned migrations (server/db/
+// migrate.ts) — this function no longer derives any DDL from schema.ts.
+//
+// What remains here are two partial UNIQUE indexes that are NOT safe to bake
+// into a plain migration, because creating them can fail on real production
+// data (pre-existing races/duplicates) and that failure needs a compensating
+// action, not a crashed boot or a stuck migration:
+//   - ride-double-booking guard: cleans up stale "active" rides first;
+//   - phone/email uniqueness guard: logs actionable duplicates and lets the
+//     app keep running without the DB-level guarantee until they're cleaned.
+// Both are idempotent (`IF NOT EXISTS`) and cheap to re-check on every boot.
+async function applyRuntimeDataGuards() {
   await createRideRaceGuardIndexes();
+  await createContactUniquenessGuardIndexes();
 }
 
 // Database-level backstop for the startRide double-booking race (audit
@@ -496,89 +84,62 @@ async function createRideRaceGuardIndexes() {
   );
 }
 
-// ---------- Column migrations for existing databases ----------
-// `CREATE TABLE IF NOT EXISTS` doesn't add columns to a pre-existing table, so
-// any new column must be applied here with `ALTER TABLE ... ADD COLUMN IF NOT
-// EXISTS`. Idempotent — safe to run on every boot.
-async function runMigrations() {
-  // Каждый ALTER — отдельным запросом: pg отправляет запрос с несколькими
-  // командами как prepared statement → «cannot insert multiple commands».
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at BIGINT;`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at BIGINT;`);
-  await pool.query(`ALTER TABLE parkings ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';`);
-  await pool.query(`ALTER TABLE parkings ADD COLUMN IF NOT EXISTS radius INTEGER NOT NULL DEFAULT 30;`);
-  await pool.query(`ALTER TABLE support_conversations ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'bot';`);
-  for (const col of [
-    "last_lock_state TEXT",
-    "last_latitude NUMERIC",
-    "last_longitude NUMERIC",
-    "last_location_at BIGINT",
-    "ble_key TEXT",
-    "device_type_code TEXT",
-    "last_alarm_type TEXT",
-    "last_alarm_at BIGINT",
-  ]) {
-    await pool.query(`ALTER TABLE locks ADD COLUMN IF NOT EXISTS ${col};`);
-  }
-
-  // ---- OMNI smart-lock integration ----
-  // Device registry lives on the bike: the TCP server maps an incoming IMEI to
-  // the bike it is fitted to, and records whether that lock currently holds a
-  // connection.
-  await pool.query(`ALTER TABLE bikes ADD COLUMN IF NOT EXISTS lock_imei TEXT;`);
-  await pool.query(`ALTER TABLE bikes ADD COLUMN IF NOT EXISTS lock_online BOOLEAN NOT NULL DEFAULT FALSE;`);
-  await pool.query(`ALTER TABLE bikes ADD COLUMN IF NOT EXISTS lock_last_seen BIGINT;`);
-
-  // Audit F-04: a physical lock-close (L1) is a fait-accompli device report,
-  // not a request the server can veto — there is no back-channel to prevent
-  // it. So instead of pretending the ride lifecycle controls the hardware, we
-  // only record when a close happened while a ride was still "active" (the
-  // rider closed the lock without the app calling /api/rides/:id/end), for
-  // ops visibility. Deliberately NOT auto-ending/pausing the ride here — that
-  // is the future pause feature's job once its status/columns exist.
-  await pool.query(`ALTER TABLE rides ADD COLUMN IF NOT EXISTS physically_locked_at BIGINT;`);
-
-  // Audit HIGH #2: client-supplied idempotency key for /ride/init and
-  // /ride/charge-saved-card so a retried request (double-click, network drop +
-  // resubmit) replays the original payment order instead of creating a second
-  // T-Bank charge. The partial UNIQUE index (skipping NULL) is the actual
-  // guarantee — application code can race on the read, but Postgres rejects a
-  // second INSERT with the same (user_id, idempotency_key) outright.
-  await pool.query(`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS idempotency_key TEXT;`);
-  await pool.query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_po_user_idempotency ON payment_orders (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL;`,
+// Audit HIGH #16: phone/email have no DB-level uniqueness guarantee today —
+// verifyOtp/verifyPhoneChange/verifyEmailChange all do a plain "SELECT ...
+// then INSERT/UPDATE" check in application code, so two requests racing on
+// the same contact can both pass the check and create/claim duplicate
+// accounts. A partial UNIQUE index is the DB-level backstop, same pattern as
+// createRideRaceGuardIndexes above.
+//
+// Only *active* rows are covered: deleteAccount rewrites phone to a
+// per-id-unique 'deleted:<id>' placeholder and clears email, so excluding
+// deleted_at IS NOT NULL rows is purely an optimisation, not a correctness
+// requirement — but it keeps the index small and matches the app's own
+// notion of "in-use" contact info. Email is only enforced unique once
+// VERIFIED, matching storage.ts's existing rule that only a verified email on
+// another account blocks a claim (an unverified, never-confirmed email is not
+// a proven identity yet).
+//
+// Unlike the ride-race guard, pre-existing duplicate *real user accounts*
+// cannot be auto-resolved here — merging two accounts' rides/wallet/history
+// is a product/support decision, not something bootstrap should do silently.
+// So each CREATE UNIQUE INDEX is wrapped: if the table already has
+// conflicting rows, Postgres rejects the whole statement (23505) and we log
+// a loud, actionable warning instead of crashing app startup. The index will
+// simply get created automatically on a later boot once the data is cleaned
+// up — until then, the app keeps running with just the application-level
+// check (unchanged from today).
+async function createContactUniquenessGuardIndexes() {
+  await tryCreateUniqueIndex(
+    "idx_users_phone_active",
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_active ON users (phone) WHERE deleted_at IS NULL;`,
+    `SELECT phone, array_agg(id) AS ids FROM users
+     WHERE deleted_at IS NULL GROUP BY phone HAVING COUNT(*) > 1 LIMIT 20`,
   );
-
-  // Audit HIGH #9: RebillId/AccountToken are now encrypted at rest (see
-  // server/crypto/payment-tokens.ts). These columns predate that change on
-  // any database bootstrapped before it, and the blind-index columns used for
-  // equality lookups (card/account dedup) are brand new either way.
-  await pool.query(`ALTER TABLE payment_methods ADD COLUMN IF NOT EXISTS rebill_id_hash TEXT;`);
-  await pool.query(`ALTER TABLE payment_methods ADD COLUMN IF NOT EXISTS account_token_hash TEXT;`);
-
-  // bike_telemetry was originally created (unreleased, PR #83) for a generic
-  // HTTP webhook as (bike_id, x, y, t) with x/y NOT NULL. The real devices speak
-  // TCP and send positionless check-ins, so widen the row and drop the NOT NULL
-  // on the coordinates. Additive + constraint-relaxing: existing rows stay valid.
-  for (const col of [
-    "imei TEXT",
-    "cmd TEXT NOT NULL DEFAULT 'D0'",
-    "lat DOUBLE PRECISION",
-    "lng DOUBLE PRECISION",
-    "satellites INTEGER",
-    "hdop DOUBLE PRECISION",
-    "altitude_m DOUBLE PRECISION",
-    "voltage_cv INTEGER",
-    "battery_pct INTEGER",
-    "signal_level INTEGER",
-    "locked BOOLEAN",
-    "alarm_code INTEGER",
-  ]) {
-    await pool.query(`ALTER TABLE bike_telemetry ADD COLUMN IF NOT EXISTS ${col};`);
-  }
-  await pool.query(`ALTER TABLE bike_telemetry ALTER COLUMN x DROP NOT NULL;`);
-  await pool.query(`ALTER TABLE bike_telemetry ALTER COLUMN y DROP NOT NULL;`);
+  await tryCreateUniqueIndex(
+    "idx_users_email_verified_active",
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_verified_active ON users (email)
+     WHERE deleted_at IS NULL AND email_verified_at IS NOT NULL;`,
+    `SELECT email, array_agg(id) AS ids FROM users
+     WHERE deleted_at IS NULL AND email_verified_at IS NOT NULL
+     GROUP BY email HAVING COUNT(*) > 1 LIMIT 20`,
+  );
 }
+
+async function tryCreateUniqueIndex(indexName: string, createSql: string, duplicatesSql: string) {
+  try {
+    await pool.query(createSql);
+  } catch (err) {
+    if ((err as { code?: string } | null)?.code !== "23505") throw err;
+    const dupes = await pool.query(duplicatesSql);
+    logger.error({
+      indexName,
+      duplicateGroups: dupes.rows,
+      errorCode: "CONTACT_UNIQUENESS_INDEX_BLOCKED",
+    }, `[bootstrap] не удалось создать ${indexName} — в БД уже есть дублирующиеся контакты; требуется ручная очистка, приложение продолжает работу без DB-уровневой гарантии`);
+  }
+}
+
 
 // Audit HIGH #9: one-time backfill that encrypts any RebillId/AccountToken
 // rows written before payment-token encryption existed, and fills in their
@@ -816,10 +377,9 @@ async function bootstrapDemoData() {
 // requests. Import order previously guaranteed a ready schema; now the server
 // must `await bootstrapReady`.
 export const bootstrapReady: Promise<void> = (async () => {
-  await createSchema();
-  await runMigrations();
+  await runSchemaMigrations();
   await cleanupStaleIdentifierlessPendingCardBindings();
   await encryptLegacyPaymentTokens();
-  await createIndexes();
+  await applyRuntimeDataGuards();
   await bootstrapDemoData();
 })();

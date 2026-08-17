@@ -14,6 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:push": "drizzle-kit push",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx -e \"import('./server/db/migrate').then(m=>m.runSchemaMigrations()).then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1);})\"",
     "smoke:register": "tsx script/smoke-register.ts",
     "smoke:session": "tsx script/smoke-session.ts",
     "smoke:profile": "tsx script/smoke-profile.ts",

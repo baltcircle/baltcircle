@@ -1,4 +1,5 @@
 import { pgTable, text, integer, bigint, doublePrecision, boolean, serial, numeric, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -259,8 +260,8 @@ export const bikes = pgTable("bikes", {
   parkingId: text("parking_id"),             // optional home parking station id
   // ----- OMNI smart lock (TCP ingest, server/omni/) -----
   // The lock's IMEI is how an inbound TCP connection is resolved to a bike, so
-  // it must be unique across the fleet; the partial UNIQUE index enforcing that
-  // is in server/db/bootstrap.ts (Drizzle cannot express a partial index).
+  // it must be unique across the fleet — enforced by the partial UNIQUE index
+  // below (NULL for every bike without a smart lock fitted).
   lockImei: text("lock_imei"),
   lockOnline: boolean("lock_online").notNull().default(false),
   lockLastSeen: bigint("lock_last_seen", { mode: "number" }),  // unix ms
@@ -270,6 +271,7 @@ export const bikes = pgTable("bikes", {
   seed: boolean("seed").notNull().default(false),
 }, (t) => [
   index("idx_bikes_status").on(t.status),
+  uniqueIndex("idx_bikes_lock_imei").on(t.lockImei).where(sql`${t.lockImei} IS NOT NULL`),
 ]);
 
 // Operational statuses. `available`/`rented`/`reserved` drive the rental flow;
@@ -358,6 +360,45 @@ export const locks = pgTable("locks", {
   index("idx_locks_status").on(t.status),
 ]);
 export type Lock = typeof locks.$inferSelect;
+
+// Onboard OMNI smart-lock reports (wire protocol in shared/omni/protocol.ts).
+// See server/db/bootstrap.ts's historical comment for the per-cmd column
+// layout; storage.ts/omni ingest use raw `sql` templates against this table
+// rather than the query builder, but it is modelled here so schema
+// migrations manage it like every other table.
+export const bikeTelemetry = pgTable("bike_telemetry", {
+  id: serial("id").primaryKey(),
+  bikeId: text("bike_id").notNull(),
+  imei: text("imei"),
+  cmd: text("cmd").notNull().default("D0"),
+  t: bigint("t", { mode: "number" }).notNull(),
+  x: doublePrecision("x"),
+  y: doublePrecision("y"),
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  satellites: integer("satellites"),
+  hdop: doublePrecision("hdop"),
+  altitudeM: doublePrecision("altitude_m"),
+  voltageCv: integer("voltage_cv"),
+  batteryPct: integer("battery_pct"),
+  signalLevel: integer("signal_level"),
+  locked: boolean("locked"),
+  alarmCode: integer("alarm_code"),
+}, (t) => [
+  index("idx_bike_telemetry_bike_t").on(t.bikeId, t.t),
+  // Most rows are positionless check-ins/heartbeats; the ride-track query
+  // only wants rows carrying a fix, so keep the index partial.
+  index("idx_bike_telemetry_pos").on(t.bikeId, t.t).where(sql`${t.x} IS NOT NULL`),
+]);
+export type BikeTelemetry = typeof bikeTelemetry.$inferSelect;
+
+// Free-form server-owned key/value store (schema version marker, feature
+// flags, one-off operational switches). Never exposed directly over the API.
+export const meta = pgTable("meta", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});
+export type Meta = typeof meta.$inferSelect;
 
 const optionalText = (max: number) => z.union([z.string().trim().max(max), z.literal("")]).optional();
 
@@ -581,6 +622,22 @@ export const rides = pgTable("rides", {
 export type Ride = typeof rides.$inferSelect;
 export const insertRideSchema = createInsertSchema(rides);
 
+// Track points recorded during a ride, in abstract map space (matching
+// bike_telemetry's x/y). storage.ts queries this table with raw `sql`
+// templates (loadRidePoints) rather than the query builder, but it is
+// modelled here so schema migrations (drizzle-kit generate) create/alter it
+// like every other table instead of relying on ad-hoc bootstrap DDL.
+export const ridePoints = pgTable("ride_points", {
+  id: serial("id").primaryKey(),
+  rideId: integer("ride_id").notNull(),
+  x: doublePrecision("x").notNull(),
+  y: doublePrecision("y").notNull(),
+  t: bigint("t", { mode: "number" }).notNull(),
+}, (t) => [
+  index("idx_ride_points_ride").on(t.rideId, t.id),
+]);
+export type RidePoint = typeof ridePoints.$inferSelect;
+
 // A ride enriched with the rider's display name/phone for the admin rides
 // table. Identity is resolved server-side from the users table; an unknown or
 // demo rider yields null name/phone so the UI can fall back to the raw id.
@@ -801,9 +858,9 @@ export const paymentOrders = pgTable("payment_orders", {
   rideId: integer("ride_id"),                     // set once the paid ride is started
   // Client-supplied idempotency token (audit HIGH #2): a retried /ride/init or
   // /ride/charge-saved-card request carries the SAME key, letting the server
-  // replay the original order instead of creating a second payment/charge. A
-  // partial UNIQUE index on (user_id, idempotency_key) (see server/db/bootstrap.ts)
-  // is the actual database-level guarantee; this column just carries the value.
+  // replay the original order instead of creating a second payment/charge. The
+  // partial UNIQUE index on (user_id, idempotency_key) below is the actual
+  // database-level guarantee; this column just carries the value.
   idempotencyKey: text("idempotency_key"),
   // Last acquirer error (notification/Init), non-secret values only.
   lastErrorCode: text("last_error_code"),
@@ -812,6 +869,7 @@ export const paymentOrders = pgTable("payment_orders", {
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }),
 }, (t) => [
+  uniqueIndex("idx_po_user_idempotency").on(t.userId, t.idempotencyKey).where(sql`${t.idempotencyKey} IS NOT NULL`),
   index("idx_po_order").on(t.orderId),
   index("idx_po_user").on(t.userId),
   index("idx_po_payment").on(t.paymentId),
@@ -939,7 +997,7 @@ export type SupportMessageRole = typeof SUPPORT_MESSAGE_ROLES[number];
 
 export const supportMessages = pgTable("support_messages", {
   id: serial("id").primaryKey(),
-  conversationId: integer("conversation_id").notNull(),
+  conversationId: integer("conversation_id").notNull().references(() => supportConversations.id, { onDelete: "cascade" }),
   senderRole: text("sender_role").notNull(),
   senderId: text("sender_id"),
   body: text("body").notNull().default(""),

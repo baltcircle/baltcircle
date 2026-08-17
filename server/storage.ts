@@ -440,18 +440,28 @@ export class DatabaseStorage implements IStorage {
       await db.update(users).set(set as any).where(eq(users.id, existing.id));
       return { user: (await this.getUser(existing.id))! };
     }
-    await db.insert(users).values({
-      id: randomUUID(),
-      name: req.name,
-      phone: cleanPhone,
-      email: null,
-      role,
-      consentAcceptedAt: now,
-      consentVersion: CONSENT_VERSION,
-      consentIp: consentIp ?? null,
-      createdAt: now,
-      updatedAt: now,
-    } as any);
+    // Audit HIGH #16: two verifyOtp calls for the same phone can both read
+    // `existing` as undefined (no row lock on the SELECT above) and both
+    // reach this INSERT. The DB-level partial unique index on active phones
+    // (bootstrap.ts) makes the loser fail with 23505 instead of creating a
+    // duplicate account — fall back to the row the winner just created so
+    // the loser's caller still gets a valid, usable account.
+    try {
+      await db.insert(users).values({
+        id: randomUUID(),
+        name: req.name,
+        phone: cleanPhone,
+        email: null,
+        role,
+        consentAcceptedAt: now,
+        consentVersion: CONSENT_VERSION,
+        consentIp: consentIp ?? null,
+        createdAt: now,
+        updatedAt: now,
+      } as any);
+    } catch (err) {
+      if (!this.isUniqueViolation(err)) throw err;
+    }
     return { user: (await this.getUserByPhone(cleanPhone))! };
   }
 
@@ -573,7 +583,17 @@ export class DatabaseStorage implements IStorage {
     }
 
     await db.update(phoneChangeRequests).set({ consumed: true }).where(eq(phoneChangeRequests.userId, userId));
-    await db.update(users).set({ phone: req.newPhone, updatedAt: Date.now() } as any).where(eq(users.id, userId));
+    // Audit HIGH #16: the read-then-write above still leaves a window between
+    // the recheck and this UPDATE. The DB-level partial unique index on
+    // active phones (bootstrap.ts) is the actual guarantee — on the rare
+    // double-loss race, surface the exact same error the pre-check above
+    // already returns instead of a raw 500.
+    try {
+      await db.update(users).set({ phone: req.newPhone, updatedAt: Date.now() } as any).where(eq(users.id, userId));
+    } catch (err) {
+      if (!this.isUniqueViolation(err)) throw err;
+      return { error: "Этот номер уже используется другим аккаунтом" };
+    }
     return { user: (await this.getUser(userId))! };
   }
 
@@ -648,9 +668,18 @@ export class DatabaseStorage implements IStorage {
 
     const now = Date.now();
     await db.update(emailChangeRequests).set({ consumed: true }).where(eq(emailChangeRequests.userId, userId));
-    await db.update(users)
-      .set({ email: req.newEmail, emailVerifiedAt: now, updatedAt: now } as any)
-      .where(eq(users.id, userId));
+    // Audit HIGH #16: same read-then-write race as verifyPhoneChange above.
+    // The DB-level partial unique index on verified emails (bootstrap.ts) is
+    // the actual guarantee — surface the same error as the pre-check on the
+    // rare double-loss race instead of a raw 500.
+    try {
+      await db.update(users)
+        .set({ email: req.newEmail, emailVerifiedAt: now, updatedAt: now } as any)
+        .where(eq(users.id, userId));
+    } catch (err) {
+      if (!this.isUniqueViolation(err)) throw err;
+      return { error: "Этот email уже используется другим аккаунтом" };
+    }
     return { user: (await this.getUser(userId))! };
   }
 
@@ -1740,11 +1769,25 @@ export class DatabaseStorage implements IStorage {
     );
   }
 
-  private async loadRidePoints(rideId: number): Promise<[number, number, number][]> {
-    const rows = (await pool.query(
-      "SELECT x, y, t FROM ride_points WHERE ride_id = $1 ORDER BY id",
-      [rideId],
-    )).rows as { x: number; y: number; t: number }[];
+  // Audit HIGH #15: this used to always run on the global `pool` (a plain
+  // pool.query), even when called from inside an already-open `db.transaction`
+  // (endRide below). A raw pool.query grabs a SEPARATE connection instead of
+  // reusing the transaction's own client, so it can't see the tx's
+  // uncommitted writes/snapshot, and — worse — it holds a second pool slot for
+  // the lifetime of a transaction that's already holding one. With N
+  // concurrent endRide calls against a pool of size N, every connection is
+  // pinned by an open transaction waiting on this second query, which itself
+  // has no free connection left to run on — deadlock by connection
+  // exhaustion. Callers inside a transaction MUST now pass their `tx` so this
+  // reuses the same client/snapshot instead of reaching for the pool.
+  private async loadRidePoints(
+    rideId: number,
+    executor: { execute: (query: ReturnType<typeof sql>) => Promise<{ rows: unknown[] }> } = db,
+  ): Promise<[number, number, number][]> {
+    const result = await executor.execute(
+      sql`SELECT x, y, t FROM ride_points WHERE ride_id = ${rideId} ORDER BY id`,
+    );
+    const rows = result.rows as { x: number; y: number; t: number }[];
     return rows.map((p) => [p.x, p.y, p.t]);
   }
 
@@ -2021,7 +2064,8 @@ export class DatabaseStorage implements IStorage {
       // Flush the append-only points into the canonical rides.track ONCE, at
       // completion. Fall back to the legacy in-row track for rides that started
       // before the ride_points migration and never got any point rows.
-      const pts: [number, number, number][] = await this.loadRidePoints(rideId);
+      // Pass `tx` — see the audit HIGH #15 note on loadRidePoints above.
+      const pts: [number, number, number][] = await this.loadRidePoints(rideId, tx);
       const track: [number, number, number][] =
         pts.length > 0 ? pts : (JSON.parse(r.track) as [number, number, number][]);
       const last = track[track.length - 1];
@@ -2409,18 +2453,25 @@ export class DatabaseStorage implements IStorage {
       LIMIT 14
     `)).rows.reverse();
 
-    // popular parkings — proximity of ride start
+    // Popular parkings — proximity of ride start. Audit HIGH #18: this used to
+    // pull EVERY ride's start coordinates into Node and loop parkings×rides
+    // (O(P×R), and the ride history only grows). The aggregation itself moves
+    // into one SQL query — Postgres still does a nested-loop-shaped join
+    // internally, but the full rides table is never pulled across the wire
+    // into Node memory, and there's no per-row JS overhead.
     const allParkings = await this.listParkings();
-    const allRides = (await pool.query("SELECT start_lat, start_lng FROM rides")).rows as any[];
-    const parkingCounts = allParkings.map(p => {
-      let c = 0;
-      for (const r of allRides) {
-        const dx = r.start_lng - p.lng;
-        const dy = r.start_lat - p.lat;
-        if (Math.sqrt(dx*dx+dy*dy) < 30) c++;
-      }
-      return { ...p, rideStarts: c };
-    }).sort((a, b) => b.rideStarts - a.rideStarts);
+    const rideStartCounts = new Map<string, number>(
+      ((await pool.query(`
+        SELECT p.id, COUNT(r.id)::int AS c
+        FROM parkings p
+        LEFT JOIN rides r
+          ON sqrt(power(r.start_lng - p.lng, 2) + power(r.start_lat - p.lat, 2)) < 30
+        GROUP BY p.id
+      `)).rows as { id: string; c: number }[]).map((row) => [row.id, row.c]),
+    );
+    const parkingCounts = allParkings
+      .map((p) => ({ ...p, rideStarts: rideStartCounts.get(p.id) ?? 0 }))
+      .sort((a, b) => b.rideStarts - a.rideStarts);
 
     const utilisation = (await pool.query(`
       SELECT bike_id, COUNT(*) AS rides
@@ -2520,19 +2571,28 @@ export class DatabaseStorage implements IStorage {
     `)).rows as any[];
 
     // ---- Parking usage (proximity of ride starts in the period) ----
-    const periodStarts = (await pool.query(
-      "SELECT start_lat, start_lng FROM rides WHERE started_at >= $1 AND started_at <= $2",
-      [from, to],
-    )).rows as any[];
-    const parkingUsage = (await this.listParkings()).map((p) => {
-      let c = 0;
-      for (const r of periodStarts) {
-        const dx = r.start_lng - p.lng;
-        const dy = r.start_lat - p.lat;
-        if (Math.sqrt(dx * dx + dy * dy) < 30) c++;
-      }
-      return { id: p.id, name: p.name, capacity: p.capacity, occupied: p.occupied, rideStarts: c };
-    }).sort((a, b) => b.rideStarts - a.rideStarts);
+    // Audit HIGH #18: same O(P×R) Node loop as analytics() above, moved into
+    // one SQL aggregate. The period filter must live in the JOIN's ON clause,
+    // not a WHERE after it — a WHERE on r.started_at would turn this into an
+    // inner join and drop parkings with zero rides in the period instead of
+    // reporting them as rideStarts: 0.
+    const parkingRideCounts = new Map<string, number>(
+      ((await pool.query(
+        `SELECT p.id, COUNT(r.id)::int AS c
+         FROM parkings p
+         LEFT JOIN rides r
+           ON sqrt(power(r.start_lng - p.lng, 2) + power(r.start_lat - p.lat, 2)) < 30
+          AND r.started_at >= $1 AND r.started_at <= $2
+         GROUP BY p.id`,
+        [from, to],
+      )).rows as { id: string; c: number }[]).map((row) => [row.id, row.c]),
+    );
+    const parkingUsage = (await this.listParkings())
+      .map((p) => ({
+        id: p.id, name: p.name, capacity: p.capacity, occupied: p.occupied,
+        rideStarts: parkingRideCounts.get(p.id) ?? 0,
+      }))
+      .sort((a, b) => b.rideStarts - a.rideStarts);
 
     return {
       range: { from, to },
