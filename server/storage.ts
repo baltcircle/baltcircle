@@ -395,82 +395,109 @@ export class DatabaseStorage implements IStorage {
 
   // Step 2: verify a submitted code. On success the rider is created (or reused
   // if the phone already registered) and the request row is consumed.
-  async verifyOtp({ phone, code, consentIp }: { phone: string; code: string; consentIp?: string }) {
+  async verifyOtp(
+    { phone, code, consentIp }: { phone: string; code: string; consentIp?: string },
+  ): Promise<{ user: User } | { error: string }> {
     const cleanPhone = normalizePhone(phone);
-    const req = (await db.select().from(otpRequests)
-      .where(eq(otpRequests.phone, cleanPhone)).limit(1))[0] as OtpRequest | undefined;
 
-    if (!req || req.consumed) {
-      return { error: "Запросите код подтверждения заново" };
-    }
-    if (Date.now() > req.expiresAt) {
-      return { error: "Срок действия кода истёк. Запросите новый код" };
-    }
-    if (req.attempts >= OTP_MAX_ATTEMPTS) {
-      return { error: "Слишком много попыток. Запросите новый код" };
-    }
+    // Audit: read → consume → update/create ran as separate statements with no
+    // transaction, so a crash/error between "consumed=true" and the user
+    // upsert could burn the code without ever creating/updating the rider,
+    // and two concurrent verifies for the same phone could both read the same
+    // stale `attempts` and both write `attempts+1` (lost update — weakens the
+    // brute-force limit). Wrapping the whole flow in one transaction with
+    // `.for("update")` on the otp_requests row (same pattern as startRide/
+    // endRide) fixes both: the row lock serialises concurrent verifies for
+    // the same phone — the second call blocks until the first commits, then
+    // re-reads the now-current attempts/consumed state — and any failure
+    // after "consumed=true" rolls the whole transaction back, so the code is
+    // never burned without the rider actually being created/updated.
+    const outcome = await (async () => {
+      try {
+        return await db.transaction(async (tx) => {
+          const req = (await tx.select().from(otpRequests)
+            .where(eq(otpRequests.phone, cleanPhone)).for("update").limit(1))[0] as OtpRequest | undefined;
 
-    const expected = req.codeHash;
-    const provided = hashOtp(cleanPhone, code.trim());
-    if (!safeEqualHex(provided, expected)) {
-      const attempts = req.attempts + 1;
-      await db.update(otpRequests).set({ attempts }).where(eq(otpRequests.phone, cleanPhone));
-      const left = OTP_MAX_ATTEMPTS - attempts;
-      return {
-        error: left > 0 ? `Неверный код. Осталось попыток: ${left}` : "Слишком много попыток. Запросите новый код",
-      };
-    }
+          if (!req || req.consumed) {
+            return { kind: "error" as const, error: "Запросите код подтверждения заново" };
+          }
+          if (Date.now() > req.expiresAt) {
+            return { kind: "error" as const, error: "Срок действия кода истёк. Запросите новый код" };
+          }
+          if (req.attempts >= OTP_MAX_ATTEMPTS) {
+            return { kind: "error" as const, error: "Слишком много попыток. Запросите новый код" };
+          }
 
-    // Correct code — consume the request so it can't be reused.
-    await db.update(otpRequests).set({ consumed: true }).where(eq(otpRequests.phone, cleanPhone));
+          const expected = req.codeHash;
+          const provided = hashOtp(cleanPhone, code.trim());
+          if (!safeEqualHex(provided, expected)) {
+            const attempts = req.attempts + 1;
+            await tx.update(otpRequests).set({ attempts }).where(eq(otpRequests.phone, cleanPhone));
+            const left = OTP_MAX_ATTEMPTS - attempts;
+            return {
+              kind: "error" as const,
+              error: left > 0 ? `Неверный код. Осталось попыток: ${left}` : "Слишком много попыток. Запросите новый код",
+            };
+          }
 
-    // Consent was accepted at OTP start (the API requires consent: true before
-    // a code is sent), so record the consent metadata on verify when the rider
-    // row is created/refreshed. The verified phone IS the proof of consent.
-    const now = Date.now();
-    const role: UserRole = isAdminPhone(cleanPhone) ? "admin" : "rider";
+          // Correct code — consume the request so it can't be reused.
+          await tx.update(otpRequests).set({ consumed: true }).where(eq(otpRequests.phone, cleanPhone));
 
-    // Reuse an existing rider for this phone (keeps rides/wallet) or create one.
-    const existing = (await db.select().from(users).where(eq(users.phone, cleanPhone)).limit(1))[0] as
-      | User
-      | undefined;
-    if (existing) {
-      const set: Partial<User> = {
-        updatedAt: now,
-        consentAcceptedAt: now,
-        consentVersion: CONSENT_VERSION,
-        consentIp: consentIp ?? existing.consentIp ?? null,
-        // Keep an already-elevated role (e.g. operator) but ensure admin phones
-        // are promoted. Never silently demote a stored operator/admin.
-        role: role === "admin" ? "admin" : (existing.role as UserRole),
-      };
-      if (existing.name !== req.name) set.name = req.name;
-      await db.update(users).set(set as any).where(eq(users.id, existing.id));
-      return { user: (await this.getUser(existing.id))! };
-    }
-    // Audit HIGH #16: two verifyOtp calls for the same phone can both read
-    // `existing` as undefined (no row lock on the SELECT above) and both
-    // reach this INSERT. The DB-level partial unique index on active phones
-    // (bootstrap.ts) makes the loser fail with 23505 instead of creating a
-    // duplicate account — fall back to the row the winner just created so
-    // the loser's caller still gets a valid, usable account.
-    try {
-      await db.insert(users).values({
-        id: randomUUID(),
-        name: req.name,
-        phone: cleanPhone,
-        email: null,
-        role,
-        consentAcceptedAt: now,
-        consentVersion: CONSENT_VERSION,
-        consentIp: consentIp ?? null,
-        createdAt: now,
-        updatedAt: now,
-      } as any);
-    } catch (err) {
-      if (!this.isUniqueViolation(err)) throw err;
-    }
-    return { user: (await this.getUserByPhone(cleanPhone))! };
+          // Consent was accepted at OTP start (the API requires consent: true
+          // before a code is sent), so record the consent metadata on verify
+          // when the rider row is created/refreshed. The verified phone IS the
+          // proof of consent.
+          const now = Date.now();
+          const role: UserRole = isAdminPhone(cleanPhone) ? "admin" : "rider";
+
+          // Reuse an existing rider for this phone (keeps rides/wallet) or
+          // create one. Read happens inside the same locked transaction, so no
+          // concurrent verify for this phone can interleave here anymore.
+          const existing = (await tx.select().from(users).where(eq(users.phone, cleanPhone)).limit(1))[0] as
+            | User
+            | undefined;
+          if (existing) {
+            const set: Partial<User> = {
+              updatedAt: now,
+              consentAcceptedAt: now,
+              consentVersion: CONSENT_VERSION,
+              consentIp: consentIp ?? existing.consentIp ?? null,
+              // Keep an already-elevated role (e.g. operator) but ensure admin
+              // phones are promoted. Never silently demote a stored operator/admin.
+              role: role === "admin" ? "admin" : (existing.role as UserRole),
+            };
+            if (existing.name !== req.name) set.name = req.name;
+            await tx.update(users).set(set as any).where(eq(users.id, existing.id));
+            return { kind: "userId" as const, userId: existing.id };
+          }
+          const newId = randomUUID();
+          await tx.insert(users).values({
+            id: newId,
+            name: req.name,
+            phone: cleanPhone,
+            email: null,
+            role,
+            consentAcceptedAt: now,
+            consentVersion: CONSENT_VERSION,
+            consentIp: consentIp ?? null,
+            createdAt: now,
+            updatedAt: now,
+          } as any);
+          return { kind: "userId" as const, userId: newId };
+        });
+      } catch (err) {
+        // Belt-and-suspenders: the DB-level partial unique index on active
+        // phones (bootstrap.ts) still exists for any path that somehow bypasses
+        // the row lock above — fall back to the row the winner just created so
+        // the loser's caller still gets a valid, usable account instead of 500.
+        if (this.isUniqueViolation(err)) return { kind: "raced" as const };
+        throw err;
+      }
+    })();
+
+    if (outcome.kind === "error") return { error: outcome.error };
+    if (outcome.kind === "raced") return { user: (await this.getUserByPhone(cleanPhone))! };
+    return { user: (await this.getUser(outcome.userId))! };
   }
 
   // ---------- OTP delivery diagnostics ----------
@@ -570,42 +597,57 @@ export class DatabaseStorage implements IStorage {
 
   // Step 2: verify the code sent to the new number and, on success, update the
   // user's phone. The request row is consumed so the code can't be reused.
-  async verifyPhoneChange({ userId, code }: { userId: string; code: string }) {
-    const req = (await db.select().from(phoneChangeRequests)
-      .where(eq(phoneChangeRequests.userId, userId)).limit(1))[0] as PhoneChangeRequest | undefined;
-    if (!req || req.consumed) return { error: "Запросите код подтверждения заново" };
-    if (Date.now() > req.expiresAt) return { error: "Срок действия кода истёк. Запросите новый код" };
-    if (req.attempts >= OTP_MAX_ATTEMPTS) return { error: "Слишком много попыток. Запросите новый код" };
+  async verifyPhoneChange(
+    { userId, code }: { userId: string; code: string },
+  ): Promise<{ user: User } | { error: string }> {
+    // Audit: same non-atomic read → consume → update pattern as verifyOtp,
+    // fixed the same way — one transaction, `.for("update")` on the
+    // phone_change_requests row. Serialises concurrent verifies for this user
+    // (fixes the attempts lost-update) and rolls back the "consumed" flag if
+    // the final user UPDATE fails, instead of burning the code for nothing.
+    const outcome = await (async () => {
+      try {
+        return await db.transaction(async (tx) => {
+          const req = (await tx.select().from(phoneChangeRequests)
+            .where(eq(phoneChangeRequests.userId, userId)).for("update").limit(1))[0] as PhoneChangeRequest | undefined;
+          if (!req || req.consumed) return { kind: "error" as const, error: "Запросите код подтверждения заново" };
+          if (Date.now() > req.expiresAt) return { kind: "error" as const, error: "Срок действия кода истёк. Запросите новый код" };
+          if (req.attempts >= OTP_MAX_ATTEMPTS) return { kind: "error" as const, error: "Слишком много попыток. Запросите новый код" };
 
-    const provided = hashOtp(req.newPhone, code.trim());
-    if (!safeEqualHex(provided, req.codeHash)) {
-      const attempts = req.attempts + 1;
-      await db.update(phoneChangeRequests).set({ attempts }).where(eq(phoneChangeRequests.userId, userId));
-      const left = OTP_MAX_ATTEMPTS - attempts;
-      return {
-        error: left > 0 ? `Неверный код. Осталось попыток: ${left}` : "Слишком много попыток. Запросите новый код",
-      };
-    }
+          const provided = hashOtp(req.newPhone, code.trim());
+          if (!safeEqualHex(provided, req.codeHash)) {
+            const attempts = req.attempts + 1;
+            await tx.update(phoneChangeRequests).set({ attempts }).where(eq(phoneChangeRequests.userId, userId));
+            const left = OTP_MAX_ATTEMPTS - attempts;
+            return {
+              kind: "error" as const,
+              error: left > 0 ? `Неверный код. Осталось попыток: ${left}` : "Слишком много попыток. Запросите новый код",
+            };
+          }
 
-    // Re-check the number is still free (another account could have claimed it
-    // between request and verify), then apply the change.
-    const taken = (await db.select().from(users).where(eq(users.phone, req.newPhone)).limit(1))[0] as User | undefined;
-    if (taken && taken.id !== userId) {
-      return { error: "Этот номер уже используется другим аккаунтом" };
-    }
+          // Re-check the number is still free (another account could have
+          // claimed it between request and verify) inside the same locked
+          // transaction, then apply the change.
+          const taken = (await tx.select().from(users).where(eq(users.phone, req.newPhone)).limit(1))[0] as User | undefined;
+          if (taken && taken.id !== userId) {
+            return { kind: "error" as const, error: "Этот номер уже используется другим аккаунтом" };
+          }
 
-    await db.update(phoneChangeRequests).set({ consumed: true }).where(eq(phoneChangeRequests.userId, userId));
-    // Audit HIGH #16: the read-then-write above still leaves a window between
-    // the recheck and this UPDATE. The DB-level partial unique index on
-    // active phones (bootstrap.ts) is the actual guarantee — on the rare
-    // double-loss race, surface the exact same error the pre-check above
-    // already returns instead of a raw 500.
-    try {
-      await db.update(users).set({ phone: req.newPhone, updatedAt: Date.now() } as any).where(eq(users.id, userId));
-    } catch (err) {
-      if (!this.isUniqueViolation(err)) throw err;
-      return { error: "Этот номер уже используется другим аккаунтом" };
-    }
+          await tx.update(phoneChangeRequests).set({ consumed: true }).where(eq(phoneChangeRequests.userId, userId));
+          await tx.update(users).set({ phone: req.newPhone, updatedAt: Date.now() } as any).where(eq(users.id, userId));
+          return { kind: "ok" as const };
+        });
+      } catch (err) {
+        // Belt-and-suspenders: the DB-level partial unique index on active
+        // phones (bootstrap.ts) is the actual cross-user guarantee (the row
+        // lock above only serialises verifies for THIS user's request) — on
+        // the rare double-loss race, surface the same error as the pre-check.
+        if (this.isUniqueViolation(err)) return { kind: "error" as const, error: "Этот номер уже используется другим аккаунтом" };
+        throw err;
+      }
+    })();
+
+    if (outcome.kind === "error") return { error: outcome.error };
     return { user: (await this.getUser(userId))! };
   }
 
@@ -655,43 +697,56 @@ export class DatabaseStorage implements IStorage {
     return { ok: true as const, email: newEmail, code, resendInSec: OTP_RESEND_LOCK_MS / 1000 };
   }
 
-  async verifyEmailChange({ userId, code }: { userId: string; code: string }) {
-    const req = (await db.select().from(emailChangeRequests)
-      .where(eq(emailChangeRequests.userId, userId)).limit(1))[0] as EmailChangeRequest | undefined;
-    if (!req || req.consumed) return { error: "Запросите код подтверждения заново" };
-    if (Date.now() > req.expiresAt) return { error: "Срок действия кода истёк. Запросите новый код" };
-    if (req.attempts >= OTP_MAX_ATTEMPTS) return { error: "Слишком много попыток. Запросите новый код" };
+  async verifyEmailChange(
+    { userId, code }: { userId: string; code: string },
+  ): Promise<{ user: User } | { error: string }> {
+    // Audit: same non-atomic read → consume → update pattern fixed the same
+    // way as verifyOtp/verifyPhoneChange — one transaction, `.for("update")`
+    // on the email_change_requests row.
+    const outcome = await (async () => {
+      try {
+        return await db.transaction(async (tx) => {
+          const req = (await tx.select().from(emailChangeRequests)
+            .where(eq(emailChangeRequests.userId, userId)).for("update").limit(1))[0] as EmailChangeRequest | undefined;
+          if (!req || req.consumed) return { kind: "error" as const, error: "Запросите код подтверждения заново" };
+          if (Date.now() > req.expiresAt) return { kind: "error" as const, error: "Срок действия кода истёк. Запросите новый код" };
+          if (req.attempts >= OTP_MAX_ATTEMPTS) return { kind: "error" as const, error: "Слишком много попыток. Запросите новый код" };
 
-    const provided = hashOtp(req.newEmail, code.trim());
-    if (!safeEqualHex(provided, req.codeHash)) {
-      const attempts = req.attempts + 1;
-      await db.update(emailChangeRequests).set({ attempts }).where(eq(emailChangeRequests.userId, userId));
-      const left = OTP_MAX_ATTEMPTS - attempts;
-      return {
-        error: left > 0 ? `Неверный код. Осталось попыток: ${left}` : "Слишком много попыток. Запросите новый код",
-      };
-    }
+          const provided = hashOtp(req.newEmail, code.trim());
+          if (!safeEqualHex(provided, req.codeHash)) {
+            const attempts = req.attempts + 1;
+            await tx.update(emailChangeRequests).set({ attempts }).where(eq(emailChangeRequests.userId, userId));
+            const left = OTP_MAX_ATTEMPTS - attempts;
+            return {
+              kind: "error" as const,
+              error: left > 0 ? `Неверный код. Осталось попыток: ${left}` : "Слишком много попыток. Запросите новый код",
+            };
+          }
 
-    // Re-check the email is still free (race with another account).
-    const taken = (await db.select().from(users).where(eq(users.email, req.newEmail)).limit(1))[0] as User | undefined;
-    if (taken && taken.id !== userId && taken.emailVerifiedAt) {
-      return { error: "Этот email уже используется другим аккаунтом" };
-    }
+          // Re-check the email is still free (race with another account) inside
+          // the same locked transaction.
+          const taken = (await tx.select().from(users).where(eq(users.email, req.newEmail)).limit(1))[0] as User | undefined;
+          if (taken && taken.id !== userId && taken.emailVerifiedAt) {
+            return { kind: "error" as const, error: "Этот email уже используется другим аккаунтом" };
+          }
 
-    const now = Date.now();
-    await db.update(emailChangeRequests).set({ consumed: true }).where(eq(emailChangeRequests.userId, userId));
-    // Audit HIGH #16: same read-then-write race as verifyPhoneChange above.
-    // The DB-level partial unique index on verified emails (bootstrap.ts) is
-    // the actual guarantee — surface the same error as the pre-check on the
-    // rare double-loss race instead of a raw 500.
-    try {
-      await db.update(users)
-        .set({ email: req.newEmail, emailVerifiedAt: now, updatedAt: now } as any)
-        .where(eq(users.id, userId));
-    } catch (err) {
-      if (!this.isUniqueViolation(err)) throw err;
-      return { error: "Этот email уже используется другим аккаунтом" };
-    }
+          const now = Date.now();
+          await tx.update(emailChangeRequests).set({ consumed: true }).where(eq(emailChangeRequests.userId, userId));
+          await tx.update(users)
+            .set({ email: req.newEmail, emailVerifiedAt: now, updatedAt: now } as any)
+            .where(eq(users.id, userId));
+          return { kind: "ok" as const };
+        });
+      } catch (err) {
+        // Belt-and-suspenders: the DB-level partial unique index on verified
+        // emails (bootstrap.ts) is the actual cross-user guarantee — on the
+        // rare double-loss race, surface the same error as the pre-check.
+        if (this.isUniqueViolation(err)) return { kind: "error" as const, error: "Этот email уже используется другим аккаунтом" };
+        throw err;
+      }
+    })();
+
+    if (outcome.kind === "error") return { error: outcome.error };
     return { user: (await this.getUser(userId))! };
   }
 
