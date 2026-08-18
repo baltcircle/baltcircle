@@ -42,6 +42,27 @@ import {
   otpLimiter, paymentLimiter,
 } from "./context";
 
+// Audit LOW: regenerate the session ID on every successful login/registration
+// (OTP verify, OAuth sign-in) instead of just writing userId onto whatever
+// session the request already carried. Without this, a session ID an
+// attacker fixed in the rider's browser BEFORE authentication (session
+// fixation) would become a valid authenticated session the moment the rider
+// logs in — handing the attacker access to it. express-session's
+// `regenerate` issues a brand-new session id/store row and clears any prior
+// data (here that's fine: OAuth's `oauthState` CSRF nonce has already been
+// verified and is no longer needed by this point in the flow).
+function regenerateSessionAndSetUser(req: Request, userId: string, onDone: (err: Error | null) => void): void {
+  req.session.regenerate((err) => {
+    if (err) {
+      log(`session regenerate failed for user ${userId}: ${err instanceof Error ? err.message : String(err)}`);
+      onDone(err instanceof Error ? err : new Error(String(err)));
+      return;
+    }
+    req.session.userId = userId;
+    req.session.save((saveErr) => onDone(saveErr ?? null));
+  });
+}
+
 export function registerAuthRoutes(app: Express): void {
   // -------------- Rider registration (SMS OTP) --------------
   // Step 1: rider submits name + phone + consent. We generate a code, persist
@@ -94,8 +115,12 @@ export function registerAuthRoutes(app: Express): void {
       consentIp: clientIp(req),
     });
     if ("error" in result) return res.status(400).json(result);
-    req.session.userId = result.user.id;
-    res.status(201).json(result.user);
+    // Audit LOW: regenerate the session (not just set userId) to prevent
+    // session fixation — see regenerateSessionAndSetUser above.
+    regenerateSessionAndSetUser(req, result.user.id, (err) => {
+      if (err) return res.status(500).json({ error: "Не удалось войти. Повторите позже" });
+      res.status(201).json(result.user);
+    });
   });
 
   // Public probe so the client can tell whether a real SMS provider is wired up.
@@ -520,8 +545,12 @@ async function completeOauthCallback(
     await storage.linkOauthIdentity({
       userId: user.id, provider, subject, email: providerEmail, displayName,
     });
-    req.session.userId = user.id;
-    return req.session.save(() => res.redirect(`/settings?oauth=signed-in&provider=${provider}`));
+    // Audit LOW: regenerate the session (not just set userId) to prevent
+    // session fixation — see regenerateSessionAndSetUser above.
+    return regenerateSessionAndSetUser(req, user.id, (err) => {
+      if (err) return res.redirect(`/settings?oauth=error&reason=session`);
+      res.redirect(`/settings?oauth=signed-in&provider=${provider}`);
+    });
   }
 
   // No match — we can't create an account without a phone. Redirect to the

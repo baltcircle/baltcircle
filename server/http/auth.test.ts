@@ -92,9 +92,20 @@ function request(opts: {
   params?: Record<string, string>;
   headers?: Record<string, string>;
 }) {
-  const session = opts.session ?? {};
+  const session: Record<string, any> = { ...(opts.session ?? {}) };
+  session.save = (cb: () => void) => cb();
+  // Mirrors express-session's real `regenerate`: wipes existing session data
+  // (session-fixation defense) before the caller re-populates userId, but
+  // keeps the same object reference so assertions on the passed-in `req`
+  // still see fields set after regenerate resolves.
+  session.regenerate = (cb: (err: Error | null) => void) => {
+    for (const key of Object.keys(session)) {
+      if (key !== "save" && key !== "regenerate") delete session[key];
+    }
+    cb(null);
+  };
   return {
-    session: { ...session, save: (cb: () => void) => cb() },
+    session,
     body: opts.body ?? {},
     query: opts.query ?? {},
     params: opts.params ?? {},
@@ -222,6 +233,23 @@ describe("POST /api/auth/otp/verify", () => {
     expect(req.session.userId).toBe("user-1");
     expect(res.code).toBe(201);
     expect(res.body).toMatchObject({ id: "user-1" });
+  });
+
+  it("regenerates the session id on login (audit LOW: session fixation)", async () => {
+    storageMock.verifyOtp.mockResolvedValue({ user: { id: "user-1", name: "Иван", phone: "+79991234567", role: "rider" } });
+    const { post } = routeApp();
+    const res = response();
+    // Simulate an attacker-fixed pre-auth session carrying unrelated data —
+    // it must be gone by the time the rider is logged in.
+    const req = request({ body: { phone: "+79991234567", code: "123456" }, session: { attackerPlanted: "evil" } });
+    const regenerateSpy = vi.spyOn(req.session, "regenerate");
+
+    await post.get("/api/auth/otp/verify")!(req, res);
+
+    expect(regenerateSpy).toHaveBeenCalledTimes(1);
+    expect(req.session.attackerPlanted).toBeUndefined();
+    expect(req.session.userId).toBe("user-1");
+    expect(res.code).toBe(201);
   });
 
   it("does not create a session on a wrong code", async () => {
@@ -601,6 +629,34 @@ describe("OAuth callback endpoints — CSRF/state validation", () => {
 
     await get.get("/api/auth/yandex/callback")!(req, res);
 
+    expect(req.session.userId).toBe("user-7");
+    expect(res.redirectedTo).toContain("oauth=signed-in&provider=yandex");
+    vi.unstubAllGlobals();
+  });
+
+  it("regenerates the session id on OAuth sign-in (audit LOW: session fixation)", async () => {
+    process.env.YANDEX_CLIENT_ID = "client-abc";
+    process.env.YANDEX_CLIENT_SECRET = "secret-xyz";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: "tok-1" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "yandex-42" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    storageMock.findUserByOauth.mockResolvedValue({ id: "user-7" });
+    storageMock.linkOauthIdentity.mockResolvedValue({ ok: true, identity: {} });
+    const { get } = routeApp();
+    const res = response();
+    const req = request({
+      // oauthState must survive up to the point it's verified, but the
+      // finished session must not carry it (or any pre-auth data) forward.
+      session: { oauthState: { yandex: "state-1" }, attackerPlanted: "evil" },
+      query: { code: "auth-code", state: "state-1" },
+    });
+    const regenerateSpy = vi.spyOn(req.session, "regenerate");
+
+    await get.get("/api/auth/yandex/callback")!(req, res);
+
+    expect(regenerateSpy).toHaveBeenCalledTimes(1);
+    expect(req.session.attackerPlanted).toBeUndefined();
     expect(req.session.userId).toBe("user-7");
     expect(res.redirectedTo).toContain("oauth=signed-in&provider=yandex");
     vi.unstubAllGlobals();
