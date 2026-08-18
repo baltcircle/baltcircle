@@ -100,6 +100,14 @@ function response() {
   return res;
 }
 
+// Mirrors server/http/payments.ts's toPublicPaymentMethod (audit LOW): the
+// GET /api/payment-methods and refresh endpoints strip rebillId/accountToken/
+// hashes/customerKey and add hasRebillId/hasAccountToken before responding.
+function toPublic(m: Record<string, unknown>) {
+  const { rebillId, accountToken, rebillIdHash, accountTokenHash, customerKey, ...safe } = m;
+  return { ...safe, hasRebillId: !!rebillId, hasAccountToken: !!accountToken };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   tbankMock.getTbankConfig.mockReturnValue({
@@ -225,7 +233,7 @@ describe("T-Bank polling activation duplicate protection", () => {
     );
 
     expect(storageMock.updatePaymentMethod).not.toHaveBeenCalled();
-    expect(res.body).toEqual(pendingMethod);
+    expect(res.body).toEqual(toPublic(pendingMethod));
   });
 
   it("returns an unchanged Init binding while pending without writing updatedAt", async () => {
@@ -246,7 +254,7 @@ describe("T-Bank polling activation duplicate protection", () => {
     );
 
     expect(storageMock.updatePaymentMethod).not.toHaveBeenCalled();
-    expect(res.body).toEqual(pendingMethod);
+    expect(res.body).toEqual(toPublic(pendingMethod));
   });
 
   it("marks a duplicate AddCard polling result failed instead of activating it", async () => {
@@ -487,7 +495,7 @@ describe("authoritative pending card-binding reconciliation", () => {
     expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(31, expect.objectContaining({
       status: "failed",
     }));
-    expect(res.body).toEqual([{ ...method, status: "failed" }]);
+    expect(res.body).toEqual([toPublic({ ...method, status: "failed" })]);
   });
 
   it("marks a cancelled Init binding as a benign cancellation during list reconciliation", async () => {
@@ -540,5 +548,28 @@ describe("authoritative pending card-binding reconciliation", () => {
       lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
     })]);
     expect((res.body as Array<{ status: string }>).some((method) => method.status === "pending")).toBe(false);
+  });
+
+  it("audit LOW: GET /api/payment-methods never exposes rebillId/accountToken/hashes/customerKey", async () => {
+    const { get } = routeApp();
+    const boundCard = {
+      id: 70, userId: "user-1", provider: "tbank", type: "card", status: "active",
+      cardId: "card-70", brand: "visa", label: "•••• 4242",
+      rebillId: "2004700000000070", rebillIdHash: "deadbeef",
+      accountToken: null, accountTokenHash: null,
+      customerKey: "user-1", requestKey: "request-70", paymentId: "payment-70",
+    };
+    storageMock.listPaymentMethods.mockResolvedValue([boundCard]);
+    const res = response();
+
+    await get.get("/api/payment-methods")!({ session: { userId: "user-1" } }, res);
+
+    const [returned] = res.body as Array<Record<string, unknown>>;
+    expect(returned).not.toHaveProperty("rebillId");
+    expect(returned).not.toHaveProperty("rebillIdHash");
+    expect(returned).not.toHaveProperty("accountToken");
+    expect(returned).not.toHaveProperty("accountTokenHash");
+    expect(returned).not.toHaveProperty("customerKey");
+    expect(returned).toMatchObject({ id: 70, hasRebillId: true, hasAccountToken: false, requestKey: "request-70" });
   });
 });

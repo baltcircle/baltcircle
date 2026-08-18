@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Bike, PaymentMethod } from "@shared/schema";
+import type { Bike, PublicPaymentMethod } from "@shared/schema";
 import {
   TBANK_CONFIG_KEY, PAYMENT_METHODS_KEY, type TbankConfigResponse,
 } from "@/lib/payment";
@@ -77,12 +77,12 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
 
   // The rider's linked payment methods, used to detect a saved card eligible for
   // a one-tap recurring charge (active T-Bank card with a RebillId).
-  const methodsQ = useQuery<PaymentMethod[]>({
+  const methodsQ = useQuery<PublicPaymentMethod[]>({
     queryKey: PAYMENT_METHODS_KEY,
     enabled: open,
   });
   const savedCard = (methodsQ.data ?? []).find(
-    (m) => m.type === "card" && m.status === "active" && m.provider === "tbank" && !!m.rebillId,
+    (m) => m.type === "card" && m.status === "active" && m.provider === "tbank" && m.hasRebillId,
   );
   const useSavedCard = !!savedCard && !useOtherCard;
 

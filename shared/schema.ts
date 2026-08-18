@@ -833,6 +833,15 @@ export const paymentMethods = pgTable("payment_methods", {
   index("idx_pm_account_hash").on(t.accountTokenHash),
 ]);
 export type PaymentMethod = typeof paymentMethods.$inferSelect;
+// Audit LOW: the client-visible shape of a PaymentMethod. The server never
+// sends rebillId/accountToken (charge-capable bearer tokens) or their blind-
+// index hashes/customerKey (internal correlation only) to the browser — see
+// toPublicPaymentMethod in server/http/payments.ts. hasRebillId/hasAccountToken
+// carry the only signal the frontend ever actually needs from those fields.
+export type PublicPaymentMethod = Omit<
+  PaymentMethod,
+  "rebillId" | "accountToken" | "rebillIdHash" | "accountTokenHash" | "customerKey"
+> & { hasRebillId: boolean; hasAccountToken: boolean };
 
 // Link a payment method. Only the type is client-supplied; the label/status are
 // derived server-side so no card data can be smuggled in through the label.

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { PaymentMethod } from "@shared/schema";
+import type { PublicPaymentMethod } from "@shared/schema";
 import {
   partitionPendingBindings,
   visiblePaymentMethods,
@@ -50,40 +50,40 @@ describe("PaymentMethodsPage binding controls", () => {
       label: "Карта (привязывается…)",
       status: "failed",
       lastErrorCode: "SUPERSEDED_BY_NEW_ATTEMPT",
-    } as PaymentMethod;
+    } as PublicPaymentMethod;
     const cancelled = {
       id: 6,
       type: "card",
       label: "Карта (привязывается…)",
       status: "failed",
       lastErrorCode: "BINDING_CANCELLED",
-    } as PaymentMethod;
+    } as PublicPaymentMethod;
     const authFail = {
       id: 7,
       type: "card",
       label: "Карта (привязывается…)",
       status: "failed",
       lastErrorCode: "AUTH_FAIL",
-    } as PaymentMethod;
+    } as PublicPaymentMethod;
     const noErrorCode = {
       id: 8,
       type: "card",
       label: "•••• 4242",
       status: "failed",
       lastErrorCode: null,
-    } as PaymentMethod;
+    } as PublicPaymentMethod;
     const active = {
       id: 9,
       type: "card",
       label: "•••• 4242",
       status: "active",
-    } as PaymentMethod;
+    } as PublicPaymentMethod;
     const pending = {
       id: 10,
       type: "sbp",
       label: "Счёт СБП (привязывается…)",
       status: "pending",
-    } as PaymentMethod;
+    } as PublicPaymentMethod;
 
     expect(visiblePaymentMethods([superseded, cancelled, authFail, noErrorCode, active, pending])).toEqual([active]);
   });
@@ -133,10 +133,10 @@ describe("PaymentMethodsPage binding controls", () => {
     const now = Date.now();
     const activeCard = {
       id: 1, type: "card", label: "•••• 4242", status: "active", createdAt: now - 86_400_000,
-    } as PaymentMethod;
+    } as PublicPaymentMethod;
     const freshPendingCard = {
       id: 2, type: "card", label: "Карта (привязывается…)", status: "pending", createdAt: now,
-    } as PaymentMethod;
+    } as PublicPaymentMethod;
 
     const { pollable, timedOut } = partitionPendingBindings([activeCard, freshPendingCard], now);
 
@@ -154,7 +154,7 @@ describe("PaymentMethodsPage binding controls", () => {
       createdAt: now - (3 * 60 * 1_000),
       // Mimics an old server version continuously touching this field.
       updatedAt: now,
-    } as PaymentMethod;
+    } as PublicPaymentMethod;
 
     const { pollable, timedOut } = partitionPendingBindings([repeatedlyPolledPendingCard], now);
 
@@ -171,7 +171,7 @@ describe("PaymentMethodsPage binding controls", () => {
       status: "pending",
       createdAt: now - (2 * 60 * 1_000),
       updatedAt: now - (60 * 60 * 1_000),
-    } as PaymentMethod;
+    } as PublicPaymentMethod;
 
     const { pollable, timedOut } = partitionPendingBindings([freshPendingCard], now);
 

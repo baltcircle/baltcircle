@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { OverlayShell } from "@/components/OverlayShell";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { PaymentMethod } from "@shared/schema";
+import type { PublicPaymentMethod } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
@@ -53,11 +53,11 @@ interface SbpBinding {
 }
 
 interface PendingBindingState {
-  pollable: PaymentMethod[];
-  timedOut: PaymentMethod[];
+  pollable: PublicPaymentMethod[];
+  timedOut: PublicPaymentMethod[];
 }
 
-export function visiblePaymentMethods(methods: PaymentMethod[]): PaymentMethod[] {
+export function visiblePaymentMethods(methods: PublicPaymentMethod[]): PublicPaymentMethod[] {
   return methods.filter((method) => method.status !== "pending" && method.status !== "failed");
 }
 
@@ -84,11 +84,11 @@ function createdAtMs(value: unknown): number | null {
 // Exported for the Node-only contract tests. In particular, active methods
 // must never participate in the timeout decision, regardless of their age.
 export function partitionPendingBindings(
-  methods: PaymentMethod[],
+  methods: PublicPaymentMethod[],
   now: number,
 ): PendingBindingState {
-  const pollable: PaymentMethod[] = [];
-  const timedOut: PaymentMethod[] = [];
+  const pollable: PublicPaymentMethod[] = [];
+  const timedOut: PublicPaymentMethod[] = [];
   for (const method of methods) {
     if (method.status !== "pending") continue;
     const createdAt = createdAtMs(method.createdAt);
@@ -101,7 +101,7 @@ export function partitionPendingBindings(
   return { pollable, timedOut };
 }
 
-async function refreshPendingMethod(method: PaymentMethod): Promise<PaymentMethod | null> {
+async function refreshPendingMethod(method: PublicPaymentMethod): Promise<PublicPaymentMethod | null> {
   let res: Response;
   if (method.type === "sbp" && method.requestKey) {
     res = await apiRequest("GET", `/api/payments/tbank/refresh-bind-sbp/${method.id}`);
@@ -112,13 +112,13 @@ async function refreshPendingMethod(method: PaymentMethod): Promise<PaymentMetho
   } else {
     return null;
   }
-  return (await res.json()) as PaymentMethod;
+  return (await res.json()) as PublicPaymentMethod;
 }
 
 // Use the same unlink endpoint as the pre-existing trash action. `pendingOnly`
 // makes the cleanup idempotent and prevents a timeout based on stale client
 // data from removing a method that has just been activated by a webhook.
-async function cancelTimedOutPendingMethod(method: PaymentMethod): Promise<void> {
+async function cancelTimedOutPendingMethod(method: PublicPaymentMethod): Promise<void> {
   await apiRequest("DELETE", `/api/payment-methods/${method.id}?pendingOnly=1`);
 }
 
@@ -134,7 +134,7 @@ export function PaymentMethodsPage() {
   const pendingBindingIds = useRef(new Set<number>());
   const lastPendingPollAt = useRef(0);
 
-  const methodsQ = useQuery<PaymentMethod[]>({ queryKey: METHODS_KEY });
+  const methodsQ = useQuery<PublicPaymentMethod[]>({ queryKey: METHODS_KEY });
   const methods = methodsQ.data ?? [];
   const visibleMethods = visiblePaymentMethods(methods);
 
@@ -761,7 +761,7 @@ function SbpBindModal({
 // Render the stored T-Bank binding error for a failed method. Combines the
 // acquirer's message/details with a parenthetical code when present; these
 // fields come straight from T-Bank and carry no secret.
-function methodError(m: PaymentMethod): string {
+function methodError(m: PublicPaymentMethod): string {
   const message = (m.lastErrorMessage || "").trim();
   const details = (m.lastErrorDetails || "").trim();
   const code = (m.lastErrorCode || "").trim();

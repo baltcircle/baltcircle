@@ -12,7 +12,7 @@ import {
   createTicketSchema, updateTicketSchema, addTicketCommentSchema,
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
 } from "@shared/schema";
-import type { PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
+import type { PaymentMethod, PaymentOrder, PublicPaymentMethod, Ride } from "@shared/schema";
 import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./../sms";
 import {
   getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
@@ -305,6 +305,23 @@ async function supersedePendingCardBindingsForUser(userId: string): Promise<void
   }, "[tbank] card-bind attempts superseded");
 }
 
+// Audit LOW: `rebillId` and `accountToken` are charge-capable bearer tokens
+// (whoever holds them can pull money from the rider's card/account via the
+// acquirer's recurring-charge API — see shared/schema.ts comments), and
+// `rebillIdHash`/`accountTokenHash`/`customerKey` are internal correlation
+// material the client never needs. No frontend code reads the raw token
+// value — `RentalStartModal.tsx` only ever checked truthiness — so every
+// client-facing PaymentMethod response is projected through this helper
+// instead of returning the raw DB row. `hasRebillId`/`hasAccountToken` give
+// the client the same information it actually uses.
+function toPublicPaymentMethod(m: PaymentMethod): PublicPaymentMethod {
+  const { rebillId, accountToken, rebillIdHash, accountTokenHash, customerKey, ...safe } = m;
+  return { ...safe, hasRebillId: !!rebillId, hasAccountToken: !!accountToken };
+}
+function toPublicPaymentMethodOrNull(m: PaymentMethod | undefined | null): PublicPaymentMethod | null {
+  return m ? toPublicPaymentMethod(m) : null;
+}
+
 export function registerPaymentRoutes(app: Express): void {
   // -------------- Payment methods (MVP metadata only) --------------
   // Per-user linked payment methods. No card numbers / CVC are ever accepted or
@@ -314,18 +331,18 @@ export function registerPaymentRoutes(app: Express): void {
     const userId = riderId(req);
     const methods = await storage.listPaymentMethods(userId);
     const cfg = getTbankConfig();
-    if (!cfg) return res.json(methods);
+    if (!cfg) return res.json(methods.map(toPublicPaymentMethod));
 
     // A page visit is a return from the hosted form just as much as a webhook
     // is. Resolve every pending card before returning the list, so abandoned
     // rows cannot become a durable UI/database state.
     await reconcilePendingCardBindingsForUser(userId, cfg, methods);
-    res.json(await storage.listPaymentMethods(userId));
+    res.json((await storage.listPaymentMethods(userId)).map(toPublicPaymentMethod));
   });
   app.post("/api/payment-methods", requireAuth, async (req, res) => {
     const parsed = linkPaymentMethodSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-    res.status(201).json(await storage.linkPaymentMethod(riderId(req), parsed.data.type));
+    res.status(201).json(toPublicPaymentMethod(await storage.linkPaymentMethod(riderId(req), parsed.data.type)));
   });
   app.delete("/api/payment-methods/:id", requireAuth, async (req, res) => {
     const userId = riderId(req);
@@ -567,7 +584,7 @@ export function registerPaymentRoutes(app: Express): void {
       return res.status(400).json({ error: "Для этого способа оплаты проверка статуса недоступна." });
     }
     if (method.status === "active") {
-      return res.json(method); // already resolved; nothing to poll
+      return res.json(toPublicPaymentMethod(method)); // already resolved; nothing to poll
     }
 
     const cfg = getTbankConfig();
@@ -601,19 +618,19 @@ export function registerPaymentRoutes(app: Express): void {
         lastErrorMessage: null,
         lastErrorDetails: null,
       });
-      return res.json(updated);
+      return res.json(toPublicPaymentMethodOrNull(updated));
     }
     if (outcome === "failed") {
       const updated = await storage.updatePaymentMethod(method.id, {
         status: "failed",
         ...bindingErrorPatch(resp),
       });
-      return res.json(updated);
+      return res.json(toPublicPaymentMethodOrNull(updated));
     }
     // Still pending — report the row unchanged. Although SBP does not take
     // part in the card-binding guard, status polling should not manufacture a
     // lifecycle update when the acquirer has reported no transition.
-    return res.json(method);
+    return res.json(toPublicPaymentMethod(method));
   });
 
   // Start a ride by paying its tariff up front via an ordinary T-Bank payment
@@ -1086,14 +1103,14 @@ export function registerPaymentRoutes(app: Express): void {
     if (method.provider !== "tbank" || !method.requestKey) {
       return res.status(400).json({ error: "Для этого способа оплаты проверка статуса недоступна." });
     }
-    if (method.status !== "pending") return res.json(method);
+    if (method.status !== "pending") return res.json(toPublicPaymentMethod(method));
 
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
     if (await reconcilePendingCardBinding(method, cfg) === "unavailable") {
       return res.status(502).json({ error: "Не удалось проверить статус. Попробуйте позже." });
     }
-    return res.json(await storage.getPaymentMethod(method.id));
+    return res.json(toPublicPaymentMethodOrNull(await storage.getPaymentMethod(method.id)));
   });
 
   // Refresh a pending Init+Recurrent binding through the same reconciliation
@@ -1112,14 +1129,14 @@ export function registerPaymentRoutes(app: Express): void {
     if (method.provider !== "tbank" || !method.paymentId) {
       return res.status(400).json({ error: "Для этого способа оплаты проверка статуса недоступна." });
     }
-    if (method.status !== "pending") return res.json(method);
+    if (method.status !== "pending") return res.json(toPublicPaymentMethod(method));
 
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
     if (await reconcilePendingCardBinding(method, cfg) === "unavailable") {
       return res.status(502).json({ error: "Не удалось проверить статус. Попробуйте позже." });
     }
-    return res.json(await storage.getPaymentMethod(method.id));
+    return res.json(toPublicPaymentMethodOrNull(await storage.getPaymentMethod(method.id)));
   });
 
 }
