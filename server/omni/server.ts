@@ -220,6 +220,27 @@ export class OmniTcpServer {
     });
   }
 
+  /**
+   * Forcibly cut off a lock the moment it is decommissioned (audit F-09).
+   * `bind()` already refuses NEW connections for a decommissioned IMEI, but
+   * that alone leaves two gaps: a socket that authenticated and attached
+   * *before* the decommission stays live — still reporting telemetry and
+   * still reachable by `sendUnlockCommand()` — and the positive `imeiCache`
+   * entry (up to IMEI_CACHE_TTL_MS old) would let an immediate reconnect
+   * skip the DB re-check entirely. Both close here: destroying the live
+   * socket runs the normal `release()` teardown (flips `bikes.lock_online`
+   * back to false, rejects any pending unlock command), and dropping the
+   * cache entry forces the next connection attempt — from this device or a
+   * spoofed one reusing the IMEI — through a fresh `resolveLock()` DB check.
+   */
+  revokeImei(imei: string): void {
+    this.imeiCache.delete(imei);
+    const conn = this.byImei.get(imei);
+    if (!conn) return;
+    this.log.warn({ imei, connId: conn.id }, "revoking connected lock: decommissioned by admin");
+    conn.destroy("decommissioned_by_admin");
+  }
+
   async close(): Promise<void> {
     if (this.offlineSweepTimer !== null) clearInterval(this.offlineSweepTimer);
     this.offlineSweepTimer = null;
@@ -608,8 +629,14 @@ class OmniConnection {
 
     const parsed = parseDeviceFrame(text);
     if (!parsed.ok) {
+      // Audit F-10: the raw frame used to be logged (truncated to 200 chars)
+      // for debugging. A malformed frame is, by definition, unparsed input
+      // from the public internet — it can carry an IMEI/ICCID/userId, or
+      // whatever a future field ends up being, and none of that belongs in
+      // logs. Length + reject reason is enough to diagnose a framing bug
+      // without recording raw device payloads.
       this.log.warn(
-        { connId: this.id, imei: this.imei, reason: parsed.reason, frame: truncate(text) },
+        { connId: this.id, imei: this.imei, reason: parsed.reason, frameLength: text.length },
         "rejecting malformed frame",
       );
       return;
@@ -763,10 +790,6 @@ export function buildTelemetry(
       // telemetry, so they do not belong in bike_telemetry.
       return null;
   }
-}
-
-function truncate(text: string, max = 200): string {
-  return text.length <= max ? text : `${text.slice(0, max)}...`;
 }
 
 function unlockKey(imei: string, userId: string, timestampSeconds: number): string {

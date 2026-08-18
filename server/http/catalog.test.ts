@@ -322,4 +322,65 @@ describe("lock device registry admin CRUD", () => {
     expect(res.body.status).toBe("decommissioned");
     expect(storageMock.decommissionLock).toHaveBeenCalledWith(7);
   });
+
+  // Audit F-09: decommissioning must not just flip the DB row — it has to
+  // reach the live OMNI gateway so an already-connected socket for that
+  // lock is cut off immediately, not left running until it disconnects on
+  // its own.
+  it("revokes the gateway connection when a lock is decommissioned via DELETE", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.decommissionLock.mockResolvedValue({
+      lock: { ...registeredLock, status: "decommissioned" },
+    });
+    const revokeImei = vi.fn();
+    setLockGateway({ revokeImei } as any);
+
+    const res = await lockRequest("/api/admin/locks/7", "DELETE");
+
+    expect(res.status).toBe(200);
+    expect(revokeImei).toHaveBeenCalledWith(registeredLock.imei);
+  });
+
+  it("revokes the gateway connection when a lock is decommissioned via PATCH", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.updateLock.mockResolvedValue({
+      lock: { ...registeredLock, status: "decommissioned" },
+    });
+    const revokeImei = vi.fn();
+    setLockGateway({ revokeImei } as any);
+
+    const res = await lockRequest("/api/admin/locks/7", "PATCH", { status: "decommissioned" });
+
+    expect(res.status).toBe(200);
+    expect(revokeImei).toHaveBeenCalledWith(registeredLock.imei);
+  });
+
+  it("does not revoke anything for a PATCH that leaves the lock active", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.updateLock.mockResolvedValue({ lock: { ...registeredLock, status: "offline" } });
+    const revokeImei = vi.fn();
+    setLockGateway({ revokeImei } as any);
+
+    const res = await lockRequest("/api/admin/locks/7", "PATCH", { status: "offline" });
+
+    expect(res.status).toBe(200);
+    expect(revokeImei).not.toHaveBeenCalled();
+  });
+
+  it("does not crash decommissioning a lock when the OMNI gateway is offline", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.decommissionLock.mockResolvedValue({
+      lock: { ...registeredLock, status: "decommissioned" },
+    });
+    setLockGateway(null); // gateway process not running — must be best-effort.
+
+    const res = await lockRequest("/api/admin/locks/7", "DELETE");
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("decommissioned");
+  });
 });

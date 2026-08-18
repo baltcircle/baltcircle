@@ -135,36 +135,48 @@ export class PgOmniStore implements OmniStore {
   }
 
   async persistLockReport(imei: string, message: OmniMessage, at: number): Promise<void> {
+    // Audit F-08: reports for one IMEI are decoded in arrival order but their
+    // async DB writes race in the pool, so an earlier (older) report's
+    // UPDATE can complete after a later (newer) one's. GREATEST() alone kept
+    // last_seen_at monotonic while every other field — lock state, GPS fix,
+    // battery, alarm — was still applied unconditionally, so a stale write
+    // landing last could silently overwrite fresher state while last_seen_at
+    // kept ticking forward. Guarding the WHOLE row update on "this report is
+    // not older than what is already stored" makes each UPDATE atomic: a
+    // stale report is a no-op instead of a partial overwrite, and
+    // last_seen_at can just be set to $2 directly — the guard already
+    // proves $2 is the newest value.
+    const NEWEST_REPORT_GUARD = "AND (last_seen_at IS NULL OR last_seen_at <= $2)";
     const base = `status = CASE WHEN status = 'decommissioned' THEN status ELSE 'active' END,
-      last_seen_at = GREATEST(COALESCE(last_seen_at, 0), $2), updated_at = $2`;
+      last_seen_at = $2, updated_at = $2`;
     const voltage = (cv: number) => cv / 100;
     switch (message.type) {
       case "checkin":
-        await pool.query(`UPDATE locks SET ${base}, last_battery_voltage = $3 WHERE imei = $1`,
+        await pool.query(`UPDATE locks SET ${base}, last_battery_voltage = $3 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
           [imei, at, voltage(message.voltageCv)]);
         return;
       case "heartbeat":
         await pool.query(`UPDATE locks SET ${base}, last_lock_state = $3,
-          last_battery_voltage = $4, last_signal_strength = $5 WHERE imei = $1`,
+          last_battery_voltage = $4, last_signal_strength = $5 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
           [imei, at, message.locked ? "locked" : "unlocked", voltage(message.voltageCv), message.signal]);
         return;
       case "position":
         if (message.valid && message.fix) {
           await pool.query(`UPDATE locks SET ${base}, last_latitude = $3,
-            last_longitude = $4, last_location_at = $2 WHERE imei = $1`,
+            last_longitude = $4, last_location_at = $2 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
             [imei, at, message.fix.lat, message.fix.lng]);
         } else {
-          await pool.query(`UPDATE locks SET ${base} WHERE imei = $1`, [imei, at]);
+          await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
         }
         return;
       case "alarm": {
         const alarmType = ({ 1: "illegal_movement", 2: "fall", 6: "fall_cleared" } as Record<number, string>)[message.code] ?? String(message.code);
-        await pool.query(`UPDATE locks SET ${base}, last_alarm_type = $3, last_alarm_at = $2 WHERE imei = $1`,
+        await pool.query(`UPDATE locks SET ${base}, last_alarm_type = $3, last_alarm_at = $2 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
           [imei, at, alarmType]);
         return;
       }
       case "lockReport": {
-        await pool.query(`UPDATE locks SET ${base}, last_lock_state = 'locked' WHERE imei = $1`, [imei, at]);
+        await pool.query(`UPDATE locks SET ${base}, last_lock_state = 'locked' WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
         // Audit F-04: this is a device-autonomous report of a physical close
         // that already happened — there is no way for the server to have
         // prevented it. If a ride is still "active" on this lock's bike, the
@@ -183,17 +195,17 @@ export class PgOmniStore implements OmniStore {
         return;
       }
       case "firmware":
-        await pool.query(`UPDATE locks SET ${base}, firmware_version = $3, device_type_code = $4 WHERE imei = $1`,
+        await pool.query(`UPDATE locks SET ${base}, firmware_version = $3, device_type_code = $4 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
           [imei, at, message.firmwareVersion, message.deviceTypeCode]);
         return;
       case "iccid":
-        await pool.query(`UPDATE locks SET ${base}, sim_iccid = $3 WHERE imei = $1`, [imei, at, message.simIccid]);
+        await pool.query(`UPDATE locks SET ${base}, sim_iccid = $3 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at, message.simIccid]);
         return;
       case "mac":
-        await pool.query(`UPDATE locks SET ${base}, mac_address = $3 WHERE imei = $1`, [imei, at, message.macAddress]);
+        await pool.query(`UPDATE locks SET ${base}, mac_address = $3 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at, message.macAddress]);
         return;
       default:
-        await pool.query(`UPDATE locks SET ${base} WHERE imei = $1`, [imei, at]);
+        await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
     }
   }
 
@@ -274,15 +286,22 @@ export class PgOmniStore implements OmniStore {
       ];
       return `(${cells.join(",")})`;
     });
+    // Audit F-08: same reordering hazard as persistLockReport — flushes are
+    // batched every writer flush interval and their queries can complete out
+    // of program order, so an older buffered position/battery reading must
+    // not be allowed to overwrite a newer one that already landed. Guarding
+    // on "this row's t is not older than the bike's current last_seen" makes
+    // the update a no-op for a stale row instead of a partial overwrite, so
+    // last_seen/lock_last_seen can be set to v.t directly.
     await pool.query(
       `UPDATE bikes AS b SET
          lng = COALESCE(v.x, b.lng),
          lat = COALESCE(v.y, b.lat),
          battery = COALESCE(v.battery_pct, b.battery),
-         last_seen = GREATEST(b.last_seen, v.t),
-         lock_last_seen = GREATEST(COALESCE(b.lock_last_seen, 0), v.t)
+         last_seen = v.t,
+         lock_last_seen = v.t
        FROM (VALUES ${tuples.join(",")}) AS v(bike_id, x, y, battery_pct, t)
-       WHERE b.id = v.bike_id`,
+       WHERE b.id = v.bike_id AND (b.last_seen IS NULL OR b.last_seen <= v.t)`,
       params,
     );
   }

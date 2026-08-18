@@ -244,6 +244,10 @@ export function registerCatalogRoutes(app: Express): void {
     }
     const result = await storage.updateLock(id, parsed.data);
     if ("error" in result) return res.status(404).json(result);
+    // Audit F-09: a PATCH can decommission a lock too, not just DELETE below
+    // — either path must cut off an already-connected socket immediately
+    // rather than waiting for it to disconnect on its own.
+    if (result.lock.status === "decommissioned") getLockGateway()?.revokeImei(result.lock.imei);
     res.json(result.lock);
   });
   app.delete("/api/admin/locks/:id", requireRole("operator", "admin"), async (req, res) => {
@@ -251,6 +255,10 @@ export function registerCatalogRoutes(app: Express): void {
     if (!Number.isSafeInteger(id) || id < 1) return res.status(404).json({ error: "Замок не найден" });
     const result = await storage.decommissionLock(id);
     if ("error" in result) return res.status(404).json(result);
+    // Audit F-09: decommission alone does not disconnect a live socket —
+    // without this the retired/stolen device keeps reporting telemetry and
+    // stays reachable by sendUnlockCommand() until it disconnects on its own.
+    getLockGateway()?.revokeImei(result.lock.imei);
     res.json(result.lock);
   });
   app.post("/api/admin/bikes/:id/archive", requireRole("operator", "admin"), async (req, res) => {

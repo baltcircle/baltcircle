@@ -274,6 +274,56 @@ describe("connection lifecycle", () => {
     expect(store.sightings.has(DECOMMISSIONED_IMEI)).toBe(false);
   });
 
+  // Audit F-09 residual gap: bind() already fail-closes NEW connections for a
+  // decommissioned IMEI, but a socket that authenticated *before* the
+  // decommission previously stayed live — revokeImei() is what
+  // DELETE/PATCH /api/admin/locks now calls to close that gap.
+  it("disconnects an already-connected lock the moment it is decommissioned (audit F-09)", async () => {
+    const { server, store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+    expect(server.connectionCount).toBe(1);
+
+    // Simulate the admin action: the registry row flips to decommissioned...
+    store.registry.set(IMEI_A, { bikeId: "bike-a", status: "decommissioned" });
+    // ...and the HTTP handler tells the gateway to cut the live socket off.
+    server.revokeImei(IMEI_A);
+
+    await waitFor(() => server.connectionCount === 0);
+    expect(store.onlineCalls.at(-1)).toEqual({ imei: IMEI_A, online: false });
+
+    // Defense in depth: with the socket gone, an unlock command can no
+    // longer be delivered to this device under any circumstances.
+    await expect(server.sendUnlockCommand(IMEI_A, "1234")).rejects.toThrow(
+      /not connected/,
+    );
+  });
+
+  it("does not let a decommissioned lock reconnect within the auth cache TTL (audit F-09)", async () => {
+    const { server, store, lock } = await harness();
+    const resolveLockSpy = vi.spyOn(store, "resolveLock");
+
+    const first = await lock(IMEI_A);
+    first.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+    expect(resolveLockSpy).toHaveBeenCalledTimes(1);
+
+    // Decommission while the cache still holds a fresh positive result for
+    // this IMEI (well inside the 60s TTL). Without evicting the cache entry,
+    // a reconnect here would be waved through from cache without ever
+    // re-checking the (now decommissioned) registry row.
+    store.registry.set(IMEI_A, { bikeId: "bike-a", status: "decommissioned" });
+    server.revokeImei(IMEI_A);
+    await waitFor(() => server.connectionCount === 0);
+
+    const second = await lock(IMEI_A);
+    second.sendCheckin();
+
+    await waitFor(() => resolveLockSpy.mock.calls.length === 2);
+    expect(server.connectionCount).toBe(0);
+    expect(store.onlineCalls.filter((c) => c.online === true)).toHaveLength(1);
+  });
 
   it("records a sighting of an unregistered lock so it can be assigned later", async () => {
     const { server, store, lock } = await harness();
