@@ -219,11 +219,19 @@ const MODELS = ["BC Cruiser", "BC Comfort", "BC City+", "BC Lite"];
 // Bump this whenever the demo geography/seed data changes so existing databases
 // get refreshed automatically on next startup (MVP demo data — safe to wipe &
 // reseed, it carries no real user data).
-const DEMO_DATA_VERSION = 6;
+const DEMO_DATA_VERSION = 7;
 
-// Demo fleet size — kept small so QR/rental + admin tables have data without
-// flooding the map/tables.
-const DEMO_BIKE_COUNT = 5;
+// v7: product has moved past the demo-fleet phase — the fleet is now real,
+// operator-added bikes (seed = FALSE), starting with the one already live.
+// DEMO_BIKE_COUNT = 0 stops seeding/reseeding any fake BC-00N bikes; the
+// version bump triggers a one-time reseed on next boot that runs the
+// existing `DELETE FROM bikes WHERE seed = TRUE` cleanup (guarded above to
+// skip any seed bike a real rider actually used) so any leftover demo bikes
+// from before this change are removed without touching the real fleet.
+// Parkings/zones stay seeded — that's real operating geography, not fake
+// fleet data, and operator-added bikes/parkings (seed = FALSE) are never
+// touched by any DELETE in this file regardless of this constant.
+const DEMO_BIKE_COUNT = 0;
 
 function seedRng(seed: number) {
   let s = seed >>> 0;
@@ -259,8 +267,11 @@ async function populateDemoData(client: pg.PoolClient) {
     );
   }
 
-  // Bikes — a small sample fleet placed near parkings, all "available". Must
-  // run AFTER the parkings loop above (see comment there).
+  // Bikes — demo fleet, placed near parkings, all "available". Must run
+  // AFTER the parkings loop above (see comment there). DEMO_BIKE_COUNT is 0
+  // since v7 (real operator-added fleet in production) — this loop is dead
+  // code at runtime but left in place rather than deleted, so a future demo/
+  // staging environment can bump the constant back up without restoring code.
   for (let i = 1; i <= DEMO_BIKE_COUNT; i++) {
     const id = `BC-${String(i).padStart(3, "0")}`;
     const model = MODELS[i % MODELS.length];
