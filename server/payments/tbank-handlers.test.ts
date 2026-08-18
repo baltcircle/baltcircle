@@ -59,6 +59,7 @@ import {
   refundVerificationCharge,
   bindViaVerificationPayment,
   extractLast4FromLabel,
+  tbankErrorBody,
 } from "./tbank-handlers";
 import type { TbankConfig } from "../tbank";
 
@@ -794,5 +795,43 @@ describe("refundVerificationCharge concurrency guard (claimRefund)", () => {
     expect(storageMock.claimRefund).toHaveBeenCalledTimes(2);
     // Exactly one /Cancel attempt for the shared PaymentId, never two.
     expect(tbankRefundVerificationChargeMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Audit LOW: tbankErrorBody must not leak T-Bank's internal/integration
+// error codes (misconfiguration, validation, infra) to the client — only a
+// curated allowlist of rider-actionable card-decline codes.
+describe("tbankErrorBody (audit LOW: rider-facing error allowlist)", () => {
+  it("forwards the acquirer's own message for a known rider-facing decline code", () => {
+    const body = tbankErrorBody({ ErrorCode: "1051", Message: "Недостаточно средств на карте" });
+    expect(body).toEqual({ error: "Недостаточно средств на карте", code: "1051", message: "Недостаточно средств на карте", details: undefined });
+  });
+
+  it("collapses a terminal-misconfiguration code (204) to the generic message and logs the raw detail", () => {
+    const body = tbankErrorBody({ ErrorCode: "204", Message: "Неверный токен. Проверьте пару TerminalKey/SecretKey" });
+    expect(body).toEqual({ error: "Платёжный сервис отклонил операцию. Попробуйте позже или другую карту.", code: undefined, message: undefined, details: undefined });
+    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("204"), "tbank");
+  });
+
+  it("collapses an internal-system code (9999) to the generic message", () => {
+    const body = tbankErrorBody({ ErrorCode: "9999", Message: "Внутренняя ошибка системы" });
+    expect(body.error).toBe("Платёжный сервис отклонил операцию. Попробуйте позже или другую карту.");
+    expect(body.code).toBeUndefined();
+    expect(body.message).toBeUndefined();
+  });
+
+  it("collapses a parameter-validation code (5) even without a code being forwarded", () => {
+    const body = tbankErrorBody({ ErrorCode: "5", Message: "Неверный запрос" });
+    expect(body).toEqual({ error: "Платёжный сервис отклонил операцию. Попробуйте позже или другую карту.", code: undefined, message: undefined, details: undefined });
+  });
+
+  it("falls back to the generic message when the acquirer sends no ErrorCode at all", () => {
+    const body = tbankErrorBody({});
+    expect(body).toEqual({ error: "Платёжный сервис отклонил операцию. Попробуйте позже или другую карту.", code: undefined, message: undefined, details: undefined });
+  });
+
+  it("prefers Details over the generic fallback when Message is absent, for an allowlisted code", () => {
+    const body = tbankErrorBody({ ErrorCode: "1091", Details: "Превышен лимит операций по карте" });
+    expect(body).toEqual({ error: "Превышен лимит операций по карте", code: "1091", message: undefined, details: "Превышен лимит операций по карте" });
   });
 });

@@ -62,12 +62,38 @@ export async function startRideForPaidOrder(
   return { ok: true, rideId };
 }
 
-// Build a sanitized error body for a rejected T-Bank operation. Surfaces the
-// acquirer's own ErrorCode / Message / Details so the rider (and support) can
-// see *why* the operation failed instead of an opaque generic message. These
-// fields are produced by T-Bank and carry no terminal secret (the password is
-// never echoed back), so they are safe to forward. A friendly fallback message
-// is always provided when T-Bank returns nothing useful.
+// Audit LOW: T-Bank's ErrorCode/Message/Details are acquirer-internal
+// diagnostics, not all of them meant for the end rider. Most codes ARE
+// genuinely useful decline reasons ("insufficient funds", "try another
+// card"), but some flag our OWN integration being broken — e.g. 204/205
+// ("Неверный токен. Проверьте пару TerminalKey/SecretKey") reveal that the
+// terminal password/signature is misconfigured, 202 ("Терминал заблокирован")
+// and 10 ("Метод Charge заблокирован для данного терминала") reveal terminal-
+// level business state, and 3/9999/50-64/2xx are opaque internal-system or
+// request-validation codes aimed at developers, not riders. Handing any of
+// these to an unauthenticated or probing client leaks integration internals
+// for no rider benefit. Full list: developer.tinkoff.ru/eacq/intro/errors.
+//
+// Only forward the acquirer's own text for a curated allowlist of
+// rider-actionable card-decline codes; everything else collapses to one
+// generic message. The raw code/message/details are always logged
+// server-side (support/debugging never loses information) — only the
+// client-facing response is filtered.
+const RIDER_FACING_TBANK_ERROR_CODES: ReadonlySet<string> = new Set([
+  "54", "99", "101", "219", "252",
+  "1006", "1012", "1013", "1014", "1030", "1033",
+  "1034", "1035", "1036", "1037", "1038", "1039", "1040", "1041", "1042", "1043",
+  "1051", "1054", "1057", "1065", "1082", "1089", "1091", "1096",
+]);
+
+const GENERIC_TBANK_DECLINE_MESSAGE =
+  "Платёжный сервис отклонил операцию. Попробуйте позже или другую карту.";
+
+// Build a sanitized error body for a rejected T-Bank operation — the single
+// choke point used both for a live acquirer response (tbankErrorBody) and for
+// error fields already persisted on an order/payment-method row (see
+// server/http/payments.ts ride/wallet status endpoints), so the same
+// allowlist policy applies everywhere T-Bank error detail can reach a client.
 export function tbankErrorBody(resp: {
   ErrorCode?: string;
   Message?: string;
@@ -77,11 +103,15 @@ export function tbankErrorBody(resp: {
   const message = (resp.Message ?? "").trim();
   const details = (resp.Details ?? "").trim();
 
+  if (!RIDER_FACING_TBANK_ERROR_CODES.has(code)) {
+    if (code || message || details) {
+      log(`[tbank] suppressed non-rider-facing error from client response: code=${code || "?"} message=${message || "?"} details=${details || "?"}`, "tbank");
+    }
+    return { error: GENERIC_TBANK_DECLINE_MESSAGE };
+  }
+
   // Prefer the acquirer's human message, then its details, then a fallback.
-  const error =
-    message ||
-    details ||
-    "Платёжный сервис отклонил операцию. Попробуйте позже или другую карту.";
+  const error = message || details || GENERIC_TBANK_DECLINE_MESSAGE;
 
   return {
     error,

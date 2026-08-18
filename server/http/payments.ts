@@ -916,6 +916,19 @@ export function registerPaymentRoutes(app: Express): void {
     if (!order || order.userId !== userId) {
       return res.status(404).json({ error: "Заказ не найден" });
     }
+    // Audit LOW: only a status="failed" order's lastError* came straight from
+    // a live T-Bank rejection (bindingErrorPatch(resp)), so only that case
+    // needs the tbankErrorBody rider-facing allowlist. Any other status
+    // (e.g. "paid" with lastErrorMessage explaining a post-charge ride-start
+    // failure) carries OUR OWN already-safe diagnostic text, never a raw
+    // acquirer code, and passes through unfiltered.
+    const failureDetail = order.status === "failed"
+      ? tbankErrorBody({
+          ErrorCode: order.lastErrorCode ?? undefined,
+          Message: order.lastErrorMessage ?? undefined,
+          Details: order.lastErrorDetails ?? undefined,
+        })
+      : { error: order.lastErrorMessage ?? undefined, code: undefined, message: undefined, details: undefined };
     res.json({
       orderId: order.orderId,
       status: order.status,
@@ -923,13 +936,10 @@ export function registerPaymentRoutes(app: Express): void {
       tariffId: order.tariffId,
       amountKopecks: order.amountKopecks,
       rideId: order.rideId,
-      // Acquirer failure detail (non-secret values only) so the result page can
-      // show WHY a payment was declined — code/message/details for debugging
-      // test-card issues, plus a short human message in `error` for the headline.
-      error: order.lastErrorMessage ?? undefined,
-      errorCode: order.lastErrorCode ?? undefined,
-      errorMessage: order.lastErrorMessage ?? undefined,
-      errorDetails: order.lastErrorDetails ?? undefined,
+      error: failureDetail.error,
+      errorCode: failureDetail.code,
+      errorMessage: failureDetail.message,
+      errorDetails: failureDetail.details,
     });
   });
 
@@ -1004,14 +1014,24 @@ export function registerPaymentRoutes(app: Express): void {
     if (!order || order.userId !== userId) {
       return res.status(404).json({ error: "Заказ не найден" });
     }
+    // Audit LOW: see the analogous ride-order endpoint above — only a
+    // status="failed" order's lastError* is a raw T-Bank rejection that needs
+    // the tbankErrorBody rider-facing allowlist.
+    const failureDetail = order.status === "failed"
+      ? tbankErrorBody({
+          ErrorCode: order.lastErrorCode ?? undefined,
+          Message: order.lastErrorMessage ?? undefined,
+          Details: order.lastErrorDetails ?? undefined,
+        })
+      : { error: order.lastErrorMessage ?? undefined, code: undefined, message: undefined, details: undefined };
     res.json({
       orderId: order.orderId,
       status: order.status,
       amountKopecks: order.amountKopecks,
-      error: order.lastErrorMessage ?? undefined,
-      errorCode: order.lastErrorCode ?? undefined,
-      errorMessage: order.lastErrorMessage ?? undefined,
-      errorDetails: order.lastErrorDetails ?? undefined,
+      error: failureDetail.error,
+      errorCode: failureDetail.code,
+      errorMessage: failureDetail.message,
+      errorDetails: failureDetail.details,
     });
   });
 
