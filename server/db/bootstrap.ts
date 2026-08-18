@@ -361,7 +361,26 @@ async function bootstrapDemoData() {
     // Bikes BEFORE parkings — bikes.parking_id now has a real FOREIGN KEY to
     // parkings.id (see populateDemoData comment above); deleting the parking
     // row first would fail with 23503 while a seed bike still points at it.
-    await client.query(`DELETE FROM bikes    WHERE seed = TRUE`);
+    //
+    // A seed bike (BC-001..BC-005) is a real, rentable point on the public
+    // map — a genuine non-demo rider can rent one. Their ride/payment_order
+    // row is intentionally NOT covered by the DEMO_USERS filters above (it's
+    // real user data, not demo fixtures), so it can still exist here. Since
+    // rides.bike_id and payment_orders.bike_id now also carry real FOREIGN
+    // KEYs to bikes.id, hard-deleting a seed bike that a real rider actually
+    // used would fail with 23503 and crash the entire bootstrap sequence
+    // (bootstrapReady), i.e. the server would refuse to start on the next
+    // DEMO_DATA_VERSION bump. Exclude any seed bike still referenced by a
+    // ride or payment order — it's left in place (mirroring deleteBike's own
+    // archive-instead-of-delete fallback) and gets its non-id fields
+    // refreshed in place by populateDemoData's INSERT ... ON CONFLICT DO
+    // UPDATE below instead of being deleted and reinserted.
+    await client.query(`
+      DELETE FROM bikes
+      WHERE seed = TRUE
+        AND id NOT IN (SELECT bike_id FROM rides)
+        AND id NOT IN (SELECT bike_id FROM payment_orders)
+    `);
     await client.query(`DELETE FROM parkings WHERE seed = TRUE`);
     await populateDemoData(client);
     await client.query(
