@@ -194,7 +194,7 @@ export interface IWalletStorage {
   // explicit non-production test fixture — never behind a bare client request
   // (audit CRITICAL #1: this used to be reachable directly from HTTP).
   topUp(userId: string, amount: number): Promise<{ wallet: Wallet; payment: Payment }>;
-  purchaseTariff(userId: string, tariff: string, price: number, durationMs: number): Promise<{ wallet: Wallet; payment: Payment }>;
+  purchaseTariff(userId: string, tariff: string, price: number, durationMs: number, idempotencyKey?: string): Promise<{ wallet: Wallet; payment: Payment }>;
   listPayments(userId: string): Promise<Payment[]>;
   // T-Bank wallet top-up orders (pay now, credit balance once confirmed)
   createWalletTopupOrder(input: { orderId: string; userId: string; amountKopecks: number }): Promise<WalletTopupOrder>;

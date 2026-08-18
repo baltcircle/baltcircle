@@ -36,6 +36,7 @@ import {
   requireRole, requireAuth, requireRoleWhenConfigured,
   otpLimiter, paymentLimiter,
 } from "./context";
+import { readIdempotencyKey } from "./payments";
 
 export function registerWalletRoutes(app: Express): void {
   // -------------- Wallet / Payments --------------
@@ -64,7 +65,16 @@ export function registerWalletRoutes(app: Express): void {
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     res.json(await storage.topUp(riderId(req), Math.round(parsed.data.amount * 100)));
   });
+  // Audit MEDIUM: this used to have no idempotency protection — a retried
+  // request (double-click, network drop + resend) would re-run the debit and
+  // charge the rider twice for the same tariff. Same Idempotency-Key pattern
+  // as /api/payments/tbank/ride/init (audit HIGH #2): the key is required and
+  // storage.purchaseTariff atomically gates the debit on it, so a replay with
+  // the same key returns the original result instead of debiting again.
   app.post("/api/wallet/tariff", requireAuth, async (req, res) => {
+    const idem = readIdempotencyKey(req);
+    if ("error" in idem) return res.status(400).json({ error: idem.error });
+
     const schema = z.object({
       tariff: z.enum(["h1", "h2", "h3"]),
     });
@@ -75,11 +85,18 @@ export function registerWalletRoutes(app: Express): void {
     if (!tariffDef) return res.status(400).json({ error: "Unknown tariff" });
     const durationMs = tariffDef.durationHours * 60 * 60 * 1000;
     const priceKopecks = tariffPriceKopecks(tariffDef);
-    const w = await storage.getWallet(riderId(req));
-    if (w.balance < priceKopecks) {
-      return res.status(400).json({ error: "Недостаточно средств на балансе" });
+    try {
+      res.json(await storage.purchaseTariff(riderId(req), parsed.data.tariff, priceKopecks, durationMs, idem.key));
+    } catch (err) {
+      // purchaseTariff throws a plain Error with a rider-facing message for the
+      // one expected business failure (insufficient balance); anything else is
+      // an infrastructure error and should surface as a 500 via the default
+      // error handler, not be swallowed here.
+      if (err instanceof Error && err.message === "Недостаточно средств на балансе") {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
     }
-    res.json(await storage.purchaseTariff(riderId(req), parsed.data.tariff, priceKopecks, durationMs));
   });
   app.get("/api/payments", requireAuth, async (req, res) => res.json(await storage.listPayments(riderId(req))));
 }

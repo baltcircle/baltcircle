@@ -57,9 +57,9 @@ type BindingReconciliation = "active" | "failed" | "in_flight" | "unavailable";
 // replays the original order/charge instead of creating a second one. Only
 // the web client in this repo calls these routes, so the header can be a hard
 // requirement rather than an optional best-effort hint.
-const IDEMPOTENCY_KEY_MAX_LEN = 100;
+export const IDEMPOTENCY_KEY_MAX_LEN = 100;
 
-function readIdempotencyKey(req: Request): { key: string } | { error: string } {
+export function readIdempotencyKey(req: Request): { key: string } | { error: string } {
   const raw = req.get("Idempotency-Key");
   const key = typeof raw === "string" ? raw.trim() : "";
   if (!key) return { error: "Отсутствует заголовок Idempotency-Key" };

@@ -749,8 +749,17 @@ export const payments = pgTable("payments", {
   kind: text("kind").notNull(),       // topup | ride_charge | tariff_purchase
   description: text("description").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  // Client-supplied idempotency token for wallet mutations that don't already
+  // go through payment_orders (audit MEDIUM: wallet/tariff was not
+  // idempotent). Same pattern as payment_orders.idempotencyKey (audit HIGH
+  // #2): a retried request with the SAME key replays the original payment
+  // row instead of debiting the wallet twice. Only set for kinds that opt in
+  // (currently tariff_purchase); NULL for everything else, so the partial
+  // unique index below never constrains rows that never carry a key.
+  idempotencyKey: text("idempotency_key"),
 }, (t) => [
   index("idx_payments_user").on(t.userId),
+  uniqueIndex("idx_payments_user_idempotency").on(t.userId, t.idempotencyKey).where(sql`${t.idempotencyKey} IS NOT NULL`),
 ]);
 export type Payment = typeof payments.$inferSelect;
 
