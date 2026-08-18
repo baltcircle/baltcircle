@@ -1,0 +1,105 @@
+name: Uptime Monitor
+
+# Audit HIGH #23 (zero-budget variant) — the app runs on a single Yandex
+# Cloud VM with no failover (explicit decision: horizontal scaling is
+# deferred to 1-2 months before launch, no extra compute spend for now).
+# This workflow can't remove that single point of failure, but it makes an
+# outage visible within minutes instead of relying on someone noticing.
+#
+# Runs on a GitHub-hosted runner (NOT the self-hosted baltcircle-prod
+# runner) on purpose: if the prod VM itself is down, a check running ON
+# that VM would never get a chance to report it. Checking from GitHub's
+# infrastructure over the public internet is what makes this a real
+# external health check. Free for public repos (unlimited Actions minutes).
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: uptime-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check production health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe takeride.ru
+        id: probe
+        run: |
+          set +e
+          ok=1
+          for url in "https://takeride.ru/api/bikes" "https://www.takeride.ru/api/bikes"; do
+            # 3 attempts per URL, short timeouts — tolerate a single transient
+            # blip (deploy in progress, brief network hiccup) without
+            # crying wolf, but still catch a real outage within ~1 minute.
+            attempt_ok=0
+            for i in 1 2 3; do
+              if curl --fail --silent --max-time 10 "$url" >/dev/null; then
+                attempt_ok=1
+                break
+              fi
+              sleep 10
+            done
+            if [ "$attempt_ok" -eq 0 ]; then
+              echo "UNREACHABLE: $url"
+              ok=0
+            else
+              echo "OK: $url"
+            fi
+          done
+          echo "healthy=$ok" >> "$GITHUB_OUTPUT"
+
+      - name: Find existing incident issue
+        id: find
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          num=$(gh issue list --repo "${{ github.repository }}" \
+            --label incident --state open --search "in:title \"Prod down\"" \
+            --json number --jq '.[0].number // ""')
+          echo "issue_number=$num" >> "$GITHUB_OUTPUT"
+
+      - name: Open incident issue
+        if: steps.probe.outputs.healthy == '0' && steps.find.outputs.issue_number == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create --repo "${{ github.repository }}" \
+            --title "🔴 Prod down: takeride.ru unreachable" \
+            --label incident \
+            --body "Автоматический мониторинг (uptime-monitor.yml) не смог получить ответ от https://takeride.ru/api/bikes и/или https://www.takeride.ru/api/bikes.
+
+          **Обнаружено:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          **Прогон:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          Единая точка отказа (HIGH #23, zero-budget вариант) — на проде одна VM без failover, горизонтальное масштабирование отложено до старта проекта. См. docs/runbook-incident-response.md для порядка восстановления.
+
+          Этот issue закроется автоматически, когда мониторинг снова увидит здоровый ответ."
+
+      - name: Add follow-up comment on continued outage
+        if: steps.probe.outputs.healthy == '0' && steps.find.outputs.issue_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment "${{ steps.find.outputs.issue_number }}" --repo "${{ github.repository }}" \
+            --body "⏱️ Всё ещё недоступен: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+      - name: Close incident issue on recovery
+        if: steps.probe.outputs.healthy == '1' && steps.find.outputs.issue_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment "${{ steps.find.outputs.issue_number }}" --repo "${{ github.repository }}" \
+            --body "✅ Восстановлено: $(date -u '+%Y-%m-%d %H:%M:%S UTC'). Мониторинг снова получает здоровый ответ от обоих доменов."
+          gh issue close "${{ steps.find.outputs.issue_number }}" --repo "${{ github.repository }}"
+
+      - name: Fail the run if unhealthy
+        if: steps.probe.outputs.healthy == '0'
+        run: exit 1

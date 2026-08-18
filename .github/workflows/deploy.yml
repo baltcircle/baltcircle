@@ -78,6 +78,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Audit HIGH #23 (zero-budget variant): the single prod VM is the one
+      # accepted point of failure for now (horizontal scaling deferred to
+      # 1-2 months before launch — see docs/runbook-incident-response.md).
+      # `restart: unless-stopped` in docker-compose.yml only takes effect
+      # once dockerd itself is running, so make sure both services actually
+      # come back on their own after a VM reboot instead of needing someone
+      # to notice and SSH in. Idempotent — safe to run on every deploy.
+      - name: Ensure docker/nginx survive a VM reboot
+        run: |
+          sudo systemctl enable docker
+          sudo systemctl enable nginx
+
       # One-shot data migration: legacy SQLite (data.db in the old Docker volume)
       # -> managed PostgreSQL. Runs only if the legacy volume still holds a
       # data.db AND the migration has not been marked done. The migrate script is
