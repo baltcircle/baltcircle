@@ -7,6 +7,7 @@ import {
   tbankInitRidePayment,
   tbankInitSavedCardCharge,
   tbankRefundVerificationCharge,
+  verifyNotificationToken,
 } from "./tbank";
 import type { TbankConfig } from "./tbank";
 
@@ -22,6 +23,38 @@ const cfg: TbankConfig = {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+// Audit LOW: timing-safe webhook signature comparison.
+describe("verifyNotificationToken", () => {
+  const password = "webhook-secret";
+  const body = { OrderId: "order-1", Status: "CONFIRMED", Amount: 19900 };
+
+  it("accepts a correctly computed token (case-insensitively)", () => {
+    const token = computeToken(body as any, password);
+    expect(verifyNotificationToken({ ...body, Token: token }, password)).toBe(true);
+    expect(verifyNotificationToken({ ...body, Token: token.toUpperCase() }, password)).toBe(true);
+  });
+
+  it("rejects a wrong-but-same-length token without throwing", () => {
+    const token = computeToken(body as any, password);
+    const tampered = (token[0] === "0" ? "1" : "0") + token.slice(1);
+    expect(verifyNotificationToken({ ...body, Token: tampered }, password)).toBe(false);
+  });
+
+  it("rejects a token of the wrong length without throwing (timingSafeEqual length guard)", () => {
+    expect(verifyNotificationToken({ ...body, Token: "deadbeef" }, password)).toBe(false);
+    expect(verifyNotificationToken({ ...body, Token: "" }, password)).toBe(false);
+  });
+
+  it("rejects a missing Token field", () => {
+    expect(verifyNotificationToken({ ...body }, password)).toBe(false);
+  });
+
+  it("rejects a token computed with the wrong password", () => {
+    const token = computeToken(body as any, "other-password");
+    expect(verifyNotificationToken({ ...body, Token: token }, password)).toBe(false);
+  });
 });
 
 describe("buildReceipt", () => {

@@ -15,7 +15,7 @@
 // only ever fed into the SHA-256 token and is never returned, logged, or sent
 // to the client.
 
-import { createHash, randomInt } from "node:crypto";
+import { createHash, randomInt, timingSafeEqual } from "node:crypto";
 
 import { logger } from "./logger";
 
@@ -281,13 +281,24 @@ function pruneEmpty(params: TbankParams): TbankParams {
 
 // Verify an inbound notification's Token against the recomputed signature.
 // Returns false when the token is missing or does not match.
+//
+// Audit LOW: a plain string `===` short-circuits on the first mismatched
+// character, so its timing leaks how many leading hex digits an attacker's
+// guess got right — a classic timing side-channel against HMAC/hash-based
+// signature checks (CWE-208). We compare with a constant-time algorithm
+// instead so response latency reveals nothing about how close a forged
+// token is to the real one.
 export function verifyNotificationToken(body: Record<string, unknown>, password: string): boolean {
   const provided = body?.Token;
   if (typeof provided !== "string" || provided.length === 0) return false;
   const expected = computeToken(body as TbankParams, password);
-  // Both are hex digests of fixed length; a plain compare is sufficient and the
-  // value is not secret (the attacker would need the password to forge it).
-  return provided.toLowerCase() === expected.toLowerCase();
+  const providedLower = provided.toLowerCase();
+  const expectedLower = expected.toLowerCase();
+  // timingSafeEqual requires equal-length buffers; a length mismatch already
+  // means "not equal" and can be rejected before the constant-time compare
+  // (the length of a fixed-format sha256 hex digest is not itself sensitive).
+  if (providedLower.length !== expectedLower.length) return false;
+  return timingSafeEqual(Buffer.from(providedLower, "utf8"), Buffer.from(expectedLower, "utf8"));
 }
 
 export interface TbankResponse {
