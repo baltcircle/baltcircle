@@ -48,6 +48,7 @@ function selectFrom(rows: unknown[]) {
     from: () => chain,
     where: () => chain,
     orderBy: () => chain,
+    for: () => chain,
     limit: () => Promise.resolve(rows),
     then: (resolve: (value: unknown[]) => unknown, reject?: (reason: unknown) => unknown) => Promise.resolve(rows).then(resolve, reject),
   };

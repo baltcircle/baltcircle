@@ -64,6 +64,7 @@ function makeTx(selectQueue: unknown[][], ridePointsRows: { x: number; y: number
     update: [] as { table: unknown; patch: unknown }[],
     insert: [] as { table: unknown; values: unknown }[],
     execute: [] as unknown[],
+    forCalled: false,
   };
   const queue = [...selectQueue];
   const tx: any = {
@@ -72,6 +73,10 @@ function makeTx(selectQueue: unknown[][], ridePointsRows: { x: number; y: number
       const chain: any = {
         from: () => chain,
         where: () => chain,
+        for: (mode: string) => {
+          calls.forCalled = mode === "update";
+          return chain;
+        },
         limit: () => Promise.resolve(rows),
         then: (resolve: (v: unknown[]) => unknown, reject?: (e: unknown) => unknown) =>
           Promise.resolve(rows).then(resolve, reject),
@@ -152,6 +157,26 @@ describe("endRide — no-op guards", () => {
 
     expect(result).toBeUndefined();
     expect(tx.update).not.toHaveBeenCalled();
+  });
+
+  // Audit HIGH: two concurrent endRide(sameId) calls used to both read the
+  // ride as "active" and both settle it (double overage charge / double
+  // payment row). The fix locks the ride row with FOR UPDATE so the second
+  // caller's SELECT blocks until the first transaction commits, then re-reads
+  // status === "completed" and takes the no-op guard above. This test can't
+  // simulate real lock contention against a mocked tx, but it pins the
+  // concrete mechanism the fix relies on: the ride SELECT must actually
+  // request the row lock, not just resolve some rows.
+  it("requests a FOR UPDATE row lock on the ride before deciding whether to settle it", async () => {
+    const activeRide = makeRide();
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx, calls } = makeTx([[activeRide], [], [completedRide]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+    vi.setSystemTime(new Date(activeRide.startedAt + HOUR));
+
+    await storage.endRide(activeRide.id);
+
+    expect(calls.forCalled).toBe(true);
   });
 });
 

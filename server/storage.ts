@@ -1668,7 +1668,9 @@ export class DatabaseStorage implements IStorage {
     return (await db.select().from(parkings).where(eq(parkings.id, id)).limit(1))[0] as Parking | undefined;
   }
 
-  // Generate the next free P-NN id when the operator doesn't supply one.
+  // Generate the next free P-NN id when the operator doesn't supply one. Just
+  // a candidate picker — NOT a reservation. createParking() below is the one
+  // responsible for making the actual claim race-safe.
   private async nextParkingId(): Promise<string> {
     const ids = ((await db.select({ id: parkings.id }).from(parkings)) as { id: string }[]).map((r) => r.id);
     let n = 1;
@@ -1677,11 +1679,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createParking(input: AdminCreateParkingInput) {
-    const id = (input.id && input.id.trim().length > 0 ? input.id.trim().toUpperCase() : await this.nextParkingId());
-    if (await this.getParking(id)) return { error: "Парковка с таким кодом уже существует" };
     const now = Date.now();
     const occupied = Math.min(input.occupied, input.capacity);
-    await db.insert(parkings).values({
+    const values = (id: string) => ({
       id,
       name: input.name.trim(),
       city: input.city,
@@ -1696,8 +1696,40 @@ export class DatabaseStorage implements IStorage {
       seed: false,
       createdAt: now,
       updatedAt: now,
-    } as any);
-    return { parking: (await this.getParking(id))! };
+    });
+
+    // Audit: nextParkingId() used to scan for a free id, then createParking
+    // separately checked getParking(id) before inserting — two check-then-act
+    // gaps a concurrent create could land in between. `parkings.id` is the
+    // primary key, so instead of checking first we always insert directly and
+    // let Postgres be the arbiter: a genuine conflict surfaces as 23505.
+    if (input.id && input.id.trim().length > 0) {
+      const id = input.id.trim().toUpperCase();
+      try {
+        await db.insert(parkings).values(values(id) as any);
+      } catch (err) {
+        if (this.isUniqueViolation(err)) return { error: "Парковка с таким кодом уже существует" };
+        throw err;
+      }
+      return { parking: (await this.getParking(id))! };
+    }
+
+    // No explicit id: pick the next free P-NN slot and insert directly. If
+    // another concurrent create just took that exact id, retry with the next
+    // free slot instead of surfacing a spurious "already exists" — the
+    // operator asked for "any free code", not that specific one.
+    const MAX_ATTEMPTS = 50;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const candidate = await this.nextParkingId();
+      try {
+        await db.insert(parkings).values(values(candidate) as any);
+        return { parking: (await this.getParking(candidate))! };
+      } catch (err) {
+        if (this.isUniqueViolation(err)) continue;
+        throw err;
+      }
+    }
+    return { error: "Не удалось выделить код парковки — попробуйте ещё раз" };
   }
 
   async updateParking(id: string, patch: AdminUpdateParkingInput) {
@@ -1762,12 +1794,8 @@ export class DatabaseStorage implements IStorage {
   // Live points go to their own ride_points table so each appended point is a
   // single INSERT instead of parsing + re-stringifying the whole track JSON.
   // rides.track stays the canonical stored track, finalised once in endRide.
-  private async insertRidePoint(rideId: number, x: number, y: number, t: number) {
-    await pool.query(
-      "INSERT INTO ride_points (ride_id, x, y, t) VALUES ($1, $2, $3, $4)",
-      [rideId, x, y, t],
-    );
-  }
+  // (The old standalone insertRidePoint() helper was folded into
+  // appendRidePoint()'s transaction — see the audit note there.)
 
   // Audit HIGH #15: this used to always run on the global `pool` (a plain
   // pool.query), even when called from inside an already-open `db.transaction`
@@ -1983,35 +2011,49 @@ export class DatabaseStorage implements IStorage {
   }
 
   async appendRidePoint(rideId: number, x: number, y: number) {
-    const r = (await db.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride | undefined;
-    if (!r || r.status !== "active") return undefined;
-    // Distance delta is computed from the LAST stored point only — a single
-    // indexed row read, not a parse of the whole track. Then we append one row
-    // instead of rewriting the entire track JSON (was O(N^2) per ride).
-    const last = (await pool.query(
-      "SELECT x, y, t FROM ride_points WHERE ride_id = $1 ORDER BY id DESC LIMIT 1",
-      [rideId],
-    )).rows[0] as { x: number; y: number; t: number } | undefined;
-    const px = last ? last.x : r.startLng;
-    const py = last ? last.y : r.startLat;
-    const dx = x - px, dy = y - py;
-    const dMap = Math.sqrt(dx * dx + dy * dy);
-    // 1 map unit ≈ 30 metres (≈30km coastal span across 1000 units, demo scale)
-    const addedMeters = dMap * 30;
-    const newDistance = r.distanceM + addedMeters;
-    await this.insertRidePoint(rideId, x, y, Date.now());
-    // Hourly prepaid model: cost is fixed at start (tariff price) and only
-    // changes on overage in endRide. Live points update the distance only —
-    // never the price. rides.track is finalised once in endRide.
-    await db.update(rides).set({ distanceM: newDistance }).where(eq(rides.id, rideId));
-    await db.update(bikes).set({ lat: y, lng: x, lastSeen: Date.now(), idleHours: 0 } as any)
-      /* position-only во время поездки — fleet-событие не нужно (silent ниже) */
-      .where(eq(bikes.id, r.bikeId));
+    // Atomic: the read-last-point → compute-distance → insert-point →
+    // update-distance sequence used to run as four independent statements on
+    // the default pool (audit: appendRidePoint неатомарен). A phone sending
+    // points on a flaky connection retries, and two points for the same ride
+    // can be in flight at once; both would read the same "last" point, each
+    // compute a distance delta from it, and whichever UPDATE commits last
+    // would clobber the other's distanceM instead of the two deltas
+    // accumulating. `.for("update")` on the ride row serialises writers for
+    // THIS ride only (other rides' points are untouched, so this isn't a
+    // global bottleneck) and keeps the read+insert+update on one snapshot.
+    const result = await db.transaction(async (tx) => {
+      const r = (await tx.select().from(rides).where(eq(rides.id, rideId)).for("update").limit(1))[0] as Ride | undefined;
+      if (!r || r.status !== "active") return undefined;
+      // Distance delta is computed from the LAST stored point only — a single
+      // indexed row read, not a parse of the whole track. Then we append one
+      // row instead of rewriting the entire track JSON (was O(N^2) per ride).
+      const last = (await tx.execute(
+        sql`SELECT x, y, t FROM ride_points WHERE ride_id = ${rideId} ORDER BY id DESC LIMIT 1`,
+      )).rows[0] as { x: number; y: number; t: number } | undefined;
+      const px = last ? last.x : r.startLng;
+      const py = last ? last.y : r.startLat;
+      const dx = x - px, dy = y - py;
+      const dMap = Math.sqrt(dx * dx + dy * dy);
+      // 1 map unit ≈ 30 metres (≈30km coastal span across 1000 units, demo scale)
+      const addedMeters = dMap * 30;
+      const newDistance = r.distanceM + addedMeters;
+      const now = Date.now();
+      await tx.execute(sql`INSERT INTO ride_points (ride_id, x, y, t) VALUES (${rideId}, ${x}, ${y}, ${now})`);
+      // Hourly prepaid model: cost is fixed at start (tariff price) and only
+      // changes on overage in endRide. Live points update the distance only —
+      // never the price. rides.track is finalised once in endRide.
+      await tx.update(rides).set({ distanceM: newDistance }).where(eq(rides.id, rideId));
+      await tx.update(bikes).set({ lat: y, lng: x, lastSeen: now, idleHours: 0 } as any)
+        /* position-only во время поездки — fleet-событие не нужно (silent ниже) */
+        .where(eq(bikes.id, r.bikeId));
+      return r;
+    });
+    if (!result) return undefined;
     // Position changed → invalidate the map list and push the owning rider a
     // fresh active-ride snapshot (new track point) over SSE. silent: статус не
     // меняется, не будим fleet-стрим на каждую GPS-точку.
     this.invalidateBikesCache({ silent: true });
-    rideEvents.emit(r.userId, "point" as RideEventReason);
+    rideEvents.emit(result.userId, "point" as RideEventReason);
     return this.hydrateTrack(
       (await db.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride,
     );
@@ -2059,7 +2101,15 @@ export class DatabaseStorage implements IStorage {
     // or bike freed without a charge recorded. One transaction keeps them
     // consistent: either the whole settlement lands or none of it does.
     const result = await db.transaction(async (tx) => {
-      const r = (await tx.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride | undefined;
+      // `.for("update")` locks the ride row for the duration of this tx (audit
+      // HIGH: double endRide). Without it, two concurrent completions of the
+      // same ride (a duplicate client request, a retried webhook) both read
+      // status = 'active' before either commits, and both proceed to settle —
+      // charging overage twice and running the bike-release/payment logic
+      // twice. The lock serialises them: the loser blocks here until the
+      // winner commits, then re-reads status = 'completed' and returns
+      // undefined below, a no-op instead of a double settlement.
+      const r = (await tx.select().from(rides).where(eq(rides.id, rideId)).for("update").limit(1))[0] as Ride | undefined;
       if (!r || r.status !== "active") return undefined;
       // Flush the append-only points into the canonical rides.track ONCE, at
       // completion. Fall back to the legacy in-row track for rides that started
