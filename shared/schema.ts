@@ -259,7 +259,7 @@ export const bikes = pgTable("bikes", {
   // ----- Real-fleet operations fields (added for admin management) -----
   serial: text("serial"),                    // manufacturer serial / frame number
   lockId: text("lock_id"),                   // vendor-facing lock id printed on the unit
-  parkingId: text("parking_id"),             // optional home parking station id
+  parkingId: text("parking_id").references(() => parkings.id, { onDelete: "set null" }), // optional home parking station id
   // ----- OMNI smart lock (TCP ingest, server/omni/) -----
   // The lock's IMEI is how an inbound TCP connection is resolved to a bike, so
   // it must be unique across the fleet — enforced by the partial UNIQUE index

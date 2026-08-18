@@ -239,7 +239,28 @@ async function populateDemoData(client: pg.PoolClient) {
   const rng = seedRng(20260525);
   const now = Date.now();
 
-  // Bikes — a small sample fleet placed near parkings, all "available".
+  // Parkings FIRST — bikes.parking_id now carries a real FOREIGN KEY to
+  // parkings.id (audit: слой данных MEDIUM/LOW, missing-FK finding), so the
+  // referenced parking row must exist before any bike insert that points at
+  // it, or the INSERT below fails with 23503 on a fresh (bikeCount === 0) DB.
+  // Город берём из префикса названия («Город · Место») — для демо этого
+  // достаточно.
+  for (const p of PARKINGS) {
+    const occupied = Math.min(p.capacity, Math.floor(rng() * p.capacity * 0.9));
+    const city = p.name.split("·")[0].trim();
+    await client.query(
+      `INSERT INTO parkings (id, name, city, lat, lng, capacity, occupied, radius, status, notes, archived_at, seed, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,30,'active',NULL,NULL,TRUE,$8,NULL)
+       ON CONFLICT (id) DO UPDATE SET
+         name=EXCLUDED.name, city=EXCLUDED.city, lat=EXCLUDED.lat, lng=EXCLUDED.lng,
+         capacity=EXCLUDED.capacity, occupied=EXCLUDED.occupied, status='active',
+         archived_at=NULL, seed=TRUE`,
+      [p.id, p.name, city, p.y, p.x, p.capacity, occupied, now],
+    );
+  }
+
+  // Bikes — a small sample fleet placed near parkings, all "available". Must
+  // run AFTER the parkings loop above (see comment there).
   for (let i = 1; i <= DEMO_BIKE_COUNT; i++) {
     const id = `BC-${String(i).padStart(3, "0")}`;
     const model = MODELS[i % MODELS.length];
@@ -261,22 +282,6 @@ async function populateDemoData(client: pg.PoolClient) {
          idle_hours=EXCLUDED.idle_hours, flagged=EXCLUDED.flagged,
          parking_id=EXCLUDED.parking_id, seed=TRUE`,
       [id, model, battery, y, x, lastSeen, idleHours, p.id],
-    );
-  }
-
-  // Parkings — seeded active and marked seed = TRUE. Город берём из префикса
-  // названия («Город · Место») — для демо этого достаточно.
-  for (const p of PARKINGS) {
-    const occupied = Math.min(p.capacity, Math.floor(rng() * p.capacity * 0.9));
-    const city = p.name.split("·")[0].trim();
-    await client.query(
-      `INSERT INTO parkings (id, name, city, lat, lng, capacity, occupied, radius, status, notes, archived_at, seed, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,30,'active',NULL,NULL,TRUE,$8,NULL)
-       ON CONFLICT (id) DO UPDATE SET
-         name=EXCLUDED.name, city=EXCLUDED.city, lat=EXCLUDED.lat, lng=EXCLUDED.lng,
-         capacity=EXCLUDED.capacity, occupied=EXCLUDED.occupied, status='active',
-         archived_at=NULL, seed=TRUE`,
-      [p.id, p.name, city, p.y, p.x, p.capacity, occupied, now],
     );
   }
 
@@ -353,8 +358,11 @@ async function bootstrapDemoData() {
     await client.query(`DELETE FROM payments WHERE user_id = ANY($1::text[])`, [DEMO_USERS]);
     await client.query(`DELETE FROM wallet   WHERE user_id = ANY($1::text[])`, [DEMO_USERS]);
     await client.query(`DELETE FROM zones`);
-    await client.query(`DELETE FROM parkings WHERE seed = TRUE`);
+    // Bikes BEFORE parkings — bikes.parking_id now has a real FOREIGN KEY to
+    // parkings.id (see populateDemoData comment above); deleting the parking
+    // row first would fail with 23503 while a seed bike still points at it.
     await client.query(`DELETE FROM bikes    WHERE seed = TRUE`);
+    await client.query(`DELETE FROM parkings WHERE seed = TRUE`);
     await populateDemoData(client);
     await client.query(
       "INSERT INTO meta (key, value) VALUES ('demo_data_version', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",

@@ -1,0 +1,1 @@
+ALTER TABLE "bikes" ADD CONSTRAINT "bikes_parking_id_parkings_id_fk" FOREIGN KEY ("parking_id") REFERENCES "public"."parkings"("id") ON DELETE set null ON UPDATE no action NOT VALID;
