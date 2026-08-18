@@ -2,7 +2,7 @@ import {
   bikes, locks, parkings, zones, rides, tickets, ticketComments, payments, wallet, mapObjects, users,
   otpRequests, phoneChangeRequests, emailChangeRequests, oauthIdentities,
   paymentMethods, supportTickets, paymentOrders, walletTopupOrders,
-  supportConversations, supportMessages,
+  supportConversations, supportMessages, ridePoints,
   TICKET_CLOSED_STATUSES,
 } from "@shared/schema";
 import type {
@@ -199,7 +199,10 @@ export class DatabaseStorage implements IStorage {
   // mutable here; phone changes go through SMS OTP and email changes go
   // through email OTP (RuSender). Neither is accepted on this endpoint.
   async updateProfile(id: string, patch: UpdateProfileInput) {
-    const existing = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0] as User | undefined;
+    // Audit: soft-delete scope gap — without the deletedAt check a caller that
+    // still holds a session for an account deleted on another device could
+    // resurrect readable profile fields on the anonymized row.
+    const existing = (await db.select().from(users).where(and(eq(users.id, id), isNull(users.deletedAt))).limit(1))[0] as User | undefined;
     if (!existing) return { error: "Пользователь не найден" };
 
     const set: Partial<User> = { updatedAt: Date.now() };
@@ -326,15 +329,20 @@ export class DatabaseStorage implements IStorage {
     return Number((await pool.query("SELECT COUNT(*)::int AS c FROM users WHERE deleted_at IS NULL")).rows[0].c);
   }
 
+  // Audit: soft-delete scope gap — an operator must not be able to promote or
+  // demote a deleted account's role; getUser()/withResolvedRole() would just
+  // hide the row again on the next read anyway, so silently "succeeding"
+  // here was misleading rather than dangerous, but the explicit check makes
+  // the admin UI surface a clear error instead of a row that vanishes.
   async setUserRole(id: string, role: UserRole) {
-    const existing = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0] as User | undefined;
+    const existing = (await db.select().from(users).where(and(eq(users.id, id), isNull(users.deletedAt))).limit(1))[0] as User | undefined;
     if (!existing) return { error: "Пользователь не найден" };
     await db.update(users).set({ role, updatedAt: Date.now() } as any).where(eq(users.id, id));
     return { user: (await this.getUser(id))! };
   }
 
   async setUserBlocked(id: string, blocked: boolean, reason?: string) {
-    const existing = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0] as User | undefined;
+    const existing = (await db.select().from(users).where(and(eq(users.id, id), isNull(users.deletedAt))).limit(1))[0] as User | undefined;
     if (!existing) return { error: "Пользователь не найден" };
     const set: Partial<User> = {
       blockedAt: blocked ? Date.now() : null,
@@ -518,7 +526,11 @@ export class DatabaseStorage implements IStorage {
   // stored only as an HMAC. Enforces the same per-request resend lock as
   // registration and refuses a number already used by another account.
   async startPhoneChange({ userId, phone }: { userId: string; phone: string }) {
-    const user = (await db.select().from(users).where(eq(users.id, userId)).limit(1))[0] as User | undefined;
+    // Audit: soft-delete scope gap — deleteAccount already revokes every
+    // session for this user, so this path shouldn't be reachable in practice,
+    // but the explicit check is defense-in-depth against a stale/forged
+    // session outliving the deletion.
+    const user = (await db.select().from(users).where(and(eq(users.id, userId), isNull(users.deletedAt))).limit(1))[0] as User | undefined;
     if (!user) return { error: "Пользователь не найден" };
 
     const newPhone = normalizePhone(phone);
@@ -1627,17 +1639,27 @@ export class DatabaseStorage implements IStorage {
     return { bike: (await this.getBike(id))! };
   }
 
-  // Hard delete: only allowed when the bike has no ride history. Otherwise we
-  // refuse and archive instead, so analytics/ride records never dangle.
+  // Hard delete: only allowed when the bike has no ride/ticket/payment-order
+  // history. Otherwise we refuse and archive instead, so analytics records
+  // never dangle. Audit "missing FK constraints" fix: rides.bike_id,
+  // tickets.bike_id and payment_orders.bike_id now carry a real (NOT VALID)
+  // FOREIGN KEY to bikes.id — a hard delete while any of them still points at
+  // this bike would fail with an unhandled 23503 instead of this friendly
+  // archive fallback, so all three referencing tables must be checked here,
+  // not just rides as before.
   async deleteBike(id: string) {
     const existing = await this.getBike(id);
     if (!existing) return { error: "Велосипед не найден" };
     if (existing.status === "rented") return { error: "Нельзя удалить велосипед во время активной аренды" };
-    const rideCount = Number((await pool.query("SELECT COUNT(*) AS c FROM rides WHERE bike_id = $1", [id])).rows[0].c);
-    if (rideCount > 0) {
+    const [rideCount, ticketCount, orderCount] = await Promise.all([
+      pool.query("SELECT COUNT(*) AS c FROM rides WHERE bike_id = $1", [id]),
+      pool.query("SELECT COUNT(*) AS c FROM tickets WHERE bike_id = $1", [id]),
+      pool.query("SELECT COUNT(*) AS c FROM payment_orders WHERE bike_id = $1", [id]),
+    ]).then((rs) => rs.map((r) => Number(r.rows[0].c)));
+    if (rideCount > 0 || ticketCount > 0 || orderCount > 0) {
       await db.update(bikes).set({ status: "archived" } as any).where(eq(bikes.id, id));
       this.invalidateBikesCache();
-      return { error: "У велосипеда есть история поездок — он переведён в архив", archived: (await this.getBike(id))! };
+      return { error: "У велосипеда есть история поездок/заявок — он переведён в архив", archived: (await this.getBike(id))! };
     }
     await db.delete(bikes).where(eq(bikes.id, id));
     this.invalidateBikesCache();
@@ -2211,6 +2233,14 @@ export class DatabaseStorage implements IStorage {
     );
   }
 
+  // Audit MEDIUM: hydrateTrack used to be called once per row (Promise.all
+  // over N separate `ride_points` SELECTs) — one round-trip per *active*
+  // ride in the page. A single active ride per rider makes the userId-scoped
+  // call cheap, but the unscoped admin/global call can have as many parallel
+  // queries as there are simultaneously active rides fleet-wide. Batch every
+  // active ride's points into ONE `WHERE ride_id IN (...)` query and group
+  // them in memory instead, mirroring listAdminRides' existing batched-IN
+  // pattern for riders.
   async listRides(opts?: { userId?: string; limit?: number }) {
     const limit = opts?.limit ?? 50;
     const rows = opts?.userId
@@ -2219,7 +2249,28 @@ export class DatabaseStorage implements IStorage {
           .orderBy(desc(rides.startedAt))
           .limit(limit)) as Ride[])
       : ((await db.select().from(rides).orderBy(desc(rides.startedAt)).limit(limit)) as Ride[]);
-    return Promise.all(rows.map((r) => this.hydrateTrack(r))) as Promise<Ride[]>;
+    return this.hydrateTracks(rows);
+  }
+
+  // Batch variant of hydrateTrack: fetches ride_points for every active ride
+  // in `rows` with a single query instead of one query per ride.
+  private async hydrateTracks(rows: Ride[]): Promise<Ride[]> {
+    const activeIds = rows.filter((r) => r.status === "active").map((r) => r.id);
+    if (activeIds.length === 0) return rows;
+    const pointRows = (await db.select({ rideId: ridePoints.rideId, x: ridePoints.x, y: ridePoints.y, t: ridePoints.t })
+      .from(ridePoints)
+      .where(inArray(ridePoints.rideId, activeIds))
+      .orderBy(asc(ridePoints.rideId), asc(ridePoints.id))) as { rideId: number; x: number; y: number; t: number }[];
+    const pointsByRide = new Map<number, [number, number, number][]>();
+    for (const p of pointRows) {
+      const arr = pointsByRide.get(p.rideId) ?? [];
+      arr.push([p.x, p.y, p.t]);
+      pointsByRide.set(p.rideId, arr);
+    }
+    return rows.map((r) => {
+      const pts = pointsByRide.get(r.id);
+      return pts && pts.length > 0 ? { ...r, track: JSON.stringify(pts) } : r;
+    });
   }
 
   // Rides for the operator panel, newest first, joined to rider identity so the

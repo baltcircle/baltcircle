@@ -27,6 +27,8 @@ export const users = pgTable("users", {
   updatedAt: bigint("updated_at", { mode: "number" }),          // unix ms of last profile mutation
 }, (t) => [
   index("idx_users_phone").on(t.phone),
+  index("idx_users_email").on(t.email),
+  index("idx_users_deleted_created").on(t.deletedAt, t.createdAt.desc()),
 ]);
 export type User = typeof users.$inferSelect;
 export type UserRole = "rider" | "mechanic" | "operator" | "admin";
@@ -197,7 +199,7 @@ export type EmailChangeVerifyInput = z.infer<typeof emailChangeVerifySchema>;
 // a session, we fall back to matching by verified email.
 export const oauthIdentities = pgTable("oauth_identities", {
   id: serial("id").primaryKey(),
-  userId: text("user_id").notNull(),
+  userId: text("user_id").notNull().references(() => users.id),
   provider: text("provider").notNull(),      // "yandex" | "vk"
   subject: text("subject").notNull(),        // provider's stable user id (string)
   email: text("email"),                      // provider-reported email at link time (may be null for VK)
@@ -216,7 +218,7 @@ export type OauthProvider = typeof OAUTH_PROVIDERS[number];
 // Идентифицируем подписку по endpoint (URL push-сервиса FCM/APNs/Mozilla).
 export const pushSubscriptions = pgTable("push_subscriptions", {
   id: serial("id").primaryKey(),
-  userId: text("user_id").notNull(),
+  userId: text("user_id").notNull().references(() => users.id),
   endpoint: text("endpoint").notNull(),         // уникальный URL push-сервиса
   p256dh: text("p256dh").notNull(),             // публичный ключ клиента (base64url)
   authKey: text("auth_key").notNull(),          // auth secret (base64url)
@@ -272,6 +274,7 @@ export const bikes = pgTable("bikes", {
 }, (t) => [
   index("idx_bikes_status").on(t.status),
   uniqueIndex("idx_bikes_lock_imei").on(t.lockImei).where(sql`${t.lockImei} IS NOT NULL`),
+  index("idx_bikes_parking").on(t.parkingId),
 ]);
 
 // Operational statuses. `available`/`rented`/`reserved` drive the rental flow;
@@ -595,8 +598,8 @@ export type UpdateMapObjectInput = z.infer<typeof updateMapObjectSchema>;
 /* ------- RIDES ------- */
 export const rides = pgTable("rides", {
   id: serial("id").primaryKey(),
-  bikeId: text("bike_id").notNull(),
-  userId: text("user_id").notNull(),
+  bikeId: text("bike_id").notNull().references(() => bikes.id),
+  userId: text("user_id").notNull().references(() => users.id),
   startedAt: bigint("started_at", { mode: "number" }).notNull(),
   endedAt: bigint("ended_at", { mode: "number" }),
   startLat: doublePrecision("start_lat").notNull(),
@@ -618,6 +621,7 @@ export const rides = pgTable("rides", {
   index("idx_rides_user").on(t.userId),
   index("idx_rides_bike").on(t.bikeId),
   index("idx_rides_started").on(t.startedAt),
+  index("idx_rides_user_started").on(t.userId, t.startedAt.desc()),
 ]);
 export type Ride = typeof rides.$inferSelect;
 export const insertRideSchema = createInsertSchema(rides);
@@ -653,7 +657,7 @@ export type AdminRide = Ride & {
 // legacy auto-flag kinds kept for backward compatibility with seeded rows.
 export const tickets = pgTable("tickets", {
   id: serial("id").primaryKey(),
-  bikeId: text("bike_id").notNull(),
+  bikeId: text("bike_id").notNull().references(() => bikes.id),
   kind: text("kind").notNull(),          // issue type — see TICKET_KINDS
   priority: text("priority").notNull().default("medium"), // see TICKET_PRIORITIES
   title: text("title").notNull().default(""),     // short summary
@@ -665,6 +669,8 @@ export const tickets = pgTable("tickets", {
   closedAt: bigint("closed_at", { mode: "number" }),        // unix ms when resolved/closed/cancelled
 }, (t) => [
   index("idx_tickets_bike").on(t.bikeId),
+  index("idx_tickets_created").on(t.createdAt),
+  index("idx_tickets_status").on(t.status),
 ]);
 export type Ticket = typeof tickets.$inferSelect;
 
@@ -672,7 +678,7 @@ export type Ticket = typeof tickets.$inferSelect;
 // operator comment or an auto-generated event note (status change, creation).
 export const ticketComments = pgTable("ticket_comments", {
   id: serial("id").primaryKey(),
-  ticketId: integer("ticket_id").notNull(),
+  ticketId: integer("ticket_id").notNull().references(() => tickets.id),
   author: text("author").notNull(),     // operator display name or "Система"
   body: text("body").notNull(),
   kind: text("kind").notNull().default("comment"), // comment | event
@@ -744,7 +750,7 @@ export type AddTicketCommentInput = z.infer<typeof addTicketCommentSchema>;
 /* ------- PAYMENTS / BALANCE (single demo user) ------- */
 export const payments = pgTable("payments", {
   id: serial("id").primaryKey(),
-  userId: text("user_id").notNull(),
+  userId: text("user_id").notNull().references(() => users.id),
   amount: integer("amount").notNull(), // kopecks (integer, signed) — never float rubles
   kind: text("kind").notNull(),       // topup | ride_charge | tariff_purchase
   description: text("description").notNull(),
@@ -760,11 +766,12 @@ export const payments = pgTable("payments", {
 }, (t) => [
   index("idx_payments_user").on(t.userId),
   uniqueIndex("idx_payments_user_idempotency").on(t.userId, t.idempotencyKey).where(sql`${t.idempotencyKey} IS NOT NULL`),
+  index("idx_payments_user_created").on(t.userId, t.createdAt.desc()),
 ]);
 export type Payment = typeof payments.$inferSelect;
 
 export const wallet = pgTable("wallet", {
-  userId: text("user_id").primaryKey(),
+  userId: text("user_id").primaryKey().references(() => users.id),
   balance: integer("balance").notNull().default(0), // kopecks (integer) — never float rubles
   activeTariff: text("active_tariff").notNull().default("payg"),
   tariffExpiresAt: bigint("tariff_expires_at", { mode: "number" }),
@@ -859,8 +866,8 @@ export type LinkPaymentMethodInput = z.infer<typeof linkPaymentMethodSchema>;
 export const paymentOrders = pgTable("payment_orders", {
   id: serial("id").primaryKey(),
   orderId: text("order_id").notNull().unique(),   // our Init OrderId (<= 50 chars, echoed in notifications)
-  userId: text("user_id").notNull(),
-  bikeId: text("bike_id").notNull(),
+  userId: text("user_id").notNull().references(() => users.id),
+  bikeId: text("bike_id").notNull().references(() => bikes.id),
   tariffId: text("tariff_id").notNull(),          // h1 | h2 | h3
   amountKopecks: integer("amount_kopecks").notNull(),
   paymentId: text("payment_id"),                  // T-Bank PaymentId returned by Init
@@ -873,7 +880,7 @@ export const paymentOrders = pgTable("payment_orders", {
   paymentMethodId: integer("payment_method_id"),
   rebillId: text("rebill_id"),                    // RebillId used for the saved-card charge
   status: text("status").notNull().default("pending"), // pending | paid | failed
-  rideId: integer("ride_id"),                     // set once the paid ride is started
+  rideId: integer("ride_id").references(() => rides.id), // set once the paid ride is started
   // Client-supplied idempotency token (audit HIGH #2): a retried /ride/init or
   // /ride/charge-saved-card request carries the SAME key, letting the server
   // replay the original order instead of creating a second payment/charge. The
@@ -958,13 +965,15 @@ export type WalletTopupInitInput = z.infer<typeof walletTopupInitSchema>;
 // a subject + message; staff handling happens out-of-band for the MVP.
 export const supportTickets = pgTable("support_tickets", {
   id: serial("id").primaryKey(),
-  userId: text("user_id").notNull(),
+  userId: text("user_id").notNull().references(() => users.id),
   subject: text("subject").notNull(),
   message: text("message").notNull(),
   status: text("status").notNull().default("open"), // open | resolved
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 }, (t) => [
   index("idx_support_tickets_user").on(t.userId),
+  index("idx_support_tickets_created").on(t.createdAt),
+  index("idx_support_tickets_status").on(t.status),
 ]);
 export type SupportTicket = typeof supportTickets.$inferSelect;
 
