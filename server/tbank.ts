@@ -334,11 +334,21 @@ export interface TbankResponse {
 // (minus any null/undefined fields, which are dropped before both signing and
 // serialization). This guarantees the signed set and the sent set are identical
 // — a mismatch here is the classic cause of T-Kassa code 204 "invalid token".
+//
+// DEFAULT_TBANK_TIMEOUT_MS: every call is bounded even when the caller passes
+// no timeoutMs. Before this, AddCard/Init/Charge/etc. had NO abort at all — if
+// the acquirer's API ever hung (slow network, their-side incident), our Express
+// request handler hung with it indefinitely, which on the client surfaced as
+// an unbounded "Открываем форму банка…" spin with no way out. 15s is generous
+// for a synchronous card-bind/payment-init call but guarantees the rider
+// always gets a definite success or a retryable "попробуйте позже" error.
+const DEFAULT_TBANK_TIMEOUT_MS = 15_000;
+
 async function signedPost(
   cfg: TbankConfig,
   path: string,
   params: TbankParams,
-  timeoutMs?: number,
+  timeoutMs: number = DEFAULT_TBANK_TIMEOUT_MS,
 ): Promise<TbankResponse> {
   // Build the final root-level param set, then drop empty values so they are
   // neither signed nor sent (T-Kassa signs only the fields present in the body).
@@ -348,22 +358,20 @@ async function signedPost(
 
   const url = `${cfg.apiBase}${path}`;
   let res: globalThis.Response;
-  const controller = timeoutMs == null ? undefined : new AbortController();
-  const timeout = controller == null
-    ? undefined
-    : setTimeout(() => controller.abort(), timeoutMs);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: controller?.signal,
+      signal: controller.signal,
     });
   } catch {
-    log(`[tbank] transport error calling ${path}${timeoutMs == null ? "" : ` (timeout ${timeoutMs}ms)`}`, "tbank");
+    log(`[tbank] transport error calling ${path} (timeout ${timeoutMs}ms)`, "tbank");
     throw new Error("Платёжный сервис временно недоступен. Попробуйте позже.");
   } finally {
-    if (timeout != null) clearTimeout(timeout);
+    clearTimeout(timeout);
   }
 
   let data: TbankResponse;

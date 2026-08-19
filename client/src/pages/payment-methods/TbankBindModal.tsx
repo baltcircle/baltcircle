@@ -1,12 +1,31 @@
 import { useEffect, useState } from "react";
 import { Loader2, X } from "lucide-react";
 
+// Сколько ждём onLoad у iframe, прежде чем показать «форма долго
+// загружается» с запасным выходом. Без этого таймера при зависшей/
+// медленной hosted-форме T-Bank (плохая сеть, вкладка ожила из фона со старым
+// JS и т.п.) пользователь смотрел на спиннер бесконечно без какого-либо выхода
+// кроме закрытия по X.
+const IFRAME_STUCK_TIMEOUT_MS = 12_000;
+
 // Модальный bottom-sheet с hosted-формой T-Bank во встроенном iframe. Вкладка
 // НЕ уходит на pay.tbank.ru — форма живёт внутри iframe, история вкладки
 // не меняется, native swipe-back некуда вести. Статус привязки отслеживает
 // родитель (polling + postMessage) и закрывает модалку через onClose.
 export function TbankBindModal({ url, onClose }: { url: string; onClose: () => void }) {
   const [loading, setLoading] = useState(true);
+  const [stuck, setStuck] = useState(false);
+
+  // Сбрасываем флаг «зависло», когда iframe всё-таки загружуется;
+  // таймер переставится только при монте (не на каждый рендер).
+  useEffect(() => {
+    if (!loading) {
+      setStuck(false);
+      return;
+    }
+    const timer = setTimeout(() => setStuck(true), IFRAME_STUCK_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   // Защита от native swipe-back пока модалка открыта. iframe (и сама форма
   // T-Bank со своими внутренними переходами) добавляет записи в историю
@@ -69,9 +88,31 @@ export function TbankBindModal({ url, onClose }: { url: string; onClose: () => v
         {/* iframe с формой T-Bank. src задаём атрибутом (надёжно во всех
             браузерах). Лишние записи истории от iframe ловит сентинел выше. */}
         <div className="relative flex-1">
-          {loading && (
+          {loading && !stuck && (
             <div className="absolute inset-0 flex items-center justify-center bg-background">
               <Loader2 className="w-6 h-6 animate-spin text-primary" />
+            </div>
+          )}
+          {loading && stuck && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-background px-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                Форма банка долго загружается. Проверьте соединение с интернетом
+                и попробуйте открыть её в отдельной вкладке.
+              </p>
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full rounded-full bg-primary py-2.5 text-sm font-medium text-primary-foreground text-center"
+              >
+                Открыть в новой вкладке
+              </a>
+              <button
+                onClick={onClose}
+                className="w-full rounded-full border border-border py-2.5 text-sm font-medium text-foreground"
+              >
+                Отмена
+              </button>
             </div>
           )}
           <iframe
