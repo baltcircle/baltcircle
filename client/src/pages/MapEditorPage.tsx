@@ -5,52 +5,20 @@ import { MapLibreMap } from "@/components/MapLibreMap";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Map as MapIcon,
-  Trash2,
   Save,
   Eraser,
   Route as RouteIcon,
   Hexagon,
   Undo2,
-  Eye,
-  EyeOff,
-  ChevronRight,
-  ChevronLeft,
-  Check,
-  CircleDot,
-  Info,
   Pencil,
   X,
 } from "lucide-react";
-
-const ADMIN_OBJECTS_KEY = ["/api/admin/map-objects"] as const;
-
-type ObjType = "route" | "operating" | "slow" | "forbidden";
-type Kind = "route" | "zone";
-
-interface TypeOption {
-  id: ObjType;
-  label: string;
-  short: string;
-  kind: Kind;
-  color: string;
-  desc: string;
-}
-
-const TYPE_OPTIONS: TypeOption[] = [
-  { id: "route",     label: "Маршрут",              short: "Маршрут",   kind: "route", color: "#1d6f8e", desc: "Линия — рекомендованный трек" },
-  { id: "operating", label: "Ограничение парковки", short: "Парковка",  kind: "zone",  color: "#1f9e93", desc: "Полигон — только внутри разрешено парковаться" },
-  { id: "slow",      label: "Тихая зона (15 км/ч)", short: "Тихая",     kind: "zone",  color: "#c9831f", desc: "Полигон — принудительное ограничение скорости" },
-  { id: "forbidden", label: "Запрещённая зона",     short: "Запрет",    kind: "zone",  color: "#d64545", desc: "Полигон — езда запрещена" },
-];
-
-const TYPE_LABEL: Record<string, string> = Object.fromEntries(
-  TYPE_OPTIONS.map((o) => [o.id, o.label]),
-);
+import { ADMIN_OBJECTS_KEY, TYPE_OPTIONS, type ObjType, type Kind } from "./map-editor/types";
+import { DraftInfo } from "./map-editor/panels";
+import { SavedObjectsPanel } from "./map-editor/SavedObjectsPanel";
 
 export function MapEditorPage() {
   const { toast } = useToast();
@@ -342,146 +310,18 @@ export function MapEditorPage() {
         </Card>
       </div>
 
-      {/* ── Правая панель: сохранённые объекты ─────────────────────────────── */}
-      <div
-        className={[
-          "absolute top-3 right-3 bottom-3 z-20 w-[320px] max-w-[80vw] transition-transform duration-200",
-          panelOpen ? "translate-x-0" : "translate-x-[calc(100%+12px)]",
-        ].join(" ")}
-      >
-        <Card className="h-full p-4 shadow-lg backdrop-blur bg-background/95 flex flex-col" data-testid="editor-saved-list">
-          <div className="flex items-center gap-2 mb-3 text-xs uppercase tracking-widest text-muted-foreground">
-            <MapIcon className="w-3.5 h-3.5" /> Сохранённые
-            <span className="ml-auto normal-case tracking-normal text-foreground text-sm">
-              {objectsQ.data?.length ?? 0}
-            </span>
-          </div>
-          <div className="flex-1 overflow-y-auto space-y-2 -mx-1 px-1">
-            {(objectsQ.data?.length ?? 0) === 0 ? (
-              <div className="text-sm text-muted-foreground" data-testid="editor-saved-empty">
-                Пока нет объектов. Карта в приложении пустая.
-              </div>
-            ) : (
-              objectsQ.data!.map((o) => (
-                <div
-                  key={o.id}
-                  className={[
-                    "flex items-center gap-2 rounded-md border border-card-border px-2.5 py-2 group",
-                    o.active ? "" : "opacity-60",
-                  ].join(" ")}
-                  data-testid={`editor-saved-${o.id}`}
-                >
-                  <span className="w-3 h-3 rounded-sm shrink-0 shadow-inner" style={{ backgroundColor: o.color }} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-light truncate" title={o.name}>{o.name}</div>
-                    <div className="text-[10px] text-muted-foreground truncate">{TYPE_LABEL[o.type] ?? o.type}</div>
-                  </div>
-                  <Badge variant="secondary" className="text-[9px] px-1.5 h-4">
-                    {o.kind === "zone" ? "зона" : "линия"}
-                  </Badge>
-                  {!o.active && (
-                    <Badge variant="outline" className="text-[9px] px-1.5 h-4" data-testid={`editor-inactive-${o.id}`}>
-                      скрыт
-                    </Badge>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0"
-                    onClick={() => startEdit(o)}
-                    data-testid={`editor-edit-${o.id}`}
-                    aria-label="Редактировать объект"
-                    title="Редактировать"
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0"
-                    onClick={() => toggleM.mutate({ id: o.id, active: !o.active })}
-                    disabled={toggleM.isPending}
-                    data-testid={`editor-toggle-${o.id}`}
-                    aria-label={o.active ? "Скрыть с карты" : "Показать на карте"}
-                    title={o.active ? "Скрыть с публичной карты" : "Показать на публичной карте"}
-                  >
-                    {o.active ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0"
-                    onClick={() => {
-                      if (window.confirm(`Удалить «${o.name}»?`)) deleteM.mutate(o.id);
-                    }}
-                    disabled={deleteM.isPending}
-                    data-testid={`editor-delete-${o.id}`}
-                    aria-label="Удалить объект"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                  </Button>
-                </div>
-              ))
-            )}
-          </div>
-
-          <HintBlock kind={activeType.kind} />
-        </Card>
-
-        {/* Кнопка сворачивания панели */}
-        <button
-          onClick={() => setPanelOpen((v) => !v)}
-          className="absolute top-4 -left-9 h-9 w-9 rounded-l-md bg-background/95 border border-r-0 border-card-border shadow-md flex items-center justify-center hover:bg-muted transition"
-          data-testid="editor-toggle-panel"
-          title={panelOpen ? "Свернуть панель" : "Развернуть панель"}
-        >
-          {panelOpen ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-        </button>
-      </div>
+      <SavedObjectsPanel
+        objects={objectsQ.data}
+        panelOpen={panelOpen}
+        setPanelOpen={setPanelOpen}
+        activeKind={activeType.kind}
+        onEdit={startEdit}
+        onToggle={(o) => toggleM.mutate({ id: o.id, active: !o.active })}
+        disableToggle={toggleM.isPending}
+        onDelete={(o) => deleteM.mutate(o.id)}
+        disableDelete={deleteM.isPending}
+      />
     </div>
   );
 }
 
-// ─── Sub-components ─────────────────────────────────────────────────────────
-
-function DraftInfo({ draft, minPoints, kind }: { draft: [number, number][]; minPoints: number; kind: Kind }) {
-  const need = Math.max(0, minPoints - draft.length);
-  const ready = draft.length >= minPoints;
-  return (
-    <div className="flex items-center gap-2 text-xs" data-testid="editor-draft-info">
-      <CircleDot className="w-3.5 h-3.5 text-muted-foreground" />
-      <span className="text-muted-foreground">
-        Точек: <span className="font-medium text-foreground">{draft.length}</span>
-        <span className="text-muted-foreground/70"> / {minPoints}</span>
-      </span>
-      {need > 0 && (
-        <span className="text-amber-600 dark:text-amber-400 font-medium">
-          нужно ещё {need}
-        </span>
-      )}
-      {ready && (
-        <span className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
-          <Check className="w-3 h-3" />
-          {kind === "zone" ? "можно замыкать" : "готово"}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function HintBlock({ kind }: { kind: Kind }) {
-  return (
-    <div className="mt-3 pt-3 border-t border-card-border text-[11px] text-muted-foreground space-y-1.5">
-      <div className="flex items-center gap-1.5 text-foreground font-medium">
-        <Info className="w-3 h-3" /> Как рисовать
-      </div>
-      <div>• Клик по карте — добавить точку</div>
-      <div>• Перетащи вершину — переместить точку</div>
-      {kind === "zone" ? (
-        <div>• Клик по первой точке ◎ — замкнуть зону и сохранить</div>
-      ) : null}
-      <div>• Клик по любой вершине — убрать её из линии</div>
-      <div>• Ctrl/⌘+Z — отменить последнюю точку</div>
-    </div>
-  );
-}
