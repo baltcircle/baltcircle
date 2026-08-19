@@ -8,119 +8,34 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { fmtDate } from "@/lib/format";
 import { TBANK_CONFIG_KEY, type TbankConfigResponse } from "@/lib/payment";
 import {
-  CreditCard, Loader2, Trash2, AlertCircle, Plus, X, ExternalLink, CheckCircle2,
+  CreditCard, Loader2, Trash2, Plus,
 } from "lucide-react";
 import { CardBrandIcon, SbpBrandIcon } from "@/components/PaymentBrandIcon";
-import { BikeQr } from "@/components/BikeQr";
 import visaLogo from "@/assets/payment-icons/visa.svg";
 import mastercardLogo from "@/assets/payment-icons/mastercard.svg";
 import mirLogo from "@/assets/payment-icons/mir.svg";
 import sbpLogo from "@/assets/payment-icons/sbp.svg";
+import {
+  type SbpBinding,
+  partitionPendingBindings,
+  refreshPendingMethod,
+  cancelTimedOutPendingMethod,
+  visiblePaymentMethods,
+  statusLabel,
+  methodError,
+  cleanErr,
+} from "./payment-methods/binding-utils";
+import { TbankBindModal } from "./payment-methods/TbankBindModal";
+import { SbpBindModal } from "./payment-methods/SbpBindModal";
 
 const METHODS_KEY = ["/api/payment-methods"];
 const PENDING_POLL_INTERVAL_MS = 3_000;
-const PENDING_BINDING_TIMEOUT_MS = 3 * 60 * 1_000;
 const ACCEPTED_PAYMENT_METHODS = [
   { src: visaLogo, alt: "Visa" },
   { src: mastercardLogo, alt: "Mastercard" },
   { src: mirLogo, alt: "МИР" },
   { src: sbpLogo, alt: "СБП" },
 ] as const;
-
-// Human sublabel + tone for a payment-method status. Shown as the small
-// secondary line under the method label, matching the profile-row style.
-function statusLabel(status: string): { text: string; cls: string } {
-  switch (status) {
-    case "active":
-      return { text: "Активна", cls: "text-green-500" };
-    case "failed":
-      return { text: "Ошибка привязки", cls: "text-red-500" };
-    default:
-      return { text: "Привязана", cls: "text-gray-400 dark:text-zinc-500" };
-  }
-}
-
-// Live state for an in-progress SBP account binding. `payload` is the QR/
-// deeplink the rider opens in their bank; `methodId` is the pending method we poll
-// to detect activation. `status` drives the modal's headline (waiting → success
-// / failed). Held in component state so the QR modal survives re-renders while
-// the rider authorises the binding in their bank app.
-interface SbpBinding {
-  methodId: number;
-  payload: string;
-  status: "waiting" | "active" | "failed";
-  error?: string;
-}
-
-interface PendingBindingState {
-  pollable: PublicPaymentMethod[];
-  timedOut: PublicPaymentMethod[];
-}
-
-export function visiblePaymentMethods(methods: PublicPaymentMethod[]): PublicPaymentMethod[] {
-  return methods.filter((method) => method.status !== "pending" && method.status !== "failed");
-}
-
-// API data is normally serialized as a numeric unix-ms value by Drizzle. Keep
-// the timeout guard defensive nevertheless: a date string, seconds timestamp,
-// or malformed legacy value must never be mistaken for a three-minute-old bind.
-function createdAtMs(value: unknown): number | null {
-  const numeric = typeof value === "number"
-    ? value
-    : typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))
-      ? Number(value)
-      : NaN;
-  if (Number.isFinite(numeric)) {
-    // Unix seconds are still accepted from legacy/alternate serializers.
-    return Math.abs(numeric) < 100_000_000_000 ? numeric * 1_000 : numeric;
-  }
-  if (typeof value === "string") {
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-// Exported for the Node-only contract tests. In particular, active methods
-// must never participate in the timeout decision, regardless of their age.
-export function partitionPendingBindings(
-  methods: PublicPaymentMethod[],
-  now: number,
-): PendingBindingState {
-  const pollable: PublicPaymentMethod[] = [];
-  const timedOut: PublicPaymentMethod[] = [];
-  for (const method of methods) {
-    if (method.status !== "pending") continue;
-    const createdAt = createdAtMs(method.createdAt);
-    const age = createdAt === null ? null : Math.max(0, now - createdAt);
-    // An invalid/unknown timestamp cannot establish a timeout. Continue
-    // background reconciliation rather than presenting a false failure.
-    if (age !== null && age >= PENDING_BINDING_TIMEOUT_MS) timedOut.push(method);
-    else pollable.push(method);
-  }
-  return { pollable, timedOut };
-}
-
-async function refreshPendingMethod(method: PublicPaymentMethod): Promise<PublicPaymentMethod | null> {
-  let res: Response;
-  if (method.type === "sbp" && method.requestKey) {
-    res = await apiRequest("GET", `/api/payments/tbank/refresh-bind-sbp/${method.id}`);
-  } else if (method.requestKey) {
-    res = await apiRequest("POST", `/api/payment-methods/${method.id}/refresh`);
-  } else if (method.paymentId) {
-    res = await apiRequest("GET", `/api/payments/tbank/refresh-bind/${method.id}`);
-  } else {
-    return null;
-  }
-  return (await res.json()) as PublicPaymentMethod;
-}
-
-// Use the same unlink endpoint as the pre-existing trash action. `pendingOnly`
-// makes the cleanup idempotent and prevents a timeout based on stale client
-// data from removing a method that has just been activated by a webhook.
-async function cancelTimedOutPendingMethod(method: PublicPaymentMethod): Promise<void> {
-  await apiRequest("DELETE", `/api/payment-methods/${method.id}?pendingOnly=1`);
-}
 
 export function PaymentMethodsPage() {
   const toast = useToast();
@@ -564,232 +479,4 @@ export function PaymentMethodsPage() {
       )}
     </OverlayShell>
   );
-}
-
-// Модальный bottom-sheet с hosted-формой T-Bank во встроенном iframe. Вкладка
-// НЕ уходит на pay.tbank.ru — форма живёт внутри iframe, история вкладки
-// не меняется, native swipe-back некуда вести. Статус привязки отслеживает
-// родитель (polling + postMessage) и закрывает модалку через onClose.
-function TbankBindModal({ url, onClose }: { url: string; onClose: () => void }) {
-  const [loading, setLoading] = useState(true);
-
-  // Защита от native swipe-back пока модалка открыта. iframe (и сама форма
-  // T-Bank со своими внутренними переходами) добавляет записи в историю
-  // ВЕРХНЕГО окна (проверено: +N записей), и native swipe попадал в них
-  // («тянет в привязку»). Решение, работающее и в Safari, и в Chromium: на
-  // каждый popstate СРАЗУ возвращаем сентинел обратно (ре-pushState) и
-  // закрываем модалку. Свайп не может уйти глубже, чем на сентинел.
-  // (contentWindow.location.replace НЕ используем: в Safari доступ к
-  // contentWindow свежего about:blank iframe гоночный и кидает/молчит.)
-  useEffect(() => {
-    let alive = true;
-    // Запоминаем глубину истории ДО открытия, чтобы при закрытии
-    // снять ВСЕ записи, которые накидали сентинел + iframe/форма.
-    const baseLen = history.length;
-    history.pushState({ bcTbankModal: true }, "");
-    const onPop = () => {
-      if (!alive) return;
-      // Свайп/назад съел сентинел (или iframe-запись) — мгновенно
-      // восстанавливаем барьер и закрываем модалку, не давая уйти
-      // на pay.tbank.ru / вглубь iframe-записей.
-      history.pushState({ bcTbankModal: true }, "");
-      onClose();
-    };
-    window.addEventListener("popstate", onPop);
-    return () => {
-      alive = false;
-      window.removeEventListener("popstate", onPop);
-      // Откатываем ВСЕ записи, добавленные пока модалка была
-      // открыта (сентинел + внутренние переходы iframe/формы),
-      // чтобы после закрытия свайп на /payment-methods не попал на
-      // оставшиеся pay.tbank.ru-записи.
-      const extra = history.length - baseLen;
-      if (extra > 0) history.go(-extra);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return (
-    <div
-      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60"
-      data-testid="tbank-bind-modal"
-      onClick={onClose}
-    >
-      <div
-        className="w-full sm:max-w-md bg-background rounded-t-2xl sm:rounded-2xl sm:mb-4 overflow-hidden flex flex-col animate-slide-up"
-        style={{ height: "90vh", maxHeight: "90vh" }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Шапка с кнопкой закрытия */}
-        <div className="relative flex items-center justify-center shrink-0 border-b border-border py-3">
-          <h2 className="text-base font-semibold text-foreground">Привязка карты</h2>
-          <button
-            onClick={onClose}
-            aria-label="Закрыть"
-            className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 rounded-full hover:bg-muted transition-colors"
-          >
-            <X className="w-5 h-5 text-foreground" />
-          </button>
-        </div>
-        {/* iframe с формой T-Bank. src задаём атрибутом (надёжно во всех
-            браузерах). Лишние записи истории от iframe ловит сентинел выше. */}
-        <div className="relative flex-1">
-          {loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-background">
-              <Loader2 className="w-6 h-6 animate-spin text-primary" />
-            </div>
-          )}
-          <iframe
-            src={url}
-            title="Привязка карты T-Bank"
-            className="w-full h-full border-0"
-            allow="payment"
-            onLoad={() => setLoading(false)}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Modal walking the rider through an SBP account binding. Shows the QR (scan
-// with another device's camera / bank app) plus an "Открыть в банке" button
-// that opens the deeplink on the same phone. The parent polls the binding
-// status and flips `binding.status` to "active"/"failed", which this modal
-// reflects. The payload is a bank deeplink/URL rendered locally as a QR (no
-// network), so the account credential never leaves the rider's device path.
-function SbpBindModal({
-  binding,
-  onClose,
-}: {
-  binding: SbpBinding;
-  onClose: () => void;
-}) {
-  // Whether the payload is openable as a link on this device. SBP payloads are
-  // https:// or a bank-scheme deeplink; either is safe to hand to the browser.
-  const canOpen = /^(https?:|[a-z][a-z0-9+.-]*:)/i.test(binding.payload.trim());
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4"
-      data-testid="sbp-bind-modal"
-      onClick={onClose}
-    >
-      <div
-        className="w-full sm:max-w-sm bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl border border-gray-200 dark:border-zinc-800 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-5 pt-5 pb-2">
-          <h2 className="text-lg font-display font-light text-gray-900 dark:text-white">
-            Привязка счёта СБП
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            data-testid="button-close-sbp-modal"
-            className="flex items-center justify-center w-9 h-9 rounded-full text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors shrink-0"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="px-5 pb-6">
-          {binding.status === "active" ? (
-            <div className="flex flex-col items-center text-center py-6" data-testid="sbp-bind-success">
-              <CheckCircle2 className="w-14 h-14 text-green-500" />
-              <p className="mt-3 text-base font-semibold text-gray-900 dark:text-white">Счёт СБП привязан</p>
-              <p className="mt-1 text-sm text-gray-500 dark:text-zinc-400">
-                Теперь можно оплачивать поездки через СБП.
-              </p>
-              <button
-                type="button"
-                onClick={onClose}
-                data-testid="button-sbp-done"
-                className="mt-5 w-full py-3 rounded-xl bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-semibold hover:opacity-90 transition-opacity"
-              >
-                Готово
-              </button>
-            </div>
-          ) : binding.status === "failed" ? (
-            <div className="flex flex-col items-center text-center py-6" data-testid="sbp-bind-failed">
-              <AlertCircle className="w-14 h-14 text-red-500" />
-              <p className="mt-3 text-base font-semibold text-gray-900 dark:text-white">Не удалось привязать счёт</p>
-              {binding.error && (
-                <p className="mt-1 text-sm text-red-500">{binding.error}</p>
-              )}
-              <button
-                type="button"
-                onClick={onClose}
-                data-testid="button-sbp-close-failed"
-                className="mt-5 w-full py-3 rounded-xl bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-semibold hover:opacity-90 transition-opacity"
-              >
-                Закрыть
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center">
-              <p className="text-sm text-gray-500 dark:text-zinc-400 text-center mb-4">
-                Отсканируйте QR камерой или приложением банка, а на этом телефоне — нажмите «Открыть в банке».
-              </p>
-              <div className="rounded-2xl bg-white p-3 border border-gray-200" data-testid="sbp-qr">
-                <BikeQr value={binding.payload} size={220} />
-              </div>
-              {canOpen && (
-                <a
-                  href={binding.payload}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  data-testid="button-open-in-bank"
-                  className="mt-5 w-full inline-flex items-center justify-center gap-2 py-3 rounded-xl bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-semibold hover:opacity-90 transition-opacity"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  Открыть в банке
-                </a>
-              )}
-              <div className="mt-4 flex items-center gap-2 text-xs text-gray-400 dark:text-zinc-500">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>Ждём подтверждения в банке…</span>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Render the stored T-Bank binding error for a failed method. Combines the
-// acquirer's message/details with a parenthetical code when present; these
-// fields come straight from T-Bank and carry no secret.
-function methodError(m: PublicPaymentMethod): string {
-  const message = (m.lastErrorMessage || "").trim();
-  const details = (m.lastErrorDetails || "").trim();
-  const code = (m.lastErrorCode || "").trim();
-  const base = message || details || "Банк отклонил привязку карты.";
-  const extras = [
-    code ? `код ${code}` : "",
-    details && details !== base ? details : "",
-  ].filter(Boolean).join(", ");
-  return extras ? `${base} (${extras})` : base;
-}
-
-// apiRequest throws "<status>: <body>" — pull a human message out of the body.
-// The add-card endpoint returns the acquirer's own { error, code, message,
-// details }; surface the message plus a parenthetical code/details so a rider
-// (or support) sees *why* the binding failed instead of a generic rejection.
-function cleanErr(e: Error): string {
-  const m = e.message.match(/^\d+:\s*([\s\S]*)$/);
-  const body = m ? m[1] : e.message;
-  try {
-    const parsed = JSON.parse(body);
-    if (parsed?.error) {
-      const extra = parsed.code ? `код ${parsed.code}` : "";
-      const detail = parsed.details && parsed.details !== parsed.error ? parsed.details : "";
-      const suffix = [extra, detail].filter(Boolean).join(", ");
-      return suffix ? `${parsed.error} (${suffix})` : parsed.error;
-    }
-  } catch {
-    // body wasn't JSON; fall through
-  }
-  return body;
 }

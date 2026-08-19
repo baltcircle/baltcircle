@@ -5,29 +5,31 @@ import type { PublicPaymentMethod } from "@shared/schema";
 import {
   partitionPendingBindings,
   visiblePaymentMethods,
-} from "./PaymentMethodsPage";
+} from "./payment-methods/binding-utils";
 
 // This project currently uses Node-only Vitest tests and does not include a DOM
 // component-test environment. Keep the binding-state contract covered directly
-// against the page source.
-const source = readFileSync(resolve(process.cwd(), "client/src/pages/PaymentMethodsPage.tsx"), "utf8");
+// against the page source (plus its extracted binding-utils module, which
+// now holds the polling/timeout implementation).
+const pageSource = readFileSync(resolve(process.cwd(), "client/src/pages/PaymentMethodsPage.tsx"), "utf8");
+const utilsSource = readFileSync(resolve(process.cwd(), "client/src/pages/payment-methods/binding-utils.ts"), "utf8");
 
 describe("PaymentMethodsPage binding controls", () => {
   it("does not render the relocated consent or cancellation disclosures", () => {
-    expect(source).not.toContain("autoChargeConsent");
-    expect(source).not.toContain('data-testid="checkbox-autocharge-consent"');
-    expect(source).not.toContain('data-testid="text-autocharge-consent"');
-    expect(source).not.toContain('data-testid="text-autocharge-cancel-info"');
+    expect(pageSource).not.toContain("autoChargeConsent");
+    expect(pageSource).not.toContain('data-testid="checkbox-autocharge-consent"');
+    expect(pageSource).not.toContain('data-testid="text-autocharge-consent"');
+    expect(pageSource).not.toContain('data-testid="text-autocharge-cancel-info"');
   });
 
   it("gates both binding buttons only while the page is busy", () => {
-    const cardButton = source.slice(
-      source.indexOf('data-testid="button-bind-card"') - 300,
-      source.indexOf('data-testid="button-bind-card"') + 100,
+    const cardButton = pageSource.slice(
+      pageSource.indexOf('data-testid="button-bind-card"') - 300,
+      pageSource.indexOf('data-testid="button-bind-card"') + 100,
     );
-    const sbpButton = source.slice(
-      source.indexOf('data-testid="button-add-sbp"') - 300,
-      source.indexOf('data-testid="button-add-sbp"') + 100,
+    const sbpButton = pageSource.slice(
+      pageSource.indexOf('data-testid="button-add-sbp"') - 300,
+      pageSource.indexOf('data-testid="button-add-sbp"') + 100,
     );
 
     expect(cardButton).toContain("disabled={busy}");
@@ -35,12 +37,12 @@ describe("PaymentMethodsPage binding controls", () => {
   });
 
   it("keeps pending binding methods out of the rendered methods list", () => {
-    expect(source).toContain("const visibleMethods = visiblePaymentMethods(methods)");
-    expect(source).toContain("{visibleMethods.map((m) => {");
-    expect(source).not.toContain("{methods.map((m) => {");
-    expect(source).not.toContain("button-refresh-");
-    expect(source).not.toContain("method-pending-hint-");
-    expect(source).not.toContain("Проверить статус");
+    expect(pageSource).toContain("const visibleMethods = visiblePaymentMethods(methods)");
+    expect(pageSource).toContain("{visibleMethods.map((m) => {");
+    expect(pageSource).not.toContain("{methods.map((m) => {");
+    expect(pageSource).not.toContain("button-refresh-");
+    expect(pageSource).not.toContain("method-pending-hint-");
+    expect(pageSource).not.toContain("Проверить статус");
   });
 
   it("hides every failed binding, including generic bank rejections", () => {
@@ -89,44 +91,44 @@ describe("PaymentMethodsPage binding controls", () => {
   });
 
   it("does not render an inline bank-error detail", () => {
-    expect(source).not.toContain("method-error-");
-    expect(source).not.toContain("{m.status === \"failed\" && err && (");
+    expect(pageSource).not.toContain("method-error-");
+    expect(pageSource).not.toContain("{m.status === \"failed\" && err && (");
   });
 
   it("does not show a toast for any terminal card-bind failure", () => {
-    const fetchedFailureEffect = source.slice(
-      source.indexOf("// A webhook can update the list"),
-      source.indexOf("// Start a real T-Bank card binding"),
+    const fetchedFailureEffect = pageSource.slice(
+      pageSource.indexOf("// A webhook can update the list"),
+      pageSource.indexOf("// Start a real T-Bank card binding"),
     );
-    const pollingFailureEffect = source.slice(
-      source.indexOf("// Keep pending bindings out of the list"),
-      source.indexOf("// Привязка карты через МОДАЛЬНЫЙ iframe"),
+    const pollingFailureEffect = pageSource.slice(
+      pageSource.indexOf("// Keep pending bindings out of the list"),
+      pageSource.indexOf("// Привязка карты через МОДАЛЬНЫЙ iframe"),
     );
 
     expect(fetchedFailureEffect).toContain('method.status === "failed"');
     expect(pollingFailureEffect).toContain('method.status === "failed"');
     expect(fetchedFailureEffect).not.toContain("toast.toast");
     expect(pollingFailureEffect).not.toContain("toast.toast");
-    expect(source).not.toContain('title: "Привязка не удалась"');
-    expect(source).not.toContain("shouldNotifyBindingFailure");
+    expect(pageSource).not.toContain('title: "Привязка не удалась"');
+    expect(pageSource).not.toContain("shouldNotifyBindingFailure");
   });
 
   it("silently polls each supported pending binding route every three seconds", () => {
-    expect(source).toContain("const PENDING_POLL_INTERVAL_MS = 3_000");
-    expect(source).toContain('`/api/payments/tbank/refresh-bind-sbp/${method.id}`');
-    expect(source).toContain('`/api/payment-methods/${method.id}/refresh`');
-    expect(source).toContain('`/api/payments/tbank/refresh-bind/${method.id}`');
-    expect(source).toContain("window.setInterval(() => void poll(), PENDING_POLL_INTERVAL_MS)");
-    expect(source).toContain("queryClient.invalidateQueries({ queryKey: METHODS_KEY })");
+    expect(pageSource).toContain("const PENDING_POLL_INTERVAL_MS = 3_000");
+    expect(utilsSource).toContain('`/api/payments/tbank/refresh-bind-sbp/${method.id}`');
+    expect(utilsSource).toContain('`/api/payment-methods/${method.id}/refresh`');
+    expect(utilsSource).toContain('`/api/payments/tbank/refresh-bind/${method.id}`');
+    expect(pageSource).toContain("window.setInterval(() => void poll(), PENDING_POLL_INTERVAL_MS)");
+    expect(pageSource).toContain("queryClient.invalidateQueries({ queryKey: METHODS_KEY })");
   });
 
   it("uses the three-minute client timeout only as a non-speculative reconciliation safety net", () => {
-    expect(source).toContain("const PENDING_BINDING_TIMEOUT_MS = 3 * 60 * 1_000");
-    expect(source).toContain('if (method.status !== "pending") continue');
-    expect(source).toContain("age !== null && age >= PENDING_BINDING_TIMEOUT_MS");
-    expect(source).toContain("Do not show a speculative");
-    expect(source).toContain("GetAddCardState/GetState");
-    expect(source).toContain('apiRequest("DELETE", `/api/payment-methods/${method.id}?pendingOnly=1`)');
+    expect(utilsSource).toContain("const PENDING_BINDING_TIMEOUT_MS = 3 * 60 * 1_000");
+    expect(utilsSource).toContain('if (method.status !== "pending") continue');
+    expect(utilsSource).toContain("age !== null && age >= PENDING_BINDING_TIMEOUT_MS");
+    expect(pageSource).toContain("Do not show a speculative");
+    expect(pageSource).toContain("GetAddCardState/GetState");
+    expect(utilsSource).toContain('apiRequest("DELETE", `/api/payment-methods/${method.id}?pendingOnly=1`)');
   });
 
   it("does not timeout-toast a fresh pending card on mount, even with an old active card", () => {
