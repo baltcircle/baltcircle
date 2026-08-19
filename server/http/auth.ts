@@ -217,7 +217,12 @@ export function registerAuthRoutes(app: Express): void {
   // The current rider changes their phone number. This is the ONLY way to
   // change a phone — the profile PATCH endpoint never touches it. Step 1 sends a
   // code to the new number; step 2 verifies it and applies the change.
-  app.post("/api/users/me/phone/start", async (req, res) => {
+  // Audit MEDIUM (Платежи track): unlike /api/auth/otp/start|verify, these
+  // four endpoints sent real SMS/email and guessed codes with no rate limit
+  // at all — an authenticated rider (or anyone who stole/fixed a session)
+  // could hammer them to run up SMS cost or brute-force the change code.
+  // Reuse the same IP-keyed otpLimiter as the registration OTP flow.
+  app.post("/api/users/me/phone/start", otpLimiter, async (req, res) => {
     const id = req.session?.userId;
     if (!id) return res.status(401).json({ error: "Требуется вход" });
     const parsed = phoneChangeStartSchema.safeParse(req.body);
@@ -242,7 +247,7 @@ export function registerAuthRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/users/me/phone/verify", async (req, res) => {
+  app.post("/api/users/me/phone/verify", otpLimiter, async (req, res) => {
     const id = req.session?.userId;
     if (!id) return res.status(401).json({ error: "Требуется вход" });
     const parsed = phoneChangeVerifySchema.safeParse(req.body);
@@ -258,7 +263,7 @@ export function registerAuthRoutes(app: Express): void {
   // -------------- Email change (RuSender OTP) --------------
   // Same OTP UX as phone — send code to the target email, verify, apply. This is
   // the only path to set/change/verify an email; profile PATCH never touches it.
-  app.post("/api/users/me/email/start", async (req, res) => {
+  app.post("/api/users/me/email/start", otpLimiter, async (req, res) => {
     const id = req.session?.userId;
     if (!id) return res.status(401).json({ error: "Требуется вход" });
     const parsed = emailChangeStartSchema.safeParse(req.body);
@@ -283,7 +288,7 @@ export function registerAuthRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/users/me/email/verify", async (req, res) => {
+  app.post("/api/users/me/email/verify", otpLimiter, async (req, res) => {
     const id = req.session?.userId;
     if (!id) return res.status(401).json({ error: "Требуется вход" });
     const parsed = emailChangeVerifySchema.safeParse(req.body);
