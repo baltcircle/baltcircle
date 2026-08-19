@@ -1,7 +1,8 @@
 import { useEffect, type MouseEvent } from "react";
 import { OverlayShell } from "@/components/OverlayShell";
-import { INFO_CATEGORIES, PRIVACY_DOCS, RIDING_DOCS, type InfoDoc } from "@/lib/info";
-import { LEGAL_DOCS } from "@/lib/legal";
+import { INFO_CATEGORIES, PRIVACY_DOCS, RIDING_DOCS } from "@/lib/info";
+import { InfoDocument } from "./safety/InfoDocument";
+import { LegalSection } from "./safety/LegalSection";
 
 const RIDING_CATEGORY = INFO_CATEGORIES.find((category) => category.slug === "riding")!;
 const PRIVACY_CATEGORY = INFO_CATEGORIES.find((category) => category.slug === "privacy")!;
@@ -69,39 +70,6 @@ function renderParagraph(
       })}
       {paragraph.slice(cursor)}
     </>
-  );
-}
-
-function InfoDocument({ doc, category }: { doc: InfoDoc; category: "riding" | "privacy" }) {
-  const anchor = `${category}-${doc.slug}`;
-
-  return (
-    <section
-      id={anchor}
-      data-testid={`section-info-${anchor}`}
-      className="scroll-mt-6"
-    >
-      <h3 className="font-display text-lg font-light">{doc.title}</h3>
-      <p className="text-muted-foreground mt-1">{doc.description}</p>
-
-      {doc.sections.map((section, index) => (
-        <section key={index} className="mt-5">
-          {section.heading && (
-            <h4 className="font-display text-base font-light">{section.heading}</h4>
-          )}
-          {section.paragraphs?.map((paragraph, paragraphIndex) => (
-            <p key={paragraphIndex}>{renderParagraph(paragraph, INFO_INLINE_REFERENCES)}</p>
-          ))}
-          {section.bullets && (
-            <ul>
-              {section.bullets.map((bullet, bulletIndex) => (
-                <li key={bulletIndex}>{bullet}</li>
-              ))}
-            </ul>
-          )}
-        </section>
-      ))}
-    </section>
   );
 }
 
@@ -176,7 +144,12 @@ export function SafetyPage() {
             <p>{RIDING_CATEGORY.intro}</p>
             <div className="space-y-8 mt-6">
               {RIDING_DOCS.map((doc) => (
-                <InfoDocument key={doc.slug} doc={doc} category="riding" />
+                <InfoDocument
+                  key={doc.slug}
+                  doc={doc}
+                  category="riding"
+                  renderParagraph={(p) => renderParagraph(p, INFO_INLINE_REFERENCES)}
+                />
               ))}
             </div>
           </section>
@@ -187,7 +160,12 @@ export function SafetyPage() {
             <p>{renderParagraph(PRIVACY_CATEGORY.intro, INFO_INLINE_REFERENCES)}</p>
             <div className="space-y-8 mt-6">
               {PRIVACY_DOCS.map((doc) => (
-                <InfoDocument key={doc.slug} doc={doc} category="privacy" />
+                <InfoDocument
+                  key={doc.slug}
+                  doc={doc}
+                  category="privacy"
+                  renderParagraph={(p) => renderParagraph(p, INFO_INLINE_REFERENCES)}
+                />
               ))}
             </div>
           </section>
@@ -225,46 +203,7 @@ export function SafetyPage() {
             </p>
           </section>
 
-          <section id="legal" data-testid="section-info-legal" className="scroll-mt-6">
-            <h2 className="font-display text-xl font-light">Правовые документы</h2>
-            <p className="text-muted-foreground mt-1">
-              Соглашение, правила проката, конфиденциальность, оплата
-            </p>
-
-            <div className="space-y-10 mt-6">
-              {LEGAL_DOCS.map((doc) => (
-                <section
-                  key={doc.slug}
-                  id={`legal-${doc.slug}`}
-                  data-testid={`section-info-legal-${doc.slug}`}
-                  className="scroll-mt-6"
-                >
-                  <h3 className="font-display text-lg font-light">{doc.title}</h3>
-                  <p className="text-muted-foreground mt-1">{doc.description}</p>
-
-                  {doc.sections.map((section, index) => (
-                    <section key={index} className="mt-5">
-                      {section.heading && (
-                        <h4 className="font-display text-base font-light">{section.heading}</h4>
-                      )}
-                      {section.paragraphs?.map((paragraph, paragraphIndex) => (
-                        <p key={paragraphIndex}>
-                          {renderParagraph(paragraph, LEGAL_INLINE_REFERENCES)}
-                        </p>
-                      ))}
-                      {section.bullets && (
-                        <ul>
-                          {section.bullets.map((bullet, bulletIndex) => (
-                            <li key={bulletIndex}>{bullet}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </section>
-                  ))}
-                </section>
-              ))}
-            </div>
-          </section>
+          <LegalSection renderParagraph={(p) => renderParagraph(p, LEGAL_INLINE_REFERENCES)} />
         </div>
       </div>
     </OverlayShell>
