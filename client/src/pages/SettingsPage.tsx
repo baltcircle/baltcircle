@@ -8,15 +8,15 @@ import type { User as UserType } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { PhoneChangeModal } from "@/components/PhoneChangeModal";
 import { EmailChangeModal } from "@/components/EmailChangeModal";
-import { ArrowLeft, ChevronRight, Sun, Moon, Bell } from "lucide-react";
+import { ArrowLeft, ChevronRight } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  getPushState, subscribePush, unsubscribePush, pushStateLabel,
-  type PushState,
-} from "@/lib/push";
+import { usePushToggle } from "./settings/usePushToggle";
+import { ProfileSection } from "./settings/ProfileSection";
+import { PushNotificationsSection } from "./settings/PushNotificationsSection";
+import { ThemeSection } from "./settings/ThemeSection";
 
 export function SettingsPage() {
   const toast = useToast();
@@ -25,63 +25,10 @@ export function SettingsPage() {
 
   const [name, setName] = useState(user?.name ?? "");
   const [editingName, setEditingName] = useState(false);
-  const [pushState, setPushState] = useState<PushState>("default");
-  const [pushBusy, setPushBusy] = useState(false);
+  const { pushState, pushOn, pushBusy, pushDisabled, togglePush } = usePushToggle();
   const [phoneModalOpen, setPhoneModalOpen] = useState(false);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-
-  // Подтягиваем текущее состояние push при монтировании.
-  useEffect(() => {
-    let cancelled = false;
-    getPushState().then((s) => { if (!cancelled) setPushState(s); }).catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
-
-  const pushOn = pushState === "granted-subscribed";
-  const pushDisabled =
-    pushBusy ||
-    pushState === "unsupported" ||
-    pushState === "ios-need-standalone" ||
-    pushState === "denied";
-
-  async function togglePush() {
-    if (pushDisabled) {
-      if (pushState === "ios-need-standalone") {
-        toast.toast({
-          title: "Добавьте приложение на экран «Домой»",
-          description: "iOS Safari показывает push только в установленном PWA. Откройте Поделиться → На экран «Домой».",
-        });
-      } else if (pushState === "denied") {
-        toast.toast({
-          title: "Уведомления заблокированы",
-          description: "Разрешите уведомления в настройках браузера для этого сайта.",
-        });
-      }
-      return;
-    }
-    setPushBusy(true);
-    try {
-      const next = pushOn ? await unsubscribePush() : await subscribePush();
-      setPushState(next);
-      if (next === "granted-subscribed") {
-        toast.toast({ title: "Push включены" });
-      } else if (next === "denied") {
-        toast.toast({
-          title: "Разрешение отклонено",
-          description: "Включить можно в настройках браузера.",
-        });
-      }
-    } catch (err) {
-      toast.toast({
-        title: "Не удалось переключить push",
-        description: (err as Error)?.message ?? "Попробуйте ещё раз.",
-        variant: "destructive",
-      });
-    } finally {
-      setPushBusy(false);
-    }
-  }
 
   useEffect(() => {
     if (user) {
@@ -159,117 +106,29 @@ export function SettingsPage() {
       <div className="flex-1 flex flex-col px-4 pt-6 pb-4 gap-3 min-h-0">
 
         {/* User data */}
-        <div className="rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800 shrink-0">
-          {/* Name */}
-          <div
-            className="px-4 py-3 border-b border-gray-100 dark:border-zinc-700 cursor-pointer"
-            onClick={() => isRegistered && setEditingName(v => !v)}
-          >
-            {editingName ? (
-              <input
-                autoFocus
-                value={name}
-                onChange={e => setName(e.target.value)}
-                onBlur={() => saveMut.mutate({ name: name.trim() })}
-                onKeyDown={e => e.key === "Enter" && saveMut.mutate({ name: name.trim() })}
-                className="w-full text-base font-semibold text-gray-900 dark:text-white bg-transparent border-b border-blue-500 outline-none"
-              />
-            ) : (
-              <p className="text-base font-semibold text-gray-900 dark:text-white">{name || "—"}</p>
-            )}
-            <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">Твоё имя</p>
-          </div>
-
-          {/* Phone */}
-          <button
-            type="button"
-            onClick={() => setPhoneModalOpen(true)}
-            className="w-full px-4 py-3 border-b border-gray-100 dark:border-zinc-700 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors"
-          >
-            <div className="text-left">
-              <p className="text-base font-semibold text-gray-900 dark:text-white">{user?.phone ?? "—"}</p>
-              <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">Номер телефона</p>
-            </div>
-            <ChevronRight className="w-4 h-4 text-gray-400 dark:text-zinc-500 shrink-0" />
-          </button>
-
-          {/* Email */}
-          <button
-            type="button"
-            onClick={() => setEmailModalOpen(true)}
-            className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors"
-          >
-            <div className="text-left">
-              <p className="text-base font-semibold text-gray-900 dark:text-white">{user?.email ?? "—"}</p>
-              <p className="text-xs mt-0.5">
-                <span className="text-gray-400 dark:text-zinc-500">Email</span>
-                {user?.emailVerifiedAt && <span className="text-green-500 ml-1">· Подтверждён</span>}
-              </p>
-            </div>
-            <ChevronRight className="w-4 h-4 text-gray-400 dark:text-zinc-500 shrink-0" />
-          </button>
-        </div>
+        <ProfileSection
+          isRegistered={isRegistered}
+          editingName={editingName}
+          setEditingName={setEditingName}
+          name={name}
+          setName={setName}
+          onSaveName={() => saveMut.mutate({ name: name.trim() })}
+          user={user}
+          onOpenPhoneModal={() => setPhoneModalOpen(true)}
+          onOpenEmailModal={() => setEmailModalOpen(true)}
+        />
 
         {/* Push notifications */}
-        <div className="rounded-2xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 overflow-hidden shrink-0">
-          <p className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-widest text-gray-400 dark:text-zinc-500">Уведомления</p>
-          <div className="px-4 py-3 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <Bell className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
-              <div className="min-w-0">
-                <p className="text-base font-semibold text-gray-900 dark:text-white">Push уведомления</p>
-                <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5 truncate">
-                  {pushStateLabel(pushState)}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={togglePush}
-              aria-checked={pushOn}
-              role="switch"
-              disabled={pushDisabled && pushState !== "ios-need-standalone" && pushState !== "denied"}
-              className={`relative inline-flex w-11 h-6 rounded-full transition-colors duration-200 shrink-0 ${
-                pushOn ? "bg-primary" : "bg-gray-200 dark:bg-zinc-600"
-              } ${pushBusy ? "opacity-60" : ""} ${pushState === "unsupported" ? "opacity-40 cursor-not-allowed" : ""}`}
-            >
-              <span
-                className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
-                  pushOn ? "translate-x-5" : "translate-x-0"
-                }`}
-              />
-            </button>
-          </div>
-        </div>
+        <PushNotificationsSection
+          pushState={pushState}
+          pushOn={pushOn}
+          pushBusy={pushBusy}
+          pushDisabled={pushDisabled}
+          onToggle={togglePush}
+        />
 
         {/* Theme */}
-        <div className="rounded-2xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 overflow-hidden shrink-0">
-          <p className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-widest text-gray-400 dark:text-zinc-500">Настройки приложения</p>
-          <div className="px-4 py-3">
-            <p className="text-base font-semibold text-gray-900 dark:text-white mb-3">Тема приложения</p>
-            <div className="flex rounded-full bg-muted p-1 gap-1">
-              {(["system", "light", "dark"] as const).map((m) => {
-                const active = mode === m;
-                return (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setMode(m)}
-                    className={`flex-1 flex items-center justify-center h-8 rounded-full text-sm font-medium transition-all ${
-                      active
-                        ? "bg-primary text-primary-foreground shadow"
-                        : "text-muted-foreground"
-                    }`}
-                  >
-                    {m === "system" && "Авто"}
-                    {m === "light" && <Sun className="w-4 h-4" />}
-                    {m === "dark" && <Moon className="w-4 h-4" />}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+        <ThemeSection mode={mode} setMode={setMode} />
 
         {/* Consent */}
         {isRegistered && user?.consentAcceptedAt && (
