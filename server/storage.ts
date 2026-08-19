@@ -1,6 +1,6 @@
 import {
-  bikes, locks, parkings, zones, rides, tickets, ticketComments, payments, wallet, mapObjects, users,
-  otpRequests, phoneChangeRequests, emailChangeRequests, oauthIdentities,
+  bikes, locks, unassignedLocks, bikeTelemetry, parkings, zones, rides, tickets, ticketComments, payments, wallet, mapObjects, users,
+  otpRequests, phoneChangeRequests, emailChangeRequests, oauthIdentities, pushSubscriptions,
   paymentMethods, supportTickets, paymentOrders, walletTopupOrders,
   supportConversations, supportMessages, ridePoints,
   TICKET_CLOSED_STATUSES,
@@ -22,7 +22,7 @@ import {
   TARIFFS, tariffPriceKopecks, findNearestParkingWithinRadius,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
-import { eq, desc, sql, gt, lt, and, asc, inArray, isNull } from "drizzle-orm";
+import { eq, desc, sql, gt, lt, and, asc, inArray, isNull, count } from "drizzle-orm";
 import { EventEmitter } from "node:events";
 import { sendToUserAsync } from "./push";
 import { encryptToken, decryptToken, hashTokenForLookup } from "./crypto/payment-tokens";
@@ -225,97 +225,80 @@ export class DatabaseStorage implements IStorage {
    * wallet, because those rows are required for accounting and audit.
    */
   async deleteAccount(userId: string): Promise<{ ok: true } | { error: "active_ride" | "not_found" }> {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-
-      const user = (await client.query<{ phone: string; deleted_at: number | null }>(
-        `SELECT phone, deleted_at FROM users WHERE id = $1 FOR UPDATE`,
-        [userId],
-      )).rows[0];
-      if (!user || user.deleted_at) {
-        await client.query("ROLLBACK");
-        return { error: "not_found" };
+    return db.transaction(async (tx) => {
+      const user = (await tx.select({ phone: users.phone, deletedAt: users.deletedAt })
+        .from(users).where(eq(users.id, userId)).for("update").limit(1))[0];
+      if (!user || user.deletedAt) {
+        return { error: "not_found" as const };
       }
 
-      const activeRide = (await client.query(
-        `SELECT 1 FROM rides WHERE user_id = $1 AND status = 'active' LIMIT 1`,
-        [userId],
-      )).rowCount;
+      const activeRide = (await tx.select({ id: rides.id }).from(rides)
+        .where(and(eq(rides.userId, userId), eq(rides.status, "active"))).limit(1))[0];
       if (activeRide) {
-        await client.query("ROLLBACK");
-        return { error: "active_ride" };
+        return { error: "active_ride" as const };
       }
 
       const now = Date.now();
       // Pending contact verification and OAuth/provider metadata contain direct
       // identifiers and have no independent retention requirement.
-      await client.query(`DELETE FROM phone_change_requests WHERE user_id = $1`, [userId]);
-      await client.query(`DELETE FROM email_change_requests WHERE user_id = $1`, [userId]);
-      await client.query(`DELETE FROM oauth_identities WHERE user_id = $1`, [userId]);
-      await client.query(`DELETE FROM push_subscriptions WHERE user_id = $1`, [userId]);
-      await client.query(`DELETE FROM otp_requests WHERE phone = $1`, [user.phone]);
+      await tx.delete(phoneChangeRequests).where(eq(phoneChangeRequests.userId, userId));
+      await tx.delete(emailChangeRequests).where(eq(emailChangeRequests.userId, userId));
+      await tx.delete(oauthIdentities).where(eq(oauthIdentities.userId, userId));
+      await tx.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
+      await tx.delete(otpRequests).where(eq(otpRequests.phone, user.phone));
 
       // Payment methods should already have been unlinked from the acquirer by
       // the HTTP layer. This removes legacy/failed metadata if an older row was
       // not eligible for a remote unlink.
-      await client.query(`DELETE FROM payment_methods WHERE user_id = $1`, [userId]);
+      await tx.delete(paymentMethods).where(eq(paymentMethods.userId, userId));
 
       // Support content can itself contain PII and is not a financial ledger.
       // support_messages cascades from its conversation; sender_id cleanup also
       // covers any legacy message that is not attached to a current conversation.
-      await client.query(`DELETE FROM support_tickets WHERE user_id = $1`, [userId]);
-      await client.query(`DELETE FROM support_conversations WHERE user_id = $1`, [userId]);
-      await client.query(`DELETE FROM support_messages WHERE sender_id = $1`, [userId]);
+      await tx.delete(supportTickets).where(eq(supportTickets.userId, userId));
+      await tx.delete(supportConversations).where(eq(supportConversations.userId, userId));
+      await tx.delete(supportMessages).where(eq(supportMessages.senderId, userId));
 
       // A RebillId can authorize future charges and must never outlive the
       // account. Keep the order itself for accounting, but sever the reusable
       // payment-method link/token.
-      await client.query(
-        `UPDATE payment_orders
-         SET payment_method_id = NULL, rebill_id = NULL, updated_at = $2
-         WHERE user_id = $1`,
-        [userId, now],
-      );
+      await tx.update(paymentOrders)
+        .set({ paymentMethodId: null, rebillId: null, updatedAt: now })
+        .where(eq(paymentOrders.userId, userId));
 
       // Users.name and users.phone are NOT NULL in the deployed schema. Replace
       // them with non-identifying values rather than weakening historical DB
       // constraints; email, consent IP and all other profile PII become NULL.
-      await client.query(
-        `UPDATE users
-         SET name = 'Удалённый пользователь',
-             phone = 'deleted:' || id,
-             email = NULL,
-             email_verified_at = NULL,
-             consent_accepted_at = NULL,
-             consent_version = NULL,
-             consent_ip = NULL,
-             blocked_at = NULL,
-             blocked_reason = NULL,
-             deleted_at = $2,
-             updated_at = $2
-         WHERE id = $1`,
-        [userId, now],
-      );
+      await tx.update(users)
+        .set({
+          name: "Удалённый пользователь",
+          phone: sql`'deleted:' || id`,
+          email: null,
+          emailVerifiedAt: null,
+          consentAcceptedAt: null,
+          consentVersion: null,
+          consentIp: null,
+          blockedAt: null,
+          blockedReason: null,
+          deletedAt: now,
+          updatedAt: now,
+        } as any)
+        .where(eq(users.id, userId));
 
       // Delete all persisted sessions for this user, including sessions on
       // other devices. connect-pg-simple creates this table lazily, so account
-      // deletion must also work before the first session has been written.
-      const sessionTable = (await client.query<{ session_table: string | null }>(
-        `SELECT to_regclass('public.session')::text AS session_table`,
-      )).rows[0]?.session_table;
+      // deletion must also work before the first session has been written, and
+      // that table has no Drizzle schema (owned by the session-store library) —
+      // both checks stay on tx.execute(sql) for that reason.
+      const sessionTable = (await tx.execute<{ session_table: string | null }>(sql`
+        SELECT to_regclass('public.session')::text AS session_table
+      `)).rows[0]?.session_table;
       if (sessionTable) {
-        await client.query(`DELETE FROM "session" WHERE sess::jsonb ->> 'userId' = $1`, [userId]);
+        await tx.execute(sql`DELETE FROM "session" WHERE sess::jsonb ->> 'userId' = ${userId}`);
       }
 
-      await client.query("COMMIT");
-      return { ok: true };
-    } catch (err) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw err;
-    } finally {
-      client.release();
-    }
+      return { ok: true as const };
+    });
   }
 
   // ---------- Admin user management ----------
@@ -333,7 +316,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async countUsers() {
-    return Number((await pool.query("SELECT COUNT(*)::int AS c FROM users WHERE deleted_at IS NULL")).rows[0].c);
+    return (await db.select({ c: count() }).from(users).where(isNull(users.deletedAt)))[0].c;
   }
 
   // Audit: soft-delete scope gap — an operator must not be able to promote or
@@ -1420,10 +1403,15 @@ export class DatabaseStorage implements IStorage {
 
   /** Zero-out unread counter for the reader side. */
   async markSupportRead(conversationId: number, reader: "user" | "operator"): Promise<void> {
-    const col = reader === "user" ? "user_unread_count" : "operator_unread_count";
-    await db.execute(sql.raw(
-      `UPDATE support_conversations SET ${col} = 0 WHERE id = ${Number(conversationId)}`
-    ));
+    // Both branches are plain, fully parameterized updates — no interpolated
+    // SQL text, unlike the previous sql.raw(`... ${col} ... ${id}`) version.
+    if (reader === "user") {
+      await db.update(supportConversations).set({ userUnreadCount: 0 })
+        .where(eq(supportConversations.id, conversationId));
+    } else {
+      await db.update(supportConversations).set({ operatorUnreadCount: 0 })
+        .where(eq(supportConversations.id, conversationId));
+    }
   }
 
   /** Admin inbox: all conversations, newest activity first, joined with rider profile. */
@@ -1647,7 +1635,7 @@ export class DatabaseStorage implements IStorage {
   // is cosmetic and must not fail the bike that was successfully created.
   private async forgetUnassignedLock(imei: string): Promise<void> {
     try {
-      await pool.query("DELETE FROM unassigned_locks WHERE imei = $1", [imei]);
+      await db.delete(unassignedLocks).where(eq(unassignedLocks.imei, imei));
     } catch {
       /* ignore */
     }
@@ -1657,10 +1645,7 @@ export class DatabaseStorage implements IStorage {
   // bikes.lock_imei binding. Rows may be absent for old/manual bindings, so an
   // UPDATE affecting zero rows is intentional and must not reject the bike save.
   private async syncLockRegistryBinding(imei: string, bikeId: string | null): Promise<void> {
-    await pool.query(
-      `UPDATE locks SET bike_id = $2, updated_at = $3 WHERE imei = $1`,
-      [imei, bikeId, Date.now()],
-    );
+    await db.update(locks).set({ bikeId, updatedAt: Date.now() } as any).where(eq(locks.imei, imei));
   }
 
   async adminUpdateBike(id: string, patch: AdminUpdateBikeInput) {
@@ -1733,10 +1718,10 @@ export class DatabaseStorage implements IStorage {
     if (!existing) return { error: "Велосипед не найден" };
     if (existing.status === "rented") return { error: "Нельзя удалить велосипед во время активной аренды" };
     const [rideCount, ticketCount, orderCount] = await Promise.all([
-      pool.query("SELECT COUNT(*) AS c FROM rides WHERE bike_id = $1", [id]),
-      pool.query("SELECT COUNT(*) AS c FROM tickets WHERE bike_id = $1", [id]),
-      pool.query("SELECT COUNT(*) AS c FROM payment_orders WHERE bike_id = $1", [id]),
-    ]).then((rs) => rs.map((r) => Number(r.rows[0].c)));
+      db.select({ c: count() }).from(rides).where(eq(rides.bikeId, id)),
+      db.select({ c: count() }).from(tickets).where(eq(tickets.bikeId, id)),
+      db.select({ c: count() }).from(paymentOrders).where(eq(paymentOrders.bikeId, id)),
+    ]).then((rs) => rs.map((r) => r[0].c));
     if (rideCount > 0 || ticketCount > 0 || orderCount > 0) {
       await db.update(bikes).set({ status: "archived" } as any).where(eq(bikes.id, id));
       this.invalidateBikesCache();
@@ -1882,7 +1867,7 @@ export class DatabaseStorage implements IStorage {
   async deleteParking(id: string) {
     const existing = await this.getParking(id);
     if (!existing) return { error: "Парковка не найдена" };
-    const refCount = Number((await pool.query("SELECT COUNT(*) AS c FROM bikes WHERE parking_id = $1", [id])).rows[0].c);
+    const refCount = (await db.select({ c: count() }).from(bikes).where(eq(bikes.parkingId, id)))[0].c;
     if (refCount > 0) {
       await db.update(parkings).set({ archivedAt: Date.now(), updatedAt: Date.now() } as any).where(eq(parkings.id, id));
       return { error: "К парковке привязаны велосипеды — она переведена в архив", archived: (await this.getParking(id))! };
@@ -2376,7 +2361,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async countRides() {
-    return Number((await pool.query("SELECT COUNT(*)::int AS c FROM rides")).rows[0].c);
+    return (await db.select({ c: count() }).from(rides))[0].c;
   }
 
   async getWallet(userId: string) {
@@ -2524,7 +2509,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async countTickets() {
-    return Number((await pool.query("SELECT COUNT(*)::int AS c FROM tickets")).rows[0].c);
+    return (await db.select({ c: count() }).from(tickets))[0].c;
   }
 
   async getTicket(id: number): Promise<TicketWithComments | undefined> {

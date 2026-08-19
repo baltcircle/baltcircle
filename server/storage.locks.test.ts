@@ -7,18 +7,38 @@
 // it is bound to a bike.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bike } from "@shared/schema";
+import { unassignedLocks, locks } from "@shared/schema";
 
 const IMEI = "861234567890123";
 
+// drizzle's eq(column, value) queryChunks hold the column ref plus a Param
+// node for the bound value; a Param is the only chunk with a non-array
+// `.value`, which is what makes it distinguishable from both the raw column
+// ref (no `.value`) and StringChunk (`.value` is an array).
+function extractEqValue(cond: unknown): unknown {
+  const chunks = (cond as { queryChunks?: unknown[] })?.queryChunks;
+  if (!Array.isArray(chunks)) return undefined;
+  for (const c of chunks) {
+    if (c && typeof c === "object" && "value" in c && !Array.isArray((c as { value?: unknown }).value)) {
+      return (c as { value: unknown }).value;
+    }
+  }
+  return undefined;
+}
+
 /** Rows the next db.select() chain resolves to, in call order. */
 let selectResults: unknown[][] = [];
-/** Set to make the INSERT/UPDATE reject, standing in for a Postgres error. */
+/** Set to make the INSERT/UPDATE/DELETE reject, standing in for a Postgres error. */
 let writeError: unknown = null;
+/** db.delete(table) / db.update(table) calls, recorded with their bound where-value. */
+let deleteCalls: { table: unknown; imei?: unknown }[] = [];
+let updateCalls: { table: unknown; set?: unknown; imei?: unknown }[] = [];
 
 const dbMock = vi.hoisted(() => ({
   select: vi.fn(),
   insert: vi.fn(),
   update: vi.fn(),
+  delete: vi.fn(),
 }));
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 
@@ -64,7 +84,31 @@ beforeEach(() => {
     return chain;
   };
   dbMock.insert.mockImplementation(write);
-  dbMock.update.mockImplementation(write);
+
+  deleteCalls = [];
+  updateCalls = [];
+  dbMock.update.mockImplementation((table: unknown) => {
+    const entry: { table: unknown; set?: unknown; imei?: unknown } = { table };
+    updateCalls.push(entry);
+    const chain: any = {
+      set: (v: unknown) => { entry.set = v; return chain; },
+      where: (cond: unknown) => {
+        entry.imei = extractEqValue(cond);
+        return writeError ? Promise.reject(writeError) : Promise.resolve();
+      },
+    };
+    return chain;
+  });
+  dbMock.delete.mockImplementation((table: unknown) => {
+    const entry: { table: unknown; imei?: unknown } = { table };
+    deleteCalls.push(entry);
+    return {
+      where: (cond: unknown) => {
+        entry.imei = extractEqValue(cond);
+        return writeError ? Promise.reject(writeError) : Promise.resolve();
+      },
+    };
+  });
   poolMock.query.mockResolvedValue({ rows: [] });
 });
 
@@ -96,13 +140,15 @@ describe("createBike lock binding", () => {
     const result = await storage.createBike(createInput);
 
     expect(result).toEqual({ bike: bikeRow() });
-    const deletes = poolMock.query.mock.calls.filter(([sql]) =>
-      String(sql).includes("DELETE FROM unassigned_locks"));
-    expect(deletes).toHaveLength(1);
-    expect(deletes[0][1]).toEqual([IMEI]);
-    expect(poolMock.query).toHaveBeenCalledWith(
-      expect.stringContaining("UPDATE locks SET bike_id = $2"),
-      [IMEI, "BC-01", expect.any(Number)],
+    const unassignedDeletes = deleteCalls.filter((d) => d.table === unassignedLocks);
+    expect(unassignedDeletes).toHaveLength(1);
+    expect(unassignedDeletes[0].imei).toBe(IMEI);
+
+    const locksUpdates = updateCalls.filter((u) => u.table === locks);
+    expect(locksUpdates).toHaveLength(1);
+    expect(locksUpdates[0].imei).toBe(IMEI);
+    expect(locksUpdates[0].set).toEqual(
+      expect.objectContaining({ bikeId: "BC-01", updatedAt: expect.any(Number) }),
     );
   });
 
