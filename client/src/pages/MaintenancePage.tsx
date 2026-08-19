@@ -1,80 +1,28 @@
 import { useMemo, useState, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useSearch } from "wouter";
-import type { Bike, Ticket, TicketComment, TicketWithComments, User } from "@shared/schema";
-import { TICKET_KINDS, TICKET_PRIORITIES, TICKET_STATUSES, TICKET_CLOSED_STATUSES } from "@shared/schema";
+import type { Bike, Ticket, User } from "@shared/schema";
+import { TICKET_PRIORITIES, TICKET_STATUSES } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-} from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Wrench, MessageSquarePlus, X } from "lucide-react";
+import { Plus, Wrench } from "lucide-react";
 import { fmtRelative } from "@/lib/format";
 import { TablePager, useClientPagination } from "@/components/table-pager";
-
-// Russian labels for the stored ids. Legacy auto-flag kinds are mapped too so
-// older seeded/auto-generated tickets still render a friendly label.
-const KIND_LABEL: Record<string, string> = {
-  wheel_puncture: "Колесо / прокол",
-  brakes: "Тормоза",
-  chain: "Цепь",
-  handlebar_saddle: "Руль / седло",
-  lock: "Замок",
-  qr_sticker: "QR-наклейка",
-  dirty: "Грязный велосипед",
-  lost: "Потерян / не найден",
-  other: "Другое",
-  // legacy
-  low_battery: "Низкий заряд замка",
-  suspicious_idle: "Подозрительный простой",
-  repair_request: "Заявка на ремонт",
-  out_of_zone: "Вне зоны",
-};
-
-const PRIORITY_LABEL: Record<string, string> = {
-  low: "Низкий", medium: "Средний", high: "Высокий", critical: "Критический",
-};
-const PRIORITY_TONE: Record<string, string> = {
-  low: "text-muted-foreground border-border",
-  medium: "text-sky-600 dark:text-sky-400 border-sky-500/40",
-  high: "text-amber-600 dark:text-amber-400 border-amber-500/40",
-  critical: "text-destructive border-destructive/40",
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  new: "Новая", open: "Новая", in_progress: "В работе",
-  waiting_parts: "Ждёт запчасти", resolved: "Решена",
-  closed: "Закрыта", cancelled: "Отменена",
-};
-const STATUS_TONE: Record<string, string> = {
-  new: "text-amber-600 dark:text-amber-400 border-amber-500/40",
-  open: "text-amber-600 dark:text-amber-400 border-amber-500/40",
-  in_progress: "text-sky-600 dark:text-sky-400 border-sky-500/40",
-  waiting_parts: "text-violet-600 dark:text-violet-400 border-violet-500/40",
-  resolved: "text-emerald-600 dark:text-emerald-400 border-emerald-500/40",
-  closed: "text-muted-foreground border-border",
-  cancelled: "text-muted-foreground border-border",
-};
-
-const normStatus = (s: string) => (s === "open" ? "new" : s);
-const isClosed = (s: string) => TICKET_CLOSED_STATUSES.includes(normStatus(s));
-
-type CreateForm = {
-  bikeId: string; kind: string; priority: string; title: string; message: string; assignee: string;
-};
-const emptyForm: CreateForm = {
-  bikeId: "", kind: "wheel_puncture", priority: "medium", title: "", message: "", assignee: "",
-};
+import {
+  KIND_LABEL, PRIORITY_LABEL, PRIORITY_TONE, STATUS_LABEL, STATUS_TONE,
+  normStatus, isClosed, type CreateForm, emptyForm,
+} from "./maintenance/labels";
+import { CreateTicketDialog } from "./maintenance/CreateTicketDialog";
+import { TicketDetail } from "./maintenance/TicketDetail";
 
 export function MaintenancePage() {
   const toast = useToast();
@@ -258,101 +206,16 @@ export function MaintenancePage() {
         <TablePager page={page} pageCount={pageCount} total={filtered.length} onPage={setPage} testid="tickets-pager" />
       </div>
 
-      {/* Create dialog */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent data-testid="dialog-create-ticket" className="max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="font-display font-light">Новая сервисная заявка</DialogTitle>
-            <DialogDescription>Создайте заявку на обслуживание велосипеда.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Велосипед</div>
-              <Input
-                value={form.bikeId}
-                onChange={(e) => setForm((s) => ({ ...s, bikeId: e.target.value.toUpperCase() }))}
-                placeholder="BC-014"
-                list="bike-ids"
-                data-testid="input-ticket-bike"
-              />
-              <datalist id="bike-ids">
-                {(bikesQ.data ?? []).map((b) => <option key={b.id} value={b.id} />)}
-              </datalist>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">Тип</div>
-                <Select value={form.kind} onValueChange={(v) => setForm((s) => ({ ...s, kind: v }))}>
-                  <SelectTrigger data-testid="select-ticket-kind"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {TICKET_KINDS.map((k) => (
-                      <SelectItem key={k} value={k}>{KIND_LABEL[k]}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">Приоритет</div>
-                <Select value={form.priority} onValueChange={(v) => setForm((s) => ({ ...s, priority: v }))}>
-                  <SelectTrigger data-testid="select-ticket-priority-new"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {TICKET_PRIORITIES.map((p) => (
-                      <SelectItem key={p} value={p}>{PRIORITY_LABEL[p]}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Заголовок (необязательно)</div>
-              <Input
-                value={form.title}
-                onChange={(e) => setForm((s) => ({ ...s, title: e.target.value }))}
-                placeholder="Кратко"
-                data-testid="input-ticket-title"
-              />
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Описание</div>
-              <Textarea
-                rows={3}
-                value={form.message}
-                onChange={(e) => setForm((s) => ({ ...s, message: e.target.value }))}
-                placeholder="Что произошло?"
-                data-testid="textarea-ticket-message"
-              />
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Исполнитель (необязательно)</div>
-              <Input
-                value={form.assignee}
-                onChange={(e) => setForm((s) => ({ ...s, assignee: e.target.value }))}
-                placeholder="Имя механика / бригады"
-                list="ticket-assignees"
-                data-testid="input-ticket-assignee"
-              />
-              <datalist id="ticket-assignees">
-                {assigneeOptions.map((name) => <option key={name} value={name} />)}
-              </datalist>
-            </div>
-            {(form.priority === "high" || form.priority === "critical") && (
-              <p className="text-xs text-amber-600 dark:text-amber-400">
-                Велосипед будет переведён в обслуживание (если он доступен).
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)} data-testid="button-ticket-cancel">Отмена</Button>
-            <Button
-              onClick={() => createMut.mutate()}
-              disabled={!form.bikeId.trim() || form.message.trim().length < 2 || createMut.isPending}
-              data-testid="button-submit-ticket"
-            >
-              Создать
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <CreateTicketDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        form={form}
+        setForm={setForm}
+        bikes={bikesQ.data ?? []}
+        assigneeOptions={assigneeOptions}
+        onSubmit={() => createMut.mutate()}
+        submitting={createMut.isPending}
+      />
 
       <TicketDetail
         id={detailId}
@@ -360,142 +223,5 @@ export function MaintenancePage() {
         toast={toast}
       />
     </div>
-  );
-}
-
-function TicketDetail({ id, onClose, toast }: {
-  id: number | null;
-  onClose: () => void;
-  toast: ReturnType<typeof useToast>;
-}) {
-  const detailQ = useQuery<TicketWithComments>({
-    queryKey: [`/api/tickets/${id}`],
-    enabled: id != null,
-  });
-  const [comment, setComment] = useState("");
-
-  useEffect(() => { setComment(""); }, [id]);
-
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ["/api/tickets"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
-    if (id != null) queryClient.invalidateQueries({ queryKey: [`/api/tickets/${id}`] });
-  };
-
-  const patchMut = useMutation({
-    mutationFn: async (patch: Record<string, unknown>) => {
-      const res = await apiRequest("PATCH", `/api/tickets/${id}`, patch);
-      return res.json();
-    },
-    onSuccess: invalidate,
-    onError: (e: any) => toast.toast({ title: "Не удалось обновить", description: String(e?.message ?? e), variant: "destructive" }),
-  });
-
-  const commentMut = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/tickets/${id}/comments`, { body: comment.trim() });
-      return res.json();
-    },
-    onSuccess: () => { setComment(""); invalidate(); },
-    onError: (e: any) => toast.toast({ title: "Не удалось добавить комментарий", description: String(e?.message ?? e), variant: "destructive" }),
-  });
-
-  const t = detailQ.data;
-
-  return (
-    <Dialog open={id != null} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent data-testid="dialog-ticket-detail" className="max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="font-display font-light">
-            {t ? (t.title || KIND_LABEL[t.kind] || t.kind) : "Заявка"}
-          </DialogTitle>
-          <DialogDescription>
-            {t ? `${t.bikeId} · ${KIND_LABEL[t.kind] ?? t.kind}` : "Загрузка…"}
-          </DialogDescription>
-        </DialogHeader>
-
-        {t && (
-          <div className="space-y-4">
-            <div className="text-sm whitespace-pre-wrap">{t.message}</div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">Статус</div>
-                <Select
-                  value={normStatus(t.status)}
-                  onValueChange={(v) => patchMut.mutate({ status: v })}
-                >
-                  <SelectTrigger data-testid="select-ticket-detail-status"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {TICKET_STATUSES.map((s) => (
-                      <SelectItem key={s} value={s}>{STATUS_LABEL[s]}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">Приоритет</div>
-                <Select
-                  value={t.priority}
-                  onValueChange={(v) => patchMut.mutate({ priority: v })}
-                >
-                  <SelectTrigger data-testid="select-ticket-detail-priority"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {TICKET_PRIORITIES.map((p) => (
-                      <SelectItem key={p} value={p}>{PRIORITY_LABEL[p]}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {!isClosed(t.status) && (
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={() => patchMut.mutate({ status: "closed", returnBikeToAvailable: true })}
-                disabled={patchMut.isPending}
-                data-testid="button-close-ticket"
-              >
-                <X className="w-4 h-4 mr-2" />Закрыть и вернуть велосипед в доступные
-              </Button>
-            )}
-
-            {/* History / comments */}
-            <div>
-              <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">История</div>
-              <div className="space-y-2 max-h-56 overflow-y-auto" data-testid="ticket-history">
-                {t.comments.length === 0 && <div className="text-xs text-muted-foreground">Пока пусто</div>}
-                {t.comments.map((c: TicketComment) => (
-                  <div key={c.id} className="text-sm" data-testid={`ticket-comment-${c.id}`}>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span className={c.kind === "event" ? "italic" : "font-medium not-italic text-foreground"}>{c.author}</span>
-                      <span>{fmtRelative(c.createdAt)}</span>
-                    </div>
-                    <div className={c.kind === "event" ? "text-muted-foreground italic" : ""}>{c.body}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-3 flex gap-2">
-                <Input
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  placeholder="Добавить комментарий"
-                  data-testid="input-ticket-comment"
-                  onKeyDown={(e) => { if (e.key === "Enter" && comment.trim()) commentMut.mutate(); }}
-                />
-                <Button
-                  onClick={() => commentMut.mutate()}
-                  disabled={!comment.trim() || commentMut.isPending}
-                  data-testid="button-add-ticket-comment"
-                >
-                  <MessageSquarePlus className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
   );
 }
