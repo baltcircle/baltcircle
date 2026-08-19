@@ -99,9 +99,9 @@ export function PaymentMethodsPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: METHODS_KEY });
       if (data.paymentUrl && typeof data.methodId === "number") {
-        // Открываем hosted-форму T-Bank в МОДАЛЬНОМ iframe (bottom-sheet).
-        // Вкладка НЕ уходит на pay.tbank.ru → история не меняется → native
-        // swipe-back не может попасть на форму T-Bank. Статус ловим общим фоновым polling'ом.
+        // Открываем hosted-форму T-Bank в отдельном ПОПАПе (T-Bank блокирует
+        // встраивание своей формы в iframe). Вкладка НЕ уходит на pay.tbank.ru →
+        // история не меняется. Статус ловим общим фоновым polling'ом.
         setTbankBind({ methodId: data.methodId, url: data.paymentUrl });
       } else if (data.paymentUrl) {
         // Фоллбэк (methodId не пришёл): старый путь через уход вкладки.
@@ -217,17 +217,19 @@ export function PaymentMethodsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [methods, tbankBind?.methodId]);
 
-  // Привязка карты через МОДАЛЬНЫЙ iframe (bottom-sheet), а НЕ через уход вкладки
-  // на pay.tbank.ru. Раньше форма открывалась в той же вкладке
-  // (window.location.replace) — тогда T-Bank создавал цепочку cross-origin
-  // записей в истории (форма → 3DS → return), и нативный iOS swipe-back попадал
-  // на pay.tbank.ru. Удалить cross-origin записи JS не может (проверено), поэтому
-  // единственное надёжное решение — НЕ уводить вкладку с takeride.ru вообще:
-  // история вкладки не меняется, свайпать некуда.
+  // Привязка карты через отдельный ПОПАП (window.open), а НЕ через iframe и НЕ
+  // через уход вкладки на pay.tbank.ru (window.location.replace). История двух
+  // предыдущих вариантов: (1) полный window.location.replace создавал
+  // cross-origin записи в истории, нативный iOS swipe-back попадал на
+  // pay.tbank.ru; (2) iframe-модалка решала это, но T-Bank отдаёт
+  // X-Frame-Options/CSP frame-ancestors и свою hosted-форму в iframe НЕ
+  // рендерит вообще (подтверждено). Попап — самостоятельный top-level
+  // контекст: анти-фрейминг не мешает, и наша вкладка не навигируется вообще,
+  // так что swipe-back не активен.
   //
-  // Результат привязки НЕ доверяем URL внутри iframe — авторитетен серверный
+  // Результат привязки НЕ доверяем URL внутри попапа — авторитетен серверный
   // webhook. Ловим двумя путями: (1) polling статуса созданной записи (methodId)
-  // каждые 2с; (2) postMessage от iframe при возврате на ?from=tbank (ускоряет
+  // каждые 2с; (2) postMessage от попапа при возврате на ?from=tbank (ускоряет
   // закрытие). Модалка закрывается, когда карта active/failed или по таймауту.
   const bindFrame = tbankBind; // { methodId, url } | null — состояние объявлено выше
 

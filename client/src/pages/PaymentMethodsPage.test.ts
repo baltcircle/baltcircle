@@ -102,7 +102,7 @@ describe("PaymentMethodsPage binding controls", () => {
     );
     const pollingFailureEffect = pageSource.slice(
       pageSource.indexOf("// Keep pending bindings out of the list"),
-      pageSource.indexOf("// Привязка карты через МОДАЛЬНЫЙ iframe"),
+      pageSource.indexOf("// Привязка карты через отдельный ПОПАП"),
     );
 
     expect(fetchedFailureEffect).toContain('method.status === "failed"');

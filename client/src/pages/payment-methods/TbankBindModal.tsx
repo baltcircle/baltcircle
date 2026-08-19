@@ -1,67 +1,90 @@
-import { useEffect, useState } from "react";
-import { Loader2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CreditCard, Loader2, X } from "lucide-react";
 
-// Сколько ждём onLoad у iframe, прежде чем показать «форма долго
-// загружается» с запасным выходом. Без этого таймера при зависшей/
-// медленной hosted-форме T-Bank (плохая сеть, вкладка ожила из фона со старым
-// JS и т.п.) пользователь смотрел на спиннер бесконечно без какого-либо выхода
-// кроме закрытия по X.
-const IFRAME_STUCK_TIMEOUT_MS = 12_000;
+// T-Bank's hosted card-bind page refuses to render inside an iframe (blocked
+// by X-Frame-Options/CSP frame-ancestors on their side — confirmed: the same
+// URL opens and works fine as a plain new tab, but silently never fires
+// iframe onLoad). A same-origin-looking small POPUP WINDOW is not framing —
+// it is a completely separate top-level browsing context, so the bank's
+// anti-framing header does not apply, and it keeps the previous "small
+// window" feel instead of taking over the whole tab.
+const POPUP_NAME = "tbank-bind";
+const POPUP_WIDTH = 430;
+const POPUP_HEIGHT = 760;
+// Popup blockers can return a non-null Window handle that is closed almost
+// immediately, or return null outright, or (Safari) return a real window
+// that never actually navigates. Give it a brief moment to settle before
+// deciding it was blocked.
+const POPUP_BLOCK_CHECK_MS = 500;
+// How often we poll popup.closed to notice the rider closing the T-Bank
+// window themselves. The actual bind result is never trusted from this —
+// the parent page's background status poll + server-side webhook remain
+// authoritative; this only drives *our* waiting UI.
+const POPUP_CLOSE_POLL_MS: number = 700;
 
-// Модальный bottom-sheet с hosted-формой T-Bank во встроенном iframe. Вкладка
-// НЕ уходит на pay.tbank.ru — форма живёт внутри iframe, история вкладки
-// не меняется, native swipe-back некуда вести. Статус привязки отслеживает
-// родитель (polling + postMessage) и закрывает модалку через onClose.
+function openBindPopup(url: string): Window | null {
+  const left = Math.max(0, Math.round((window.screen.width - POPUP_WIDTH) / 2));
+  const top = Math.max(0, Math.round((window.screen.height - POPUP_HEIGHT) / 2));
+  // Deliberately no "noopener" — the return page (?from=tbank) needs
+  // window.opener to postMessage the result back to us and self-close.
+  return window.open(
+    url,
+    POPUP_NAME,
+    `width=${POPUP_WIDTH},height=${POPUP_HEIGHT},left=${left},top=${top},resizable=yes,scrollbars=yes`,
+  );
+}
+
+// Компактное окно поверх "Способов оплаты", пока рядом открыто настоящее
+// маленькое окно с формой T-Bank. Сама форма живёт в window.open-попапе (не в
+// iframe — банк блокирует встраивание), поэтому наша вкладка вообще не
+// навигируется и история не меняется. Результат привязки отслеживает
+// родитель (polling + postMessage от окна-попапа) и закрывает это окно через
+// onClose; здесь мы только управляем самим попапом и статусом "открыт/закрыт/заблокирован".
 export function TbankBindModal({ url, onClose }: { url: string; onClose: () => void }) {
-  const [loading, setLoading] = useState(true);
-  const [stuck, setStuck] = useState(false);
+  const [blocked, setBlocked] = useState(false);
+  const popupRef = useRef<Window | null>(null);
+  const openedRef = useRef(false);
 
-  // Сбрасываем флаг «зависло», когда iframe всё-таки загружуется;
-  // таймер переставится только при монте (не на каждый рендер).
-  useEffect(() => {
-    if (!loading) {
-      setStuck(false);
-      return;
+  const reopen = () => {
+    const popup = openBindPopup(url);
+    popupRef.current = popup;
+    if (popup) {
+      setBlocked(false);
+      popup.focus();
+    } else {
+      setBlocked(true);
     }
-    const timer = setTimeout(() => setStuck(true), IFRAME_STUCK_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [loading]);
+  };
 
-  // Защита от native swipe-back пока модалка открыта. iframe (и сама форма
-  // T-Bank со своими внутренними переходами) добавляет записи в историю
-  // ВЕРХНЕГО окна (проверено: +N записей), и native swipe попадал в них
-  // («тянет в привязку»). Решение, работающее и в Safari, и в Chromium: на
-  // каждый popstate СРАЗУ возвращаем сентинел обратно (ре-pushState) и
-  // закрываем модалку. Свайп не может уйти глубже, чем на сентинел.
-  // (contentWindow.location.replace НЕ используем: в Safari доступ к
-  // contentWindow свежего about:blank iframe гоночный и кидает/молчит.)
+  // Открываем попап один раз при монте — это прямое следствие клика "Привязать
+  // карту" (мутация уже завершилась к этому моменту), так что часть браузеров
+  // может посчитать вызов недостаточно "свежим" относительно жеста пользователя
+  // и заблокировать его. Проверяем это и показываем запасную ссылку — клик по
+  // ней сам является новым жестом и не блокируется никогда.
   useEffect(() => {
-    let alive = true;
-    // Запоминаем глубину истории ДО открытия, чтобы при закрытии
-    // снять ВСЕ записи, которые накидали сентинел + iframe/форма.
-    const baseLen = history.length;
-    history.pushState({ bcTbankModal: true }, "");
-    const onPop = () => {
-      if (!alive) return;
-      // Свайп/назад съел сентинел (или iframe-запись) — мгновенно
-      // восстанавливаем барьер и закрываем модалку, не давая уйти
-      // на pay.tbank.ru / вглубь iframe-записей.
-      history.pushState({ bcTbankModal: true }, "");
-      onClose();
-    };
-    window.addEventListener("popstate", onPop);
-    return () => {
-      alive = false;
-      window.removeEventListener("popstate", onPop);
-      // Откатываем ВСЕ записи, добавленные пока модалка была
-      // открыта (сентинел + внутренние переходы iframe/формы),
-      // чтобы после закрытия свайп на /payment-methods не попал на
-      // оставшиеся pay.tbank.ru-записи.
-      const extra = history.length - baseLen;
-      if (extra > 0) history.go(-extra);
-    };
+    if (openedRef.current) return;
+    openedRef.current = true;
+    const popup = openBindPopup(url);
+    popupRef.current = popup;
+    const check = setTimeout(() => {
+      if (!popup || popup.closed) setBlocked(true);
+    }, POPUP_BLOCK_CHECK_MS);
+    return () => clearTimeout(check);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Если пользователь сам закрыл окно T-Bank — просто закрываем это окно
+  // ожидания. Итоговый статус (active/failed) всё равно приходит из
+  // фонового опроса в родителе независимо от того, открыта эта карточка или нет.
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (popupRef.current && popupRef.current.closed) {
+        window.clearInterval(interval);
+        onClose();
+      }
+    }, POPUP_CLOSE_POLL_MS);
+    return () => window.clearInterval(interval);
+  }, [onClose]);
 
   return (
     <div
@@ -71,10 +94,8 @@ export function TbankBindModal({ url, onClose }: { url: string; onClose: () => v
     >
       <div
         className="w-full sm:max-w-md bg-background rounded-t-2xl sm:rounded-2xl sm:mb-4 overflow-hidden flex flex-col animate-slide-up"
-        style={{ height: "90vh", maxHeight: "90vh" }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Шапка с кнопкой закрытия */}
         <div className="relative flex items-center justify-center shrink-0 border-b border-border py-3">
           <h2 className="text-base font-semibold text-foreground">Привязка карты</h2>
           <button
@@ -85,43 +106,44 @@ export function TbankBindModal({ url, onClose }: { url: string; onClose: () => v
             <X className="w-5 h-5 text-foreground" />
           </button>
         </div>
-        {/* iframe с формой T-Bank. src задаём атрибутом (надёжно во всех
-            браузерах). Лишние записи истории от iframe ловит сентинел выше. */}
-        <div className="relative flex-1">
-          {loading && !stuck && (
-            <div className="absolute inset-0 flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4 px-6 py-8 text-center">
+          {!blocked ? (
+            <>
               <Loader2 className="w-6 h-6 animate-spin text-primary" />
-            </div>
-          )}
-          {loading && stuck && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-background px-6 text-center">
               <p className="text-sm text-muted-foreground">
-                Форма банка долго загружается. Проверьте соединение с интернетом
-                и попробуйте открыть её в отдельной вкладке.
+                Заполните данные карты в открывшемся окне T-Bank. Это окно
+                закроется автоматически, когда привязка завершится.
+              </p>
+              <button
+                onClick={reopen}
+                className="flex items-center gap-2 text-sm font-medium text-primary"
+              >
+                <CreditCard className="w-4 h-4" />
+                Не вижу окно — открыть снова
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Браузер заблокировал всплывающее окно. Откройте форму банка вручную.
               </p>
               <a
                 href={url}
                 target="_blank"
-                rel="noopener noreferrer"
+                rel="noreferrer"
+                onClick={onClose}
                 className="w-full rounded-full bg-primary py-2.5 text-sm font-medium text-primary-foreground text-center"
               >
-                Открыть в новой вкладке
+                Открыть форму банка
               </a>
-              <button
-                onClick={onClose}
-                className="w-full rounded-full border border-border py-2.5 text-sm font-medium text-foreground"
-              >
-                Отмена
-              </button>
-            </div>
+            </>
           )}
-          <iframe
-            src={url}
-            title="Привязка карты T-Bank"
-            className="w-full h-full border-0"
-            allow="payment"
-            onLoad={() => setLoading(false)}
-          />
+          <button
+            onClick={onClose}
+            className="w-full rounded-full border border-border py-2.5 text-sm font-medium text-foreground"
+          >
+            Отмена
+          </button>
         </div>
       </div>
     </div>

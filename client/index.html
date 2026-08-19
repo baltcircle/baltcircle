@@ -35,27 +35,31 @@
   <body>
     <div id="root"></div>
     <!--
-      T-Bank return leg (?from=tbank) внутри iframe: форма привязки карты
-      открывается в модальном iframe поверх «Способов оплаты», вкладка НЕ уходит
-      на pay.tbank.ru. По завершении T-Bank редиректит iframe на
-      /payment-methods?from=tbank. Если мы ВНУТРИ iframe (window !== parent) —
-      шлём результат родителю через postMessage (он закроет модалку и
-      обновит статус). Основной надёжный путь подтверждения — серверный
-      webhook + polling; postMessage лишь ускоряет закрытие.
+      T-Bank return leg (?from=tbank): форма привязки карты открывается в
+      небольшом ПОПАПЕ (window.open) над «Способами оплаты», а не в iframe —
+      T-Bank отдаёт X-Frame-Options/CSP frame-ancestors и просто НЕ рендерится
+      внутри iframe (подтверждено: та же ссылка открытая вручную в новой
+      вкладке работает). Попап — самостоятельный top-level контекст, на него
+      анти-фрейминг банка не действует. По завершении T-Bank редиректит попап
+      на /payment-methods?from=tbank; если у окна есть window.opener
+      (мы и есть тот самый попап) — шлём результат опенеру через postMessage
+      и закрываемся сами. Основной надёжный путь подтверждения — серверный
+      webhook + polling; postMessage лишь ускоряет закрытие окна ожидания.
     -->
     <script>
-      // Если это возврат с T-Bank ВНУТРИ iframe — не мешаем бандлу грузиться
+      // Если это возврат с T-Bank в попапе/iframe — не мешаем бандлу грузиться
       // (он подключён статическим тегом ниже, Vite подменяет путь на /assets/*),
-      // просто сразу шлём результат родителю через postMessage. React внутри
-      // iframe смонтируется как обычно, но родитель уже закроет модалку.
+      // просто сразу шлём результат родителю/опенеру через postMessage.
       (function () {
         try {
           var p = new URLSearchParams(location.search);
           var isReturn =
             p.has("from") || p.has("Success") || p.has("RequestKey") || p.has("ErrorCode");
           var inFrame = window.parent && window.parent !== window;
-          if (isReturn && inFrame) {
-            window.parent.postMessage(
+          var isPopup = !inFrame && !!window.opener;
+          var target = inFrame ? window.parent : isPopup ? window.opener : null;
+          if (isReturn && target) {
+            target.postMessage(
               {
                 type: "tbank:done",
                 success: (p.get("Success") || "").toLowerCase() === "true",
@@ -65,6 +69,14 @@
               },
               location.origin
             );
+            // Попап — самостоятельное окно, а не наша вкладка: закрываем его
+            // сразу после уведомления, чтобы пользователь не остался смотреть
+            // на страницу возврата в отдельном маленьком окне.
+            if (isPopup) {
+              setTimeout(function () {
+                try { window.close(); } catch (e) { /* ignore */ }
+              }, 50);
+            }
           }
         } catch (e) {
           /* ignore */
