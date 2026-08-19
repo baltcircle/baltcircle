@@ -53,6 +53,10 @@ export interface IOtpStorage {
     providerStatus?: string;
     providerError?: string;
   }): Promise<void>;
+  // Periodic TTL cleanup for otp_requests/phone_change_requests/
+  // email_change_requests (audit MEDIUM, Платежи track). See implementation
+  // in storage.ts for the retention rationale.
+  purgeExpiredContactRequests(): Promise<{ otp: number; phoneChange: number; emailChange: number }>;
   // phone change (SMS OTP for an existing account)
   startPhoneChange(input: { userId: string; phone: string }): Promise<
     | { ok: true; phone: string; code: string; resendInSec: number }

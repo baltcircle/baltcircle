@@ -3,7 +3,7 @@ import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
-import { pool, bootstrapReady } from "./storage";
+import { pool, bootstrapReady, storage } from "./storage";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
@@ -175,6 +175,29 @@ app.use((req, res, next) => {
   // request (routes touch storage on the first hit). bootstrapReady resolves
   // once the async bootstrap in server/db/bootstrap.ts has completed.
   await bootstrapReady;
+
+  // Audit MEDIUM (Платежи track): otp_requests/phone_change_requests/
+  // email_change_requests had no periodic cleanup and could retain PII
+  // (name, target phone/email, SMS/email provider diagnostics) forever.
+  // This process runs 24/7 in production, so an in-process sweep needs no
+  // extra infra/cost — same pattern already used for the session store
+  // (connect-pg-simple's pruneSessionInterval above) and the OMNI lock
+  // gateway's offline-lock sweep (server/omni/server.ts). Runs once shortly
+  // after boot, then hourly.
+  const runContactRequestPurge = () => {
+    void storage.purgeExpiredContactRequests()
+      .then(({ otp, phoneChange, emailChange }) => {
+        if (otp || phoneChange || emailChange) {
+          logger.info({ otp, phoneChange, emailChange }, "purged expired otp/contact-change requests");
+        }
+      })
+      .catch((err) => logger.error({ err }, "contact-request purge failed"));
+  };
+  const CONTACT_REQUEST_PURGE_INTERVAL_MS = 60 * 60 * 1000; // hourly, matches session-store sweep
+  const initialPurgeTimer = setTimeout(runContactRequestPurge, 30_000);
+  const contactRequestPurgeTimer = setInterval(runContactRequestPurge, CONTACT_REQUEST_PURGE_INTERVAL_MS);
+  process.once("SIGTERM", () => { clearTimeout(initialPurgeTimer); clearInterval(contactRequestPurgeTimer); });
+  process.once("SIGINT", () => { clearTimeout(initialPurgeTimer); clearInterval(contactRequestPurgeTimer); });
 
   // The gateway is a standalone TCP listener (not an HTTP route), but it shares
   // this process so the authenticated pilot-control endpoint can address its

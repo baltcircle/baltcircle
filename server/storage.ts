@@ -22,7 +22,7 @@ import {
   TARIFFS, tariffPriceKopecks, findNearestParkingWithinRadius,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
-import { eq, desc, sql, gt, and, asc, inArray, isNull } from "drizzle-orm";
+import { eq, desc, sql, gt, lt, and, asc, inArray, isNull } from "drizzle-orm";
 import { EventEmitter } from "node:events";
 import { sendToUserAsync } from "./push";
 import { encryptToken, decryptToken, hashTokenForLookup } from "./crypto/payment-tokens";
@@ -62,6 +62,13 @@ export const BIKE_EVENT_CHANNEL = "fleet";
 export const OTP_TTL_MS = 5 * 60 * 1000;     // code valid 5 minutes
 export const OTP_MAX_ATTEMPTS = 5;           // wrong-code tries before lockout
 export const OTP_RESEND_LOCK_MS = 60 * 1000; // min seconds between SMS per phone
+// Audit MEDIUM (Платежи track): otp_requests/phone_change_requests/
+// email_change_requests had no periodic cleanup, so a consumed or abandoned
+// row (name, target phone/email, SMS/email provider diagnostics) could sit
+// in the DB forever. 48h is long enough for admin GET /api/sms/otp-status to
+// still inspect a recently consumed/failed OTP for support purposes, short
+// enough that PII doesn't linger indefinitely. See purgeExpiredContactRequests.
+export const CONTACT_REQUEST_RETENTION_MS = 48 * 60 * 60 * 1000;
 
 // Secret used to HMAC the OTP before storage. Falls back to the session secret
 // (or a dev constant) so codes are never persisted in plaintext even locally.
@@ -545,6 +552,25 @@ export class DatabaseStorage implements IStorage {
         providerCheckedAt: Date.now(),
       })
       .where(eq(otpRequests.phone, cleanPhone));
+  }
+
+  // Periodic TTL purge for all three OTP-shaped tables (otp_requests,
+  // phone_change_requests, email_change_requests). Deletes rows whose last
+  // SMS/email dispatch is older than CONTACT_REQUEST_RETENTION_MS, regardless
+  // of consumed/expired state — covers both abandoned (never verified) and
+  // long-consumed rows. Not done on consume itself: GET /api/sms/otp-status
+  // (admin) reads a phone's otp_requests row right after verification to show
+  // support the delivery/consumption outcome, so the row must outlive the
+  // verify call by a support-reasonable window. Called on a timer from
+  // server/index.ts — no external cron, this process already runs 24/7.
+  async purgeExpiredContactRequests(): Promise<{ otp: number; phoneChange: number; emailChange: number }> {
+    const cutoff = Date.now() - CONTACT_REQUEST_RETENTION_MS;
+    const [otp, phoneChange, emailChange] = await Promise.all([
+      db.delete(otpRequests).where(lt(otpRequests.lastSentAt, cutoff)).returning({ k: otpRequests.phone }),
+      db.delete(phoneChangeRequests).where(lt(phoneChangeRequests.lastSentAt, cutoff)).returning({ k: phoneChangeRequests.userId }),
+      db.delete(emailChangeRequests).where(lt(emailChangeRequests.lastSentAt, cutoff)).returning({ k: emailChangeRequests.userId }),
+    ]);
+    return { otp: otp.length, phoneChange: phoneChange.length, emailChange: emailChange.length };
   }
 
   // ---------- Phone change (SMS OTP, existing account) ----------
