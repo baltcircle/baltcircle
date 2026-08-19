@@ -6,16 +6,17 @@ import {
   buildBikeSavePayload,
   liveLockBatteryDisplay,
   lockPickerOptions,
-} from "./BikesPage";
+} from "./bikes/bike-utils";
 
 const IMEI = "862596083776074";
-const source = readFileSync(resolve(process.cwd(), "client/src/pages/BikesPage.tsx"), "utf8");
+const tableSource = readFileSync(resolve(process.cwd(), "client/src/pages/bikes/BikesTable.tsx"), "utf8");
+const formSource = readFileSync(resolve(process.cwd(), "client/src/pages/bikes/BikeFormDialog.tsx"), "utf8");
 
 describe("bound lock IMEI column", () => {
   it("renders the bound lock IMEI and shows a dash when no IMEI is bound", () => {
-    expect(source).toContain('<TableHead>Замок ID</TableHead>');
-    expect(source).toContain('{b.lockImei || "—"}');
-    expect(source).not.toContain('{b.lockId || "—"}');
+    expect(tableSource).toContain('<TableHead>Замок ID</TableHead>');
+    expect(tableSource).toContain('{b.lockImei || "—"}');
+    expect(tableSource).not.toContain('{b.lockId || "—"}');
   });
 });
 
@@ -46,10 +47,10 @@ describe("bike lock picker", () => {
 
 describe("live lock battery display", () => {
   it("renders charge as a display-only field with a freshness label", () => {
-    expect(source).toContain('data-testid="display-bike-battery"');
-    expect(source).toContain('data-testid="text-bike-battery-freshness"');
-    expect(source).not.toContain('data-testid="input-bike-battery"');
-    expect(source).not.toContain("form.battery");
+    expect(formSource).toContain('data-testid="display-bike-battery"');
+    expect(formSource).toContain('data-testid="text-bike-battery-freshness"');
+    expect(formSource).not.toContain('data-testid="input-bike-battery"');
+    expect(formSource).not.toContain("form.battery");
   });
 
   it("shows the reported charge and recent freshness for a connected lock", () => {

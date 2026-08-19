@@ -1,151 +1,28 @@
 import { useMemo, useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import type { Bike, BikeStatus, Parking } from "@shared/schema";
-import { BIKE_STATUSES } from "@shared/schema";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useQuery } from "@tanstack/react-query";
+import type { Bike, Parking } from "@shared/schema";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { bikeQrLink, fmtRelative } from "@/lib/format";
-import { qrToSvg } from "@/lib/qrcode";
-import { BikeQr } from "@/components/BikeQr";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-} from "@/components/ui/dialog";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import {
-  Search, Plus, Pencil, QrCode, Archive, Trash2, Copy, Download, Printer, Bike as BikeIcon, Wrench,
-} from "lucide-react";
-import { Link } from "wouter";
-import { TablePager, useClientPagination } from "@/components/table-pager";
+import { Search, Plus } from "lucide-react";
+import { BikesTable } from "./bikes/BikesTable";
+import { BikeFormDialog } from "./bikes/BikeFormDialog";
+import { BikeQrDialog } from "./bikes/BikeQrDialog";
+import { ADMIN_BIKES_KEY } from "./bikes/bike-utils";
 
-const ADMIN_BIKES_KEY = ["/api/admin/bikes"] as const;
-
-const STATUS_LABEL: Record<BikeStatus, string> = {
-  available: "Доступен",
-  rented: "В аренде",
-  reserved: "Бронь",
-  maintenance: "Сервис",
-  offline: "Оффлайн",
-  storage: "На складе",
-  lost: "Утерян",
-  archived: "Архив",
-};
-
-const STATUS_TONE: Record<BikeStatus, string> = {
-  available: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
-  rented: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
-  reserved: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
-  maintenance: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
-  offline: "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200",
-  storage: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200",
-  lost: "bg-rose-200 text-rose-900 dark:bg-rose-950 dark:text-rose-200",
-  archived: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
-};
-
-export type BikeSaveForm = {
-  id: string;
-  model: string;
-  status: BikeStatus;
-  serial: string;
-  lockId: string;
-  lockImei: string;
-  parkingId: string;
-  notes: string;
-};
-
-const emptyForm: BikeSaveForm = {
-  id: "", model: "", status: "available",
-  serial: "", lockId: "", lockImei: "", parkingId: "", notes: "",
-};
-
-const UNASSIGNED_LOCKS_KEY = ["/api/admin/locks/unassigned"] as const;
-
-export type LockBatterySnapshot = {
-  battery: number;
-  lockImei: string | null;
-  lockLastSeen: number | null;
-};
-
-/**
- * The bike snapshot is populated by lock telemetry. Do not surface the schema
- * default (100%) as a live reading until the bound lock has actually reported.
- */
-export function liveLockBatteryDisplay(snapshot: LockBatterySnapshot): {
-  value: string;
-  freshness: string;
-} {
-  if (!snapshot.lockImei || !snapshot.lockLastSeen) {
-    return { value: "—", freshness: "Нет данных" };
-  }
-
-  return {
-    value: `${snapshot.battery}%`,
-    freshness: `обновлено ${fmtRelative(snapshot.lockLastSeen)}`,
-  };
-}
-
-/**
- * Battery is deliberately absent: it is a telemetry-owned bike snapshot, not
- * an operator-editable field. Creation uses the existing server schema default
- * of 100% until the newly bound lock reports its real charge.
- */
-export function buildBikeSavePayload(
-  form: BikeSaveForm,
-  editing: Pick<Bike, "id" | "lockImei"> | null,
-) {
-  const common = {
-    model: form.model,
-    status: form.status,
-    serial: form.serial,
-    lockId: form.lockId,
-    parkingId: form.parkingId === "none" ? "" : form.parkingId,
-    notes: form.notes,
-  };
-
-  if (editing) {
-    // Only send the lock when it actually changed: an untouched edit must not
-    // look like a lock swap (which resets the lock's live state server-side).
-    const lockPatch = form.lockImei && form.lockImei !== editing.lockImei
-      ? { lockImei: form.lockImei }
-      : {};
-    return { ...common, ...lockPatch };
-  }
-
-  return { id: form.id, lockImei: form.lockImei, ...common };
-}
-
-/** A non-decommissioned registry lock that is not fitted to a bike. */
-type UnassignedLock = { imei: string; lastSeen: number | null };
-
-export type LockPickerOption = {
-  /** The exact 15-digit IMEI submitted when an operator selects this option. */
-  value: string;
-  /** The operator-facing lock name. Keep this to the numeric IMEI only. */
-  label: string;
-};
-
-export function lockPickerOptions(
-  locks: UnassignedLock[],
-  currentImei: string | null,
-): LockPickerOption[] {
-  return [
-    ...(currentImei ? [{ value: currentImei, label: currentImei }] : []),
-    ...locks
-      .filter((lock) => lock.imei !== currentImei)
-      .map((lock) => ({ value: lock.imei, label: lock.imei })),
-  ];
-}
+// Re-exported for the existing test suite (client/src/pages/BikesPage.test.ts
+// imports pure helpers from this module path). The actual implementations now
+// live in ./bikes/bike-utils.
+export {
+  buildBikeSavePayload,
+  liveLockBatteryDisplay,
+  lockPickerOptions,
+  type BikeSaveForm,
+  type LockBatterySnapshot,
+  type LockPickerOption,
+} from "./bikes/bike-utils";
 
 export function BikesPage() {
   const toast = useToast();
@@ -163,25 +40,10 @@ export function BikesPage() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Bike | null>(null);
-  const [form, setForm] = useState<BikeSaveForm>(emptyForm);
-  const [formError, setFormError] = useState<string | null>(null);
-
   const [qrBike, setQrBike] = useState<Bike | null>(null);
-
-  // Locks are discovered asynchronously: the operator often opens this form
-  // before the lock they just powered on has dialled in. Poll while the form is
-  // open so the list fills in without the operator closing and reopening it.
-  const locksQ = useQuery<UnassignedLock[]>({
-    queryKey: UNASSIGNED_LOCKS_KEY,
-    enabled: formOpen && canWrite,
-    refetchInterval: formOpen ? 10_000 : false,
-    staleTime: 0,
-  });
 
   const bikes = bikesQ.data ?? [];
   const parkings = parkingsQ.data ?? [];
-  const parkingName = (id: string | null) =>
-    id ? parkings.find((p) => p.id === id)?.name ?? id : "—";
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -197,107 +59,16 @@ export function BikesPage() {
   }, [bikes, search, showArchived]);
 
   const archivedCount = bikes.filter((b) => b.status === "archived").length;
-  const { page, setPage, pageCount, pageItems } = useClientPagination(filtered);
-  // A lock selected for a pending swap has not reported for this bike yet, so
-  // never show the old lock's charge as though it were the selected lock's data.
-  const displayedLock = editing?.lockImei === form.lockImei ? editing : null;
-  const lockBattery = liveLockBatteryDisplay({
-    battery: displayedLock?.battery ?? 0,
-    lockImei: displayedLock?.lockImei ?? null,
-    lockLastSeen: displayedLock?.lockLastSeen ?? null,
-  });
 
-  // ---------- Mutations ----------
-  const saveMut = useMutation({
-    mutationFn: async (payload: { editingId: string | null; body: any }) => {
-      const { editingId, body } = payload;
-      const res = editingId
-        ? await apiRequest("PATCH", `/api/admin/bikes/${encodeURIComponent(editingId)}`, body)
-        : await apiRequest("POST", "/api/admin/bikes", body);
-      return res.json() as Promise<Bike>;
-    },
-    onSuccess: (bike) => {
-      queryClient.invalidateQueries({ queryKey: ADMIN_BIKES_KEY });
-      queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
-      setFormOpen(false);
-      toast.toast({ title: editing ? "Велосипед обновлён" : "Велосипед добавлен", description: bike.id });
-    },
-    // On success the claimed lock is no longer unassigned; on a lost race (409)
-    // the picker must drop the lock the other operator took. Either way, refetch.
-    onSettled: () => queryClient.invalidateQueries({ queryKey: UNASSIGNED_LOCKS_KEY }),
-    onError: (err: any) => setFormError(err?.message?.replace(/^\d+:\s*/, "") ?? "Не удалось сохранить"),
-  });
-
-  const archiveMut = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiRequest("POST", `/api/admin/bikes/${encodeURIComponent(id)}/archive`);
-      return res.json() as Promise<Bike>;
-    },
-    onSuccess: (bike) => {
-      queryClient.invalidateQueries({ queryKey: ADMIN_BIKES_KEY });
-      queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
-      toast.toast({ title: "Велосипед в архиве", description: bike.id });
-    },
-    onError: (err: any) => toast.toast({ title: "Не удалось", description: err?.message?.replace(/^\d+:\s*/, ""), variant: "destructive" }),
-  });
-
-  const deleteMut = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiRequest("DELETE", `/api/admin/bikes/${encodeURIComponent(id)}`);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ADMIN_BIKES_KEY });
-      queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
-      toast.toast({ title: "Велосипед удалён" });
-    },
-    onError: (err: any) => {
-      // 409 means the bike had ride history and was archived instead.
-      queryClient.invalidateQueries({ queryKey: ADMIN_BIKES_KEY });
-      toast.toast({
-        title: "Переведён в архив",
-        description: err?.message?.replace(/^\d+:\s*/, "") ?? "У велосипеда есть история поездок",
-      });
-    },
-  });
-
-  // ---------- Form helpers ----------
   const openAdd = () => {
     setEditing(null);
-    setForm(emptyForm);
-    setFormError(null);
     setFormOpen(true);
   };
   const openEdit = (b: Bike) => {
     setEditing(b);
-    setForm({
-      id: b.id,
-      model: b.model,
-      status: b.status as BikeStatus,
-      serial: b.serial ?? "",
-      lockId: b.lockId ?? "",
-      lockImei: b.lockImei ?? "",
-      parkingId: b.parkingId ?? "",
-      notes: b.notes ?? "",
-    });
-    setFormError(null);
     setFormOpen(true);
   };
 
-  const submitForm = () => {
-    setFormError(null);
-    if (editing) {
-      saveMut.mutate({ editingId: editing.id, body: buildBikeSavePayload(form, editing) });
-      return;
-    }
-    if (!form.lockImei) {
-      setFormError("Выберите замок — без него велосипед нельзя отследить");
-      return;
-    }
-    saveMut.mutate({ editingId: null, body: buildBikeSavePayload(form, null) });
-  };
-
-  // ---------- Loading / error ----------
   if (bikesQ.isLoading) {
     return (
       <div className="px-4 lg:px-10 py-10 max-w-7xl mx-auto" data-testid="bikes-loading">
@@ -358,380 +129,28 @@ export function BikesPage() {
         </Button>
       </div>
 
-      <Card className="overflow-x-auto" data-testid="table-admin-bikes">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-28">Код</TableHead>
-              <TableHead>Модель</TableHead>
-              <TableHead>Статус</TableHead>
-              <TableHead>Замок ID</TableHead>
-              <TableHead>Парковка</TableHead>
-              <TableHead>Серийный</TableHead>
-              <TableHead className="text-right">Действия</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {pageItems.map((b) => (
-              <TableRow key={b.id} data-testid={`row-admin-bike-${b.id}`} className="hover-elevate">
-                <TableCell className="font-mono text-sm">
-                  <span className="inline-flex items-center gap-2">
-                    <BikeIcon className="w-3.5 h-3.5 text-muted-foreground" />{b.id}
-                  </span>
-                </TableCell>
-                <TableCell className="text-sm">{b.model}</TableCell>
-                <TableCell>
-                  <Badge className={`${STATUS_TONE[b.status as BikeStatus] ?? STATUS_TONE.offline} border-0`}>
-                    {STATUS_LABEL[b.status as BikeStatus] ?? b.status}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground font-mono">{b.lockImei || "—"}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">{parkingName(b.parkingId)}</TableCell>
-                <TableCell className="text-sm text-muted-foreground font-mono">{b.serial || "—"}</TableCell>
-                <TableCell>
-                  <div className="flex items-center justify-end gap-1">
-                    <Button variant="ghost" size="icon" onClick={() => setQrBike(b)} title="QR-код" data-testid={`button-qr-${b.id}`}>
-                      <QrCode className="w-4 h-4" />
-                    </Button>
-                    {canWrite && (
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(b)} title="Редактировать" data-testid={`button-edit-${b.id}`}>
-                        <Pencil className="w-4 h-4" />
-                      </Button>
-                    )}
-                    <Button asChild variant="ghost" size="icon" title="Создать сервисную заявку" data-testid={`button-service-${b.id}`}>
-                      <Link href={`/admin/maintenance?bike=${encodeURIComponent(b.id)}`}>
-                        <Wrench className="w-4 h-4" />
-                      </Link>
-                    </Button>
-                    {canWrite && b.status !== "archived" && (
-                      <Button
-                        variant="ghost" size="icon"
-                        onClick={() => archiveMut.mutate(b.id)}
-                        disabled={archiveMut.isPending}
-                        title="В архив"
-                        data-testid={`button-archive-${b.id}`}
-                      >
-                        <Archive className="w-4 h-4" />
-                      </Button>
-                    )}
-                    {canWrite && (
-                      <Button
-                        variant="ghost" size="icon"
-                        onClick={() => {
-                          if (confirm(`Удалить ${b.id}? Если есть история поездок — велосипед уйдёт в архив.`)) {
-                            deleteMut.mutate(b.id);
-                          }
-                        }}
-                        disabled={deleteMut.isPending}
-                        title="Удалить"
-                        data-testid={`button-delete-${b.id}`}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    )}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-            {filtered.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground py-12" data-testid="bikes-empty">
-                  {search ? "Ничего не найдено" : "Велосипедов пока нет — добавьте первый."}
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-        <TablePager page={page} pageCount={pageCount} total={filtered.length} onPage={setPage} testid="bikes-pager" />
-      </Card>
+      <BikesTable
+        bikes={filtered}
+        parkings={parkings}
+        canWrite={canWrite}
+        search={search}
+        onQr={setQrBike}
+        onEdit={openEdit}
+      />
 
-      {/* ---------- Add / edit dialog ---------- */}
-      <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent data-testid="dialog-bike-form" className="max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="font-display font-light">
-              {editing ? `Редактирование ${editing.id}` : "Новый велосипед"}
-            </DialogTitle>
-            <DialogDescription>
-              {editing ? "Измените поля и сохраните." : "Заполните данные реального велосипеда."}
-            </DialogDescription>
-          </DialogHeader>
+      <BikeFormDialog
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        editing={editing}
+        parkings={parkings}
+        canWrite={canWrite}
+      />
 
-          <div className="space-y-3">
-            <Field label="Код / ID">
-              <Input
-                value={form.id}
-                disabled={!!editing}
-                onChange={(e) => setForm((f) => ({ ...f, id: e.target.value.toUpperCase() }))}
-                placeholder="Напр. BC-006"
-                data-testid="input-bike-id"
-              />
-            </Field>
-            <Field label="Модель">
-              <Input
-                value={form.model}
-                onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-                placeholder="Напр. BC City+"
-                data-testid="input-bike-model"
-              />
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Статус">
-                <Select value={form.status} onValueChange={(v) => setForm((f) => ({ ...f, status: v as BikeStatus }))}>
-                  <SelectTrigger data-testid="select-bike-status"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {BIKE_STATUSES.map((s) => (
-                      <SelectItem key={s} value={s} data-testid={`status-option-${s}`}>{STATUS_LABEL[s]}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Заряд замка, %">
-                <div
-                  className="rounded-md border border-input bg-muted/50 px-3 py-2 text-sm tabular-nums"
-                  data-testid="display-bike-battery"
-                  aria-label={`Заряд замка: ${lockBattery.value}`}
-                >
-                  {lockBattery.value}
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground" data-testid="text-bike-battery-freshness">
-                  {lockBattery.freshness}
-                </p>
-              </Field>
-            </div>
-            <LockPicker
-              value={form.lockImei}
-              onChange={(imei) => setForm((f) => ({ ...f, lockImei: imei }))}
-              locks={locksQ.data ?? []}
-              loading={locksQ.isFetching}
-              onRefresh={() => locksQ.refetch()}
-              currentImei={editing?.lockImei ?? null}
-              required={!editing}
-            />
-            <Field label="Парковка (необязательно)">
-              <Select
-                value={form.parkingId || "none"}
-                onValueChange={(v) => setForm((f) => ({ ...f, parkingId: v }))}
-              >
-                <SelectTrigger data-testid="select-bike-parking"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Не назначена</SelectItem>
-                  {parkings.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Серийный № (необязательно)">
-                <Input
-                  value={form.serial}
-                  onChange={(e) => setForm((f) => ({ ...f, serial: e.target.value }))}
-                  data-testid="input-bike-serial"
-                />
-              </Field>
-              {/* Legacy free-text label, kept for inventory notes. The IMEI
-                  above is what actually binds a lock to this bike. */}
-              <Field label="Инв. номер замка (необязательно)">
-                <Input
-                  value={form.lockId}
-                  onChange={(e) => setForm((f) => ({ ...f, lockId: e.target.value }))}
-                  placeholder="Своя маркировка"
-                  data-testid="input-bike-lock"
-                />
-              </Field>
-            </div>
-            <Field label="Заметки (необязательно)">
-              <Textarea
-                value={form.notes}
-                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-                rows={2}
-                data-testid="input-bike-notes"
-              />
-            </Field>
-
-            {formError && (
-              <div className="text-xs text-destructive" data-testid="bike-form-error">{formError}</div>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFormOpen(false)} data-testid="button-bike-cancel">
-              Отмена
-            </Button>
-            <Button
-              onClick={submitForm}
-              disabled={saveMut.isPending || (!editing && !form.lockImei)}
-              data-testid="button-bike-save"
-            >
-              {saveMut.isPending ? "Сохранение…" : "Сохранить"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ---------- QR dialog ---------- */}
-      <QrDialog
+      <BikeQrDialog
         bike={qrBike}
         onClose={() => setQrBike(null)}
         onCopied={() => toast.toast({ title: "Скопировано", description: "Ссылка QR в буфере обмена" })}
       />
     </div>
-  );
-}
-
-/**
- * Picks the physical lock a bike is fitted with.
- *
- * The options come from every non-decommissioned registry lock not bound to a
- * bike. A lock does not need to be online to be installed, so its last-seen
- * timestamp may be absent.
- */
-function LockPicker({
-  value, onChange, locks, loading, onRefresh, currentImei, required,
-}: {
-  value: string;
-  onChange: (imei: string) => void;
-  locks: UnassignedLock[];
-  loading: boolean;
-  onRefresh: () => void;
-  currentImei: string | null;
-  required: boolean;
-}) {
-  // On edit the bike's own lock is (correctly) absent from the unassigned list,
-  // but it must stay selectable or saving would look like removing the lock.
-  const options = lockPickerOptions(locks, currentImei);
-
-  // Deliberately not wrapped in <Field>: that renders a <label>, and a click
-  // anywhere on a label activates the control inside it — which here would be
-  // the refresh button.
-  return (
-    <div className="block">
-      <div className="text-xs font-medium text-muted-foreground mb-1">
-        {required ? "Замок (обязательно)" : "Замок"}
-      </div>
-      {options.length === 0 ? (
-        <div className="rounded-md border border-dashed p-3 space-y-2" data-testid="lock-picker-empty">
-          <p className="text-xs text-muted-foreground">
-            Свободных замков пока нет. Зарегистрируйте замок или проверьте, что
-            он не назначен другому велосипеду.
-          </p>
-          <Button type="button" size="sm" variant="outline" onClick={onRefresh} disabled={loading}
-            data-testid="button-locks-refresh">
-            {loading ? "Обновление…" : "Обновить"}
-          </Button>
-        </div>
-      ) : (
-        <div className="flex gap-2">
-          <Select value={value} onValueChange={onChange}>
-            <SelectTrigger className="flex-1" data-testid="select-bike-lock-imei">
-              <SelectValue placeholder="Выберите замок" />
-            </SelectTrigger>
-            <SelectContent>
-              {options.map((o) => (
-                <SelectItem key={o.value} value={o.value} data-testid={`lock-option-${o.value}`}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button type="button" variant="outline" onClick={onRefresh} disabled={loading}
-            data-testid="button-locks-refresh">
-            {loading ? "…" : "Обновить"}
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <div className="text-xs font-medium text-muted-foreground mb-1">{label}</div>
-      {children}
-    </label>
-  );
-}
-
-// Escape HTML metacharacters before interpolating untrusted text into a raw
-// document.write() string (the QR print window). Prevents stored XSS via
-// operator-controlled bike id/model (audit M10).
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => (
-    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!
-  ));
-}
-
-function QrDialog({ bike, onClose, onCopied }: { bike: Bike | null; onClose: () => void; onCopied: () => void }) {
-  const link = bike ? bikeQrLink(bike.id) : "";
-
-  const download = () => {
-    if (!bike) return;
-    const svg = qrToSvg(link, { size: 512 });
-    const blob = new Blob([svg], { type: "image/svg+xml" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `qr-${bike.id}.svg`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const print = () => {
-    if (!bike) return;
-    const svg = qrToSvg(link, { size: 320 });
-    const w = window.open("", "_blank", "width=420,height=560");
-    if (!w) return;
-    // bike.id / bike.model are operator-controlled free text — escape before
-    // interpolating into the print document so they can't inject markup (M10).
-    const id = escapeHtml(bike.id);
-    const model = escapeHtml(bike.model);
-    w.document.write(`<!doctype html><html><head><title>QR ${id}</title>
-      <style>body{font-family:sans-serif;text-align:center;padding:32px}
-      h1{font-size:20px;margin:16px 0 4px}p{color:#666;margin:0;font-size:13px}</style>
-      </head><body>${svg}<h1>${id}</h1><p>${model}</p>
-      <script>window.onload=function(){window.print();}</script></body></html>`);
-    w.document.close();
-  };
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(link);
-      onCopied();
-    } catch {
-      /* clipboard unavailable — link is still visible to copy manually */
-    }
-  };
-
-  return (
-    <Dialog open={!!bike} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent data-testid="dialog-bike-qr">
-        <DialogHeader>
-          <DialogTitle className="font-display font-light flex items-center gap-2">
-            <QrCode className="w-5 h-5" /> QR-код {bike?.id}
-          </DialogTitle>
-          <DialogDescription>Распечатайте и наклейте на велосипед.</DialogDescription>
-        </DialogHeader>
-
-        {bike && (
-          <div className="flex flex-col items-center gap-4">
-            <BikeQr value={link} size={220} className="rounded-lg border border-card-border p-2 bg-white" testId="bike-qr-image" />
-            <code className="text-xs break-all text-center text-muted-foreground" data-testid="bike-qr-link">{link}</code>
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <Button variant="outline" size="sm" onClick={copy} data-testid="button-copy-qr">
-                <Copy className="w-4 h-4 mr-2" /> Копировать
-              </Button>
-              <Button variant="outline" size="sm" onClick={download} data-testid="button-download-qr">
-                <Download className="w-4 h-4 mr-2" /> Скачать QR
-              </Button>
-              <Button variant="outline" size="sm" onClick={print} data-testid="button-print-qr">
-                <Printer className="w-4 h-4 mr-2" /> Печать QR
-              </Button>
-            </div>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
   );
 }
