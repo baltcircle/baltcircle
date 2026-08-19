@@ -65,9 +65,16 @@ export class BaseStorage {
   // static` member declared on BaseStorage by name, since that requires
   // referencing the literal `BaseStorage` class from another file. A
   // protected instance field needs no such cross-file static reference.
-  protected readonly bikesCacheTtlMs = 3000;
-  protected _bikesCache: Bike[] | null = null;
-  protected _bikesCacheAt = 0;
+  //
+  // Public rather than protected: bike.ts's listBikes references these
+  // through an explicit `this: {...}` structural parameter type (same
+  // structural-typing rule as optStr/isUniqueViolation below — a protected
+  // member can never satisfy a plain object type from outside the
+  // declaring class's hierarchy, even though the real caller is in that
+  // hierarchy at runtime).
+  readonly bikesCacheTtlMs = 3000;
+  _bikesCache: Bike[] | null = null;
+  _bikesCacheAt = 0;
 
   // Drop the cached bike rows so the next listBikes() re-reads from the DB.
   // Call after ANY write that can change a bike's row (status/position/CRUD).

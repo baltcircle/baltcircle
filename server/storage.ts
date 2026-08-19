@@ -1,14 +1,12 @@
 import {
-  bikes, locks, unassignedLocks, parkings, zones, rides, tickets, paymentOrders, wallet, payments, ridePoints, users,
+  bikes, locks, parkings, rides, tickets, paymentOrders, wallet, payments, ridePoints, users,
 } from "@shared/schema";
 import type {
-  Bike, Parking, ZoneRow, Ride, AdminRide, User,
-  AdminCreateBikeInput, AdminUpdateBikeInput, AdminCreateParkingInput, AdminUpdateParkingInput,
-  Lock, AdminCreateLockInput, AdminUpdateLockInput,
+  Bike, Parking, Ride, AdminRide, User,
 } from "@shared/schema";
 import { eq, desc, sql, and, asc, inArray, count } from "drizzle-orm";
 import {
-  MAP_W, MAP_H, TARIFFS, tariffPriceKopecks, findNearestParkingWithinRadius,
+  TARIFFS, tariffPriceKopecks, findNearestParkingWithinRadius,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
 import { sendToUserAsync } from "./push";
@@ -39,6 +37,9 @@ import { WalletMixin } from "./storage/wallet";
 import { TicketMixin } from "./storage/ticket";
 import { MapObjectMixin } from "./storage/map-object";
 import { AnalyticsMixin } from "./storage/analytics";
+import { BikeMixin } from "./storage/bike";
+import { LockMixin } from "./storage/lock";
+import { ParkingMixin } from "./storage/parking";
 
 // IStorage is split into domain-segmented sub-interfaces; re-exported for callers.
 import type { IStorage } from "./storage/interfaces";
@@ -61,80 +62,16 @@ export class DatabaseStorage
     .with(TicketMixin)
     .with(MapObjectMixin)
     .with(AnalyticsMixin)
+    .with(BikeMixin)
+    .with(LockMixin)
+    .with(ParkingMixin)
     .build()
   implements IStorage
 {
-  async listBikes(opts?: { includeArchived?: boolean }) {
-    const now = Date.now();
-    let rows = this._bikesCache;
-    if (!rows || now - this._bikesCacheAt >= this.bikesCacheTtlMs) {
-      rows = (await db.select().from(bikes)) as Bike[];
-      this._bikesCache = rows;
-      this._bikesCacheAt = now;
-    }
-    if (opts?.includeArchived) return rows;
-    return rows.filter((b) => b.status !== "archived");
-  }
-  async getBike(id: string) { return (await db.select().from(bikes).where(eq(bikes.id, id)).limit(1))[0] as Bike | undefined; }
-  async updateBike(id: string, patch: Partial<Bike>) {
-    await db.update(bikes).set(patch as any).where(eq(bikes.id, id));
-    this.invalidateBikesCache();
-    return this.getBike(id);
-  }
-
-  // ---------- Bikes: admin CRUD (staff only) ----------
-  // Normalize an optional string field: trim, and treat "" as null so blank
-  // form inputs clear the column rather than storing an empty string.
-  // Any registry lock not fitted to a bike is eligible for binding, regardless
-  // of connectivity. The TCP gateway creates a registry row directly, so the
-  // legacy unassigned_locks discovery buffer cannot be the source of this list.
-  // Keep the anti-join while legacy bike.lock_imei bindings exist: it prevents a
-  // pre-registry bike binding from being offered again before its registry row is
-  // next synchronized.
-  async listUnassignedLocks(): Promise<{ imei: string; lastSeen: number | null }[]> {
-    return (await pool.query(
-      `SELECT l.imei, l.last_seen_at AS "lastSeen" FROM locks l
-        WHERE l.bike_id IS NULL
-          AND l.status <> 'decommissioned'
-          AND NOT EXISTS (SELECT 1 FROM bikes b WHERE b.lock_imei = l.imei)
-        ORDER BY l.last_seen_at DESC NULLS LAST, l.created_at DESC`,
-    )).rows as { imei: string; lastSeen: number | null }[];
-  }
-
-  // ---------- Lock device registry: admin CRUD ----------
-  async listLocks(): Promise<Lock[]> {
-    return await db.select().from(locks).orderBy(desc(locks.createdAt)) as Lock[];
-  }
-
-  async createLock(input: AdminCreateLockInput): Promise<{ lock: Lock } | { error: string }> {
-    const bikeId = this.optStr(input.bikeId);
-    if (bikeId && !await this.getBike(bikeId)) return { error: "Велосипед не найден" };
-
-    const now = Date.now();
-    try {
-      const inserted = await db.insert(locks).values({
-        imei: input.imei.trim(),
-        macAddress: this.optStr(input.macAddress),
-        bikeId,
-        simIccid: this.optStr(input.simIccid),
-        firmwareVersion: this.optStr(input.firmwareVersion),
-        apn: this.optStr(input.apn) ?? "cmiot",
-        status: input.status ?? "unregistered",
-        notes: this.optStr(input.notes),
-        createdAt: now,
-        updatedAt: now,
-      }).returning();
-      return { lock: inserted[0] as Lock };
-    } catch (err) {
-      if (this.isUniqueViolation(err)) return { error: "Замок с таким IMEI уже зарегистрирован" };
-      throw err;
-    }
-  }
-
-  async getLock(id: number): Promise<Lock | undefined> {
-    return (await db.select().from(locks).where(eq(locks.id, id)).limit(1))[0] as Lock | undefined;
-  }
-
+  // Physically sits with the Lock domain in the pre-refactor monolith but is
+  // semantically Ride-domain (returns a Ride). Deferred here rather than
+  // moved into lock.ts in Stage 2; extracted together with the rest of the
+  // Ride domain in Stage 3.
   /**
    * The current active ride on a bike, if any (audit F-07). Used to stop the
    * admin manual-unlock endpoint from physically opening a bike that is
@@ -145,342 +82,6 @@ export class DatabaseStorage
       .where(and(eq(rides.bikeId, bikeId), eq(rides.status, "active")))
       .limit(1))[0] as Ride | undefined;
   }
-
-  async updateLock(id: number, patch: AdminUpdateLockInput): Promise<{ lock: Lock } | { error: string }> {
-    const existing = (await db.select().from(locks).where(eq(locks.id, id)).limit(1))[0] as Lock | undefined;
-    if (!existing) return { error: "Замок не найден" };
-
-    const set: Partial<Lock> = { updatedAt: Date.now() };
-    if (patch.bikeId !== undefined) {
-      const bikeId = this.optStr(patch.bikeId);
-      if (bikeId && !await this.getBike(bikeId)) return { error: "Велосипед не найден" };
-      set.bikeId = bikeId;
-    }
-    if (patch.macAddress !== undefined) set.macAddress = this.optStr(patch.macAddress);
-    if (patch.simIccid !== undefined) set.simIccid = this.optStr(patch.simIccid);
-    if (patch.firmwareVersion !== undefined) set.firmwareVersion = this.optStr(patch.firmwareVersion);
-    if (patch.apn !== undefined) set.apn = this.optStr(patch.apn) ?? "cmiot";
-    if (patch.status !== undefined) set.status = patch.status;
-    if (patch.notes !== undefined) set.notes = this.optStr(patch.notes);
-
-    const updated = await db.update(locks).set(set as any).where(eq(locks.id, id)).returning();
-    return { lock: updated[0] as Lock };
-  }
-
-  // Device history is retained. DELETE is intentionally a lifecycle transition,
-  // not a physical row deletion.
-  async decommissionLock(id: number): Promise<{ lock: Lock } | { error: string }> {
-    const updated = await db.update(locks).set({
-      status: "decommissioned",
-      updatedAt: Date.now(),
-    }).where(eq(locks.id, id)).returning();
-    if (!updated[0]) return { error: "Замок не найден" };
-    return { lock: updated[0] as Lock };
-  }
-
-  // Postgres unique-violation. Two operators can pick the same freshly
-  // discovered lock at the same time; the partial unique index on
-  // bikes.lock_imei is what actually decides, and the loser gets told plainly
-  // instead of a 500.
-  // Drizzle wraps driver errors in a DrizzleQueryError whose own `code` is
-  // undefined and keeps the pg error (carrying the SQLSTATE) on `cause`, while
-  // a raw pool.query throws that pg error directly. Both shapes reach here, so
-  // both are checked — matching only the top level lets a duplicate IMEI
-  // written through Drizzle escape as a 500.
-  private static readonly LOCK_TAKEN =
-    "Этот замок только что назначили другому велосипеду — выберите другой";
-
-  // Create a real (non-demo) bike. The id is unique (primary key); a duplicate
-  // is rejected with a clear message. Map coordinates default to the assigned
-  // parking station or the map centre so the bike has a valid position.
-  async createBike(input: AdminCreateBikeInput) {
-    const id = input.id.trim().toUpperCase();
-    if (await this.getBike(id)) return { error: "Велосипед с таким кодом уже существует" };
-
-    let lat = MAP_H / 2;
-    let lng = MAP_W / 2;
-    const parkingId = this.optStr(input.parkingId);
-    if (parkingId) {
-      const p = (await db.select().from(parkings).where(eq(parkings.id, parkingId)).limit(1))[0] as Parking | undefined;
-      if (p) { lat = p.lat; lng = p.lng; }
-    }
-
-    const now = Date.now();
-    const lockImei = input.lockImei.trim();
-    try {
-      await db.insert(bikes).values({
-        id,
-        model: input.model.trim(),
-        status: input.status,
-        battery: input.battery,
-        lat, lng,
-        lastSeen: now,
-        idleHours: 0,
-        flagged: false,
-        serial: this.optStr(input.serial),
-        lockId: this.optStr(input.lockId),
-        lockImei,
-        parkingId,
-        notes: this.optStr(input.notes),
-        seed: false,
-      } as any);
-    } catch (err) {
-      if (this.isUniqueViolation(err)) return { error: DatabaseStorage.LOCK_TAKEN };
-      throw err;
-    }
-    await this.syncLockRegistryBinding(lockImei, id);
-    await this.forgetUnassignedLock(lockImei);
-    this.invalidateBikesCache();
-    return { bike: (await this.getBike(id))! };
-  }
-
-  // The lock is now in the registry, so its discovery row is noise. Best-effort:
-  // listUnassignedLocks already excludes assigned IMEIs, so failing to clean up
-  // is cosmetic and must not fail the bike that was successfully created.
-  private async forgetUnassignedLock(imei: string): Promise<void> {
-    try {
-      await db.delete(unassignedLocks).where(eq(unassignedLocks.imei, imei));
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // Keep the registry's explicit bike_id relationship in step with the legacy
-  // bikes.lock_imei binding. Rows may be absent for old/manual bindings, so an
-  // UPDATE affecting zero rows is intentional and must not reject the bike save.
-  private async syncLockRegistryBinding(imei: string, bikeId: string | null): Promise<void> {
-    await db.update(locks).set({ bikeId, updatedAt: Date.now() } as any).where(eq(locks.imei, imei));
-  }
-
-  async adminUpdateBike(id: string, patch: AdminUpdateBikeInput) {
-    const existing = await this.getBike(id);
-    if (!existing) return { error: "Велосипед не найден" };
-
-    const set: Partial<Bike> = {};
-    if (patch.model !== undefined) set.model = patch.model.trim();
-    if (patch.status !== undefined) set.status = patch.status;
-    if (patch.battery !== undefined) set.battery = patch.battery;
-    if (patch.serial !== undefined) set.serial = this.optStr(patch.serial);
-    if (patch.lockId !== undefined) set.lockId = this.optStr(patch.lockId);
-    if (patch.notes !== undefined) set.notes = this.optStr(patch.notes);
-    if (patch.parkingId !== undefined) {
-      const parkingId = this.optStr(patch.parkingId);
-      set.parkingId = parkingId;
-    }
-    // Swapping the lock resets its live state: the new lock has not connected
-    // as this bike yet, and inheriting the old one's "online" would show a dead
-    // bike as reachable until the ingest corrects it.
-    const swappingLock = patch.lockImei !== undefined && patch.lockImei !== existing.lockImei;
-    if (swappingLock) {
-      set.lockImei = patch.lockImei!.trim();
-      set.lockOnline = false;
-      set.lockLastSeen = null;
-    }
-    try {
-      await db.update(bikes).set(set as any).where(eq(bikes.id, id));
-    } catch (err) {
-      if (this.isUniqueViolation(err)) return { error: DatabaseStorage.LOCK_TAKEN };
-      throw err;
-    }
-    // A manual transition into the rental pool uses the lock's current position,
-    // not the operator-selected parking. This deliberately overwrites any
-    // parkingId supplied in the same PATCH; the regular parking picker remains
-    // available for overrides when the bike is not transitioning to available.
-    if (patch.status === "available" && existing.status !== "available") {
-      await this.recalculateBikeParking(existing);
-    }
-    if (swappingLock) {
-      if (existing.lockImei) await this.syncLockRegistryBinding(existing.lockImei, null);
-      await this.syncLockRegistryBinding(set.lockImei!, id);
-      await this.forgetUnassignedLock(set.lockImei!);
-    }
-    this.invalidateBikesCache();
-    return { bike: (await this.getBike(id))! };
-  }
-
-  // Soft delete: mark a bike archived so it drops out of the public list and
-  // rental selection while keeping its ride history intact.
-  async archiveBike(id: string) {
-    const existing = await this.getBike(id);
-    if (!existing) return { error: "Велосипед не найден" };
-    if (existing.status === "rented") return { error: "Нельзя архивировать велосипед во время активной аренды" };
-    await db.update(bikes).set({ status: "archived" } as any).where(eq(bikes.id, id));
-    this.invalidateBikesCache();
-    return { bike: (await this.getBike(id))! };
-  }
-
-  // Hard delete: only allowed when the bike has no ride/ticket/payment-order
-  // history. Otherwise we refuse and archive instead, so analytics records
-  // never dangle. Audit "missing FK constraints" fix: rides.bike_id,
-  // tickets.bike_id and payment_orders.bike_id now carry a real (NOT VALID)
-  // FOREIGN KEY to bikes.id — a hard delete while any of them still points at
-  // this bike would fail with an unhandled 23503 instead of this friendly
-  // archive fallback, so all three referencing tables must be checked here,
-  // not just rides as before.
-  async deleteBike(id: string) {
-    const existing = await this.getBike(id);
-    if (!existing) return { error: "Велосипед не найден" };
-    if (existing.status === "rented") return { error: "Нельзя удалить велосипед во время активной аренды" };
-    const [rideCount, ticketCount, orderCount] = await Promise.all([
-      db.select({ c: count() }).from(rides).where(eq(rides.bikeId, id)),
-      db.select({ c: count() }).from(tickets).where(eq(tickets.bikeId, id)),
-      db.select({ c: count() }).from(paymentOrders).where(eq(paymentOrders.bikeId, id)),
-    ]).then((rs) => rs.map((r) => r[0].c));
-    if (rideCount > 0 || ticketCount > 0 || orderCount > 0) {
-      await db.update(bikes).set({ status: "archived" } as any).where(eq(bikes.id, id));
-      this.invalidateBikesCache();
-      return { error: "У велосипеда есть история поездок/заявок — он переведён в архив", archived: (await this.getBike(id))! };
-    }
-    await db.delete(bikes).where(eq(bikes.id, id));
-    this.invalidateBikesCache();
-    return { ok: true as const };
-  }
-  // ---------- Parkings: read + admin CRUD ----------
-  // Public callers get active, non-archived points only. The admin page passes
-  // includeInactive/includeArchived to see the full set.
-  async listParkings(opts?: { includeInactive?: boolean; includeArchived?: boolean }) {
-    let rows = (await db.select().from(parkings)) as Parking[];
-    if (!opts?.includeArchived) rows = rows.filter((p) => !p.archivedAt);
-    if (!opts?.includeInactive) rows = rows.filter((p) => p.status === "active");
-    // «Занято» считается динамически: число велосипедов, у которых эта
-    // парковка указана как домашняя И которые физически на месте.
-    // Арендованный/архивный велосипед стойку не занимает. Перекрывает
-    // статичное поле occupied из БД — оно больше не ведётся вручную.
-    const bikeRows = await this.listBikes({ includeArchived: false });
-    const AT_STATION = new Set(["available", "reserved", "maintenance", "offline", "storage"]);
-    const counts = new Map<string, number>();
-    for (const b of bikeRows) {
-      if (!b.parkingId) continue;
-      if (!AT_STATION.has(b.status)) continue;
-      counts.set(b.parkingId, (counts.get(b.parkingId) ?? 0) + 1);
-    }
-    return rows.map((p) => ({ ...p, occupied: counts.get(p.id) ?? 0 }));
-  }
-  async getParking(id: string) {
-    return (await db.select().from(parkings).where(eq(parkings.id, id)).limit(1))[0] as Parking | undefined;
-  }
-
-  // Generate the next free P-NN id when the operator doesn't supply one. Just
-  // a candidate picker — NOT a reservation. createParking() below is the one
-  // responsible for making the actual claim race-safe.
-  private async nextParkingId(): Promise<string> {
-    const ids = ((await db.select({ id: parkings.id }).from(parkings)) as { id: string }[]).map((r) => r.id);
-    let n = 1;
-    while (ids.includes(`P-${String(n).padStart(2, "0")}`)) n++;
-    return `P-${String(n).padStart(2, "0")}`;
-  }
-
-  async createParking(input: AdminCreateParkingInput) {
-    const now = Date.now();
-    const occupied = Math.min(input.occupied, input.capacity);
-    const values = (id: string) => ({
-      id,
-      name: input.name.trim(),
-      city: input.city,
-      lat: input.lat,
-      lng: input.lng,
-      capacity: input.capacity,
-      occupied,
-      radius: input.radius,
-      status: input.status,
-      notes: this.optStr(input.notes),
-      archivedAt: null,
-      seed: false,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    // Audit: nextParkingId() used to scan for a free id, then createParking
-    // separately checked getParking(id) before inserting — two check-then-act
-    // gaps a concurrent create could land in between. `parkings.id` is the
-    // primary key, so instead of checking first we always insert directly and
-    // let Postgres be the arbiter: a genuine conflict surfaces as 23505.
-    if (input.id && input.id.trim().length > 0) {
-      const id = input.id.trim().toUpperCase();
-      try {
-        await db.insert(parkings).values(values(id) as any);
-      } catch (err) {
-        if (this.isUniqueViolation(err)) return { error: "Парковка с таким кодом уже существует" };
-        throw err;
-      }
-      return { parking: (await this.getParking(id))! };
-    }
-
-    // No explicit id: pick the next free P-NN slot and insert directly. If
-    // another concurrent create just took that exact id, retry with the next
-    // free slot instead of surfacing a spurious "already exists" — the
-    // operator asked for "any free code", not that specific one.
-    const MAX_ATTEMPTS = 50;
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const candidate = await this.nextParkingId();
-      try {
-        await db.insert(parkings).values(values(candidate) as any);
-        return { parking: (await this.getParking(candidate))! };
-      } catch (err) {
-        if (this.isUniqueViolation(err)) continue;
-        throw err;
-      }
-    }
-    return { error: "Не удалось выделить код парковки — попробуйте ещё раз" };
-  }
-
-  async updateParking(id: string, patch: AdminUpdateParkingInput) {
-    const existing = await this.getParking(id);
-    if (!existing) return { error: "Парковка не найдена" };
-    const set: Partial<Parking> = {};
-    if (patch.name !== undefined) set.name = patch.name.trim();
-    if (patch.city !== undefined) set.city = patch.city;
-    if (patch.lat !== undefined) set.lat = patch.lat;
-    if (patch.lng !== undefined) set.lng = patch.lng;
-    if (patch.capacity !== undefined) set.capacity = patch.capacity;
-    if (patch.occupied !== undefined) set.occupied = patch.occupied;
-    if (patch.radius !== undefined) set.radius = patch.radius;
-    if (patch.status !== undefined) set.status = patch.status;
-    if (patch.notes !== undefined) set.notes = this.optStr(patch.notes);
-    // Keep occupied within the (possibly new) capacity bound.
-    const cap = set.capacity ?? existing.capacity;
-    const occ = set.occupied ?? existing.occupied;
-    if (occ > cap) set.occupied = cap;
-    set.updatedAt = Date.now();
-    await db.update(parkings).set(set as any).where(eq(parkings.id, id));
-    return { parking: (await this.getParking(id))! };
-  }
-
-  // Soft delete: stamp archivedAt so the point drops out of every list while
-  // staying referenceable from bikes/history that point at its id.
-  async archiveParking(id: string) {
-    const existing = await this.getParking(id);
-    if (!existing) return { error: "Парковка не найдена" };
-    await db.update(parkings).set({ archivedAt: Date.now(), updatedAt: Date.now() } as any).where(eq(parkings.id, id));
-    return { parking: (await this.getParking(id))! };
-  }
-
-  // Undo a soft delete: clear archivedAt and force status to inactive so the
-  // point returns muted on the admin maps but never re-appears on the public
-  // map until an operator explicitly re-activates it.
-  async restoreParking(id: string) {
-    const existing = await this.getParking(id);
-    if (!existing) return { error: "Парковка не найдена" };
-    if (!existing.archivedAt) return { error: "Парковка не в архиве" };
-    await db.update(parkings).set({ archivedAt: null, status: "inactive", updatedAt: Date.now() } as any).where(eq(parkings.id, id));
-    return { parking: (await this.getParking(id))! };
-  }
-
-  // Hard delete: only when no bike references this parking. Otherwise archive so
-  // bike.parkingId never dangles.
-  async deleteParking(id: string) {
-    const existing = await this.getParking(id);
-    if (!existing) return { error: "Парковка не найдена" };
-    const refCount = (await db.select({ c: count() }).from(bikes).where(eq(bikes.parkingId, id)))[0].c;
-    if (refCount > 0) {
-      await db.update(parkings).set({ archivedAt: Date.now(), updatedAt: Date.now() } as any).where(eq(parkings.id, id));
-      return { error: "К парковке привязаны велосипеды — она переведена в архив", archived: (await this.getParking(id))! };
-    }
-    await db.delete(parkings).where(eq(parkings.id, id));
-    return { ok: true as const };
-  }
-
-  async listZones() { return (await db.select().from(zones)) as ZoneRow[]; }
 
   // ---- ride GPS points (append-only, avoids O(N^2) track rewrites) ----
   // Live points go to their own ride_points table so each appended point is a
