@@ -14,6 +14,12 @@ on:
         required: false
         default: "Kaliningrad"
 
+# Audit M4: checkout only, then a local shell script (scripts/build-addresses.sh)
+# that writes to a host bind mount — no GitHub API calls, no release created
+# (unlike pmtiles-gen.yml, which does and needs contents:write for that reason).
+permissions:
+  contents: read
+
 jobs:
   addresses:
     runs-on: [self-hosted, baltcircle-prod]

@@ -6,6 +6,12 @@ on:
       - main
   workflow_dispatch:
 
+# Audit M4: neither job here calls the GitHub API (both only run
+# actions/checkout + local build/deploy steps) — contents:read is the
+# minimum GITHUB_TOKEN scope actions/checkout needs and nothing more.
+permissions:
+  contents: read
+
 concurrency:
   group: baltcircle-production
   cancel-in-progress: true
@@ -177,7 +183,14 @@ jobs:
           SMS_PROVIDER: ${{ secrets.SMS_PROVIDER }}
           SMSRU_API_ID: ${{ secrets.SMSRU_API_ID }}
           SIGMASMS_TOKEN: ${{ secrets.SIGMASMS_TOKEN }}
+          SIGMASMS: ${{ secrets.SIGMASMS }}
           SIGMASMS_SENDER: ${{ secrets.SIGMASMS_SENDER }}
+          # Audit M1: previously only documented in .env.example, never wired into
+          # the deploy — no way to tune these in production without editing code.
+          SIGMASMS_MESSAGE_TEMPLATE: ${{ vars.SIGMASMS_MESSAGE_TEMPLATE }}
+          PG_POOL_MAX: ${{ vars.PG_POOL_MAX }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL }}
+          TELEMETRY_INGEST_TOKEN: ${{ secrets.TELEMETRY_INGEST_TOKEN }}
           OTP_SECRET: ${{ secrets.OTP_SECRET }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
           PAYMENT_TOKEN_KEY: ${{ secrets.PAYMENT_TOKEN_KEY }}
@@ -185,7 +198,20 @@ jobs:
           TBANK_TERMINAL_KEY: ${{ secrets.TBANK_TERMINAL_KEY }}
           TBANK_PASSWORD: ${{ secrets.TBANK_PASSWORD }}
           TBANK_API_BASE: ${{ secrets.TBANK_API_BASE }}
+          TBANK_ADD_CARD_CHECK_TYPE: ${{ vars.TBANK_ADD_CARD_CHECK_TYPE }}
+          TBANK_CARD_BIND_AMOUNT_KOPEKS: ${{ vars.TBANK_CARD_BIND_AMOUNT_KOPEKS }}
+          TBANK_CARD_BIND_METHOD: ${{ vars.TBANK_CARD_BIND_METHOD }}
           PUBLIC_APP_URL: ${{ secrets.PUBLIC_APP_URL }}
+          OMNI_MAX_CONNECTIONS: ${{ vars.OMNI_MAX_CONNECTIONS }}
+          OMNI_IDLE_TIMEOUT_MS: ${{ vars.OMNI_IDLE_TIMEOUT_MS }}
+          OMNI_MAX_NEW_CONNECTIONS_PER_IP: ${{ vars.OMNI_MAX_NEW_CONNECTIONS_PER_IP }}
+          OMNI_NEW_CONNECTION_WINDOW_MS: ${{ vars.OMNI_NEW_CONNECTION_WINDOW_MS }}
+          OMNI_MAX_FRAMES_PER_SECOND: ${{ vars.OMNI_MAX_FRAMES_PER_SECOND }}
+          OMNI_FRAME_BUCKET_CAPACITY: ${{ vars.OMNI_FRAME_BUCKET_CAPACITY }}
+          OMNI_STATUS_MIN_INTERVAL_MS: ${{ vars.OMNI_STATUS_MIN_INTERVAL_MS }}
+          OMNI_FLUSH_INTERVAL_MS: ${{ vars.OMNI_FLUSH_INTERVAL_MS }}
+          OMNI_MAX_BATCH_ROWS: ${{ vars.OMNI_MAX_BATCH_ROWS }}
+          UPLOADS_DIR: ${{ vars.UPLOADS_DIR }}
           RUSENDER_API_KEY: ${{ secrets.RUSENDER_API_KEY }}
           RUSENDER_KEY_ID: ${{ secrets.RUSENDER_KEY_ID }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}

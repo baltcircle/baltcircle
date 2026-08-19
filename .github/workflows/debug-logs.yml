@@ -3,6 +3,10 @@ name: Debug production card-bind logs
 on:
   workflow_dispatch:
 
+# Audit M4: no checkout, no GitHub API calls — pure `docker logs` on the
+# self-hosted runner. Deny all GITHUB_TOKEN scopes.
+permissions: {}
+
 jobs:
   logs:
     name: Extract recent card-bind decisions

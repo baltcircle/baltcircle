@@ -43,3 +43,26 @@ Until T-Bank actually flips the switch, this will still show the current
 GlobalSign issuer — that's expected. The chain will change automatically
 on their side once they cut over; no further action is needed here as long
 as these two CA certs remain trusted by the image.
+
+## Rotation ownership (audit L2)
+
+`russian_trusted_sub_ca.pem` expires **2027-03-06**. `russian_trusted_root_ca.pem`
+expires 2032-02-27 (much further out, not an immediate concern). If the sub-CA
+expires before it is replaced, every outgoing HTTPS call to the T-Bank
+acquiring API fails closed once T-Bank has cut over to this chain — a
+full payment outage, not a soft-fail.
+
+- **Owner:** whoever holds prod deploy access for baltcircle/baltcircle
+  (currently the GitHub Environment `production` reviewers — `baltcircle`,
+  `YBWKon`). There is no dedicated on-call rotation for this repo yet; treat
+  this section as the single source of truth for "who does this" until one
+  exists.
+- **Action when due:** re-download both PEMs from the official Gosuslugi CDN
+  (`gu-st.ru`), re-verify the new fingerprints against
+  `https://developer.tbank.ru/eacq/intro/certificates/migration-russian-trusted-ca`,
+  replace the files in this directory, update the fingerprints above, and
+  redeploy (the Dockerfile re-runs `update-ca-certificates` on every build,
+  so no other code change is needed).
+- **Reminder:** no automated reminder exists yet. A ~2-month-lead check-in
+  (around January 2027) is recommended so a replacement can be sourced and
+  tested before the March 2027 hard deadline.

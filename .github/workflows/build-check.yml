@@ -1,5 +1,10 @@
 name: Build Check
 on: [workflow_dispatch, pull_request]
+
+# Audit M4: checkout + npm ci + tsc + test only, no GitHub API calls.
+permissions:
+  contents: read
+
 jobs:
   # Type-check and unit tests. Runs on every PR so type errors and business-logic
   # regressions (billing, ride start/finish, payment webhook) fail CI instead of

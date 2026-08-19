@@ -19,6 +19,11 @@ services:
       # secret). Required: the app fails fast if the pool cannot connect. Format:
       # postgresql://user:password@host:6432/dbname?sslmode=verify-full
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      # Postgres pool size + log verbosity — tunable without a code change
+      # (audit M1: previously hardcoded to the in-code defaults with no way
+      # to override them in production short of editing this file).
+      PG_POOL_MAX: ${PG_POOL_MAX:-10}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       # SMS OTP — backend-only runtime config (not inlined into the client
       # bundle). Read from the host env (set by the deploy workflow from GitHub
       # secrets). If SMS_PROVIDER is empty the app uses a dev fallback that logs
@@ -31,8 +36,14 @@ services:
       # honoured first if present. Sender + API base are optional and default to
       # "TakeRide" / the production host inside the app when empty.
       SIGMASMS_TOKEN: ${SIGMASMS_TOKEN:-}
+      # Alias accepted by server/sms.ts (GitHub secret name is `SIGMASMS`);
+      # SIGMASMS_TOKEN above takes precedence when both are set (audit M1).
+      SIGMASMS: ${SIGMASMS:-}
       SIGMASMS_SENDER: ${SIGMASMS_SENDER:-}
       SIGMASMS_API_BASE: ${SIGMASMS_API_BASE:-}
+      # TEMPORARY moderation-test override — see .env.example. Empty = normal
+      # OTP text.
+      SIGMASMS_MESSAGE_TEMPLATE: ${SIGMASMS_MESSAGE_TEMPLATE:-}
       # Optional dedicated secret for hashing OTP codes; falls back to
       # SESSION_SECRET when unset.
       OTP_SECRET: ${OTP_SECRET:-}
@@ -46,6 +57,14 @@ services:
       # bootstrap until a role-admin UI exists. Read from the host env (set by
       # the deploy workflow from a GitHub secret). Empty -> no auto-admins.
       ADMIN_PHONE_NUMBERS: ${ADMIN_PHONE_NUMBERS:-}
+      # Shared bearer token for the third-party GPS/IoT HTTP telemetry path
+      # (server/http/rides.ts). Empty -> that endpoint returns 503; OMNI TCP
+      # locks are unaffected (they don't use this token).
+      TELEMETRY_INGEST_TOKEN: ${TELEMETRY_INGEST_TOKEN:-}
+      # Runtime dir for support-chat attachment uploads; defaults to ./uploads
+      # inside the container when empty. Kept independent of the bind mount
+      # path below so the app-side default and the host path can diverge.
+      UPLOADS_DIR: ${UPLOADS_DIR:-/app/uploads}
       # T-Bank / T-Kassa acquiring — backend-only runtime config (never inlined
       # into the client bundle). Terminal key + password are SECRET and read from
       # the host env (set by the deploy workflow from GitHub secrets). When the
@@ -63,6 +82,12 @@ services:
       TBANK_PASSWORD: ${TBANK_PASSWORD:-}
       # API base defaults to the production acquiring host inside the app when empty.
       TBANK_API_BASE: ${TBANK_API_BASE:-}
+      # Card-binding tuning (server/tbank.ts) — was previously only
+      # overridable by editing code; now a real ops lever for sandbox
+      # testing / rollback to AddCard without a redeploy (audit M1).
+      TBANK_ADD_CARD_CHECK_TYPE: ${TBANK_ADD_CARD_CHECK_TYPE:-3DS}
+      TBANK_CARD_BIND_AMOUNT_KOPEKS: ${TBANK_CARD_BIND_AMOUNT_KOPEKS:-100}
+      TBANK_CARD_BIND_METHOD: ${TBANK_CARD_BIND_METHOD:-payment}
       # Public origin used to build Success/Fail/Notification URLs; defaults to
       # https://takeride.ru inside the app when empty.
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
@@ -83,6 +108,18 @@ services:
       VAPID_CONTACT: ${VAPID_CONTACT:-mailto:no-reply@takeride.ru}
       LOCK_GATEWAY_PORT: ${LOCK_GATEWAY_PORT:-5100}
       LOCK_GATEWAY_HOST: ${LOCK_GATEWAY_HOST:-0.0.0.0}
+      # OMNI TCP gateway tuning (server/omni/index.ts) — connection/frame-rate
+      # limits and write-batching. Defaults match the in-code fallbacks; now
+      # overridable in production without touching code (audit M1).
+      OMNI_MAX_CONNECTIONS: ${OMNI_MAX_CONNECTIONS:-500}
+      OMNI_IDLE_TIMEOUT_MS: ${OMNI_IDLE_TIMEOUT_MS:-900000}
+      OMNI_MAX_NEW_CONNECTIONS_PER_IP: ${OMNI_MAX_NEW_CONNECTIONS_PER_IP:-20}
+      OMNI_NEW_CONNECTION_WINDOW_MS: ${OMNI_NEW_CONNECTION_WINDOW_MS:-60000}
+      OMNI_MAX_FRAMES_PER_SECOND: ${OMNI_MAX_FRAMES_PER_SECOND:-5}
+      OMNI_FRAME_BUCKET_CAPACITY: ${OMNI_FRAME_BUCKET_CAPACITY:-20}
+      OMNI_STATUS_MIN_INTERVAL_MS: ${OMNI_STATUS_MIN_INTERVAL_MS:-60000}
+      OMNI_FLUSH_INTERVAL_MS: ${OMNI_FLUSH_INTERVAL_MS:-2000}
+      OMNI_MAX_BATCH_ROWS: ${OMNI_MAX_BATCH_ROWS:-500}
     ports:
       # Bind only to loopback so the app is reachable through nginx on the same
       # host, not exposed on all interfaces to the outside world (audit L8).

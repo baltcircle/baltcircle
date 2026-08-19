@@ -18,6 +18,11 @@ name: Configure TakeRide Domain
 on:
   workflow_dispatch:
 
+# Audit M4: checkout only, then local nginx/certbot shell steps on the
+# self-hosted runner — no GitHub API calls.
+permissions:
+  contents: read
+
 jobs:
   configure-domain:
     name: Apply hardened nginx config and HTTPS for takeride.ru

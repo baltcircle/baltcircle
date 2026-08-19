@@ -21,6 +21,10 @@ name: Diagnose T-Bank TLS (production container)
 on:
   workflow_dispatch:
 
+# Audit M4: no checkout, no GitHub API calls — pure `docker exec` diagnostics
+# on the self-hosted runner. Deny all GITHUB_TOKEN scopes.
+permissions: {}
+
 concurrency:
   group: baltcircle-production
   cancel-in-progress: false

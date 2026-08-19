@@ -1,6 +1,11 @@
 name: Diagnose omni container (read-only)
 on:
   workflow_dispatch: {}
+
+# Audit M4: no checkout, no GitHub API calls — pure `docker`/shell diagnostics
+# on the self-hosted runner. Deny all GITHUB_TOKEN scopes.
+permissions: {}
+
 jobs:
   diagnose:
     # Audit F-10: this repo is public, so anything this job prints to the run

@@ -32,7 +32,7 @@ jobs:
         # aquasecurity/trivy-action supply-chain compromise (see image-scan
         # job below) showed floating tags on third-party actions can be
         # force-pushed to malicious commits. Public repo — no license needed.
-        uses: gitleaks/gitleaks-action@v2.3.9
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -93,7 +93,7 @@ jobs:
 
       - name: Generate SBOM (CycloneDX)
         if: always()
-        uses: anchore/sbom-action@v0.20.8
+        uses: anchore/sbom-action@aa0e114b2e19480f157109b9922bda359bd98b90 # v0.20.8
         with:
           image: baltcircle-scan:latest
           format: cyclonedx-json
