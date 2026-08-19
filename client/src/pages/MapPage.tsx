@@ -6,7 +6,6 @@ import { MapLibreMap } from "@/components/MapLibreMap";
 import { RentalStartModal } from "@/components/RentalStartModal";
 import { RegistrationModal } from "@/components/RegistrationModal";
 import { QrScanModal } from "@/components/QrScanModal";
-import { RideTimer } from "@/components/RideTimer";
 import { DrawerMenu } from "@/components/DrawerMenu";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
@@ -16,17 +15,13 @@ import { useRideTrackPoll } from "@/hooks/use-ride-track-poll";
 import { useRideGuard } from "@/hooks/use-ride-guard";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { fmtDistance, fmtRub } from "@/lib/format";
-import { PENDING_BIKE_KEY } from "@/lib/pending-bike";
-import { QrCode, Lock, Clock, Menu, MapPin, Route, X, CreditCard } from "lucide-react";
-import { Link } from "wouter";
-
-const INTRO_SHOWN_KEY = "bc.registration.intro.shown";
-const PAYMENT_BANNER_KEY = "bc.payment.banner.dismissed";
-// Флаг «бургер-меню открыто». Нужен, чтобы восстановить открытое меню
-// после полного reload MapPage — напр. T-Bank reboot на /payment-methods
-// перемонтирует страницу и теряет in-memory drawerOpen.
-const DRAWER_OPEN_KEY = "bc.drawer.open";
+import { Menu, MapPin } from "lucide-react";
+import { useDrawerState } from "./map/use-drawer-state";
+import { useGeolocation } from "./map/use-geolocation";
+import { usePaymentBanner } from "./map/use-payment-banner";
+import { usePendingBikeScan } from "./map/use-pending-bike-scan";
+import { ActiveRideCard } from "./map/ActiveRideCard";
+import { ScanAndPaymentBanner } from "./map/ScanAndPaymentBanner";
 
 export function MapPage() {
   const toast = useToast();
@@ -85,119 +80,12 @@ export function MapPage() {
   const [rentalMulti, setRentalMulti] = useState(false);
   const [regOpen, setRegOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
-  // Восстанавливаем открытое меню СРАЗУ при монтировании из sessionStorage-флага.
-  // После возврата с T-Bank приложение грузится с нуля на /payment-methods,
-  // MapPage монтируется под оверлеем (z-50). Если меню (z-40) сразу открыто
-  // без анимации — оно не видно под оверлеем, а когда оверлей уйдёт (slide-down)
-  // — под ним уже готовый открытый бургер (как при обычных меню, без slide-in).
-  const [drawerOpen, setDrawerOpenState] = useState(() => {
-    try {
-      return sessionStorage.getItem(DRAWER_OPEN_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
-  // Меню, восстановленное открытым на первом рендере, не должно играть slide-in
-  // (оно «уже было открыто» до ухода на T-Bank). Передаём это в DrawerMenu.
-  const drawerMountedOpen = useRef(drawerOpen);
-  // Счётчик «мгновенного открытия»: при возврате со «Способов оплаты» в бургер
-  // (событие drawer:reopen из OverlayRouter) меню должно появиться БЕЗ slide-in —
-  // оно логически «уже было открыто» до перехода. Каждый bump просит DrawerMenu
-  // отрисовать открытие первым кадром без transition.
-  const [drawerInstantTick, setDrawerInstantTick] = useState(0);
-  useEffect(() => {
-    const reopen = () => {
-      setDrawerInstantTick((n) => n + 1);
-      setDrawerOpenState(true);
-      try {
-        sessionStorage.setItem(DRAWER_OPEN_KEY, "1");
-      } catch {
-        /* ignore */
-      }
-    };
-    window.addEventListener("drawer:reopen", reopen);
-    return () => window.removeEventListener("drawer:reopen", reopen);
-  }, []);
-  // Синхронизируем состояние меню с sessionStorage, чтобы оно переживало
-  // полный reload (возврат в меню после привязки карты).
-  const setDrawerOpen = (open: boolean) => {
-    setDrawerOpenState(open);
-    try {
-      if (open) sessionStorage.setItem(DRAWER_OPEN_KEY, "1");
-      else sessionStorage.removeItem(DRAWER_OPEN_KEY);
-    } catch {
-      /* private mode — меню просто не восстановится после reload */
-    }
-  };
 
-  // Payment banner — показывается под кнопкой скан, если нет карты
-  // и не закрыт в эту сессию (перенесён из бургер-меню).
-  const methodsQ = useQuery<any[]>({
-    queryKey: ["/api/payment-methods"],
-    enabled: isRegistered,
-  });
-  const hasCard = (methodsQ.data?.length ?? 0) > 0;
-  const [paymentBannerDismissed, setPaymentBannerDismissed] = useState(
-    () => sessionStorage.getItem(PAYMENT_BANNER_KEY) === "1"
-  );
-  const dismissPaymentBanner = () => {
-    sessionStorage.setItem(PAYMENT_BANNER_KEY, "1");
-    setPaymentBannerDismissed(true);
-  };
-  // Не показываем баннер, пока способы оплаты ещё грузятся — иначе при reload
-  // он мигает (hasCard=false до ответа, затем исчезает).
-  const methodsReady = !methodsQ.isLoading && methodsQ.isFetched;
-  const showPaymentBanner =
-    isRegistered && methodsReady && !hasCard && !paymentBannerDismissed && !activeRide;
-
-  // Geolocation: center map on user position.
-  // Собственный watchPosition (кеширует последнюю точку) → клик по кнопке моментально
-  // перелетает к ней. Каждый клик генерит новый массив — useEffect(center) в MapLibreMap
-  // сработает даже если координаты не изменились.
-  const [geoCenter, setGeoCenter] = useState<[number, number] | null>(null);
-  const lastPosRef = useRef<{ lat: number; lng: number } | null>(null);
-
-  useEffect(() => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) return;
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => { lastPosRef.current = { lat: pos.coords.latitude, lng: pos.coords.longitude }; },
-      () => { /* silent — ошибку покажем только когда юзер попробует геолокацию */ },
-      { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 },
-    );
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, []);
-
-  const handleGeolocate = () => {
-    // Есть свежая точка — летим мгновенно. Новый массив каждый клик → useEffect тригерится.
-    if (lastPosRef.current) {
-      setGeoCenter([lastPosRef.current.lat, lastPosRef.current.lng]);
-      return;
-    }
-    // Фоллбэк — точки ещё нет, запрашиваем явно (может вызвать prompt на iOS PWA).
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        lastPosRef.current = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setGeoCenter([pos.coords.latitude, pos.coords.longitude]);
-      },
-      () => {
-        toast.toast({
-          title: "Геолокация недоступна",
-          description: "Разрешите доступ к местоположению в настройках браузера",
-          variant: "destructive",
-        });
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
-    );
-  };
+  const { drawerOpen, setDrawerOpen, drawerMountedOpen, drawerInstantTick } = useDrawerState();
+  const { geoCenter, lastPosRef, handleGeolocate } = useGeolocation();
+  const { showPaymentBanner, dismissPaymentBanner } = usePaymentBanner(isRegistered, !!activeRide);
 
   const pendingMulti = useRef<boolean | null>(null);
-
-  useEffect(() => {
-    if (userLoading || isRegistered) return;
-    if (localStorage.getItem(INTRO_SHOWN_KEY)) return;
-    localStorage.setItem(INTRO_SHOWN_KEY, "1");
-    setRegOpen(true);
-  }, [userLoading, isRegistered]);
 
   const endMut = useMutation({
     mutationFn: async (rideId: number) => {
@@ -240,29 +128,14 @@ export function MapPage() {
     setRentalOpen(true);
   };
 
-  useEffect(() => {
-    if (userLoading || !bikesQ.data) return;
-    const code = sessionStorage.getItem(PENDING_BIKE_KEY);
-    if (!code) return;
-    sessionStorage.removeItem(PENDING_BIKE_KEY);
-
-    const target = bikesQ.data.find((b) => b.id.toUpperCase() === code);
-    if (!target) {
-      toast.toast({ title: "Велосипед не найден", description: code, variant: "destructive" });
-      return;
-    }
-    if (target.status !== "available") {
-      toast.toast({ title: "Велосипед недоступен", description: `${target.id} сейчас занят`, variant: "destructive" });
-      return;
-    }
-    if (!isRegistered) {
-      pendingMulti.current = false;
-      setRegOpen(true);
-      return;
-    }
-    onBikeScanned(target);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userLoading, bikesQ.data, isRegistered]);
+  usePendingBikeScan({
+    userLoading,
+    isRegistered,
+    bikes: bikesQ.data,
+    pendingMulti,
+    setRegOpen,
+    onBikeScanned,
+  });
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
@@ -337,107 +210,14 @@ export function MapPage() {
         </button>
 
         {activeRide ? (
-          /* Active ride card */
-          <div
-            className="rounded-2xl bg-card/95 text-card-foreground backdrop-blur-sm shadow-xl px-4 py-3"
-            data-testid="home-active-ride-card"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-widest text-accent">
-                  <span className="w-1.5 h-1.5 rounded-full bg-accent ride-pulse" /> В пути
-                </div>
-                <div className="font-display text-base font-light leading-tight truncate" data-testid="text-active-bike">
-                  {activeRide.bikeId}
-                </div>
-              </div>
-              <div className="text-right shrink-0">
-                <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Стоимость</div>
-                <div className="font-display text-base font-light tabular-nums" data-testid="text-ride-cost">
-                  {fmtRub(activeRide.cost ?? 0)}
-                </div>
-              </div>
-            </div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <div className="rounded-xl bg-background/50 border border-card-border px-3 py-2">
-                <div className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted-foreground">
-                  <Clock className="w-3 h-3" /> Время
-                </div>
-                <div className="font-display text-base font-light tabular-nums mt-0.5" data-testid="text-ride-duration">
-                  <RideTimer startedAt={activeRide.startedAt} />
-                </div>
-              </div>
-              <div className="rounded-xl bg-background/50 border border-card-border px-3 py-2">
-                <div className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted-foreground">
-                  <Route className="w-3 h-3" /> Расстояние
-                </div>
-                <div className="font-display text-base font-light tabular-nums mt-0.5" data-testid="text-ride-distance">
-                  {fmtDistance(activeRide.distanceM ?? 0)}
-                </div>
-              </div>
-            </div>
-            <div className="mt-2">
-              <button
-                type="button"
-                onClick={() => endMut.mutate(activeRide.id)}
-                disabled={endMut.isPending}
-                data-testid="button-end-ride"
-                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-sand-deep text-brand-bark h-11 font-medium shadow-sm hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
-              >
-                <Lock className="w-4 h-4" /> Завершить поездку
-              </button>
-            </div>
-          </div>
+          <ActiveRideCard ride={activeRide} onEnd={() => endMut.mutate(activeRide.id)} ending={endMut.isPending} />
         ) : (
-          /* Scan button + payment banner под ней */
-          <div className="flex flex-col gap-3">
-            <button
-              type="button"
-              onClick={() => goRent(false)}
-              aria-label={isRegistered ? "Сканировать QR" : "Сканировать QR (нужна регистрация)"}
-              data-testid="home-primary-scan"
-              className="w-full h-14 rounded-full bg-primary hover:opacity-90 text-black font-medium text-lg flex items-center justify-between px-6 shadow-lg active:scale-[0.98] transition-all"
-            >
-              <span>Сканировать</span>
-              <QrCode className="w-6 h-6" />
-            </button>
-
-            {/* Payment banner — под кнопкой скан. Крестик скрывает баннер,
-             * блок анкорится по нижнему краю — кнопка скан опускается на его место. */}
-            {showPaymentBanner && (
-              <div className="rounded-2xl bg-card/95 text-card-foreground backdrop-blur-sm shadow-xl px-4 py-3 relative">
-                <button
-                  type="button"
-                  onClick={dismissPaymentBanner}
-                  className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors"
-                  aria-label="Закрыть"
-                >
-                  <X className="w-4 h-4 text-card-foreground/70" />
-                </button>
-                <div className="flex items-start gap-3 pr-6">
-                  <CreditCard className="w-5 h-5 text-card-foreground/80 shrink-0 mt-0.5" />
-                  <p className="text-sm text-card-foreground leading-snug">
-                    Добавьте способ оплаты, чтобы начать кататься
-                  </p>
-                </div>
-                <Link
-                  href="/payment-methods"
-                  onClick={() => {
-                    // Зашли с баннера на главном экране — кнопка «назад»
-                    // должна вернуть на карту, а не в меню.
-                    try {
-                      sessionStorage.setItem("bc.pm.origin", "map");
-                    } catch {
-                      /* ignore */
-                    }
-                  }}
-                  className="mt-3 flex items-center justify-center w-full h-10 rounded-full bg-primary hover:opacity-90 text-black text-sm font-medium transition-colors"
-                >
-                  Добавить оплату
-                </Link>
-              </div>
-            )}
-          </div>
+          <ScanAndPaymentBanner
+            isRegistered={isRegistered}
+            onScan={() => goRent(false)}
+            showPaymentBanner={showPaymentBanner}
+            onDismissBanner={dismissPaymentBanner}
+          />
         )}
       </div>
 
