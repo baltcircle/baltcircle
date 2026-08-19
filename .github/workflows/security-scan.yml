@@ -93,7 +93,7 @@ jobs:
 
       - name: Generate SBOM (CycloneDX)
         if: always()
-        uses: anchore/sbom-action@aa0e114b2e19480f157109b9922bda359bd98b90 # v0.20.8
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: baltcircle-scan:latest
           format: cyclonedx-json
