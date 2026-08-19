@@ -14,6 +14,7 @@ import type {
   CreateTicketInput, UpdateTicketInput, AdminCreateParkingInput, AdminUpdateParkingInput,
   SupportConversation, SupportMessage, SupportMessageRole, AdminSupportConversationRow,
   Lock, AdminCreateLockInput, AdminUpdateLockInput, WalletTopupOrder,
+  OauthIdentity, OauthProvider,
 } from "@shared/schema";
 
 export interface IUserStorage {
@@ -63,6 +64,21 @@ export interface IOtpStorage {
     | { error: string; retryAfterSec?: number }
   >;
   verifyPhoneChange(input: { userId: string; code: string }): Promise<{ user: User } | { error: string }>;
+  // email change (RuSender OTP, mirrors phone change)
+  startEmailChange(input: { userId: string; email: string }): Promise<
+    | { ok: true; email: string; code: string; resendInSec: number }
+    | { error: string; retryAfterSec?: number }
+  >;
+  verifyEmailChange(input: { userId: string; code: string }): Promise<{ user: User } | { error: string }>;
+  unlinkEmail(userId: string): Promise<{ user: User } | { error: string }>;
+  // OAuth identities (Yandex ID / VK ID)
+  listOauthIdentities(userId: string): Promise<OauthIdentity[]>;
+  linkOauthIdentity(params: {
+    userId: string; provider: OauthProvider; subject: string;
+    email?: string | null; displayName?: string | null;
+  }): Promise<{ error: string } | { ok: true; identity: OauthIdentity }>;
+  unlinkOauthIdentity(userId: string, provider: OauthProvider): Promise<{ ok: true }>;
+  findUserByOauth(provider: OauthProvider, subject: string, email?: string | null): Promise<User | null>;
 }
 
 export interface IPaymentMethodStorage {
@@ -126,6 +142,20 @@ export interface IPaymentMethodStorage {
   }): Promise<PaymentOrder>;
   getRidePaymentOrder(orderId: string): Promise<PaymentOrder | undefined>;
   updateRidePaymentOrder(id: number, patch: Partial<PaymentOrder>): Promise<PaymentOrder | undefined>;
+  // Idempotency-guarded reservation (audit HIGH #2) — see implementation for
+  // the reserve-before-charge rationale.
+  reserveRidePaymentOrder(input: {
+    orderId: string;
+    userId: string;
+    bikeId: string;
+    tariffId: string;
+    amountKopecks: number;
+    source?: "hosted" | "saved_card";
+    paymentMethodId?: number;
+    rebillId?: string;
+    idempotencyKey: string;
+  }): Promise<{ order: PaymentOrder; created: boolean }>;
+  getRidePaymentOrderByIdempotencyKey(userId: string, idempotencyKey: string): Promise<PaymentOrder | undefined>;
 }
 
 export interface ISupportStorage {
@@ -179,6 +209,9 @@ export interface IParkingStorage {
 }
 
 export interface IRideStorage {
+  // Audit F-07: the current active ride on a bike, if any — used by the admin
+  // manual-unlock endpoint to avoid opening a bike mid-ride for another rider.
+  getActiveRideForBike(bikeId: string): Promise<Ride | undefined>;
   startRide(input: { bikeId: string; userId: string; tariff: string; prepaid?: boolean }): Promise<Ride | { error: string }>;
   appendRidePoint(rideId: number, x: number, y: number): Promise<Ride | undefined>;
   insertBikeTelemetry(bikeId: string, x: number, y: number, t: number): Promise<void>;
