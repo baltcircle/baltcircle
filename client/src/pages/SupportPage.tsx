@@ -1,51 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { OverlayShell } from "@/components/OverlayShell";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { SupportConversation, SupportMessage } from "@shared/schema";
+import type { SupportMessage } from "@shared/schema";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, queryClient, API_BASE } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { Send, Paperclip, X as XIcon, ImageIcon, Loader2, LifeBuoy } from "lucide-react";
-
-const CHAT_KEY = ["/api/support/chat"];
-const MAX_FILE_BYTES = 8 * 1024 * 1024;
-
-type ChatState = { conversation: SupportConversation; messages: SupportMessage[] };
-
-// Вопросы совпадают с ключевыми словами бота (shared/support-faq.ts) —
-// тап отправляет вопрос, бот отвечает скриптом.
-const FAQ_HINT = [
-  { q: "Как начать аренду велосипеда?" },
-  { q: "Как завершить поездку?" },
-  { q: "Как привязать карту и сколько стоит?" },
-  { q: "Что означают зоны на карте?" },
-];
-
-function fmtTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-}
-function fmtDay(ms: number): string {
-  const d = new Date(ms);
-  const today = new Date();
-  const isToday = d.toDateString() === today.toDateString();
-  const yesterday = new Date(today.getTime() - 86400000);
-  const isYesterday = d.toDateString() === yesterday.toDateString();
-  if (isToday) return "Сегодня";
-  if (isYesterday) return "Вчера";
-  return d.toLocaleDateString("ru-RU", { day: "2-digit", month: "long" });
-}
-
-async function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result ?? ""));
-    r.onerror = () => reject(new Error("Не удалось прочитать файл"));
-    r.readAsDataURL(file);
-  });
-}
+import { LifeBuoy } from "lucide-react";
+import { CHAT_KEY, MAX_FILE_BYTES, type ChatState, fmtDay, fileToBase64 } from "./support/utils";
+import { MessageBubble } from "./support/MessageBubble";
+import { FaqEmptyState } from "./support/FaqEmptyState";
+import { ChatInputForm } from "./support/ChatInputForm";
 
 export function SupportPage() {
   const toast = useToast();
@@ -207,36 +172,11 @@ export function SupportPage() {
           {chatQ.isLoading ? (
             <div className="text-xs text-muted-foreground text-center py-8">Загрузка чата…</div>
           ) : messages.length === 0 ? (
-            <Card className="p-4 space-y-3">
-              <div className="text-sm font-medium">Здравствуйте! Я бот поддержки TakeRide 🤖</div>
-              <div className="text-xs text-muted-foreground leading-snug">
-                Опишите вопрос своими словами — подскажу по аренде, оплате, зонам и типичным
-                проблемам. Нужен живой сотрудник — нажмите «Позвать оператора» или напишите «оператор».
-              </div>
-              <div className="space-y-2 pt-1">
-                {FAQ_HINT.map((f, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => sendMut.mutate(f.q)}
-                    disabled={sendMut.isPending}
-                    className="block w-full text-left rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5 hover:bg-muted/60 transition-colors disabled:opacity-50"
-                  >
-                    <div className="text-xs font-medium">{f.q}</div>
-                  </button>
-                ))}
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="w-full mt-1"
-                onClick={callOperator}
-                disabled={sendMut.isPending}
-              >
-                Позвать оператора
-              </Button>
-            </Card>
+            <FaqEmptyState
+              onPickFaq={(q) => sendMut.mutate(q)}
+              onCallOperator={callOperator}
+              disabled={sendMut.isPending}
+            />
           ) : (
             grouped.map((g, gi) => (
               <div key={gi} className="space-y-1.5">
@@ -253,128 +193,18 @@ export function SupportPage() {
         </div>
 
         {/* Поле ввода — приклеено к низу внешнего скроллера */}
-        <form
+        <ChatInputForm
           onSubmit={submit}
-          className="sticky bottom-0 z-10 border-t border-border/50 bg-background/95 backdrop-blur px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
-        >
-          {attachment && (
-            <div className="mb-2 flex items-center gap-2 rounded-md border border-border/60 bg-muted/40 p-2">
-              <div className="w-10 h-10 rounded overflow-hidden bg-muted flex items-center justify-center shrink-0">
-                <img src={attachment.url} alt="" className="w-full h-full object-cover" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-xs truncate">{attachment.localName}</div>
-                <div className="text-[10px] text-muted-foreground">Готово к отправке</div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAttachment(null)}
-                className="p-1 rounded hover:bg-muted"
-                aria-label="Удалить"
-              >
-                <XIcon className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-          <div className="flex items-end gap-2">
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={onPickFile}
-            />
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="shrink-0 h-9 w-9"
-              onClick={() => fileRef.current?.click()}
-              disabled={uploading || sendMut.isPending}
-              aria-label="Прикрепить фото"
-            >
-              {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
-            </Button>
-            <Textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Сообщение…"
-              rows={1}
-              className="flex-1 min-h-[36px] max-h-32 resize-none py-2"
-              data-testid="input-support-text"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  submit(e as any);
-                }
-              }}
-            />
-            <Button
-              type="submit"
-              size="icon"
-              className="shrink-0 h-9 w-9"
-              disabled={sendMut.isPending || uploading || (!text.trim() && !attachment)}
-              data-testid="button-support-send"
-              aria-label="Отправить"
-            >
-              {sendMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            </Button>
-          </div>
-        </form>
+          attachment={attachment}
+          onRemoveAttachment={() => setAttachment(null)}
+          fileRef={fileRef}
+          onPickFile={onPickFile}
+          uploading={uploading}
+          sending={sendMut.isPending}
+          text={text}
+          setText={setText}
+        />
       </div>
     </OverlayShell>
   );
 }
-
-function MessageBubble({ message }: { message: SupportMessage }) {
-  const isUser = message.senderRole === "user";
-  const isSystem = message.senderRole === "system";
-  const isBot = message.senderRole === "bot";
-
-  if (isSystem) {
-    return (
-      <div className="text-center text-[10px] text-muted-foreground py-1">
-        {message.body}
-      </div>
-    );
-  }
-
-  return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`} data-testid={`support-msg-${message.id}`}>
-      <div
-        className={`max-w-[80%] rounded-2xl px-3 py-2 ${
-          isUser
-            ? "bg-primary text-primary-foreground rounded-br-md"
-            : "bg-muted rounded-bl-md"
-        }`}
-      >
-        {!isUser && (
-          <div className="text-[10px] font-medium opacity-70 mb-0.5">{isBot ? "Бот поддержки" : "Оператор"}</div>
-        )}
-        {message.attachmentUrl && (
-          <a
-            href={message.attachmentUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block mb-1"
-          >
-            <img
-              src={message.attachmentUrl}
-              alt="Вложение"
-              className="max-w-full max-h-64 rounded-lg object-cover"
-            />
-          </a>
-        )}
-        {message.body && (
-          <div className="text-sm whitespace-pre-wrap break-words leading-snug">{message.body}</div>
-        )}
-        <div className={`text-[10px] mt-0.5 ${isUser ? "opacity-70" : "text-muted-foreground"} text-right`}>
-          {fmtTime(message.createdAt)}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Пустая иконка чтобы не терять импорт (использовать в v2)
-void ImageIcon;
