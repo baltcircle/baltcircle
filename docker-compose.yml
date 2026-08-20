@@ -120,6 +120,12 @@ services:
       OMNI_STATUS_MIN_INTERVAL_MS: ${OMNI_STATUS_MIN_INTERVAL_MS:-60000}
       OMNI_FLUSH_INTERVAL_MS: ${OMNI_FLUSH_INTERVAL_MS:-2000}
       OMNI_MAX_BATCH_ROWS: ${OMNI_MAX_BATCH_ROWS:-500}
+      # TEMPORARY live-lock onboarding diagnostic (server/omni/server.ts
+      # logOmniDiag) — unset by default (no-op for the whole fleet). Set to a
+      # single IMEI to log every frame from that device at info level before
+      # the persistence throttle, to see the device's true reporting cadence
+      # while onboarding it. Remove once the QA checkup pipeline is finalised.
+      OMNI_DIAG_IMEI: ${OMNI_DIAG_IMEI:-}
     ports:
       # Bind only to loopback so the app is reachable through nginx on the same
       # host, not exposed on all interfaces to the outside world (audit L8).

@@ -1,0 +1,77 @@
+name: Diagnose OMNI lock onboarding (production container)
+
+# Manual, read-only diagnostic. Tails the ALREADY RUNNING production app
+# container's logs (no rebuild, no restart, no deploy) for the temporary
+# omni-diag frames emitted by server/omni/server.ts's logOmniDiag() helper,
+# which only fires when the OMNI_DIAG_IMEI repo variable is set to a specific
+# device's IMEI (see docker-compose.yml / deploy.yml). Use this to see, for a
+# single physical lock being onboarded, exactly what messages it sends (Q0
+# checkin / H0 heartbeat / S5 status / D0-D1 position) and how often, before
+# designing the final QA checkup criteria.
+#
+# This is diagnostic-only: read-only `docker logs`, no writes, no restarts,
+# no secrets printed (IMEI/GPS/battery telemetry only, nothing in pino's
+# redact list).
+#
+# NOTE (should be removed after use): remove this workflow, the
+# OMNI_DIAG_IMEI repo variable, and the logOmniDiag() hook in
+# server/omni/server.ts once live-lock onboarding diagnostics are no longer
+# needed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      since_minutes:
+        description: "How many minutes of app logs to scan"
+        required: false
+        default: "20"
+
+permissions: {}
+
+concurrency:
+  group: baltcircle-production
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    name: Tail omni-diag frames from the running container
+    runs-on:
+      - self-hosted
+      - baltcircle-prod
+    steps:
+      - name: Confirm OMNI_DIAG_IMEI is set inside the running container
+        run: |
+          set -e
+          echo "== docker ps (baltcircle*) =="
+          docker ps --filter "name=baltcircle" --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+          echo ""
+          echo "== process.env.OMNI_DIAG_IMEI inside baltcircle-mvp =="
+          IMEI=$(docker exec baltcircle-mvp node -e "console.log(process.env.OMNI_DIAG_IMEI ?? '')")
+          if [ -z "$IMEI" ]; then
+            echo "OMNI_DIAG_IMEI is unset in the running container — no diagnostic frames will be logged."
+            echo "Set the 'OMNI_DIAG_IMEI' repository Actions variable and redeploy first."
+          else
+            echo "OMNI_DIAG_IMEI = $IMEI"
+          fi
+
+      - name: Tail app container logs for omni-diag frames
+        if: always()
+        run: |
+          set +e
+          SINCE="${{ inputs.since_minutes }}"
+          SINCE="${SINCE:-20}"
+          echo "== docker logs baltcircle-mvp --since ${SINCE}m, filtered to omni-diag =="
+          echo "---"
+          docker logs baltcircle-mvp --since "${SINCE}m" 2>&1 \
+            | grep -i "omni-diag" \
+            || echo "(no omni-diag lines in the last ${SINCE} minutes — either OMNI_DIAG_IMEI is unset/mismatched, or the lock has not sent anything in this window)"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "Review the lines above: each is one decoded frame from the target lock, with"
+          echo "  cmd       - Q0 checkin / H0 heartbeat / S5 status / D0,D1 position / other"
+          echo "  detail    - full decoded payload (fix lat/lng/satellites/hdop, battery, signal, locked, or rejection reason)"
+          echo "  msSinceLastFrame - milliseconds since the previous frame from this IMEI (null on the first line)"
+          echo ""
+          echo "Re-run this workflow any time (it never restarts or redeploys anything)."

@@ -666,6 +666,7 @@ class OmniConnection {
         { connId: this.id, imei: this.imei, cmd: frame.cmd, reason: decoded.reason },
         "rejecting invalid payload",
       );
+      logOmniDiag(this.log, this.imei, receivedAt, frame.cmd, { rejected: decoded.reason });
       return;
     }
 
@@ -673,6 +674,7 @@ class OmniConnection {
       { connId: this.id, imei: this.imei, bikeId: this.bikeId, cmd: frame.cmd },
       "lock report",
     );
+    logOmniDiag(this.log, this.imei, receivedAt, frame.cmd, decoded.message);
     await this.server.record(this, decoded.message, receivedAt);
 
     const ack = buildAck(frame.imei, frame.cmd, receivedAt);
@@ -794,6 +796,44 @@ export function buildTelemetry(
 
 function unlockKey(imei: string, userId: string, timestampSeconds: number): string {
   return `${imei}:${userId}:${timestampSeconds}`;
+}
+
+// ---------------------------------------------------------------------------
+// TEMPORARY live-lock onboarding diagnostic (remove once the OMNI QA checkup
+// is finalised — tracked as a one-off, not a permanent feature).
+//
+// Gated by OMNI_DIAG_IMEI so it is a complete no-op for the rest of the fleet
+// (default unset -> zero behaviour change, zero extra log volume). When set
+// to a specific IMEI, every frame from that device is logged at `info`
+// (visible under the prod default LOG_LEVEL=info, no config change needed)
+// with its full decoded content and the gap since the previous frame from
+// the same IMEI — logged *before* the persistence throttle in buildTelemetry,
+// so this reflects the true wire cadence, not the throttled write rate.
+// Deliberately does not touch bikes/locks status or any business logic.
+const omniDiagLastAt = new Map<string, number>();
+
+function logOmniDiag(
+  log: Logger,
+  imei: string | null,
+  receivedAt: number,
+  cmd: string,
+  detail: unknown,
+): void {
+  const target = process.env.OMNI_DIAG_IMEI;
+  if (!target || !imei || imei !== target) return;
+  const prev = omniDiagLastAt.get(imei);
+  omniDiagLastAt.set(imei, receivedAt);
+  log.info(
+    {
+      diag: "omni-lock-onboarding",
+      imei,
+      cmd,
+      receivedAtIso: new Date(receivedAt).toISOString(),
+      msSinceLastFrame: prev == null ? null : receivedAt - prev,
+      detail,
+    },
+    "omni-diag frame",
+  );
 }
 
 /**
