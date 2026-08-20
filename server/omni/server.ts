@@ -359,7 +359,37 @@ export class OmniTcpServer {
       this.log.error({ err, imei }, "failed to mark lock online");
     }
     this.log.info({ imei, bikeId, connId: conn.id, remote: conn.remote }, "lock connected");
+    this.maybeProbeOmniDiagD1(imei);
     return true;
+  }
+
+  /**
+   * TEMPORARY (see OMNI diag block near the bottom of this file): once, for
+   * the single lock under onboarding diagnosis, ask the device to report
+   * tracking-mode position at a given interval — probing the ambiguous
+   * D1-as-interval-set semantics empirically (see comment in
+   * shared/omni/protocol.ts on D0/D1 firmware variance) since idle heartbeats
+   * alone never carry GPS. No-op unless OMNI_DIAG_IMEI matches this exact
+   * connection AND OMNI_DIAG_SEND_D1_SECONDS is a positive integer — zero
+   * effect on the rest of the fleet. Fires at most once per process lifetime
+   * per IMEI (a few seconds after connect, to let the socket settle) so a
+   * flapping connection cannot re-send the probe repeatedly.
+   */
+  private maybeProbeOmniDiagD1(imei: string): void {
+    const target = process.env.OMNI_DIAG_IMEI;
+    if (!target || imei !== target) return;
+    const seconds = Number(process.env.OMNI_DIAG_SEND_D1_SECONDS);
+    if (!Number.isInteger(seconds) || seconds <= 0) return;
+    if (omniDiagD1Sent.has(imei)) return;
+    omniDiagD1Sent.add(imei);
+    const timer = setTimeout(() => {
+      const sent = this.sendToDevice(imei, "D1", [seconds]);
+      this.log.info(
+        { diag: "omni-lock-onboarding-d1-probe", imei, seconds, sent },
+        "sent experimental D1 tracking-interval probe",
+      );
+    }, 5_000);
+    timer.unref?.();
   }
 
   /** @internal */
@@ -811,6 +841,10 @@ function unlockKey(imei: string, userId: string, timestampSeconds: number): stri
 // so this reflects the true wire cadence, not the throttled write rate.
 // Deliberately does not touch bikes/locks status or any business logic.
 const omniDiagLastAt = new Map<string, number>();
+
+// Tracks which IMEIs already got the one-shot D1 tracking-interval probe
+// (maybeProbeOmniDiagD1 above) this process lifetime — see that method.
+const omniDiagD1Sent = new Set<string>();
 
 function logOmniDiag(
   log: Logger,

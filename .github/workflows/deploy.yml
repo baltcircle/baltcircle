@@ -212,6 +212,7 @@ jobs:
           OMNI_FLUSH_INTERVAL_MS: ${{ vars.OMNI_FLUSH_INTERVAL_MS }}
           OMNI_MAX_BATCH_ROWS: ${{ vars.OMNI_MAX_BATCH_ROWS }}
           OMNI_DIAG_IMEI: ${{ vars.OMNI_DIAG_IMEI }}
+          OMNI_DIAG_SEND_D1_SECONDS: ${{ vars.OMNI_DIAG_SEND_D1_SECONDS }}
           UPLOADS_DIR: ${{ vars.UPLOADS_DIR }}
           RUSENDER_API_KEY: ${{ secrets.RUSENDER_API_KEY }}
           RUSENDER_KEY_ID: ${{ secrets.RUSENDER_KEY_ID }}
