@@ -369,24 +369,30 @@ export class OmniTcpServer {
    * tracking-mode position at a given interval — probing the ambiguous
    * D1-as-interval-set semantics empirically (see comment in
    * shared/omni/protocol.ts on D0/D1 firmware variance) since idle heartbeats
-   * alone never carry GPS. No-op unless OMNI_DIAG_IMEI matches this exact
-   * connection AND OMNI_DIAG_SEND_D1_SECONDS is a positive integer — zero
-   * effect on the rest of the fleet. Fires at most once per process lifetime
-   * per IMEI (a few seconds after connect, to let the socket settle) so a
-   * flapping connection cannot re-send the probe repeatedly.
+   * alone never carry GPS. `0` is an explicit, real send — D1,0 — attempting
+   * to ask the device to stop continuous tracking (unverified; this is the
+   * empirical test for it). No-op only when OMNI_DIAG_SEND_D1_SECONDS is
+   * absent/empty/negative/non-integer, or OMNI_DIAG_IMEI doesn't match this
+   * exact connection — zero effect on the rest of the fleet either way.
+   * Fires at most once per process lifetime per IMEI (a few seconds after
+   * connect, to let the socket settle) so a flapping connection cannot
+   * re-send the probe repeatedly; redeploy (which changes the repo variable
+   * and restarts the process) is what lets a new value be tried.
    */
   private maybeProbeOmniDiagD1(imei: string): void {
     const target = process.env.OMNI_DIAG_IMEI;
     if (!target || imei !== target) return;
-    const seconds = Number(process.env.OMNI_DIAG_SEND_D1_SECONDS);
-    if (!Number.isInteger(seconds) || seconds <= 0) return;
+    const raw = process.env.OMNI_DIAG_SEND_D1_SECONDS;
+    if (raw === undefined || raw === "") return;
+    const seconds = Number(raw);
+    if (!Number.isInteger(seconds) || seconds < 0) return;
     if (omniDiagD1Sent.has(imei)) return;
     omniDiagD1Sent.add(imei);
     const timer = setTimeout(() => {
       const sent = this.sendToDevice(imei, "D1", [seconds]);
       this.log.info(
         { diag: "omni-lock-onboarding-d1-probe", imei, seconds, sent },
-        "sent experimental D1 tracking-interval probe",
+        seconds === 0 ? "sent experimental D1 tracking-stop probe" : "sent experimental D1 tracking-interval probe",
       );
     }, 5_000);
     timer.unref?.();
