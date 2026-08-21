@@ -1,5 +1,5 @@
-import { bikes, rides, payments, parkings, ridePoints, users, locks } from "@shared/schema";
-import type { Ride, AdminRide, User, Parking, Bike, Lock } from "@shared/schema";
+import { bikes, rides, payments, parkings, ridePoints, users, locks, reservations } from "@shared/schema";
+import type { Ride, AdminRide, User, Parking, Bike, Lock, Reservation } from "@shared/schema";
 import { eq, sql, and, desc, asc, inArray, count } from "drizzle-orm";
 import {
   TARIFFS, tariffPriceKopecks, tariffDurationMs, realToMap,
@@ -131,6 +131,29 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             if (bike.status !== "available" && bike.status !== "reserved") {
               return { error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` };
             }
+            // A "reserved" bike is held for ONE specific rider (createReservation) —
+            // only that reservation's owner may start it here; anyone else must
+            // get a friendly "booked by someone else" instead of silently
+            // hijacking another rider's hold. Locked via the same FOR UPDATE row
+            // lock as the bike above (Postgres locks are per-transaction, so a
+            // racing cancelReservation/expireOverdueReservations sweep either
+            // commits first — and we see the freed row — or blocks until we do.
+            let claimedReservationId: number | null = null;
+            if (bike.status === "reserved") {
+              const reservationRow = (await tx.select().from(reservations)
+                .where(sql`${reservations.bikeId} = ${bikeId} AND ${reservations.status} = 'active'`)
+                .for("update")
+                .limit(1))[0] as Reservation | undefined;
+              if (!reservationRow) {
+                // Stale "reserved" with no backing row (should not happen given
+                // the sweep, but fail closed rather than let anyone claim it).
+                return { error: "Велосипед забронирован — подождите или выберите другой велосипед" };
+              }
+              if (reservationRow.userId !== userId) {
+                return { error: "Велосипед забронирован другим пользователем" };
+              }
+              claimedReservationId = reservationRow.id;
+            }
             if (bike.battery < 18) return { error: "Низкий заряд замка, выберите другой велосипед" };
             // No row to lock here (the rider may have zero rides), so this read
             // alone cannot be made race-proof the same way — idx_rides_active_user
@@ -226,6 +249,11 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             // Seed the append-only points table with the start point so the live
             // track (hydrated from ride_points) is never empty for a fresh ride.
             await tx.execute(sql`INSERT INTO ride_points (ride_id, x, y, t) VALUES (${row.id}, ${startLng}, ${startLat}, ${startedAt})`);
+            if (claimedReservationId != null) {
+              await tx.update(reservations)
+                .set({ status: "claimed", claimedRideId: row.id } as any)
+                .where(eq(reservations.id, claimedReservationId));
+            }
             return row;
           });
         } catch (err) {

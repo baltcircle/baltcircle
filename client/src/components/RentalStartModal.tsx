@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Bike, PublicPaymentMethod } from "@shared/schema";
+import type { Bike, PublicPaymentMethod, Reservation } from "@shared/schema";
 import {
-  TBANK_CONFIG_KEY, PAYMENT_METHODS_KEY, type TbankConfigResponse,
+  TBANK_CONFIG_KEY, PAYMENT_METHODS_KEY, RESERVATION_ACTIVE_KEY, type TbankConfigResponse,
 } from "@/lib/payment";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -16,7 +16,7 @@ import { TARIFFS } from "@shared/geo";
 import type { Tariff } from "@shared/geo";
 import {
   Bike as BikeIcon, Check, CreditCard, QrCode, Loader2,
-  AlertCircle, ShieldAlert, MapPin, LifeBuoy,
+  AlertCircle, Smartphone, CalendarClock,
 } from "lucide-react";
 
 interface Props {
@@ -44,14 +44,17 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
   const toast = useToast();
   const [, navigate] = useLocation();
   const [tariff, setTariff] = useState<Tariff["id"]>("h1");
-  // When the rider has a saved card we default to charging it; this lets them
-  // opt into the hosted form ("pay with another card") instead.
-  const [useOtherCard, setUseOtherCard] = useState(false);
+  // The rider's explicit payment-method pick for this modal session: a saved
+  // method id, "hosted" (pay with a fresh card on T-Bank's page), or null
+  // meaning "no explicit choice yet — fall back to the newest saved method".
+  // Kept separate from the derived `selectedMethodId` below so a stale pick
+  // (a card unlinked mid-session) can't silently stick around.
+  const [manualMethodId, setManualMethodId] = useState<number | "hosted" | null>(null);
 
   useEffect(() => {
     if (open) {
       setTariff("h1");
-      setUseOtherCard(false);
+      setManualMethodId(null);
     }
   }, [open]);
 
@@ -62,9 +65,6 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
   // or payment method switched — gets a fresh key so it isn't stuck replaying
   // a stale/failed result.
   const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
-  useEffect(() => {
-    setIdemKey(crypto.randomUUID());
-  }, [open, tariff, useOtherCard]);
 
   // Whether real T-Bank acquiring is configured. When it isn't, we surface a
   // clear "payments are being set up" message instead of offering a flow that
@@ -75,16 +75,45 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
   });
   const paymentsConfigured = configQ.data?.configured ?? false;
 
-  // The rider's linked payment methods, used to detect a saved card eligible for
-  // a one-tap recurring charge (active T-Bank card with a RebillId).
+  // The rider's linked payment methods, used to offer a one-tap recurring charge
+  // against ANY active T-Bank method — a card with a RebillId or an SBP link with
+  // an AccountToken — instead of just the first card found.
   const methodsQ = useQuery<PublicPaymentMethod[]>({
     queryKey: PAYMENT_METHODS_KEY,
     enabled: open,
   });
-  const savedCard = (methodsQ.data ?? []).find(
-    (m) => m.type === "card" && m.status === "active" && m.provider === "tbank" && m.hasRebillId,
+  const activeMethods = (methodsQ.data ?? []).filter(
+    (m) => m.status === "active" && m.provider === "tbank"
+      && ((m.type === "card" && m.hasRebillId) || (m.type === "sbp" && m.hasAccountToken)),
   );
-  const useSavedCard = !!savedCard && !useOtherCard;
+  // `manualMethodId` wins only while it still points at a method that's still
+  // active; otherwise fall back to the newest saved method (list is already
+  // sorted newest-first by the API), or the hosted form if none exist.
+  const manualStillValid = manualMethodId === "hosted"
+    || (manualMethodId != null && activeMethods.some((m) => m.id === manualMethodId));
+  const selectedMethodId: number | "hosted" = manualStillValid
+    ? (manualMethodId as number | "hosted")
+    : (activeMethods[0]?.id ?? "hosted");
+  const selectedMethod = selectedMethodId === "hosted"
+    ? undefined
+    : activeMethods.find((m) => m.id === selectedMethodId);
+  const useSavedCard = !!selectedMethod;
+
+  useEffect(() => {
+    setIdemKey(crypto.randomUUID());
+  }, [open, tariff, selectedMethodId]);
+
+  // The rider's own active reservation ("бронь"), if any — used to gate the
+  // "Бронь" button per the one-reservation-at-a-time product rule (a rider who
+  // already holds a reservation elsewhere must cancel it or let it expire
+  // before booking a different bike; re-booking the SAME bike is redundant).
+  const activeReservationQ = useQuery<Reservation | null>({
+    queryKey: RESERVATION_ACTIVE_KEY,
+    enabled: open,
+  });
+  const activeReservation = activeReservationQ.data ?? null;
+  const hasReservationElsewhere = !!activeReservation && activeReservation.bikeId !== bike?.id;
+  const hasReservationForThisBike = !!activeReservation && activeReservation.bikeId === bike?.id;
 
   // Pay-then-start: create a T-Bank payment for the selected tariff and send the
   // rider to T-Bank's hosted form. The ride only starts after the payment is
@@ -147,7 +176,7 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
       const res = await apiRequest("POST", "/api/payments/tbank/ride/charge-saved-card", {
         bikeId: bike.id,
         tariffId: tariff,
-        paymentMethodId: savedCard?.id,
+        paymentMethodId: selectedMethod?.id,
       }, { "Idempotency-Key": idemKey });
       return res.json();
     },
@@ -170,9 +199,34 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
     },
   });
 
+  // Book the bike for up to RESERVATION_TTL_MS (10 min) without paying yet.
+  // Disabled by canBook below when the rider already holds a reservation.
+  const bookMut = useMutation<Reservation, Error, void>({
+    mutationFn: async () => {
+      if (!bike) throw new Error("Велосипед не выбран");
+      const res = await apiRequest("POST", "/api/reservations", { bikeId: bike.id });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: RESERVATION_ACTIVE_KEY });
+      queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
+      toast.toast({ title: "Велосипед забронирован", description: "У вас 10 минут, чтобы начать поездку." });
+      onOpenChange(false);
+    },
+    onError: (err) => {
+      toast.toast({ title: "Не удалось забронировать", description: cleanErr(err), variant: "destructive" });
+    },
+  });
+
   const submitting = payMut.isPending || chargeMut.isPending;
   const selectedTariff = TARIFFS.find((t) => t.id === tariff);
-  const canPay = !!bike && bike.status === "available" && paymentsConfigured && !submitting;
+  // "available" bikes can always be started; a "reserved" bike can ONLY be
+  // started by the rider who holds that exact reservation (storage.startRide
+  // enforces the same ownership gate server-side — this is just the UI mirror).
+  const canPay = !!bike && (bike.status === "available" || hasReservationForThisBike)
+    && paymentsConfigured && !submitting;
+  const canBook = !!bike && bike.status === "available"
+    && !hasReservationElsewhere && !hasReservationForThisBike && !bookMut.isPending;
 
   function onPrimary() {
     if (useSavedCard) chargeMut.mutate();
@@ -197,7 +251,13 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
               <div className="text-sm text-muted-foreground">{bike.model}</div>
             </div>
             <div className="flex flex-col items-end gap-2">
-              <Badge>{bike.status === "available" ? "Доступен" : bike.status}</Badge>
+              <Badge>
+                {hasReservationForThisBike
+                  ? "Забронирован вами"
+                  : bike.status === "available"
+                  ? "Доступен"
+                  : bike.status}
+              </Badge>
             </div>
           </div>
         ) : (
@@ -244,22 +304,6 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
           </div>
         </div>
 
-        {/* Payment explainer. The rider pays the tariff up front on T-Bank's
-            hosted page; the ride starts after the payment is confirmed. */}
-        <div className="rounded-xl border border-card-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-1" data-testid="rental-payment-explainer">
-          <div className="flex items-start gap-1.5">
-            <CreditCard className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <span>
-              Оплата проходит на защищённой странице Т-Банка. Данные карты вводятся
-              только там — мы их не получаем и не храним.
-            </span>
-          </div>
-          <div className="flex items-start gap-1.5">
-            <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <span>Аренда начнётся автоматически после подтверждения оплаты.</span>
-          </div>
-        </div>
-
         {/* Graceful state when acquiring isn't configured yet. */}
         {configQ.isLoading ? (
           <div className="text-[11px] text-muted-foreground flex items-center gap-1.5" data-testid="rental-payment-loading">
@@ -272,69 +316,105 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
           </div>
         ) : null}
 
-        {/* Concise pre-ride rules. */}
-        <ul className="space-y-1.5 text-xs text-muted-foreground" data-testid="rental-rules">
-          <li className="flex items-start gap-1.5">
-            <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" /> Проверьте тормоза перед стартом.
-          </li>
-          <li className="flex items-start gap-1.5">
-            <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0" /> Завершайте поездку в разрешённой зоне.
-          </li>
-          <li className="flex items-start gap-1.5">
-            <LifeBuoy className="w-3.5 h-3.5 mt-0.5 shrink-0" /> Что-то не так — обратитесь в поддержку.
-          </li>
-        </ul>
-
-        {/* Saved card: when present, show it as the default payment source with a
-            one-tap charge, plus an opt-out to the hosted form. */}
-        {paymentsConfigured && savedCard && (
-          <div className="rounded-xl border border-card-border bg-muted/40 p-3 text-xs space-y-1.5" data-testid="rental-saved-card">
-            <div className="flex items-center gap-2">
-              <CreditCard className="w-3.5 h-3.5 shrink-0" />
-              <span className="font-medium text-foreground">{savedCard.label}</span>
-              {useSavedCard && <Check className="w-3.5 h-3.5 text-primary ml-auto" />}
+        {/* Payment method picker: every active saved card/SBP link, newest first,
+            plus a "pay with another card" row that opens T-Bank's hosted form.
+            Tapping any row re-selects it — a real switch, not a binary toggle. */}
+        {paymentsConfigured && (
+          <div className="space-y-1.5">
+            {activeMethods.length > 0 && <div className="text-sm font-medium">Способ оплаты</div>}
+            <div className="rounded-xl border border-card-border bg-muted/40 p-1.5 space-y-1" data-testid="rental-payment-methods">
+              {activeMethods.map((m) => {
+                const isSelected = selectedMethodId === m.id;
+                const MethodIcon = m.type === "sbp" ? Smartphone : CreditCard;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setManualMethodId(m.id)}
+                    disabled={submitting}
+                    data-testid={`button-payment-method-${m.id}`}
+                    className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-left transition-colors hover-elevate ${
+                      isSelected ? "bg-primary/10 ring-1 ring-primary" : ""
+                    }`}
+                  >
+                    <MethodIcon className="w-3.5 h-3.5 shrink-0" />
+                    <span className="font-medium text-foreground truncate">{m.label}</span>
+                    {isSelected && <Check className="w-3.5 h-3.5 text-primary ml-auto shrink-0" />}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setManualMethodId("hosted")}
+                disabled={submitting}
+                data-testid="button-payment-method-hosted"
+                className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-left transition-colors hover-elevate ${
+                  selectedMethodId === "hosted" ? "bg-primary/10 ring-1 ring-primary" : ""
+                }`}
+              >
+                <QrCode className="w-3.5 h-3.5 shrink-0" />
+                <span className={selectedMethodId === "hosted" ? "font-medium text-foreground" : "text-muted-foreground"}>
+                  {activeMethods.length > 0 ? "Оплатить другой картой" : "Оплатить картой на странице Т-Банка"}
+                </span>
+                {selectedMethodId === "hosted" && <Check className="w-3.5 h-3.5 text-primary ml-auto shrink-0" />}
+              </button>
             </div>
-            <button
-              type="button"
-              className="text-muted-foreground underline-offset-2 hover:underline"
-              onClick={() => setUseOtherCard((v) => !v)}
-              disabled={submitting}
-              data-testid="button-toggle-other-card"
-            >
-              {useSavedCard ? "Оплатить другой картой" : "Списать с сохранённой карты"}
-            </button>
           </div>
         )}
 
-        {/* Error state if creating the payment / charging the card fails. */}
-        {(payMut.isError || chargeMut.isError) && (
+        {/* Reservation conflict note: booking THIS bike is blocked while the rider
+            holds an active reservation somewhere else. */}
+        {hasReservationElsewhere && (
+          <div className="rounded-md bg-muted/60 text-muted-foreground text-xs p-2.5 flex items-start gap-1.5" data-testid="rental-reservation-conflict">
+            <CalendarClock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>У вас уже есть активная бронь другого велосипеда. Отмените её или дождитесь истечения, чтобы забронировать этот.</span>
+          </div>
+        )}
+
+        {/* Error state if creating the payment / charging the card / booking fails. */}
+        {(payMut.isError || chargeMut.isError || bookMut.isError) && (
           <div className="rounded-md bg-destructive/10 text-destructive text-xs p-2.5 flex items-start gap-1.5" data-testid="rental-start-error">
             <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <span>{cleanErr((payMut.error ?? chargeMut.error) as Error)}</span>
+            <span>{cleanErr((payMut.error ?? chargeMut.error ?? bookMut.error) as Error)}</span>
           </div>
         )}
 
-        <DialogFooter>
+        <DialogFooter className="flex-row gap-2">
           <Button
-            className="w-full"
+            className="flex-1 min-w-0 px-2"
             disabled={!canPay}
             onClick={onPrimary}
             data-testid="button-start-rental"
           >
             {submitting ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                {useSavedCard ? "Списываем оплату…" : "Переходим к оплате…"}
-              </>
-            ) : useSavedCard ? (
-              <>
-                <CreditCard className="w-4 h-4 mr-2" />
-                Начать аренду — списать{selectedTariff ? ` ${selectedTariff.price} ₽` : ""}
-              </>
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <span className="truncate">
+                Начать{selectedTariff ? ` — ${selectedTariff.price} ₽` : ""}
+              </span>
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1 min-w-0 px-2"
+            disabled={!canBook}
+            onClick={() => bookMut.mutate()}
+            data-testid="button-book-reservation"
+            title={
+              hasReservationForThisBike
+                ? "Велосипед уже забронирован вами"
+                : hasReservationElsewhere
+                ? "У вас уже есть активная бронь другого велосипеда"
+                : undefined
+            }
+          >
+            {bookMut.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <>
-                <CreditCard className="w-4 h-4 mr-2" />
-                Оплатить и начать аренду{selectedTariff ? ` — ${selectedTariff.price} ₽` : ""}
+                <CalendarClock className="w-4 h-4 mr-1.5 shrink-0" />
+                <span className="truncate">Бронь</span>
               </>
             )}
           </Button>

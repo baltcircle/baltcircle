@@ -27,6 +27,7 @@ import { BikeMixin } from "./storage/bike";
 import { LockMixin } from "./storage/lock";
 import { ParkingMixin } from "./storage/parking";
 import { RideMixin } from "./storage/ride";
+import { ReservationMixin } from "./storage/reservation";
 
 // IStorage is split into domain-segmented sub-interfaces; re-exported for callers.
 import type { IStorage } from "./storage/interfaces";
@@ -52,6 +53,7 @@ export class DatabaseStorage
     .with(LockMixin)
     .with(ParkingMixin)
     .with(RideMixin)
+    .with(ReservationMixin)
     .build()
   implements IStorage
 {

@@ -24,6 +24,7 @@ import {
   tbankGetState,
   tbankAddAccountQr, tbankGetAddAccountQrState, tbankRemoveCard,
   generateSbpBindOrderId, extractQrPayload, classifyAccountBinding,
+  tbankInitSbpCharge, tbankChargeQr, generateSbpRideChargeOrderId,
 } from "./../tbank";
 import type { TbankConfig } from "./../tbank";
 import {
@@ -816,14 +817,20 @@ export function registerPaymentRoutes(app: Express): void {
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
 
-    // Resolve a usable saved card (active T-Bank method with a RebillId). When
-    // none exists the client should fall back to the hosted payment flow.
+    // Resolve a usable saved payment method — a card (RebillId) OR a bound
+    // SBP account (AccountToken). When paymentMethodId is given it must match
+    // that exact method; otherwise the most recently active card wins, then
+    // the most recently active SBP account. When neither exists the client
+    // should fall back to the hosted payment flow.
     const card = await storage.getActiveSavedCard(userId, parsed.data.paymentMethodId);
-    if (!card || !card.rebillId) {
-      return res.status(409).json({ error: "Нет сохранённой карты для списания. Оплатите другой картой." });
+    const sbp = card ? undefined : await storage.getActiveSavedSbp(userId, parsed.data.paymentMethodId);
+    const method = card ?? sbp;
+    if (!method) {
+      return res.status(409).json({ error: "Нет сохранённого способа оплаты для списания. Выберите другой способ." });
     }
+    const kind: "card" | "sbp" = card ? "card" : "sbp";
 
-    const orderId = generateSavedCardRideOrderId();
+    const orderId = kind === "card" ? generateSavedCardRideOrderId() : generateSbpRideChargeOrderId();
 
     // Reserve the order row BEFORE touching the acquirer (audit HIGH #2): if a
     // concurrent request with the SAME idempotency key raced us here, exactly
@@ -837,9 +844,13 @@ export function registerPaymentRoutes(app: Express): void {
         bikeId: bike.id,
         tariffId: tariffDef.id,
         amountKopecks,
-        source: "saved_card",
-        paymentMethodId: card.id,
-        rebillId: card.rebillId,
+        source: kind === "card" ? "saved_card" : "saved_sbp",
+        paymentMethodId: method.id,
+        // Write-once audit copy — only meaningful for the card path (see
+        // reserveRidePaymentOrder). We intentionally do NOT mirror the SBP
+        // AccountToken here to avoid widening the payment_orders schema for a
+        // field that's never read back.
+        rebillId: kind === "card" ? (card!.rebillId ?? undefined) : undefined,
         idempotencyKey: idem.key,
       });
       if (!reserved.created) {
@@ -864,16 +875,27 @@ export function registerPaymentRoutes(app: Express): void {
     }
 
     try {
-      // Step 1: Init registers the payment object and yields a PaymentId.
-      const init = await tbankInitSavedCardCharge(cfg, {
-        orderId,
-        amountKopecks,
-        customerKey: card.customerKey ?? user.id,
-        description: `Аренда велосипеда ${bike.id} • ${tariffDef.name}`,
-        customerEmail: user.email,
-        customerPhone: user.phone,
-        notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
-      });
+      // Step 1: Init registers the payment object and yields a PaymentId. The
+      // card and SBP paths use distinct Init variants (SBP sets Recurrent=Y +
+      // DATA.QR, per tbankInitSbpCharge's contract) but converge on the same
+      // PaymentId-based Charge step below.
+      const init = kind === "card"
+        ? await tbankInitSavedCardCharge(cfg, {
+            orderId,
+            amountKopecks,
+            customerKey: method.customerKey ?? user.id,
+            description: `Аренда велосипеда ${bike.id} • ${tariffDef.name}`,
+            customerEmail: user.email,
+            customerPhone: user.phone,
+            notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
+          })
+        : await tbankInitSbpCharge(cfg, {
+            orderId,
+            amountKopecks,
+            description: `Аренда велосипеда ${bike.id} • ${tariffDef.name}`,
+            customerKey: method.customerKey ?? user.id,
+            notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
+          });
       if (!init.Success || init.PaymentId == null) {
         await storage.updateRidePaymentOrder(order.id, { status: "failed", ...bindingErrorPatch(init) });
         return res.status(502).json(tbankErrorBody(init));
@@ -890,8 +912,11 @@ export function registerPaymentRoutes(app: Express): void {
         return res.status(500).json({ error: "Не удалось сохранить заказ оплаты. Попробуйте позже." });
       }
 
-      // Step 2: Charge debits the saved card using PaymentId + RebillId.
-      const charge = await tbankCharge(cfg, { paymentId, rebillId: card.rebillId });
+      // Step 2: Charge debits the saved method using PaymentId + RebillId (card)
+      // or PaymentId + AccountToken (SBP).
+      const charge = kind === "card"
+        ? await tbankCharge(cfg, { paymentId, rebillId: card!.rebillId! })
+        : await tbankChargeQr(cfg, { paymentId, accountToken: sbp!.accountToken! });
       const status = typeof charge.Status === "string" ? charge.Status : "";
       const outcome = classifyRidePayment({ status, success: charge.Success === false ? false : undefined });
 

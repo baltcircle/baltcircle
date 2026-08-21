@@ -137,3 +137,15 @@ export const paymentLimiter = rateLimit({
   skip: rateLimitDisabled,
   message: { error: "Слишком много запросов. Попробуйте позже." },
 });
+// A reservation holds ONE bike unavailable to everyone else for up to 10
+// minutes — cheap for the caller but a real griefing vector (repeatedly
+// book-then-let-expire to keep a bike perpetually out of the pool). Tighter
+// than paymentLimiter, looser than otpLimiter.
+export const reservationLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 10, // 10 create/cancel calls per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: rateLimitDisabled,
+  message: { error: "Слишком много запросов. Попробуйте позже." },
+});

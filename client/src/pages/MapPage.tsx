@@ -20,9 +20,11 @@ import { Menu, MapPin } from "lucide-react";
 import { useDrawerState } from "./map/use-drawer-state";
 import { useGeolocation } from "./map/use-geolocation";
 import { usePaymentBanner } from "./map/use-payment-banner";
+import { useReservationBanner } from "./map/use-reservation-banner";
 import { usePendingBikeScan } from "./map/use-pending-bike-scan";
 import { ActiveRideCard } from "./map/ActiveRideCard";
 import { ScanAndPaymentBanner } from "./map/ScanAndPaymentBanner";
+import { ReservationBanner } from "./map/ReservationBanner";
 
 export function MapPage() {
   const toast = useToast();
@@ -85,6 +87,8 @@ export function MapPage() {
   const { drawerOpen, setDrawerOpen, drawerMountedOpen, drawerInstantTick } = useDrawerState();
   const { geoCenter, lastPosRef, handleGeolocate } = useGeolocation();
   const { showPaymentBanner, dismissPaymentBanner } = usePaymentBanner(isRegistered, !!activeRide);
+  const { reservation, cancelling, cancelReservation, onExpire: onReservationExpire } =
+    useReservationBanner(isRegistered, !!activeRide);
 
   const pendingMulti = useRef<boolean | null>(null);
 
@@ -327,12 +331,22 @@ export function MapPage() {
             extending={extendMut.isPending}
           />
         ) : (
-          <ScanAndPaymentBanner
-            isRegistered={isRegistered}
-            onScan={() => goRent(false)}
-            showPaymentBanner={showPaymentBanner}
-            onDismissBanner={dismissPaymentBanner}
-          />
+          <>
+            {reservation && (
+              <ReservationBanner
+                reservation={reservation}
+                onCancel={() => cancelReservation(reservation.id)}
+                cancelling={cancelling}
+                onExpire={onReservationExpire}
+              />
+            )}
+            <ScanAndPaymentBanner
+              isRegistered={isRegistered}
+              onScan={() => goRent(false)}
+              showPaymentBanner={showPaymentBanner}
+              onDismissBanner={dismissPaymentBanner}
+            />
+          </>
         )}
       </div>
 

@@ -1043,6 +1043,18 @@ export async function tbankChargeQr(
   });
 }
 
+// Build a compact, collision-resistant OrderId for a recurring SBP RIDE charge
+// (ChargeQr against a bound AccountToken). Same constraints as the other
+// generators — <= 50 chars, ASCII latin/digits/dash only. A distinct "TRSQ"
+// (TakeRide Sbp charge via Qr) prefix lets logs/handlers tell this apart from
+// a card saved-charge (TRSC) or an SBP account binding (TRSB) at a glance.
+export function generateSbpRideChargeOrderId(): string {
+  const ts = Date.now().toString(36);
+  let rand = "";
+  while (rand.length < 6) rand += randomInt(36).toString(36);
+  return `TRSQ-${ts}-${rand.slice(0, 6)}`;
+}
+
 // Build a compact, collision-resistant OrderId for an SBP account binding.
 // Same constraints as the card generators — <= 50 chars, ASCII latin/digits/dash
 // only. A distinct "TRSB" (TakeRide Sbp Binding) prefix lets logs/handlers tell

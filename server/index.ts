@@ -199,6 +199,25 @@ app.use((req, res, next) => {
   process.once("SIGTERM", () => { clearTimeout(initialPurgeTimer); clearInterval(contactRequestPurgeTimer); });
   process.once("SIGINT", () => { clearTimeout(initialPurgeTimer); clearInterval(contactRequestPurgeTimer); });
 
+  // Reservations ("бронь") hold a bike out of the rentable pool for up to
+  // RESERVATION_TTL_MS (10 min, shared/geo.ts) — a much shorter fuse than the
+  // hourly contact-request purge above, so this sweep runs every 60 seconds
+  // instead. storage.expireOverdueReservations() does the actual flip
+  // (reservation -> "expired", bike -> "available") atomically in one
+  // transaction; this timer is just the scheduler.
+  const runReservationSweep = () => {
+    void storage.expireOverdueReservations()
+      .then((count) => {
+        if (count > 0) logger.info({ count }, "expired overdue reservations");
+      })
+      .catch((err) => logger.error({ err }, "reservation sweep failed"));
+  };
+  const RESERVATION_SWEEP_INTERVAL_MS = 60 * 1000;
+  const initialReservationSweepTimer = setTimeout(runReservationSweep, 10_000);
+  const reservationSweepTimer = setInterval(runReservationSweep, RESERVATION_SWEEP_INTERVAL_MS);
+  process.once("SIGTERM", () => { clearTimeout(initialReservationSweepTimer); clearInterval(reservationSweepTimer); });
+  process.once("SIGINT", () => { clearTimeout(initialReservationSweepTimer); clearInterval(reservationSweepTimer); });
+
   // The gateway is a standalone TCP listener (not an HTTP route), but it shares
   // this process so the authenticated pilot-control endpoint can address its
   // in-memory socket registry without a second control plane.

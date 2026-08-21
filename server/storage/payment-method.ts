@@ -345,7 +345,7 @@ export function PaymentMethodMixin<TBase extends Constructor>(Base: TBase) {
         bikeId: string;
         tariffId: string;
         amountKopecks: number;
-        source?: "hosted" | "saved_card";
+        source?: "hosted" | "saved_card" | "saved_sbp";
         paymentMethodId?: number;
         rebillId?: string;
         idempotencyKey: string;

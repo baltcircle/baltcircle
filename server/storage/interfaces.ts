@@ -14,7 +14,7 @@ import type {
   CreateTicketInput, UpdateTicketInput, AdminCreateParkingInput, AdminUpdateParkingInput,
   SupportConversation, SupportMessage, SupportMessageRole, AdminSupportConversationRow,
   Lock, AdminCreateLockInput, AdminUpdateLockInput, WalletTopupOrder,
-  OauthIdentity, OauthProvider,
+  OauthIdentity, OauthProvider, Reservation,
 } from "@shared/schema";
 
 export interface IUserStorage {
@@ -150,7 +150,7 @@ export interface IPaymentMethodStorage {
     bikeId: string;
     tariffId: string;
     amountKopecks: number;
-    source?: "hosted" | "saved_card";
+    source?: "hosted" | "saved_card" | "saved_sbp";
     paymentMethodId?: number;
     rebillId?: string;
     idempotencyKey: string;
@@ -274,6 +274,23 @@ export interface IAnalyticsStorage {
   adminAnalytics(range: { from: number; to: number }): Promise<any>;
 }
 
+export interface IReservationStorage {
+  // Product rule: a rider may hold at most ONE active reservation at a time
+  // (across any bike) — see createReservation's implementation for the
+  // atomic enforcement. Returns an error string on any precondition failure
+  // (bike unavailable, rider already has an active ride/reservation).
+  createReservation(input: { bikeId: string; userId: string }): Promise<{ reservation: Reservation } | { error: string }>;
+  getActiveReservationForUser(userId: string): Promise<Reservation | undefined>;
+  getActiveReservationForBike(bikeId: string): Promise<Reservation | undefined>;
+  // Owner-only cancel; returns an error string if the reservation doesn't
+  // exist, isn't active, or belongs to a different user.
+  cancelReservation(id: number, userId: string): Promise<{ ok: true } | { error: string }>;
+  // Sweep entry point (server/index.ts interval) — flips overdue "active"
+  // reservations to "expired" and frees the underlying bike back to
+  // "available". Returns how many rows were expired (for logging).
+  expireOverdueReservations(): Promise<number>;
+}
+
 // Facade composing every domain interface. `import { storage }` continues to
 // expose all methods through the single DatabaseStorage implementation.
 export interface IStorage
@@ -288,4 +305,5 @@ export interface IStorage
     IWalletStorage,
     ITicketStorage,
     IMapObjectStorage,
-    IAnalyticsStorage {}
+    IAnalyticsStorage,
+    IReservationStorage {}

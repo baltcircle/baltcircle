@@ -41,6 +41,7 @@ import { pool } from "./client";
 // Both are idempotent (`IF NOT EXISTS`) and cheap to re-check on every boot.
 async function applyRuntimeDataGuards() {
   await createRideRaceGuardIndexes();
+  await createReservationRaceGuardIndexes();
   await createContactUniquenessGuardIndexes();
 }
 
@@ -81,6 +82,35 @@ async function createRideRaceGuardIndexes() {
   );
   await pool.query(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_active_user ON rides (user_id) WHERE status = 'active';`,
+  );
+}
+
+// Same belt-and-suspenders idea for reservations: server/storage/reservation.ts
+// serialises "one active reservation per bike" and "one active reservation per
+// rider" (product decision: a rider may hold at most one booking at a time)
+// with SELECT ... FOR UPDATE inside a transaction, but a future code path
+// that bypasses that guard must still not be able to create a second active
+// row for the same bike or rider. Idempotent and cheap on a healthy DB.
+async function createReservationRaceGuardIndexes() {
+  await pool.query(`
+    UPDATE reservations SET status = 'cancelled'
+    WHERE status = 'active' AND id NOT IN (
+      SELECT DISTINCT ON (bike_id) id FROM reservations
+      WHERE status = 'active' ORDER BY bike_id, created_at DESC, id DESC
+    )
+  `);
+  await pool.query(`
+    UPDATE reservations SET status = 'cancelled'
+    WHERE status = 'active' AND id NOT IN (
+      SELECT DISTINCT ON (user_id) id FROM reservations
+      WHERE status = 'active' ORDER BY user_id, created_at DESC, id DESC
+    )
+  `);
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_reservations_active_bike ON reservations (bike_id) WHERE status = 'active';`,
+  );
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_reservations_active_user ON reservations (user_id) WHERE status = 'active';`,
   );
 }
 
