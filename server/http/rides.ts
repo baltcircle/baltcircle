@@ -160,6 +160,11 @@ export function registerRideRoutes(app: Express): void {
     if (!(await canManageRide(req, ride))) return res.status(403).json({ error: "Нет доступа" });
     const r = await storage.endRide(Number(req.params.id));
     if (!r) return res.status(404).json({ error: "Поездка не активна" });
+    // Radius-gating (Phase 2): endRide now returns a { error } shape (not a
+    // thrown exception or undefined) when the bike isn't in a parking zone or
+    // the lock's GPS fix is stale — the rider endpoint must surface this as a
+    // 400, not fall through to res.json(r) as if it were a settled ride.
+    if ("error" in r) return res.status(400).json(r);
     res.json(r);
   });
   // Authoritative track for a ride, built from the bike's onboard OMNI lock when
@@ -226,8 +231,12 @@ export function registerRideRoutes(app: Express): void {
   app.post("/api/admin/rides/:id/end", requireRole("operator", "admin"), async (req, res) => {
     const rideId = Number(req.params.id);
     const before = await storage.getRide(rideId);
-    const r = await storage.endRide(rideId);
+    // Radius-gating (Phase 2): the operator override intentionally bypasses the
+    // geofence hard-block — staff must be able to force-end a ride even when
+    // the bike/lock GPS is stale or outside every parking zone.
+    const r = await storage.endRide(rideId, { skipGeofence: true });
     if (!r) return res.status(404).json({ error: "Поездка не активна" });
+    if ("error" in r) return res.status(400).json(r);
     // Уведомляем клиента — его поездку завершил оператор.
     if (before?.userId) {
       sendToUserAsync(before.userId, {

@@ -46,14 +46,30 @@ function makeRide(overrides: Partial<Ride> = {}): Ride {
   } as Ride;
 }
 
+// Radius-gating (Phase 2): startRide now hard-requires the bike to be inside
+// an active parking zone. Every makeBike() fixture in this file sits at
+// (lat: 1, lng: 2) and never overrides it, and every test's lock-row select
+// below returns no fix, so startRide always falls back to matching against
+// this exact position — a single generous-radius zone centred there keeps
+// every existing fixture passing the new geofence check.
+function makeParking(overrides: Record<string, unknown> = {}) {
+  return { id: "P-1", lat: 1, lng: 2, radius: 999999, status: "active", archivedAt: null, ...overrides };
+}
+
 // Builds a fake `tx` whose `select()` calls consume `selectQueue` in order,
-// mirroring the real call sequence: [bike] -> [activeRideCheck] -> (on
-// rollback) [rideForUpdate].
+// mirroring the real call sequence: [bike] -> [activeRideCheck] -> (lockImei
+// set only) [lockRow] -> [parkingsForStart] -> (on rollback) [rideForUpdate].
 // Table identity isn't compared — instead each update/insert is classified by
 // the shape of the values it writes, which is unambiguous for this code path
 // (only the rides-cancel update sets status:"cancelled"; only the bikes-free
 // update sets status:"available"; only the wallet-topup insert has kind
 // "ride_charge" with a positive amount).
+//
+// Radius-gating (Phase 2): the parkings lookup (`await tx.select().from(parkings)`)
+// awaits the chain directly, without ever calling `.limit()` — unlike every
+// other select in this code path. The chain must therefore be awaitable on
+// its own (a `then()`), or that bare await resolves to the chain object
+// itself instead of the queued rows.
 function makeTx(selectQueue: unknown[][]) {
   const calls = { execute: [] as unknown[], updateSets: [] as unknown[], insertValues: [] as unknown[] };
   const tx: any = {
@@ -64,6 +80,8 @@ function makeTx(selectQueue: unknown[][]) {
         where: () => chain,
         for: () => chain,
         limit: () => Promise.resolve(rows),
+        then: (resolve: (v: unknown[]) => unknown, reject?: (e: unknown) => unknown) =>
+          Promise.resolve(rows).then(resolve, reject),
       };
       return chain;
     }),
@@ -112,8 +130,9 @@ afterEach(() => {
 describe("startRide physical unlock gate (audit F-04)", () => {
   it("skips the unlock command entirely for a bike with no smart lock bound", async () => {
     const bike = makeBike({ lockImei: null });
-    const startedRide = makeRide();
-    const { tx } = makeTx([[bike], [], [startedRide]]);
+    // No lockImei -> the transaction never selects `locks`, so the 3rd queued
+    // select is the radius-gating parkings lookup, not a lockRow.
+    const { tx } = makeTx([[bike], [], [makeParking()]]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
 
     const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: true });
@@ -124,8 +143,10 @@ describe("startRide physical unlock gate (audit F-04)", () => {
 
   it("keeps the ride active when the lock confirms the unlock", async () => {
     const bike = makeBike({ lockImei: "868000000000001" });
-    const startedRide = makeRide();
-    const { tx } = makeTx([[bike], [], [startedRide]]);
+    // lockImei set -> the transaction also selects `locks` (empty = no fix
+    // yet, falls back to matching against the bike's own lat/lng) before the
+    // parkings lookup.
+    const { tx } = makeTx([[bike], [], [], [makeParking()]]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
     sendUnlockCommandMock.mockResolvedValue({ success: true });
     getLockGatewayMock.mockReturnValue({ sendUnlockCommand: sendUnlockCommandMock });
@@ -140,7 +161,11 @@ describe("startRide physical unlock gate (audit F-04)", () => {
     const bike = makeBike({ lockImei: "868000000000001" });
     const startedRide = makeRide({ cost: 35000 });
     const activeRideForRollback = makeRide({ cost: 35000, status: "active" });
-    const { tx, calls } = makeTx([[bike], [], [activeRideForRollback]]);
+    // startRide's own tx consumes 4 selects (bike, activeRideCheck, lockRow,
+    // parkings); abortUnstartedRide's separate db.transaction call then reuses
+    // the same tx mock and consumes the 5th (the ride row it re-selects
+    // `.for("update")` before cancelling it).
+    const { tx, calls } = makeTx([[bike], [], [], [makeParking()], [activeRideForRollback]]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
     getLockGatewayMock.mockReturnValue(null); // gateway not running
 
@@ -158,7 +183,7 @@ describe("startRide physical unlock gate (audit F-04)", () => {
     const bike = makeBike({ lockImei: "868000000000001" });
     const startedRide = makeRide({ cost: 35000 });
     const activeRideForRollback = makeRide({ cost: 35000, status: "active" });
-    const { tx, calls } = makeTx([[bike], [], [activeRideForRollback]]);
+    const { tx, calls } = makeTx([[bike], [], [], [makeParking()], [activeRideForRollback]]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
     sendUnlockCommandMock.mockResolvedValue({ success: false });
     getLockGatewayMock.mockReturnValue({ sendUnlockCommand: sendUnlockCommandMock });
@@ -173,7 +198,7 @@ describe("startRide physical unlock gate (audit F-04)", () => {
     const bike = makeBike({ lockImei: "868000000000001" });
     const startedRide = makeRide({ cost: 35000 });
     const activeRideForRollback = makeRide({ cost: 35000, status: "active" });
-    const { tx } = makeTx([[bike], [], [activeRideForRollback]]);
+    const { tx } = makeTx([[bike], [], [], [makeParking()], [activeRideForRollback]]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
     sendUnlockCommandMock.mockRejectedValue(new Error("unlock command timed out"));
     getLockGatewayMock.mockReturnValue({ sendUnlockCommand: sendUnlockCommandMock });

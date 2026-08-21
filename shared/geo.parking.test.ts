@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findNearestParkingWithinRadius } from "./geo";
+import { findNearestParkingWithinRadius, findNearestParkingWithinRadiusFromRealCoords, mapToReal } from "./geo";
 
 const activeParking = (overrides: Record<string, unknown> = {}) => ({
   id: "P-1",
@@ -33,5 +33,46 @@ describe("findNearestParkingWithinRadius", () => {
     const eligible = activeParking({ id: "P-eligible", lng: 219, radius: 50 });
 
     expect(findNearestParkingWithinRadius(350, 217, [inactive, archived, eligible])?.id).toBe("P-eligible");
+  });
+});
+
+// Parking rows store map-space coordinates in all cases; only the QUERY point
+// differs between the two entry points — findNearestParkingWithinRadius takes
+// a map-space point (bikes.lat/lng) and converts it, while the
+// FromRealCoords variant takes a point that is ALREADY real WGS84 (an OMNI
+// lock's own GPS fix) and must skip that conversion. [lat, lng] here means
+// real-world coordinates, produced via mapToReal from a map-space point so
+// the fixture matches whatever anchor town the test environment resolves to.
+describe("findNearestParkingWithinRadiusFromRealCoords", () => {
+  it("returns a parking when the real-coordinate point is within that parking's radius", () => {
+    const parking = activeParking({ radius: 500 });
+    const [realLat, realLng] = mapToReal(parking.lng, parking.lat);
+
+    expect(findNearestParkingWithinRadiusFromRealCoords(realLat, realLng, [parking])?.id).toBe("P-1");
+  });
+
+  it("returns null when the real-coordinate point is outside every eligible parking radius", () => {
+    const parking = activeParking({ radius: 1 });
+    // Offset from the parking's own real position by ~1km (~0.01 deg lat), far
+    // outside a 1m radius.
+    const [realLat, realLng] = mapToReal(parking.lng, parking.lat);
+
+    expect(findNearestParkingWithinRadiusFromRealCoords(realLat + 0.01, realLng, [parking])).toBeNull();
+  });
+
+  it("does NOT double-convert a real point the way the map-space variant would", () => {
+    // Feeding the raw map-space numbers into the FromRealCoords variant (as if
+    // it applied mapToReal a second time) must NOT match — this pins down
+    // that the two entry points are not interchangeable.
+    const parking = activeParking({ radius: 30 });
+
+    expect(findNearestParkingWithinRadiusFromRealCoords(parking.lat, parking.lng, [parking])).toBeNull();
+  });
+
+  it("excludes archived and inactive parkings for real-coordinate matching too", () => {
+    const archived = activeParking({ id: "P-archived", archivedAt: 1, radius: 500 });
+    const [realLat, realLng] = mapToReal(archived.lng, archived.lat);
+
+    expect(findNearestParkingWithinRadiusFromRealCoords(realLat, realLng, [archived])).toBeNull();
   });
 });

@@ -1,7 +1,11 @@
-import { bikes, rides, payments, parkings, ridePoints, users } from "@shared/schema";
-import type { Ride, AdminRide, User, Parking, Bike } from "@shared/schema";
+import { bikes, rides, payments, parkings, ridePoints, users, locks } from "@shared/schema";
+import type { Ride, AdminRide, User, Parking, Bike, Lock } from "@shared/schema";
 import { eq, sql, and, desc, asc, inArray, count } from "drizzle-orm";
-import { TARIFFS, tariffPriceKopecks, tariffDurationMs, findNearestParkingWithinRadius } from "@shared/geo";
+import {
+  TARIFFS, tariffPriceKopecks, tariffDurationMs, realToMap,
+  findNearestParkingWithinRadius, findNearestParkingWithinRadiusFromRealCoords,
+  LOCK_GPS_LIVE_MS, RIDE_GPS_TRACKING_INTERVAL_SECONDS,
+} from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
 import { sendToUserAsync } from "../push";
 import { getLockGateway } from "../omni/gateway";
@@ -135,6 +139,32 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
               .limit(1))[0] as Ride | undefined;
             if (active) return { error: "У вас уже есть активная поездка" };
 
+            // Radius-gating (rental spec): a bike may only be started from inside
+            // an active parking zone. The lock's GPS is the authoritative source
+            // when we have ANY fix at all — tracking only runs during a ride, so
+            // "fresh" doesn't apply here; the last fix is simply wherever the bike
+            // was dropped off, and nothing moves it between rides. Only fall back
+            // to the bike's stored map-space position (bikes.lat/lng) when the lock
+            // has never reported a single fix yet (brand-new/never-ridden lock).
+            let lockRow: Lock | undefined;
+            if (bike.lockImei) {
+              lockRow = (await tx.select().from(locks).where(eq(locks.imei, bike.lockImei)).limit(1))[0] as Lock | undefined;
+            }
+            const hasLockFix = lockRow?.lastLatitude != null && lockRow?.lastLongitude != null;
+            const parkingRowsForStart = (await tx.select().from(parkings)) as Parking[];
+            const startParkingMatch = hasLockFix
+              ? findNearestParkingWithinRadiusFromRealCoords(lockRow!.lastLatitude!, lockRow!.lastLongitude!, parkingRowsForStart)
+              : findNearestParkingWithinRadius(bike.lat, bike.lng, parkingRowsForStart);
+            if (!startParkingMatch) {
+              return { error: "Велосипед сейчас не в зоне парковки — начать поездку нельзя. Переместите велосипед в парковочную зону или обратитесь в поддержку." };
+            }
+            // Keep bikes.lat/lng (the fallback position source used when a lock has
+            // no fix) in step with the lock's real GPS on every status change this
+            // bike goes through, starting here.
+            const syncedPos = hasLockFix ? realToMap(lockRow!.lastLatitude!, lockRow!.lastLongitude!) : null;
+            const startLat = syncedPos ? syncedPos.y : bike.lat;
+            const startLng = syncedPos ? syncedPos.x : bike.lng;
+
             // Internal (non-prepaid) flow: debit the tariff price from the wallet up
             // front, inside the same transaction so a failure rolls the ride back.
             //
@@ -170,23 +200,26 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             }
 
             const startedAt = Date.now();
-            const track: [number, number, number][] = [[bike.lng, bike.lat, startedAt]];
+            const track: [number, number, number][] = [[startLng, startLat, startedAt]];
             // paidUntilAt is the authoritative billing deadline going forward
             // (extended by /rides/:id/extend and by pause grace); startParkingId
-            // snapshots where the bike stood at start for the 5-minute
-            // cancel-with-refund rule (audit: must still be at the SAME parking).
+            // uses the just-computed geofence match (freshest available signal)
+            // rather than the bike's possibly-stale stored parkingId, for the
+            // 5-minute cancel-with-refund rule (audit: must still be at the SAME parking).
             const paidUntilAt = startedAt + tariffDurationMs(tariff);
             const row = (await tx.insert(rides).values({
               bikeId, userId, startedAt,
-              startLat: bike.lat, startLng: bike.lng,
+              startLat, startLng,
               track: JSON.stringify(track), distanceM: 0, cost: costKopecks, tariff, status: "active",
-              paidUntilAt, startParkingId: bike.parkingId,
+              paidUntilAt, startParkingId: startParkingMatch.id,
             }).returning())[0] as Ride;
-            await tx.update(bikes).set({ status: "rented", updatedAt: Date.now() } as any)
-              .where(eq(bikes.id, bikeId));
+            await tx.update(bikes).set({
+              status: "rented", updatedAt: Date.now(),
+              lat: startLat, lng: startLng, parkingId: startParkingMatch.id,
+            } as any).where(eq(bikes.id, bikeId));
             // Seed the append-only points table with the start point so the live
             // track (hydrated from ride_points) is never empty for a fresh ride.
-            await tx.execute(sql`INSERT INTO ride_points (ride_id, x, y, t) VALUES (${row.id}, ${bike.lng}, ${bike.lat}, ${startedAt})`);
+            await tx.execute(sql`INSERT INTO ride_points (ride_id, x, y, t) VALUES (${row.id}, ${startLng}, ${startLat}, ${startedAt})`);
             return row;
           });
         } catch (err) {
@@ -228,6 +261,18 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           if (!unlocked) {
             await this.abortUnstartedRide(result.id, { refundKopecks: !prepaid ? costKopecks : 0 });
             return { error: "Замок не отвечает — выберите другой велосипед или попробуйте через минуту" };
+          }
+          // Best-effort: enable live GPS tracking (D1) for the duration of the
+          // ride, superseding the temporary maybeProbeOmniDiagD1 diagnostic probe.
+          // Not billing/safety-critical like the unlock above, so a failure here
+          // is logged, not compensated — the ride proceeds on its normal track
+          // sources (phone GPS / periodic telemetry) even without live D0 frames.
+          try {
+            const gateway = getLockGateway();
+            const sent = gateway?.sendToDevice(lockImei, "D1", [RIDE_GPS_TRACKING_INTERVAL_SECONDS]);
+            if (!sent) log(`startRide: failed to enable GPS tracking imei=${lockImei} ride=${result.id}`);
+          } catch (err) {
+            log(`startRide: error enabling GPS tracking imei=${lockImei} ride=${result.id}: ${(err as Error).message}`);
           }
         }
       }
@@ -381,13 +426,23 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         loadRidePoints(rideId: number, executor: { execute: (query: ReturnType<typeof sql>) => Promise<{ rows: unknown[] }> }): Promise<[number, number, number][]>;
       },
       rideId: number,
-    ) {
+      opts?: { skipGeofence?: boolean },
+    ): Promise<Ride | { error: string } | undefined> {
       // Atomic: completing a ride touches four tables (ride, bike, wallet,
       // payment ledger). Doing them as separate statements risks a partial state
       // if the process dies mid-way — e.g. wallet debited but ride still active,
       // or bike freed without a charge recorded. One transaction keeps them
       // consistent: either the whole settlement lands or none of it does.
-      const result = await db.transaction(async (tx) => {
+      //
+      // Explicit callback return-type annotation (Radius-gating, Phase 2): without
+      // it, TS's return-type inference across this callback's several `return`
+      // points widens into a single "best common shape" object with every branch's
+      // keys made optional, instead of a clean discriminated union — which then
+      // breaks the `"error" in result` narrowing below (tsc TS2322/TS2416). An
+      // explicit annotation forces the clean union we actually rely on.
+      const result = await db.transaction(async (
+        tx,
+      ): Promise<{ error: string } | { ride: Ride; overageKopecks: number; lockImei: string | null } | undefined> => {
         // `.for("update")` locks the ride row for the duration of this tx (audit
         // HIGH: double endRide). Without it, two concurrent completions of the
         // same ride (a duplicate client request, a retried webhook) both read
@@ -407,6 +462,46 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           pts.length > 0 ? pts : (JSON.parse(r.track) as [number, number, number][]);
         const last = track[track.length - 1];
         const endedAt = Date.now();
+        const bike = (await tx.select().from(bikes).where(eq(bikes.id, r.bikeId)).limit(1))[0] as Bike | undefined;
+
+        // Radius-gating (rental spec): the rider-facing end is a HARD block —
+        // no fallback to the phone track's last point — unless the caller
+        // explicitly opts out (staff/admin force-end, see opts.skipGeofence).
+        // Rationale: the phone track is rider-controlled (mockable/spoofable via
+        // dev tools) while the lock's own GPS is not, so it is the only signal
+        // trusted to end a billed ride and free the bike.
+        //
+        // The hard block only applies when there IS a trustworthy signal to
+        // enforce it with, i.e. the bike actually has a lock (bike.lockImei).
+        // Legacy/manual-fleet bikes with no lock at all have no GPS source we
+        // trust for gating (production currently has a single real lock —
+        // most bikes are still lockless) — those keep the pre-Phase-2 behaviour
+        // unchanged: settle from the phone track, parkingMatch is assignment-only
+        // and never blocks the end. This is the same fallback path skipGeofence
+        // uses, so both share one branch below.
+        const parkingRowsForEnd = (await tx.select().from(parkings)) as Parking[];
+        let finalLat: number;
+        let finalLng: number;
+        let parkingMatch: Parking | null;
+        if (bike?.lockImei && !opts?.skipGeofence) {
+          const lockRow = (await tx.select().from(locks).where(eq(locks.imei, bike.lockImei)).limit(1))[0] as Lock | undefined;
+          const isFresh = lockRow?.lastLatitude != null && lockRow?.lastLongitude != null
+            && lockRow?.lastLocationAt != null && (Date.now() - lockRow.lastLocationAt) <= LOCK_GPS_LIVE_MS;
+          if (!isFresh) {
+            return { error: "Ждём GPS-сигнал замка для подтверждения места — попробуйте завершить поездку через несколько секунд. Если сигнала долго нет, обратитесь в поддержку." };
+          }
+          parkingMatch = findNearestParkingWithinRadiusFromRealCoords(lockRow!.lastLatitude!, lockRow!.lastLongitude!, parkingRowsForEnd);
+          if (!parkingMatch) {
+            return { error: "Велосипед сейчас не в зоне парковки — завершить поездку нельзя. Переместите велосипед в парковочную зону." };
+          }
+          const synced = realToMap(lockRow!.lastLatitude!, lockRow!.lastLongitude!);
+          finalLat = synced.y;
+          finalLng = synced.x;
+        } else {
+          finalLat = last[1];
+          finalLng = last[0];
+          parkingMatch = findNearestParkingWithinRadius(finalLat, finalLng, parkingRowsForEnd);
+        }
 
         // Hourly prepaid model. The tariff was paid at start (r.cost holds the
         // prepaid tariff price, in kopecks). If the rider kept the bike past the
@@ -422,21 +517,16 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
 
         await tx.update(rides).set({
           endedAt, status: "completed", cost: finalCost,
-          endLat: last[1], endLng: last[0],
+          endLat: finalLat, endLng: finalLng,
           track: JSON.stringify(track),
         }).where(eq(rides.id, rideId));
-        await tx.update(bikes).set({ status: "available", lat: last[1], lng: last[0], lastSeen: endedAt, idleHours: 0 } as any)
-          .where(eq(bikes.id, r.bikeId));
-        // Assignment is based only on live, active parkings. Keep it inside the
-        // ride-completion transaction, so the bike never becomes available with
-        // an outdated parking reference if the transaction rolls back.
-        const parkingMatch = findNearestParkingWithinRadius(
-          last[1],
-          last[0],
-          (await tx.select().from(parkings)) as Parking[],
-        );
-        await tx.update(bikes).set({ parkingId: parkingMatch?.id ?? null } as any)
-          .where(eq(bikes.id, r.bikeId));
+        // Assignment is based only on live, active parkings, computed above from
+        // the same validated position — merged into one update (previously two
+        // separate statements) now that both share a single source of truth.
+        await tx.update(bikes).set({
+          status: "available", lat: finalLat, lng: finalLng,
+          lastSeen: endedAt, idleHours: 0, parkingId: parkingMatch?.id ?? null,
+        } as any).where(eq(bikes.id, r.bikeId));
 
         // Only the overage is charged at end — the base tariff was already paid at
         // start (wallet debit or T-Bank). Debit the wallet for the extra hours,
@@ -465,24 +555,36 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         return {
           ride: (await tx.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride,
           overageKopecks,
+          lockImei: bike?.lockImei ?? null,
         };
       });
+      if (!result) return undefined;
+      if ("error" in result) return result;
       // Ended ride freed the bike (status "available") → refresh the map list and
       // push a terminal event so the rider's SSE stream sends null (ride over).
-      if (result?.ride) {
-        this.invalidateBikesCache();
-        rideEvents.emit(result.ride.userId, "end" as RideEventReason);
-        if (result.overageKopecks > 0) {
-          sendToUserAsync(result.ride.userId, {
-            title: "Оплата поездки",
-            body: `Списано ${formatKopecksAsRubles(result.overageKopecks)} ₽ за поездку. Спасибо, что пользуетесь TakeRide!`,
-            url: "/rides",
-            tag: `ride:${result.ride.id}:overage`,
-            data: { kind: "ride-charge-confirmed", rideId: result.ride.id },
-          });
+      this.invalidateBikesCache();
+      rideEvents.emit(result.ride.userId, "end" as RideEventReason);
+      if (result.overageKopecks > 0) {
+        sendToUserAsync(result.ride.userId, {
+          title: "Оплата поездки",
+          body: `Списано ${formatKopecksAsRubles(result.overageKopecks)} ₽ за поездку. Спасибо, что пользуетесь TakeRide!`,
+          url: "/rides",
+          tag: `ride:${result.ride.id}:overage`,
+          data: { kind: "ride-charge-confirmed", rideId: result.ride.id },
+        });
+      }
+      // Best-effort: disable D1 GPS tracking now that the ride is over (saves
+      // lock battery between rentals). Not billing/safety-critical, log-only.
+      if (result.lockImei) {
+        try {
+          const gateway = getLockGateway();
+          const sent = gateway?.sendToDevice(result.lockImei, "D1", [0]);
+          if (!sent) log(`endRide: failed to disable GPS tracking imei=${result.lockImei} ride=${result.ride.id}`);
+        } catch (err) {
+          log(`endRide: error disabling GPS tracking imei=${result.lockImei} ride=${result.ride.id}: ${(err as Error).message}`);
         }
       }
-      return result?.ride;
+      return result.ride;
     }
 
     async getRide(rideId: number) {

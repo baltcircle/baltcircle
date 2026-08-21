@@ -44,6 +44,21 @@ export const PAUSE_FREE_GRACE_MS = 10 * 60 * 1000;
 // many ms of ride start, provided the bike is still at the start parking.
 export const CANCEL_REFUND_WINDOW_MS = 5 * 60 * 1000;
 
+// GPS tracking (D1 protocol) only runs on the lock DURING an active ride —
+// it is enabled on ride start and disabled on ride end (battery-safe, see
+// omni_lock_diagnostics.md). So a lock's `lastLocationAt` is only fresh
+// (within this window) while a ride is actively in progress; anything older
+// means "no live fix yet" (cold start ~2.5min, dead zone, disconnected lock)
+// rather than a trustworthy current position. Used ONLY for the ride-END
+// geofence check — ride-START trusts the lock's last known fix regardless of
+// its age (see findNearestParkingWithinRadiusFromRealCoords call sites).
+export const LOCK_GPS_LIVE_MS = 5 * 60 * 1000;
+
+// D1 tracking interval (seconds) enabled on ride start / disabled (0) on ride
+// end. 10s verified stable with <20ms drift over dozens of frames in
+// omni_lock_diagnostics.md — a good battery/precision tradeoff.
+export const RIDE_GPS_TRACKING_INTERVAL_SECONDS = 10;
+
 // Helper: tariff price in integer kopecks (money is stored/charged in kopecks).
 export function tariffPriceKopecks(t: Tariff): number {
   return Math.round(t.price * 100);
@@ -499,6 +514,26 @@ export type ParkingForRadiusMatch = {
   archivedAt: number | null;
 };
 
+function nearestActiveParkingForRealPoint<T extends ParkingForRadiusMatch>(
+  realLat: number,
+  realLng: number,
+  parkingRows: readonly T[],
+): T | null {
+  let nearest: T | null = null;
+  let nearestDistanceM = Infinity;
+
+  for (const parking of parkingRows) {
+    if (parking.archivedAt !== null || parking.status !== "active") continue;
+    const [parkingLat, parkingLng] = mapToReal(parking.lng, parking.lat);
+    const distanceM = haversineM(realLat, realLng, parkingLat, parkingLng);
+    if (distanceM <= parking.radius && distanceM < nearestDistanceM) {
+      nearest = parking;
+      nearestDistanceM = distanceM;
+    }
+  }
+  return nearest;
+}
+
 /**
  * Finds the nearest active, non-archived parking whose own radius includes the
  * stored map-space point. Both points are converted to WGS84 before the
@@ -510,17 +545,19 @@ export function findNearestParkingWithinRadius<T extends ParkingForRadiusMatch>(
   parkingRows: readonly T[],
 ): T | null {
   const [bikeLat, bikeLng] = mapToReal(lng, lat);
-  let nearest: T | null = null;
-  let nearestDistanceM = Infinity;
+  return nearestActiveParkingForRealPoint(bikeLat, bikeLng, parkingRows);
+}
 
-  for (const parking of parkingRows) {
-    if (parking.archivedAt !== null || parking.status !== "active") continue;
-    const [parkingLat, parkingLng] = mapToReal(parking.lng, parking.lat);
-    const distanceM = haversineM(bikeLat, bikeLng, parkingLat, parkingLng);
-    if (distanceM <= parking.radius && distanceM < nearestDistanceM) {
-      nearest = parking;
-      nearestDistanceM = distanceM;
-    }
-  }
-  return nearest;
+/**
+ * Real-WGS84 variant of findNearestParkingWithinRadius, for a point that is
+ * ALREADY real (e.g. an OMNI lock's own GPS fix) — skips the map->real
+ * conversion applied to bikes.lat/lng, since applying it to an already-real
+ * point would silently double-convert and produce a wrong position.
+ */
+export function findNearestParkingWithinRadiusFromRealCoords<T extends ParkingForRadiusMatch>(
+  realLat: number,
+  realLng: number,
+  parkingRows: readonly T[],
+): T | null {
+  return nearestActiveParkingForRealPoint(realLat, realLng, parkingRows);
 }

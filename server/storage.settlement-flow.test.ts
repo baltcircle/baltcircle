@@ -103,6 +103,11 @@ interface SettlementState {
 // db.transaction() across BOTH the startRide call and the later endRide
 // call — this is what makes the test genuinely end-to-end instead of two
 // independent mocks that happen to run in the same file.
+// Phase 2 (radius-gating): startRide/endRide now hard-require the bike to be
+// within an active parking zone. Every bike fixture in this file sits at the
+// makeBike() default (lat: 10, lng: 20) and never overrides it, so a single
+// huge-radius zone centered there keeps every existing fixture's geofence
+// check passing without having to thread a parking fixture through each test.
 function makeSettlementState(fleet: Bike | Bike[], walletBalance: number | undefined): SettlementState {
   const bikeList = Array.isArray(fleet) ? fleet : [fleet];
   return {
@@ -111,7 +116,7 @@ function makeSettlementState(fleet: Bike | Bike[], walletBalance: number | undef
     ride: undefined,
     ridePointsRows: [],
     paymentRows: [],
-    parkingRows: [],
+    parkingRows: [{ id: "P-1", lat: 10, lng: 20, radius: 999999, status: "active", archivedAt: null }],
     nextRideId: 1,
     nextPaymentId: 1,
   };

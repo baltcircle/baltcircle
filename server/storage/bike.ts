@@ -1,7 +1,7 @@
 import { bikes, unassignedLocks, locks, parkings, rides, tickets, paymentOrders } from "@shared/schema";
-import type { Bike, Parking, AdminCreateBikeInput, AdminUpdateBikeInput } from "@shared/schema";
+import type { Bike, Lock, Parking, AdminCreateBikeInput, AdminUpdateBikeInput } from "@shared/schema";
 import { eq, count } from "drizzle-orm";
-import { MAP_W, MAP_H } from "@shared/geo";
+import { MAP_W, MAP_H, realToMap } from "@shared/geo";
 import { db, pool } from "../db/bootstrap";
 import type { Constructor } from "./mixin";
 import type { IBikeStorage, IParkingStorage } from "./interfaces";
@@ -11,6 +11,24 @@ import type { IBikeStorage, IParkingStorage } from "./interfaces";
 // bikes.lock_imei is what actually decides, and the loser gets told plainly
 // instead of a 500.
 const LOCK_TAKEN = "Этот замок только что назначили другому велосипеду — выберите другой";
+
+// Radius-gating (rental spec, Phase 2): bikes.lat/lng is the position-of-
+// record whenever a lock has no live GPS fix yet — it's the fallback source
+// startRide/endRide use for the geofence check. Keep it in step with the
+// lock's own real GPS on every STATUS transition, not just during rides, so
+// a bike sitting in maintenance/storage for days doesn't resurface with a
+// stale stored position the moment it's set back to "available". Best-effort
+// only: no lock, or a lock with no fix yet (brand-new/never-connected) ->
+// null, and the caller keeps whatever position the bike already had.
+async function resolveLockPositionForBikeStatusChange(
+  lockImei: string | null | undefined,
+): Promise<{ lat: number; lng: number } | null> {
+  if (!lockImei) return null;
+  const lockRow = (await db.select().from(locks).where(eq(locks.imei, lockImei)).limit(1))[0] as Lock | undefined;
+  if (lockRow?.lastLatitude == null || lockRow?.lastLongitude == null) return null;
+  const { x, y } = realToMap(lockRow.lastLatitude, lockRow.lastLongitude);
+  return { lat: y, lng: x };
+}
 
 export function BikeMixin<TBase extends Constructor>(Base: TBase) {
   return class extends Base implements IBikeStorage {
@@ -33,7 +51,16 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       id: string,
       patch: Partial<Bike>,
     ) {
-      await db.update(bikes).set(patch as any).where(eq(bikes.id, id));
+      // Position-sync: only when the caller is changing status and did NOT
+      // already specify a position itself (e.g. live telemetry ingestion sets
+      // lat/lng directly and must not be overridden by a stale lock reading).
+      let set: Partial<Bike> = patch;
+      if (patch.status !== undefined && patch.lat === undefined && patch.lng === undefined) {
+        const existing = await this.getBike(id);
+        const pos = await resolveLockPositionForBikeStatusChange(existing?.lockImei);
+        if (pos) set = { ...patch, lat: pos.lat, lng: pos.lng };
+      }
+      await db.update(bikes).set(set as any).where(eq(bikes.id, id));
       this.invalidateBikesCache();
       return this.getBike(id);
     }
@@ -152,6 +179,16 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       if (patch.model !== undefined) set.model = patch.model.trim();
       if (patch.status !== undefined) set.status = patch.status;
       if (patch.battery !== undefined) set.battery = patch.battery;
+      // Radius-gating (Phase 2): AdminUpdateBikeInput carries no lat/lng field
+      // at all, so any status transition is free to sync from the lock's own
+      // GPS. Resolved against the PRE-swap lockImei — a lock swap in this same
+      // PATCH (see swappingLock below) has never reported a fix as this bike
+      // yet, so there is nothing trustworthy to sync from until it connects.
+      let syncedPos: { lat: number; lng: number } | null = null;
+      if (patch.status !== undefined) {
+        syncedPos = await resolveLockPositionForBikeStatusChange(existing.lockImei);
+        if (syncedPos) { set.lat = syncedPos.lat; set.lng = syncedPos.lng; }
+      }
       if (patch.serial !== undefined) set.serial = this.optStr(patch.serial);
       if (patch.lockId !== undefined) set.lockId = this.optStr(patch.lockId);
       if (patch.notes !== undefined) set.notes = this.optStr(patch.notes);
@@ -178,8 +215,12 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       // not the operator-selected parking. This deliberately overwrites any
       // parkingId supplied in the same PATCH; the regular parking picker remains
       // available for overrides when the bike is not transitioning to available.
+      // Feed the JUST-SYNCED position (if any), not the stale pre-PATCH
+      // `existing` — otherwise a bike that just got a fresh lock fix would be
+      // re-parked against where it was sitting before this update instead of
+      // where it actually is now.
       if (patch.status === "available" && existing.status !== "available") {
-        await this.recalculateBikeParking(existing);
+        await this.recalculateBikeParking(syncedPos ? { ...existing, ...syncedPos } : existing);
       }
       if (swappingLock) {
         if (existing.lockImei) await this.syncLockRegistryBinding(existing.lockImei, null);

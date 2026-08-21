@@ -45,6 +45,15 @@ function makeRide(overrides: Partial<Ride> = {}): Ride {
   } as Ride;
 }
 
+// Phase 2 (radius-gating): endRide now selects the bike row first to decide
+// whether the lock-GPS hard block applies (bike.lockImei present) or the
+// legacy phone-track fallback applies (no lock — the whole fleet in these
+// pre-existing tests). lockImei defaults to null so these tests keep
+// exercising the pre-Phase-2 behaviour unless a test opts in explicitly.
+function makeBike(overrides: Record<string, unknown> = {}) {
+  return { id: "BC-01", lockImei: null, ...overrides };
+}
+
 // Detects the loadRidePoints() SELECT (audit HIGH #15 now runs it as
 // `tx.execute(sql\`... FROM ride_points ...\`)` instead of a separate
 // pool.query) so the tx mock can answer it distinctly from other execute()
@@ -56,9 +65,10 @@ function isRidePointsQuery(query: unknown): boolean {
 }
 
 // Builds a tx mock whose select() calls resolve in order from `selectQueue`
-// (rides row, parkings rows, final re-select of the completed ride) and
-// records every update/insert/execute call for assertions. `ridePointsRows`
-// answers the loadRidePoints() read specifically (see isRidePointsQuery).
+// (rides row, bike row, parkings rows, optionally a locks row when the bike
+// has a lockImei, final re-select of the completed ride) and records every
+// update/insert/execute call for assertions. `ridePointsRows` answers the
+// loadRidePoints() read specifically (see isRidePointsQuery).
 function makeTx(selectQueue: unknown[][], ridePointsRows: { x: number; y: number; t: number }[] = []) {
   const calls = {
     update: [] as { table: unknown; patch: unknown }[],
@@ -170,7 +180,7 @@ describe("endRide — no-op guards", () => {
   it("requests a FOR UPDATE row lock on the ride before deciding whether to settle it", async () => {
     const activeRide = makeRide();
     const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
-    const { tx, calls } = makeTx([[activeRide], [], [completedRide]]);
+    const { tx, calls } = makeTx([[activeRide], [makeBike()], [], [completedRide]]);
     dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
     vi.setSystemTime(new Date(activeRide.startedAt + HOUR));
 
@@ -184,7 +194,7 @@ describe("endRide — settlement without overage", () => {
   it("finishes within the paid window: no wallet debit, no payment row, no push", async () => {
     const activeRide = makeRide(); // started HOUR+1ms ago, h1 tariff = 1h paid
     const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
-    const { tx, calls } = makeTx([[activeRide], [], [completedRide]]);
+    const { tx, calls } = makeTx([[activeRide], [makeBike()], [], [completedRide]]);
     dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
 
     // Used time is just over the paid hour by 1ms -> rounds up to 1 overage
@@ -203,7 +213,7 @@ describe("endRide — settlement without overage", () => {
   it("settles a ride on an unknown/legacy tariff without computing overage regardless of duration", async () => {
     const activeRide = makeRide({ tariff: "legacy-unknown", startedAt: NOW.getTime() - 5 * HOUR });
     const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed", tariff: "legacy-unknown" });
-    const { tx, calls } = makeTx([[activeRide], [], [completedRide]]);
+    const { tx, calls } = makeTx([[activeRide], [makeBike()], [], [completedRide]]);
     dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
 
     await storage.endRide(activeRide.id);
@@ -217,7 +227,7 @@ describe("endRide — track source", () => {
   it("prefers the live ride_points rows over the legacy in-row track when both exist", async () => {
     const activeRide = makeRide({ track: JSON.stringify([[2, 1, NOW.getTime() - HOUR - 1]]) });
     const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
-    const { tx, calls } = makeTx([[activeRide], [], [completedRide]], [{ x: 10, y: 20, t: NOW.getTime() }]);
+    const { tx, calls } = makeTx([[activeRide], [makeBike()], [], [completedRide]], [{ x: 10, y: 20, t: NOW.getTime() }]);
     dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
 
     await storage.endRide(activeRide.id);
@@ -232,7 +242,7 @@ describe("endRide — track source", () => {
   it("falls back to the legacy in-row track when there are no ride_points rows", async () => {
     const activeRide = makeRide({ track: JSON.stringify([[5, 6, NOW.getTime() - HOUR - 1]]) });
     const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
-    const { tx, calls } = makeTx([[activeRide], [], [completedRide]]);
+    const { tx, calls } = makeTx([[activeRide], [makeBike()], [], [completedRide]]);
     dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx)); // no ride_points rows -> falls back to r.track
 
     await storage.endRide(activeRide.id);
@@ -247,7 +257,7 @@ describe("endRide — bike release and parking assignment", () => {
   it("frees the bike (status available) and clears parkingId when no active parking is within radius", async () => {
     const activeRide = makeRide();
     const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
-    const { tx, calls } = makeTx([[activeRide], [], [completedRide]]); // empty parkings list
+    const { tx, calls } = makeTx([[activeRide], [makeBike()], [], [completedRide]]); // empty parkings list
     dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
 
     await storage.endRide(activeRide.id);
@@ -264,7 +274,7 @@ describe("endRide — side effects only fire on real settlement", () => {
   it("invalidates the bikes cache and emits a rider 'end' event when the ride settles", async () => {
     const activeRide = makeRide();
     const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
-    const { tx } = makeTx([[activeRide], [], [completedRide]]);
+    const { tx } = makeTx([[activeRide], [makeBike()], [], [completedRide]]);
     dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
     const emitSpy = vi.spyOn(rideEvents, "emit");
     const cacheSpy = vi.spyOn(storage, "invalidateBikesCache").mockImplementation(() => {});
@@ -283,7 +293,7 @@ describe("endRide charge confirmation push", () => {
     // Wallet debit for the overage is now a raw tx.execute(sql`UPDATE ...`)
     // (audit CRITICAL #5 — atomic decrement, no SELECT-then-UPDATE round trip),
     // so it no longer shows up as a tx.select()/tx.update() call here.
-    const { tx } = makeTx([[activeRide], [], [completedRide]]);
+    const { tx } = makeTx([[activeRide], [makeBike()], [], [completedRide]]);
     dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
 
     await storage.endRide(activeRide.id);
@@ -302,7 +312,7 @@ describe("endRide charge confirmation push", () => {
     // window, all whole minutes so no rounding kicks in.
     const activeRide = makeRide({ startedAt: NOW.getTime() - 2.5 * HOUR });
     const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
-    const { tx, calls } = makeTx([[activeRide], [], [completedRide]]);
+    const { tx, calls } = makeTx([[activeRide], [makeBike()], [], [completedRide]]);
     dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
 
     await storage.endRide(activeRide.id);

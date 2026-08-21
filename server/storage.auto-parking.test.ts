@@ -67,7 +67,11 @@ afterEach(() => vi.useRealTimers());
 describe("automatic parking assignment on availability transitions", () => {
   it("sets the nearest eligible parking after a ride ends", async () => {
     const completed = rideRow({ status: "completed", endedAt: NOW.getTime() });
-    const selectResults: unknown[][] = [[rideRow()], [parkingRow()], [completed]];
+    // Phase 2 (radius-gating): endRide now selects the bike row (for lockImei)
+    // right after the ride row. bikeRow() defaults to lockImei: null, so the
+    // hard-block/lock-GPS branch is skipped and this fixture keeps exercising
+    // the pre-Phase-2 fallback: last track point + parking-radius assignment.
+    const selectResults: unknown[][] = [[rideRow()], [bikeRow()], [parkingRow()], [completed]];
     const setCalls: unknown[] = [];
     const tx: any = {
       select: vi.fn(() => selectFrom(selectResults.shift() ?? [])),
@@ -90,7 +94,9 @@ describe("automatic parking assignment on availability transitions", () => {
   it("clears parkingId when a ride ends outside every parking radius", async () => {
     const completed = rideRow({ status: "completed", endedAt: NOW.getTime() });
     const farParking = parkingRow({ lng: 200, radius: 30 });
-    const selectResults: unknown[][] = [[rideRow()], [farParking], [completed]];
+    // See note above — bikeRow() has lockImei: null, so this keeps the legacy
+    // (non-hard-blocked) endRide path with the phone track's last point.
+    const selectResults: unknown[][] = [[rideRow()], [bikeRow()], [farParking], [completed]];
     const setCalls: unknown[] = [];
     const tx: any = {
       select: vi.fn(() => selectFrom(selectResults.shift() ?? [])),
