@@ -35,11 +35,14 @@ export type BikeSaveForm = {
   lockImei: string;
   parkingId: string;
   notes: string;
+  externalQrCode: string;
+  isTestBike: boolean;
 };
 
 export const emptyBikeForm: BikeSaveForm = {
   id: "", model: "", status: "available",
   serial: "", lockId: "", lockImei: "", parkingId: "", notes: "",
+  externalQrCode: "", isTestBike: false,
 };
 
 export type LockBatterySnapshot = {
@@ -82,6 +85,8 @@ export function buildBikeSavePayload(
     lockId: form.lockId,
     parkingId: form.parkingId === "none" ? "" : form.parkingId,
     notes: form.notes,
+    externalQrCode: form.externalQrCode,
+    isTestBike: form.isTestBike,
   };
 
   if (editing) {

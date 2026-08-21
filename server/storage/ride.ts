@@ -212,6 +212,10 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
               startLat, startLng,
               track: JSON.stringify(track), distanceM: 0, cost: costKopecks, tariff, status: "active",
               paidUntilAt, startParkingId: startParkingMatch.id,
+              // Never client-supplied — derived solely from the bike row locked
+              // above, so a real-customer scan of a test unit is always tagged
+              // and a normal bike can never be tagged by a forged request param.
+              isTest: bike.isTestBike,
             }).returning())[0] as Ride;
             await tx.update(bikes).set({
               status: "rented", updatedAt: Date.now(),

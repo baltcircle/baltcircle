@@ -260,6 +260,21 @@ export const bikes = pgTable("bikes", {
   serial: text("serial"),                    // manufacturer serial / frame number
   lockId: text("lock_id"),                   // vendor-facing lock id printed on the unit
   parkingId: text("parking_id").references(() => parkings.id, { onDelete: "set null" }), // optional home parking station id
+  // Raw value encoded in the QR sticker the LOCK MANUFACTURER printed on the
+  // physical unit (a serial/activation code, format opaque and vendor-defined
+  // — NOT the OMNI-protocol IMEI). Lets QrScanModal resolve that QR to this
+  // bike as an alternate entry point alongside the normal "BC-XXX" code, e.g.
+  // for QA on a live production lock. Nullable — most bikes have no such QR
+  // registered. Not unique-indexed: low cardinality, admin-managed, and a
+  // stale duplicate here is a data-entry mistake, not a race to guard against.
+  externalQrCode: text("external_qr_code"),
+  // Marks a physical unit used to exercise real lock/geofence/tracking logic
+  // end-to-end without a real customer. Every ride started on this bike is
+  // automatically tagged rides.isTest (see storage.startRide) — this is the
+  // single source of truth for that tag, regardless of how the rider found
+  // the bike (normal QR, manual code, or the manufacturer-QR lookup above).
+  // Never auto-set by any sweep/migration — an operator flips it deliberately.
+  isTestBike: boolean("is_test_bike").notNull().default(false),
   // ----- OMNI smart lock (TCP ingest, server/omni/) -----
   // The lock's IMEI is how an inbound TCP connection is resolved to a bike, so
   // it must be unique across the fleet — enforced by the partial UNIQUE index
@@ -513,6 +528,8 @@ export const adminCreateBikeSchema = z.object({
   lockId: z.union([z.string().trim().max(60), z.literal("")]).optional(),
   parkingId: z.union([z.string().trim().max(40), z.literal("")]).optional(),
   notes: z.union([z.string().trim().max(500), z.literal("")]).optional(),
+  externalQrCode: z.union([z.string().trim().max(40), z.literal("")]).optional(),
+  isTestBike: z.boolean().optional(),
 });
 export type AdminCreateBikeInput = z.infer<typeof adminCreateBikeSchema>;
 
@@ -528,6 +545,8 @@ export const adminUpdateBikeSchema = z.object({
   lockId: z.union([z.string().trim().max(60), z.literal("")]).optional(),
   parkingId: z.union([z.string().trim().max(40), z.literal("")]).optional(),
   notes: z.union([z.string().trim().max(500), z.literal("")]).optional(),
+  externalQrCode: z.union([z.string().trim().max(40), z.literal("")]).optional(),
+  isTestBike: z.boolean().optional(),
 });
 export type AdminUpdateBikeInput = z.infer<typeof adminUpdateBikeSchema>;
 
@@ -691,6 +710,12 @@ export const rides = pgTable("rides", {
   // bikes.parking_id at start time). Used by the 5-minute cancel-with-refund
   // rule: eligible only while the bike is still at this same parking.
   startParkingId: text("start_parking_id").references(() => parkings.id, { onDelete: "set null" }),
+  // Copied from bikes.is_test_bike at startRide time (never client-supplied —
+  // see storage.startRide). Marks a ride run end-to-end against real lock
+  // control/geofence/tracking on a designated test unit, so ops/analytics can
+  // exclude it from real rental numbers later. Frozen at start: swapping a
+  // bike's isTestBike flag mid-ride does not retroactively change this.
+  isTest: boolean("is_test").notNull().default(false),
 }, (t) => [
   index("idx_rides_user_status").on(t.userId, t.status),
   index("idx_rides_user").on(t.userId),

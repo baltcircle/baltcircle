@@ -8,6 +8,7 @@ import { Field } from "@/components/FormField";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -48,6 +49,8 @@ export function BikeFormDialog({
       lockImei: editing.lockImei ?? "",
       parkingId: editing.parkingId ?? "",
       notes: editing.notes ?? "",
+      externalQrCode: editing.externalQrCode ?? "",
+      isTestBike: editing.isTestBike ?? false,
     } : emptyBikeForm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editing]);
@@ -208,6 +211,28 @@ export function BikeFormDialog({
               data-testid="input-bike-notes"
             />
           </Field>
+          <Field label="QR замка производителя (необязательно)">
+            <Input
+              value={form.externalQrCode}
+              onChange={(e) => setForm((f) => ({ ...f, externalQrCode: e.target.value.trim() }))}
+              placeholder="Напр. 1738907596 — код с наклейки на замке"
+              data-testid="input-bike-external-qr"
+            />
+          </Field>
+          <div className="flex items-center justify-between rounded-md border border-input px-3 py-2">
+            <div>
+              <div className="text-sm font-medium">Тестовый велосипед</div>
+              <p className="text-xs text-muted-foreground">
+                Каждая поездка на нём помечается как тестовая (rides.isTest),
+                при этом замок, геозона и трекинг работают как в реальной аренде.
+              </p>
+            </div>
+            <Switch
+              checked={form.isTestBike}
+              onCheckedChange={(v) => setForm((f) => ({ ...f, isTestBike: v }))}
+              data-testid="switch-bike-is-test"
+            />
+          </div>
 
           {formError && (
             <div className="text-xs text-destructive" data-testid="bike-form-error">{formError}</div>

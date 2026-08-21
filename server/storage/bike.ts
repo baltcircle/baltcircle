@@ -148,6 +148,8 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
           lockImei,
           parkingId,
           notes: this.optStr(input.notes),
+          externalQrCode: this.optStr(input.externalQrCode),
+          isTestBike: input.isTestBike ?? false,
           seed: false,
         } as any);
       } catch (err) {
@@ -192,6 +194,8 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       if (patch.serial !== undefined) set.serial = this.optStr(patch.serial);
       if (patch.lockId !== undefined) set.lockId = this.optStr(patch.lockId);
       if (patch.notes !== undefined) set.notes = this.optStr(patch.notes);
+      if (patch.externalQrCode !== undefined) set.externalQrCode = this.optStr(patch.externalQrCode);
+      if (patch.isTestBike !== undefined) set.isTestBike = patch.isTestBike;
       if (patch.parkingId !== undefined) {
         const parkingId = this.optStr(patch.parkingId);
         set.parkingId = parkingId;

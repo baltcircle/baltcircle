@@ -7,6 +7,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { QrCode, Bike as BikeIcon, Loader2 } from "lucide-react";
+import { resolveScannedCode } from "./qr-scan-utils";
 
 interface Props {
   open: boolean;
@@ -15,37 +16,6 @@ interface Props {
   bikes: Bike[];
   // Called once a bike has been scanned / chosen, to continue into rental.
   onBikeSelected: (bike: Bike) => void;
-}
-
-// Extract a bike code from raw QR text. Accepts a plain id ("BC-001") or a URL
-// that carries the id in the path — both the clean ".../bike/BC-001" and the
-// legacy hash ".../#/bike/BC-001" forms — or a query param (?bike=BC-001 /
-// ?id=BC-001). Returns an upper-cased code or null.
-function extractBikeCode(raw: string): string | null {
-  const text = raw.trim();
-  if (!text) return null;
-
-  const codePattern = /BC-?\d{1,5}/i;
-
-  // Try to parse as a URL first (covers path + query param cases).
-  try {
-    const url = new URL(text);
-    const fromQuery =
-      url.searchParams.get("bike") ?? url.searchParams.get("id") ?? "";
-    if (fromQuery) {
-      const m = fromQuery.match(codePattern);
-      if (m) return normalizeCode(m[0]);
-    }
-    // Path / hash may hold ".../bike/BC-001".
-    const m = `${url.pathname}${url.hash}`.match(codePattern);
-    if (m) return normalizeCode(m[0]);
-  } catch {
-    // Not a URL — fall through to plain matching.
-  }
-
-  const m = text.match(codePattern);
-  if (m) return normalizeCode(m[0]);
-  return null;
 }
 
 // Простая детекция iOS: любой браузер на iOS использует WebKit и ведёт себя одинаково.
@@ -83,13 +53,6 @@ function CameraPermissionHelp() {
   );
 }
 
-// Canonicalize to the "BC-001" shape the bike ids use.
-function normalizeCode(raw: string): string {
-  const upper = raw.toUpperCase().replace(/\s+/g, "");
-  const digits = upper.replace(/^BC-?/, "");
-  return `BC-${digits}`;
-}
-
 export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -120,21 +83,25 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
     }
   }, []);
 
+  // Accepts raw scanned/typed text as-is — resolveScannedCode tries the
+  // normal "BC-XXX" bike code first, then falls back to matching a
+  // manufacturer-printed lock QR (bikes[].externalQrCode) verbatim, so a QR
+  // whose content never looks like a bike code (e.g. a bare numeric serial)
+  // still resolves instead of being rejected before it gets here.
   const resolveCode = useCallback(
-    (rawCode: string): boolean => {
-      const normalized = rawCode.toUpperCase();
-      const match = bikes.find((b) => b.id.toUpperCase() === normalized);
-      if (!match) {
-        setError("Велосипед с таким кодом не найден");
-        return false;
-      }
-      if (match.status !== "available") {
-        setError("Этот велосипед сейчас недоступен");
+    (raw: string): boolean => {
+      const result = resolveScannedCode(raw, bikes);
+      if ("error" in result) {
+        setError(
+          result.error === "not-available"
+            ? "Этот велосипед сейчас недоступен"
+            : "Велосипед с таким кодом не найден",
+        );
         return false;
       }
       stopCamera();
       onOpenChange(false);
-      onBikeSelected(match);
+      onBikeSelected(result.bike);
       return true;
     },
     [bikes, onBikeSelected, onOpenChange, stopCamera],
@@ -245,13 +212,8 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
       const reader = new BrowserQRCodeReader();
       controlsRef.current = await reader.decodeFromVideoElement(video, (result) => {
         if (!result || handledRef.current) return;
-        const bikeCode = extractBikeCode(result.getText());
-        if (!bikeCode) {
-          setError("Не удалось распознать код велосипеда");
-          return;
-        }
         handledRef.current = true;
-        if (!resolveCode(bikeCode)) {
+        if (!resolveCode(result.getText())) {
           // Allow another attempt if this code wasn't usable.
           handledRef.current = false;
         }
@@ -290,8 +252,7 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
       setError("Введите код велосипеда");
       return;
     }
-    const bikeCode = extractBikeCode(raw) ?? raw.toUpperCase();
-    resolveCode(bikeCode);
+    resolveCode(raw);
   };
 
   const useTestBike = () => {

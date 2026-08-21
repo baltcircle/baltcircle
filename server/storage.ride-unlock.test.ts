@@ -32,6 +32,7 @@ function makeBike(overrides: Partial<Bike> = {}): Bike {
     serial: null, lockId: null, parkingId: null,
     lockImei: null, lockOnline: false, lockLastSeen: null,
     notes: null, seed: false,
+    externalQrCode: null, isTestBike: false,
     ...overrides,
   } as Bike;
 }
@@ -139,6 +140,33 @@ describe("startRide physical unlock gate (audit F-04)", () => {
 
     expect(getLockGatewayMock).not.toHaveBeenCalled();
     expect(result).not.toHaveProperty("error");
+  });
+
+  it("tags the created ride isTest when started on a bike flagged isTestBike, without any client-supplied flag", async () => {
+    // Test-lock feature: the tag is derived solely from the locked bike row,
+    // never from the caller's input — startRide's params take no isTest field
+    // at all, so there is nothing for a forged request to override.
+    const bike = makeBike({ lockImei: null, isTestBike: true, externalQrCode: "1738907596" });
+    const { tx, calls } = makeTx([[bike], [], [makeParking()]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: true });
+
+    expect(result).not.toHaveProperty("error");
+    const rideInsert = calls.insertValues.find((v: any) => v && "bikeId" in v && "startedAt" in v);
+    expect(rideInsert).toMatchObject({ isTest: true });
+  });
+
+  it("leaves isTest false for a normal bike", async () => {
+    const bike = makeBike({ lockImei: null, isTestBike: false });
+    const { tx, calls } = makeTx([[bike], [], [makeParking()]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: true });
+
+    expect(result).not.toHaveProperty("error");
+    const rideInsert = calls.insertValues.find((v: any) => v && "bikeId" in v && "startedAt" in v);
+    expect(rideInsert).toMatchObject({ isTest: false });
   });
 
   it("keeps the ride active when the lock confirms the unlock", async () => {
