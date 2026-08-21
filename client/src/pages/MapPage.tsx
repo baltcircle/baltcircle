@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
 
 import type { Bike, MapObject, Parking, Ride } from "@shared/schema";
+import type { Tariff } from "@shared/geo";
 import { MapLibreMap } from "@/components/MapLibreMap";
 import { RentalStartModal } from "@/components/RentalStartModal";
 import { RegistrationModal } from "@/components/RegistrationModal";
@@ -87,6 +88,29 @@ export function MapPage() {
 
   const pendingMulti = useRef<boolean | null>(null);
 
+  // Пока true — показываем «Закройте замок…» вместо тикающего таймера паузы;
+  // становится false либо когда lockReport подтвердит паузу (pausedAt придёт
+  // по SSE — см. эффект ниже), либо по истечении TTL армирования, либо при
+  // явной отмене через «Отмена» (resume до фактической паузы).
+  const [awaitingLockClose, setAwaitingLockClose] = useState(false);
+  const lockCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearLockCloseTimer = () => {
+    if (lockCloseTimer.current) {
+      clearTimeout(lockCloseTimer.current);
+      lockCloseTimer.current = null;
+    }
+  };
+  // Как только пауза реально применилась (или поездка закончилась/сменилась),
+  // ожидание закрытия замка больше не актуально.
+  useEffect(() => {
+    if (!activeRide || activeRide.pausedAt != null) {
+      clearLockCloseTimer();
+      setAwaitingLockClose(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRide?.id, activeRide?.pausedAt]);
+  useEffect(() => () => clearLockCloseTimer(), []);
+
   const endMut = useMutation({
     mutationFn: async (rideId: number) => {
       const res = await apiRequest("POST", `/api/rides/${rideId}/end`);
@@ -103,6 +127,86 @@ export function MapPage() {
     onError: (err: any) => {
       toast.toast({
         title: "Не удалось завершить",
+        description: err?.message ?? "Попробуйте ещё раз",
+        variant: "destructive",
+      });
+    },
+  });
+
+  type PauseResponse =
+    | { status: "paused"; ride: Ride }
+    | { status: "awaiting_lock_close"; expiresInMs: number };
+
+  const pauseMut = useMutation({
+    mutationFn: async (rideId: number) => {
+      const res = await apiRequest("POST", `/api/rides/${rideId}/pause`);
+      return res.json() as Promise<PauseResponse>;
+    },
+    onSuccess: (data) => {
+      if (data.status === "paused") {
+        clearLockCloseTimer();
+        setAwaitingLockClose(false);
+        queryClient.setQueryData(["/api/rides/active"], data.ride);
+      } else {
+        setAwaitingLockClose(true);
+        clearLockCloseTimer();
+        lockCloseTimer.current = setTimeout(() => {
+          setAwaitingLockClose(false);
+          toast.toast({
+            title: "Не дождались закрытия замка",
+            description: "Попробуйте поставить на паузу ещё раз.",
+            variant: "destructive",
+          });
+        }, data.expiresInMs);
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+    },
+    onError: (err: any) => {
+      toast.toast({
+        title: "Не удалось поставить на паузу",
+        description: err?.message ?? "Попробуйте ещё раз",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const resumeMut = useMutation({
+    mutationFn: async (rideId: number) => {
+      const res = await apiRequest("POST", `/api/rides/${rideId}/resume`);
+      return res.json() as Promise<Ride>;
+    },
+    onSuccess: (ride) => {
+      clearLockCloseTimer();
+      setAwaitingLockClose(false);
+      queryClient.setQueryData(["/api/rides/active"], ride);
+      queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
+    },
+    onError: (err: any) => {
+      toast.toast({
+        title: "Не удалось продолжить",
+        description: err?.message ?? "Попробуйте ещё раз",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const extendMut = useMutation({
+    mutationFn: async ({ rideId, tariff }: { rideId: number; tariff: Tariff["id"] }) => {
+      const res = await apiRequest("POST", `/api/rides/${rideId}/extend`, { tariff });
+      return res.json() as Promise<Ride>;
+    },
+    onSuccess: (ride) => {
+      queryClient.setQueryData(["/api/rides/active"], ride);
+      queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
+      toast.toast({ title: "Аренда продлена" });
+    },
+    onError: (err: any) => {
+      toast.toast({
+        title: "Не удалось продлить",
         description: err?.message ?? "Попробуйте ещё раз",
         variant: "destructive",
       });
@@ -210,7 +314,18 @@ export function MapPage() {
         </button>
 
         {activeRide ? (
-          <ActiveRideCard ride={activeRide} onEnd={() => endMut.mutate(activeRide.id)} ending={endMut.isPending} />
+          <ActiveRideCard
+            ride={activeRide}
+            onEnd={() => endMut.mutate(activeRide.id)}
+            ending={endMut.isPending}
+            onPause={() => pauseMut.mutate(activeRide.id)}
+            onResume={() => resumeMut.mutate(activeRide.id)}
+            pausing={pauseMut.isPending}
+            resuming={resumeMut.isPending}
+            awaitingLockClose={awaitingLockClose}
+            onExtend={(tariff) => extendMut.mutate({ rideId: activeRide.id, tariff })}
+            extending={extendMut.isPending}
+          />
         ) : (
           <ScanAndPaymentBanner
             isRegistered={isRegistered}

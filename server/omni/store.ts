@@ -11,6 +11,8 @@
 // flush window.
 import type { OmniMessage } from "@shared/omni/protocol";
 import { pool } from "../db/bootstrap";
+import { consumePendingPause } from "./pause-registry";
+import { rideEvents } from "../storage/events";
 
 // Keep the public TCP process decoupled from the full Drizzle schema graph: it
 // is started before HTTP routes and should only need the constants it owns.
@@ -177,6 +179,30 @@ export class PgOmniStore implements OmniStore {
       }
       case "lockReport": {
         await pool.query(`UPDATE locks SET ${base}, last_lock_state = 'locked' WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
+
+        // Pause feature: a rider taps "Пауза" and the app tells them to close
+        // the lock; the actual pause only activates on THIS report, once the
+        // closure really happened (server can't command a close, only await
+        // one — see pause-registry.ts). Consuming here means this expected
+        // closure must NOT also fall through to the F-04 anomaly flag below.
+        const armedPause = consumePendingPause(imei);
+        if (armedPause) {
+          const updated = await pool.query<{ user_id: string }>(
+            `UPDATE rides SET paused_at = $1
+             WHERE id = $2 AND status = 'active' AND paused_at IS NULL
+             RETURNING user_id`,
+            [at, armedPause.rideId],
+          );
+          if (updated.rows[0]) {
+            rideEvents.emit(updated.rows[0].user_id, "point");
+            return;
+          }
+          // Ride no longer active/already paused by the time the report landed
+          // (e.g. rider ended the ride while the closure was in flight) — fall
+          // through to the normal F-04 bookkeeping below, since this closure is
+          // then just an ordinary physical-lock event again.
+        }
+
         // Audit F-04: this is a device-autonomous report of a physical close
         // that already happened — there is no way for the server to have
         // prevented it. If a ride is still "active" on this lock's bike, the

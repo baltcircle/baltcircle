@@ -4,11 +4,13 @@ import { eq, sql, and, desc, asc, inArray, count } from "drizzle-orm";
 import {
   TARIFFS, tariffPriceKopecks, tariffDurationMs, realToMap,
   findNearestParkingWithinRadius, findNearestParkingWithinRadiusFromRealCoords,
-  LOCK_GPS_LIVE_MS, RIDE_GPS_TRACKING_INTERVAL_SECONDS,
+  LOCK_GPS_LIVE_MS, RIDE_GPS_TRACKING_INTERVAL_SECONDS, PAUSE_ARM_TTL_MS,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
+import { pendingPauseCreditMs } from "@shared/pause";
 import { sendToUserAsync } from "../push";
 import { getLockGateway } from "../omni/gateway";
+import { registerPendingPause, clearPendingPause } from "../omni/pause-registry";
 import { log } from "../logger";
 import { db, pool } from "../db/bootstrap";
 import { rideEvents } from "./events";
@@ -513,7 +515,18 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         // extend by charging OVERAGE_MINUTE_PRICE per started extra minute.
         // r.paidUntilAt is nullable only for rides started before this column
         // existed — fall back to the tariff's nominal duration for those.
-        const paidUntilAt = r.paidUntilAt ?? (r.startedAt + tariffDurationMs(r.tariff));
+        //
+        // Pause interaction: a ride can be ended while still paused (rider taps
+        // "Завершить" without resuming first). resumeRide() is the normal place
+        // the free-grace credit for a pause lands on paidUntilAt, but that never
+        // ran here — so the in-progress pause's free credit must be applied at
+        // settlement too, or the rider silently loses grace they're entitled to.
+        // Same pure helper resumeRide uses, so both agree bit for bit.
+        const pauseCreditMs = pendingPauseCreditMs(
+          { startedAt: r.startedAt, paidUntilAt: r.paidUntilAt, pausedAt: r.pausedAt, totalPausedMs: r.totalPausedMs },
+          endedAt,
+        );
+        const paidUntilAt = (r.paidUntilAt ?? (r.startedAt + tariffDurationMs(r.tariff))) + pauseCreditMs;
         const paidMs = paidUntilAt - r.startedAt;
         const usedMs = endedAt - r.startedAt;
         const { extraMinutes, overageKopecks } = computeOverage(usedMs, paidMs);
@@ -523,6 +536,10 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           endedAt, status: "completed", cost: finalCost,
           endLat: finalLat, endLng: finalLng,
           track: JSON.stringify(track),
+          // Finalise any in-progress pause into the historical record so
+          // analytics see the full paused duration even though the ride ended
+          // mid-pause (pausedAt itself is left as-is — harmless once completed).
+          totalPausedMs: r.totalPausedMs + (r.pausedAt != null ? Math.max(0, endedAt - r.pausedAt) : 0),
         }).where(eq(rides.id, rideId));
         // Assignment is based only on live, active parkings, computed above from
         // the same validated position — merged into one update (previously two
@@ -589,6 +606,110 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         }
       }
       return result.ride;
+    }
+
+    // Rider tapped "Пауза". We cannot command a lock to close — only await its
+    // own autonomous report (see pause-registry.ts header) — so this ARMS a
+    // short-lived expectation instead of writing paused_at directly. The actual
+    // paused_at write happens in server/omni/store.ts's lockReport handler once
+    // the device confirms the closure. Legacy bikes with no smart lock have
+    // nothing to await, so they pause immediately (mirrors startRide's
+    // lockImei-gating convention elsewhere in this file).
+    async requestPauseRide(rideId: number) {
+      const ride = (await db.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride | undefined;
+      if (!ride || ride.status !== "active") return { error: "Поездка не активна" };
+      if (ride.pausedAt != null) return { error: "Поездка уже на паузе" };
+      const bike = (await db.select().from(bikes).where(eq(bikes.id, ride.bikeId)).limit(1))[0] as Bike | undefined;
+      if (!bike?.lockImei) {
+        const updated = (await db.update(rides).set({ pausedAt: Date.now() } as any)
+          .where(and(eq(rides.id, rideId), eq(rides.status, "active"), sql`${rides.pausedAt} IS NULL`))
+          .returning())[0] as Ride | undefined;
+        if (!updated) return { error: "Поездка не активна" };
+        rideEvents.emit(updated.userId, "point" as RideEventReason);
+        return { status: "paused" as const, ride: updated };
+      }
+      registerPendingPause(bike.lockImei, rideId, ride.userId, PAUSE_ARM_TTL_MS);
+      return { status: "awaiting_lock_close" as const, expiresInMs: PAUSE_ARM_TTL_MS };
+    }
+
+    // Resume is rider-initiated and takes effect immediately — unlike pause, it
+    // is never gated on a physical confirmation. Also doubles as "cancel my
+    // pending pause request": if the ride is active but not yet actually
+    // paused (still awaiting the lock-closure report), this just clears the
+    // armed expectation and returns the ride unchanged instead of erroring.
+    // Public rather than private: calls this.getBike (defined on BikeMixin)
+    // through an explicit structural `this` type, same rule as
+    // abortUnstartedRide/updateBike above.
+    async resumeRide(this: { getBike(id: string): Promise<Bike | undefined> }, rideId: number): Promise<Ride | { error: string }> {
+      const outcome = await db.transaction(async (tx) => {
+        const r = (await tx.select().from(rides).where(eq(rides.id, rideId)).for("update").limit(1))[0] as Ride | undefined;
+        if (!r || r.status !== "active") return { ok: false as const, error: "Поездка не активна" };
+        if (r.pausedAt == null) return { ok: true as const, ride: r, cancelledPending: true };
+        const now = Date.now();
+        const creditMs = pendingPauseCreditMs(r, now);
+        const actualPausedMs = Math.max(0, now - r.pausedAt);
+        const updated = (await tx.update(rides).set({
+          pausedAt: null,
+          totalPausedMs: r.totalPausedMs + actualPausedMs,
+          paidUntilAt: (r.paidUntilAt ?? (r.startedAt + tariffDurationMs(r.tariff))) + creditMs,
+        } as any).where(eq(rides.id, rideId)).returning())[0] as Ride;
+        return { ok: true as const, ride: updated, cancelledPending: false };
+      });
+      if (!outcome.ok) return { error: outcome.error };
+      const { ride, cancelledPending } = outcome;
+      // Best-effort: clear any stale armed pause expectation for this lock so a
+      // late/duplicate lockReport can't re-pause a ride the rider already
+      // resumed. Never blocks or fails the resume itself.
+      const bike = await this.getBike(ride.bikeId).catch(() => undefined);
+      if (bike?.lockImei) clearPendingPause(bike.lockImei);
+      if (cancelledPending) return ride;
+      rideEvents.emit(ride.userId, "point" as RideEventReason);
+      // Best-effort physical re-unlock, mirroring endRide's D1-disable and
+      // startRide's own unlock dispatch: never rolls the resume back on
+      // failure — the billing/timer state already committed above is
+      // authoritative regardless of whether the lock itself confirms.
+      if (bike?.lockImei) {
+        try {
+          const gateway = getLockGateway();
+          const sent = gateway?.sendToDevice(bike.lockImei, "D1", [RIDE_GPS_TRACKING_INTERVAL_SECONDS]);
+          if (!sent) log(`resumeRide: failed to dispatch unlock imei=${bike.lockImei} ride=${rideId}`);
+        } catch (err) {
+          log(`resumeRide: error dispatching unlock imei=${bike.lockImei} ride=${rideId}: ${(err as Error).message}`);
+        }
+      }
+      return ride;
+    }
+
+    // Extend the paid window by a tariff's duration, charging its price from
+    // the wallet — always available, including while paused (product decision:
+    // extension is independent of the pause state). Same atomic
+    // conditional-UPDATE debit pattern as startRide (audit CRITICAL #5) so a
+    // concurrent debit/credit against the same wallet can never be lost.
+    async extendRide(rideId: number, tariff: string) {
+      const tariffDef = TARIFFS.find((t) => t.id === tariff);
+      if (!tariffDef) return { error: "Неизвестный тариф" };
+      const costKopecks = tariffPriceKopecks(tariffDef);
+      const outcome = await db.transaction(async (tx) => {
+        const r = (await tx.select().from(rides).where(eq(rides.id, rideId)).for("update").limit(1))[0] as Ride | undefined;
+        if (!r || r.status !== "active") return { error: "Поездка не активна" };
+        const debited = await tx.execute(sql`
+          UPDATE wallet SET balance = balance - ${costKopecks}
+          WHERE user_id = ${r.userId} AND balance >= ${costKopecks}
+          RETURNING balance
+        `);
+        if (debited.rows.length === 0) return { error: "Недостаточно средств на балансе" };
+        await tx.insert(payments).values({
+          userId: r.userId, amount: -costKopecks, kind: "ride_charge",
+          description: `Продление аренды ${r.bikeId} • ${tariffDef.name}`, createdAt: Date.now(),
+        });
+        const basePaidUntilAt = r.paidUntilAt ?? (r.startedAt + tariffDurationMs(r.tariff));
+        const updated = (await tx.update(rides).set({
+          paidUntilAt: basePaidUntilAt + tariffDurationMs(tariff),
+        } as any).where(eq(rides.id, rideId)).returning())[0] as Ride;
+        return updated;
+      });
+      if (!("error" in outcome)) rideEvents.emit(outcome.userId, "point" as RideEventReason);
+      return outcome;
     }
 
     async getRide(rideId: number) {

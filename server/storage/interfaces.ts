@@ -217,6 +217,9 @@ export interface IRideStorage {
   insertBikeTelemetry(bikeId: string, x: number, y: number, t: number): Promise<void>;
   getBikeTelemetry(bikeId: string, fromT: number, toT: number): Promise<[number, number, number][]>;
   endRide(rideId: number, opts?: { skipGeofence?: boolean }): Promise<Ride | { error: string } | undefined>;
+  requestPauseRide(rideId: number): Promise<{ status: "awaiting_lock_close"; expiresInMs: number } | { status: "paused"; ride: Ride } | { error: string }>;
+  resumeRide(rideId: number): Promise<Ride | { error: string }>;
+  extendRide(rideId: number, tariff: string): Promise<Ride | { error: string }>;
   getRide(rideId: number): Promise<Ride | undefined>;
   getActiveRide(userId: string): Promise<Ride | undefined>;
   listRides(opts?: { userId?: string; limit?: number }): Promise<Ride[]>;

@@ -154,6 +154,40 @@ export function registerRideRoutes(app: Express): void {
     if (!r) return res.status(404).json({ error: "Поездка не активна" });
     res.json(r);
   });
+  // Pause is gated on the OMNI lock's own physical-closure report (see
+  // server/omni/pause-registry.ts) — this endpoint only ARMS the expectation
+  // (or, for legacy no-lock bikes, pauses immediately) and never writes
+  // pausedAt itself.
+  app.post("/api/rides/:id/pause", async (req, res) => {
+    const ride = await storage.getRide(Number(req.params.id));
+    if (!ride) return res.status(404).json({ error: "Поездка не активна" });
+    if (!(await canManageRide(req, ride))) return res.status(403).json({ error: "Нет доступа" });
+    const r = await storage.requestPauseRide(Number(req.params.id));
+    if ("error" in r) return res.status(400).json(r);
+    res.json(r);
+  });
+  // Resume is immediate (never gated). Also safely cancels a still-pending
+  // (not-yet-confirmed) pause request for the same ride — see resumeRide.
+  app.post("/api/rides/:id/resume", async (req, res) => {
+    const ride = await storage.getRide(Number(req.params.id));
+    if (!ride) return res.status(404).json({ error: "Поездка не активна" });
+    if (!(await canManageRide(req, ride))) return res.status(403).json({ error: "Нет доступа" });
+    const r = await storage.resumeRide(Number(req.params.id));
+    if ("error" in r) return res.status(400).json(r);
+    res.json(r);
+  });
+  // Always available, including while paused (product decision).
+  app.post("/api/rides/:id/extend", async (req, res) => {
+    const schema = z.object({ tariff: z.enum(["h1", "h2", "h3"]) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Bad request" });
+    const ride = await storage.getRide(Number(req.params.id));
+    if (!ride) return res.status(404).json({ error: "Поездка не активна" });
+    if (!(await canManageRide(req, ride))) return res.status(403).json({ error: "Нет доступа" });
+    const r = await storage.extendRide(Number(req.params.id), parsed.data.tariff);
+    if ("error" in r) return res.status(400).json(r);
+    res.json(r);
+  });
   app.post("/api/rides/:id/end", async (req, res) => {
     const ride = await storage.getRide(Number(req.params.id));
     if (!ride) return res.status(404).json({ error: "Поездка не активна" });

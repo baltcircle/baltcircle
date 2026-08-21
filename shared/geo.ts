@@ -34,11 +34,20 @@ export const OVERAGE_MINUTE_PRICE = 12; // ₽ per started extra minute
 // the public "available" pool for the booking user before auto-expiring.
 export const RESERVATION_TTL_MS = 10 * 60 * 1000;
 
-// Free pause grace: the first N ms of any single pause do not count against
-// the ride's paid time (paidUntilAt is pushed back by the full pause
-// duration). Beyond this, the ride's paid-time clock resumes running for the
-// remainder of that pause (paidUntilAt is only pushed back by the grace).
+// Free pause grace: CUMULATIVE across the whole ride (not per-pause) — a
+// rider may pause/resume any number of times, and the first N ms of total
+// paused time across all of them push paidUntilAt back for free. Once this
+// cumulative budget is used up, further paused time no longer extends
+// paidUntilAt — the paid-time clock keeps running even while paused. See
+// shared/pause.ts for the shared client/server arithmetic.
 export const PAUSE_FREE_GRACE_MS = 10 * 60 * 1000;
+
+// How long a rider's "Пауза" request stays armed waiting for the physical
+// lock-closure report before it expires (server/omni/pause-registry.ts). The
+// server cannot command a lock closed — it can only await the device's own
+// report — so this bounds how long the app shows "waiting for lock" before
+// giving up and letting the rider retry.
+export const PAUSE_ARM_TTL_MS = 2 * 60 * 1000;
 
 // Cancellation window: a rider may cancel with a full refund within this
 // many ms of ride start, provided the bike is still at the start parking.
