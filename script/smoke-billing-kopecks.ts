@@ -13,8 +13,8 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createTestDb, teardown } from "./smoke-pg";
-import { TARIFFS, tariffPriceKopecks, OVERAGE_HOUR_PRICE } from "../shared/geo";
-import { computeOverage, finalRideCost, overageHourKopecks } from "../shared/billing";
+import { TARIFFS, tariffPriceKopecks, OVERAGE_MINUTE_PRICE } from "../shared/geo";
+import { computeOverage, finalRideCost, overageMinuteKopecks } from "../shared/billing";
 
 const PORT = 5631;
 const NAME = "billing-kopecks";
@@ -42,7 +42,7 @@ const h3 = TARIFFS.find((t) => t.id === "h3")!;
 assert(tariffPriceKopecks(h1) === 35000, "h1 (350 ₽) -> 35000 kopecks");
 assert(tariffPriceKopecks(h2) === 60000, "h2 (600 ₽) -> 60000 kopecks");
 assert(tariffPriceKopecks(h3) === 80000, "h3 (800 ₽) -> 80000 kopecks");
-assert(overageHourKopecks() === OVERAGE_HOUR_PRICE * 100, "overage hour = OVERAGE_HOUR_PRICE ×100");
+assert(overageMinuteKopecks() === OVERAGE_MINUTE_PRICE * 100, "overage minute = OVERAGE_MINUTE_PRICE ×100");
 
 // computeOverage: within the paid window -> no charge.
 assert(
@@ -54,24 +54,24 @@ assert(
   "usedMs exactly == paidMs -> no overage",
 );
 assert(
-  computeOverage(HOUR_MS - 1, HOUR_MS).extraHours === 0,
-  "just under the window -> 0 extra hours",
+  computeOverage(HOUR_MS - 1, HOUR_MS).extraMinutes === 0,
+  "just under the window -> 0 extra minutes",
 );
 
-// computeOverage: any overrun charges a full started hour.
+// computeOverage: any overrun charges a full started minute.
 let ov = computeOverage(HOUR_MS + 1, HOUR_MS);
-assert(ov.extraHours === 1 && ov.overageKopecks === overageHourKopecks(), "1ms over -> 1 started hour charged");
-ov = computeOverage(2 * HOUR_MS, HOUR_MS);
-assert(ov.extraHours === 1, "exactly 2h used on 1h tariff -> 1 extra hour");
-ov = computeOverage(2 * HOUR_MS + 1, HOUR_MS);
-assert(ov.extraHours === 2 && ov.overageKopecks === 2 * overageHourKopecks(), "just over 2h -> 2 extra hours");
+assert(ov.extraMinutes === 1 && ov.overageKopecks === overageMinuteKopecks(), "1ms over -> 1 started minute charged");
+ov = computeOverage(HOUR_MS + 2 * 60_000, HOUR_MS);
+assert(ov.extraMinutes === 2, "exactly 1h02m used on 1h tariff -> 2 extra minutes");
+ov = computeOverage(HOUR_MS + 2 * 60_000 + 1, HOUR_MS);
+assert(ov.extraMinutes === 3 && ov.overageKopecks === 3 * overageMinuteKopecks(), "just over 1h02m -> 3 extra minutes");
 
 // Unknown/legacy tariff (paidMs <= 0): never charges overage.
 assert(computeOverage(999 * HOUR_MS, 0).overageKopecks === 0, "paidMs=0 (legacy) -> never overage");
 
 // finalRideCost sums base + overage.
 assert(finalRideCost(35000, 0) === 35000, "final cost = base when no overage");
-assert(finalRideCost(35000, overageHourKopecks()) === 35000 + overageHourKopecks(), "final cost = base + overage");
+assert(finalRideCost(35000, overageMinuteKopecks()) === 35000 + overageMinuteKopecks(), "final cost = base + overage");
 
 // ---- Part 2: server checks against a throwaway DB ----
 

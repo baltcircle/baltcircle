@@ -33,9 +33,9 @@ import { bikes, rides, payments, parkings } from "@shared/schema";
 const HOUR = 60 * 60 * 1000;
 const NOW = new Date("2026-08-19T12:00:00.000Z");
 
-// h1 tariff: 350 ₽ / 1h paid window. Overage: 350 ₽ per started extra hour.
+// h1 tariff: 350 ₽ / 1h paid window. Overage: 12 ₽ per started extra minute.
 const H1_KOPECKS = 35000;
-const OVERAGE_KOPECKS = 35000;
+const OVERAGE_MINUTE_KOPECKS = 1200; // 12 ₽ per started overage minute
 
 function makeBike(overrides: Partial<Bike> = {}): Bike {
   return {
@@ -269,11 +269,11 @@ describe("settlement flow — internal wallet payment with overage", () => {
     expect(started).not.toHaveProperty("error");
     expect(state.wallet!.balance).toBe(100000 - H1_KOPECKS);
 
-    // Ran 2h30m against a 1h paid window -> 2 started overage hours.
+    // Ran 2h30m against a 1h paid window -> 90 started overage minutes.
     vi.setSystemTime(new Date(NOW.getTime() + 2.5 * HOUR));
     const ended = await storage.endRide((started as { id: number }).id);
 
-    const expectedOverage = 2 * OVERAGE_KOPECKS;
+    const expectedOverage = 90 * OVERAGE_MINUTE_KOPECKS;
     const expectedFinalCost = H1_KOPECKS + expectedOverage;
 
     expect(ended?.cost).toBe(expectedFinalCost);
@@ -295,11 +295,12 @@ describe("settlement flow — internal wallet payment with overage", () => {
     const started = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1" });
     expect(state.wallet!.balance).toBe(0);
 
-    vi.setSystemTime(new Date(NOW.getTime() + 1.5 * HOUR)); // 1 started overage hour
+    vi.setSystemTime(new Date(NOW.getTime() + 1.5 * HOUR)); // 30 started overage minutes
     const ended = await storage.endRide((started as { id: number }).id);
 
-    expect(ended?.cost).toBe(H1_KOPECKS + OVERAGE_KOPECKS);
-    expect(state.wallet!.balance).toBe(-OVERAGE_KOPECKS); // rider now owes the overage; unblocked, not silently dropped
+    const overage = 30 * OVERAGE_MINUTE_KOPECKS;
+    expect(ended?.cost).toBe(H1_KOPECKS + overage);
+    expect(state.wallet!.balance).toBe(-overage); // rider now owes the overage; unblocked, not silently dropped
     expect(state.bikes.get("BC-01")!.status).toBe("available"); // bike is still released even though the rider ends up in debt
   });
 });
@@ -317,15 +318,16 @@ describe("settlement flow — prepaid (T-Bank) start, wallet-side overage at end
     expect(state.wallet).toBeUndefined(); // no wallet row created/touched by the prepaid path
     expect(state.paymentRows).toHaveLength(0); // the T-Bank charge is recorded elsewhere, not by startRide
 
-    vi.setSystemTime(new Date(NOW.getTime() + 1.5 * HOUR)); // 1 started overage hour
+    vi.setSystemTime(new Date(NOW.getTime() + 1.5 * HOUR)); // 30 started overage minutes
     const ended = await storage.endRide((started as { id: number }).id);
 
+    const overage = 30 * OVERAGE_MINUTE_KOPECKS;
     // The ride's recorded cost still reflects the prepaid base + overage...
-    expect(ended?.cost).toBe(H1_KOPECKS + OVERAGE_KOPECKS);
+    expect(ended?.cost).toBe(H1_KOPECKS + overage);
     // ...but only the overage actually moved through the wallet.
-    expect(state.wallet!.balance).toBe(-OVERAGE_KOPECKS);
+    expect(state.wallet!.balance).toBe(-overage);
     expect(state.paymentRows).toHaveLength(1);
-    expect(state.paymentRows[0].amount).toBe(-OVERAGE_KOPECKS);
+    expect(state.paymentRows[0].amount).toBe(-overage);
   });
 });
 

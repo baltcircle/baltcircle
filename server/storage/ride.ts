@@ -1,7 +1,7 @@
 import { bikes, rides, payments, parkings, ridePoints, users } from "@shared/schema";
 import type { Ride, AdminRide, User, Parking, Bike } from "@shared/schema";
 import { eq, sql, and, desc, asc, inArray, count } from "drizzle-orm";
-import { TARIFFS, tariffPriceKopecks, findNearestParkingWithinRadius } from "@shared/geo";
+import { TARIFFS, tariffPriceKopecks, tariffDurationMs, findNearestParkingWithinRadius } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
 import { sendToUserAsync } from "../push";
 import { getLockGateway } from "../omni/gateway";
@@ -171,10 +171,16 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
 
             const startedAt = Date.now();
             const track: [number, number, number][] = [[bike.lng, bike.lat, startedAt]];
+            // paidUntilAt is the authoritative billing deadline going forward
+            // (extended by /rides/:id/extend and by pause grace); startParkingId
+            // snapshots where the bike stood at start for the 5-minute
+            // cancel-with-refund rule (audit: must still be at the SAME parking).
+            const paidUntilAt = startedAt + tariffDurationMs(tariff);
             const row = (await tx.insert(rides).values({
               bikeId, userId, startedAt,
               startLat: bike.lat, startLng: bike.lng,
               track: JSON.stringify(track), distanceM: 0, cost: costKopecks, tariff, status: "active",
+              paidUntilAt, startParkingId: bike.parkingId,
             }).returning())[0] as Ride;
             await tx.update(bikes).set({ status: "rented", updatedAt: Date.now() } as any)
               .where(eq(bikes.id, bikeId));
@@ -404,13 +410,14 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
 
         // Hourly prepaid model. The tariff was paid at start (r.cost holds the
         // prepaid tariff price, in kopecks). If the rider kept the bike past the
-        // paid window, auto-extend by charging one OVERAGE_HOUR_PRICE per started
-        // extra hour. Rides on an unknown/legacy tariff (durationHours unknown)
-        // skip overage and just settle at the recorded cost.
-        const tariffDef = TARIFFS.find((t) => t.id === r.tariff);
-        const paidMs = (tariffDef?.durationHours ?? 0) * 60 * 60 * 1000;
+        // paid window (r.paidUntilAt, which pause/extend may have moved), auto-
+        // extend by charging OVERAGE_MINUTE_PRICE per started extra minute.
+        // r.paidUntilAt is nullable only for rides started before this column
+        // existed — fall back to the tariff's nominal duration for those.
+        const paidUntilAt = r.paidUntilAt ?? (r.startedAt + tariffDurationMs(r.tariff));
+        const paidMs = paidUntilAt - r.startedAt;
         const usedMs = endedAt - r.startedAt;
-        const { extraHours, overageKopecks } = computeOverage(usedMs, paidMs);
+        const { extraMinutes, overageKopecks } = computeOverage(usedMs, paidMs);
         const finalCost = finalRideCost(r.cost, overageKopecks);
 
         await tx.update(rides).set({
@@ -452,7 +459,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           `);
           await tx.insert(payments).values({
             userId: r.userId, amount: -overageKopecks, kind: "ride_charge",
-            description: `Продление аренды ${r.bikeId} • +${extraHours} ч`, createdAt: endedAt,
+            description: `Продление аренды ${r.bikeId} • +${extraMinutes} мин`, createdAt: endedAt,
           });
         }
         return {

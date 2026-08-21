@@ -290,16 +290,16 @@ describe("endRide charge confirmation push", () => {
 
     expect(sendToUserAsyncMock).toHaveBeenCalledWith("user-1", {
       title: "Оплата поездки",
-      body: "Списано 350 ₽ за поездку. Спасибо, что пользуетесь TakeRide!",
+      body: "Списано 12 ₽ за поездку. Спасибо, что пользуетесь TakeRide!",
       url: "/rides",
       tag: "ride:42:overage",
       data: { kind: "ride-charge-confirmed", rideId: 42 },
     });
   });
 
-  it("charges one overage hour per started extra hour beyond the paid window", async () => {
-    // h1 tariff pays 1h; ride ran 2h30m total -> 1h30m over the paid window,
-    // which rounds up to 2 started extra hours.
+  it("charges one overage minute per started extra minute beyond the paid window", async () => {
+    // h1 tariff pays 1h; ride ran 2h30m total -> 1h30m (90min) over the paid
+    // window, all whole minutes so no rounding kicks in.
     const activeRide = makeRide({ startedAt: NOW.getTime() - 2.5 * HOUR });
     const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
     const { tx, calls } = makeTx([[activeRide], [], [completedRide]]);
@@ -308,7 +308,7 @@ describe("endRide charge confirmation push", () => {
     await storage.endRide(activeRide.id);
 
     expect(calls.insert).toHaveLength(1);
-    expect((calls.insert[0].values as any).description).toContain("+2 ч");
+    expect((calls.insert[0].values as any).description).toContain("+90 мин");
     expect(calls.execute).toHaveLength(2); // wallet UPSERT + balance decrement
   });
 });

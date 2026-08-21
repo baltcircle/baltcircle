@@ -5,35 +5,35 @@
 // Money is represented in integer KOPECKS everywhere (1 ₽ = 100 kopecks) to
 // avoid floating-point drift. Convert to rubles only at the display boundary.
 
-import { OVERAGE_HOUR_PRICE } from "./geo";
+import { OVERAGE_MINUTE_PRICE } from "./geo";
 
-const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
 
-// Price of one started overage hour, in kopecks.
-export function overageHourKopecks(): number {
-  return Math.round(OVERAGE_HOUR_PRICE * 100);
+// Price of one started overage minute, in kopecks.
+export function overageMinuteKopecks(): number {
+  return Math.round(OVERAGE_MINUTE_PRICE * 100);
 }
 
 export interface OverageResult {
-  // Whole started extra hours beyond the paid window (0 if within window).
-  extraHours: number;
-  // Additional charge for those extra hours, in kopecks (0 if within window).
+  // Whole started extra minutes beyond the paid window (0 if within window).
+  extraMinutes: number;
+  // Additional charge for those extra minutes, in kopecks (0 if within window).
   overageKopecks: number;
 }
 
-// Compute the auto-extension (overage) for a ride under the hourly prepaid
-// model. The rider prepaid `paidMs` of riding time; if they used more, every
-// STARTED extra hour costs one OVERAGE_HOUR_PRICE.
+// Compute the auto-extension (overage) for a ride under the per-minute
+// post-paid-window model. The rider prepaid `paidMs` of riding time; if they
+// used more, every STARTED extra minute costs one OVERAGE_MINUTE_PRICE.
 //
 //   - paidMs <= 0        -> unknown/legacy tariff: no overage (settle as-is)
 //   - usedMs <= paidMs   -> within the paid window: no overage
-//   - usedMs  > paidMs   -> ceil((usedMs - paidMs) / 1h) started hours charged
+//   - usedMs  > paidMs   -> ceil((usedMs - paidMs) / 1min) started minutes charged
 export function computeOverage(usedMs: number, paidMs: number): OverageResult {
   if (paidMs <= 0 || usedMs <= paidMs) {
-    return { extraHours: 0, overageKopecks: 0 };
+    return { extraMinutes: 0, overageKopecks: 0 };
   }
-  const extraHours = Math.ceil((usedMs - paidMs) / HOUR_MS);
-  return { extraHours, overageKopecks: extraHours * overageHourKopecks() };
+  const extraMinutes = Math.ceil((usedMs - paidMs) / MINUTE_MS);
+  return { extraMinutes, overageKopecks: extraMinutes * overageMinuteKopecks() };
 }
 
 // Final ride cost in kopecks = prepaid base cost + any overage.

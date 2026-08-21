@@ -20,7 +20,29 @@ export interface Tariff {
 
 // Price of one extra started hour when a rider exceeds their paid tariff
 // window (auto-extension). Uses the 1-hour rate. In rubles; ×100 for kopecks.
+// DEPRECATED: replaced by OVERAGE_MINUTE_PRICE (per-minute overage). Kept
+// only so historical rides computed under the old model remain inspectable;
+// do not use for new billing.
 export const OVERAGE_HOUR_PRICE = 350; // ₽ per started extra hour
+
+// Price of one started extra MINUTE once the paid tariff window elapses.
+// This is the live model: as soon as now() > ride.paidUntilAt, billing
+// switches to this per-minute rate for every started extra minute.
+export const OVERAGE_MINUTE_PRICE = 12; // ₽ per started extra minute
+
+// Reservation ("бронь") hold duration: how long a booked bike stays out of
+// the public "available" pool for the booking user before auto-expiring.
+export const RESERVATION_TTL_MS = 10 * 60 * 1000;
+
+// Free pause grace: the first N ms of any single pause do not count against
+// the ride's paid time (paidUntilAt is pushed back by the full pause
+// duration). Beyond this, the ride's paid-time clock resumes running for the
+// remainder of that pause (paidUntilAt is only pushed back by the grace).
+export const PAUSE_FREE_GRACE_MS = 10 * 60 * 1000;
+
+// Cancellation window: a rider may cancel with a full refund within this
+// many ms of ride start, provided the bike is still at the start parking.
+export const CANCEL_REFUND_WINDOW_MS = 5 * 60 * 1000;
 
 // Helper: tariff price in integer kopecks (money is stored/charged in kopecks).
 export function tariffPriceKopecks(t: Tariff): number {
@@ -54,6 +76,15 @@ export const TARIFFS: Tariff[] = [
     description: "Аренда велосипеда на 3 часа.",
   },
 ];
+
+// Duration in ms of the paid window purchased by a given tariff id (also
+// used for ride extensions, which add one more of these blocks).
+// 0 for an unknown/legacy tariff id (e.g. the retired "payg" plan) — callers
+// must treat that as "no fixed paid window", never as a real 0-length ride.
+export function tariffDurationMs(tariffId: string): number {
+  const t = TARIFFS.find((x) => x.id === tariffId);
+  return (t?.durationHours ?? 0) * 60 * 60 * 1000;
+}
 
 // Coastal launch towns (west → east along the Baltic shore).
 // Each town anchors a cluster of parking stations.

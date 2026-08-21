@@ -29,6 +29,13 @@
       "when": 1787067753502,
       "tag": "0003_bikes_parking_fk",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787331333468,
+      "tag": "0004_great_whistler",
+      "breakpoints": true
     }
   ]
 }

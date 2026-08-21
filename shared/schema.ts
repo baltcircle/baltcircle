@@ -268,6 +268,12 @@ export const bikes = pgTable("bikes", {
   lockOnline: boolean("lock_online").notNull().default(false),
   lockLastSeen: bigint("lock_last_seen", { mode: "number" }),  // unix ms
   notes: text("notes"),                      // operator free-text notes
+  // Set when status was auto-flipped to "maintenance" by system logic (e.g.
+  // "auto:low_battery"), left null for operator-initiated maintenance. Lets
+  // the sweep/heartbeat handler tell "already in maintenance for this exact
+  // reason" apart from "operator put it there for something else", and lets
+  // the UI show why a bike disappeared from the public list without a ticket.
+  maintenanceReason: text("maintenance_reason"),
   // `seed` marks demo fleet rows so the demo reseed migration can refresh them
   // without ever touching bikes an operator added manually.
   seed: boolean("seed").notNull().default(false),
@@ -306,6 +312,54 @@ export const unassignedLocks = pgTable("unassigned_locks", {
   firstSeen: bigint("first_seen", { mode: "number" }).notNull(),  // unix ms
   lastSeen: bigint("last_seen", { mode: "number" }).notNull(),    // unix ms
 });
+
+/* ------- RESERVATIONS ("бронь") ------- */
+// A short-lived hold on one bike for one user (10-minute default window, see
+// RESERVATION_TTL_MS in shared/geo.ts). While `active`, the bike sits in
+// status "reserved" and only THIS userId may claim it via /api/rides/start.
+// A background sweep (server/index.ts) flips overdue rows to "expired" and
+// the bike back to "available" — the row itself is kept (not deleted) as an
+// audit trail of who booked what and whether they followed through.
+export const reservations = pgTable("reservations", {
+  id: serial("id").primaryKey(),
+  bikeId: text("bike_id").notNull().references(() => bikes.id),
+  userId: text("user_id").notNull().references(() => users.id),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
+  status: text("status").notNull().default("active"), // active | claimed | expired | cancelled
+  claimedRideId: integer("claimed_ride_id").references(() => rides.id),
+}, (t) => [
+  index("idx_reservations_bike").on(t.bikeId),
+  index("idx_reservations_user_status").on(t.userId, t.status),
+  index("idx_reservations_active_expires").on(t.expiresAt).where(sql`${t.status} = 'active'`),
+]);
+export type Reservation = typeof reservations.$inferSelect;
+export const RESERVATION_STATUSES = ["active", "claimed", "expired", "cancelled"] as const;
+export type ReservationStatus = (typeof RESERVATION_STATUSES)[number];
+
+/* ------- OPS ALERTS ------- */
+// System-raised alerts for the ops dashboard (unauthorized movement while
+// reserved/available, low-battery auto-service transitions, etc). Distinct
+// from `tickets`: alerts are machine-generated and ack-only (no assignee/
+// comment workflow) — an operator either acknowledges one or opens a ticket
+// from it.
+export const alerts = pgTable("alerts", {
+  id: serial("id").primaryKey(),
+  bikeId: text("bike_id").notNull().references(() => bikes.id),
+  kind: text("kind").notNull(),          // see ALERT_KINDS
+  severity: text("severity").notNull().default("high"), // low | medium | high | critical
+  message: text("message").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  acknowledgedAt: bigint("acknowledged_at", { mode: "number" }),
+  acknowledgedBy: text("acknowledged_by"),
+}, (t) => [
+  index("idx_alerts_bike").on(t.bikeId),
+  index("idx_alerts_created").on(t.createdAt),
+  index("idx_alerts_unacked").on(t.createdAt).where(sql`${t.acknowledgedAt} IS NULL`),
+]);
+export type Alert = typeof alerts.$inferSelect;
+export const ALERT_KINDS = ["movement_alarm", "low_battery"] as const;
+export type AlertKind = (typeof ALERT_KINDS)[number];
 export type UnassignedLock = typeof unassignedLocks.$inferSelect;
 
 /** An OMNI IMEI as it appears on the wire: exactly 15 digits (protocol §1.1). */
@@ -616,12 +670,36 @@ export const rides = pgTable("rides", {
   // /api/rides/:id/end (audit F-04). Ops-visibility only; never auto-set the
   // ride to completed/cancelled from this.
   physicallyLockedAt: bigint("physically_locked_at", { mode: "number" }),
+  // Absolute deadline of the currently-paid window (unix ms). Set at start =
+  // startedAt + tariff duration; extended by /rides/:id/extend and by the
+  // paused-time grace (see pausedAt below). Once now() passes this, billing
+  // switches to the per-minute overage rate. Nullable only for historical
+  // rows created before this column existed.
+  paidUntilAt: bigint("paid_until_at", { mode: "number" }),
+  // Unix ms when the CURRENT pause started; null when not paused. On resume,
+  // the elapsed pause is applied against the 10-minute free grace (see
+  // shared/pause.ts) and paidUntilAt/totalPausedMs are updated accordingly.
+  pausedAt: bigint("paused_at", { mode: "number" }),
+  // Cumulative real (wall-clock) paused duration across every pause in this
+  // ride, for ops visibility/analytics. Does not by itself affect billing —
+  // only the grace-adjusted extension to paidUntilAt does.
+  totalPausedMs: integer("total_paused_ms").notNull().default(0),
+  // Set once we've pushed the "paid time is over, per-minute billing started"
+  // notification, so the overage sweep never double-sends it.
+  overageNotifiedAt: bigint("overage_notified_at", { mode: "number" }),
+  // The parking the bike was standing in when this ride started (copied from
+  // bikes.parking_id at start time). Used by the 5-minute cancel-with-refund
+  // rule: eligible only while the bike is still at this same parking.
+  startParkingId: text("start_parking_id").references(() => parkings.id, { onDelete: "set null" }),
 }, (t) => [
   index("idx_rides_user_status").on(t.userId, t.status),
   index("idx_rides_user").on(t.userId),
   index("idx_rides_bike").on(t.bikeId),
   index("idx_rides_started").on(t.startedAt),
   index("idx_rides_user_started").on(t.userId, t.startedAt.desc()),
+  // Backs the reservation-expiry / overage-notification sweep's scan for
+  // active rides without a full table scan.
+  index("idx_rides_status_paid_until").on(t.status, t.paidUntilAt),
 ]);
 export type Ride = typeof rides.$inferSelect;
 export const insertRideSchema = createInsertSchema(rides);
