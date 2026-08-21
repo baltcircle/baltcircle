@@ -76,6 +76,51 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isMap = loc === "/" || loc.startsWith("/bike/");
   useAppViewport(isCustomerMap);
 
+  // Ссылка "назад в приложение"/"в операторскую" + переключатель темы + карточка
+  // пользователя — единый блок. У оператора он рендерится сразу после последнего
+  // пункта меню ("Обращения"), а не прижат к низу сайдбара; у клиента остаётся
+  // внизу (после nav, см. использование ниже).
+  const sidebarFooter = (
+    <div className="px-3 py-4 border-t border-sidebar-border/40 space-y-2">
+      {/* Cross-link between the two interfaces (no auth yet). */}
+      {isAdmin ? (
+        <Link
+          href="/"
+          data-testid="link-exit-admin"
+          className="w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
+        >
+          <ArrowLeft className="w-4 h-4 opacity-80" /> К приложению
+        </Link>
+      ) : isStaff ? (
+        <Link
+          href={opsHome}
+          data-testid="link-admin"
+          className="w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
+        >
+          <ShieldCheck className="w-4 h-4 opacity-80" /> Операторская
+        </Link>
+      ) : null}
+      <button
+        onClick={toggle}
+        className="w-full flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
+        data-testid="button-theme-toggle"
+      >
+        <span className="flex items-center gap-2 opacity-90">
+          {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          {theme === "dark" ? "Светлая тема" : "Тёмная тема"}
+        </span>
+        <ChevronRight className="w-4 h-4 opacity-50" />
+      </button>
+
+      {user && (
+        <div className="px-3 py-2 text-xs opacity-70">
+          <div className="flex items-center gap-1.5 font-medium">{user.name}</div>
+          <div className="mt-1 opacity-70">{user.phone}</div>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div
       data-testid="app-shell"
@@ -142,45 +187,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             items={nav}
             isActive={matchActive}
           />
+          {isAdmin && sidebarFooter}
         </nav>
-        <div className="px-3 py-4 border-t border-sidebar-border/40 space-y-2">
-          {/* Cross-link between the two interfaces (no auth yet). */}
-          {isAdmin ? (
-            <Link
-              href="/"
-              data-testid="link-exit-admin"
-              className="w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
-            >
-              <ArrowLeft className="w-4 h-4 opacity-80" /> К приложению
-            </Link>
-          ) : isStaff ? (
-            <Link
-              href={opsHome}
-              data-testid="link-admin"
-              className="w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
-            >
-              <ShieldCheck className="w-4 h-4 opacity-80" /> Операторская
-            </Link>
-          ) : null}
-          <button
-            onClick={toggle}
-            className="w-full flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-sidebar-accent hover-elevate"
-            data-testid="button-theme-toggle"
-          >
-            <span className="flex items-center gap-2 opacity-90">
-              {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-              {theme === "dark" ? "Светлая тема" : "Тёмная тема"}
-            </span>
-            <ChevronRight className="w-4 h-4 opacity-50" />
-          </button>
-
-          {user && (
-            <div className="px-3 py-2 text-xs opacity-70">
-              <div className="flex items-center gap-1.5 font-medium">{user.name}</div>
-              <div className="mt-1 opacity-70">{user.phone}</div>
-            </div>
-          )}
-        </div>
+        {!isAdmin && sidebarFooter}
       </aside>
 
       {/* Mobile top header — the customer map route renders its own floating
