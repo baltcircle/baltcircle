@@ -91,6 +91,9 @@ export function MapPage() {
     useReservationBanner(isRegistered, !!activeRide);
 
   const pendingMulti = useRef<boolean | null>(null);
+  // Клик по маркеру велосипеда на карте — как и goRent(), требует регистрации;
+  // если её нет, откладываем открытие модалки аренды до onRegistered ниже.
+  const pendingBikeId = useRef<string | null>(null);
 
   // Пока true — показываем «Закройте замок…» вместо тикающего таймера паузы;
   // становится false либо когда lockReport подтвердит паузу (pausedAt придёт
@@ -236,6 +239,16 @@ export function MapPage() {
     setRentalOpen(true);
   };
 
+  const onMapBikeClick = (bikeId: string) => {
+    if (!isRegistered) {
+      pendingBikeId.current = bikeId;
+      setRegOpen(true);
+      return;
+    }
+    setSelected(bikeId);
+    setRentalOpen(true);
+  };
+
   usePendingBikeScan({
     userLoading,
     isRegistered,
@@ -266,6 +279,9 @@ export function MapPage() {
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
+          bikes={bikesQ.data ?? []}
+          selectedBikeId={selected}
+          onSelectBike={onMapBikeClick}
           ride={displayRide}
           height="100%"
           showLabels={false}
@@ -357,13 +373,21 @@ export function MapPage() {
         open={regOpen}
         onOpenChange={(open) => {
           setRegOpen(open);
-          if (!open) pendingMulti.current = null;
+          if (!open) {
+            pendingMulti.current = null;
+            pendingBikeId.current = null;
+          }
         }}
         onRegistered={() => {
           if (pendingMulti.current !== null) {
             const multi = pendingMulti.current;
             pendingMulti.current = null;
             openScan(multi);
+          } else if (pendingBikeId.current) {
+            const bikeId = pendingBikeId.current;
+            pendingBikeId.current = null;
+            setSelected(bikeId);
+            setRentalOpen(true);
           }
         }}
       />
