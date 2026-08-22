@@ -170,6 +170,15 @@ export function registerCatalogRoutes(app: Express): void {
       const status = (result.error ?? "").includes("не найден") ? 404 : 409;
       return res.status(status).json(result);
     }
+    // Opportunistic GPS refresh (fire-and-forget): a parked lock's idle
+    // heartbeat carries no GPS at all, so a status change is the only signal
+    // that the bike may have physically moved since its last known fix. Only
+    // relevant when this PATCH actually changed status — adminUpdateBike
+    // already re-syncs from the lock's LAST fix on every status change, this
+    // just asks the lock for a NEW one in case it moved further since then.
+    if (parsed.data.status !== undefined && result.bike.lockImei) {
+      getLockGateway()?.requestGpsRefresh(result.bike.lockImei, result.bike.id);
+    }
     res.json(result.bike);
   });
 

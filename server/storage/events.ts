@@ -22,3 +22,21 @@ export type RideEventReason = "start" | "point" | "end";
 export const bikeEvents = new EventEmitter();
 bikeEvents.setMaxListeners(0);
 export const BIKE_EVENT_CHANNEL = "fleet";
+
+// GPS-refresh bridge: the OMNI TCP process (server/omni/server.ts) arms a
+// short D1 burst when a bike's status changes while parked (idle heartbeats
+// carry no GPS, see shared/geo.ts's GPS_REFRESH_BURST_WINDOW_MS) and emits
+// this once persistLockReport's "position" case lands a valid fix while that
+// burst is still armed. Wired in server/storage.ts, not server/omni/store.ts,
+// because only the storage layer has the Drizzle-backed bikes/parkings
+// tables that store.ts intentionally stays decoupled from.
+export const lockGpsEvents = new EventEmitter();
+lockGpsEvents.setMaxListeners(0);
+export const LOCK_GPS_REFRESHED = "refreshed";
+export interface LockGpsRefreshedPayload {
+  imei: string;
+  bikeId: string;
+  /** WGS84 decimal degrees, straight from the device's GpsFix. */
+  lat: number;
+  lng: number;
+}

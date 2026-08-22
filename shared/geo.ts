@@ -68,6 +68,16 @@ export const LOCK_GPS_LIVE_MS = 5 * 60 * 1000;
 // omni_lock_diagnostics.md — a good battery/precision tradeoff.
 export const RIDE_GPS_TRACKING_INTERVAL_SECONDS = 10;
 
+// A parked lock's idle heartbeat (~every 4min) carries NO gps at all — only
+// battery/signal/lock-state (omni_lock_diagnostics.md, Наблюдение 1). Moving
+// a parked bike therefore never produces a fresh fix on its own; a bike
+// status change (server/omni/server.ts's requestGpsRefresh) opportunistically
+// arms a short D1 burst to try to catch one. Cold GPS fix took ~2.5min in the
+// field (omni_lock_diagnostics.md, Наблюдение 3), so this window must clear
+// that with margin before giving up and switching D1 back off to bound the
+// extra battery/traffic cost.
+export const GPS_REFRESH_BURST_WINDOW_MS = 3 * 60 * 1000;
+
 // Helper: tariff price in integer kopecks (money is stored/charged in kopecks).
 export function tariffPriceKopecks(t: Tariff): number {
   return Math.round(t.price * 100);

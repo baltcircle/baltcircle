@@ -12,7 +12,8 @@
 import type { OmniMessage } from "@shared/omni/protocol";
 import { pool } from "../db/bootstrap";
 import { consumePendingPause } from "./pause-registry";
-import { rideEvents } from "../storage/events";
+import { consumePendingGpsRefresh } from "./gps-refresh-registry";
+import { rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, type LockGpsRefreshedPayload } from "../storage/events";
 
 // Keep the public TCP process decoupled from the full Drizzle schema graph: it
 // is started before HTTP routes and should only need the constants it owns.
@@ -164,9 +165,24 @@ export class PgOmniStore implements OmniStore {
         return;
       case "position":
         if (message.valid && message.fix) {
-          await pool.query(`UPDATE locks SET ${base}, last_latitude = $3,
+          const result = await pool.query(`UPDATE locks SET ${base}, last_latitude = $3,
             last_longitude = $4, last_location_at = $2 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
             [imei, at, message.fix.lat, message.fix.lng]);
+          // Opportunistic GPS-refresh (see gps-refresh-registry.ts): a status
+          // change on a parked bike arms a short D1 burst because idle
+          // heartbeats carry no position at all. Consume the expectation only
+          // on a fix that actually landed (rowCount guards against an
+          // out-of-order report NEWEST_REPORT_GUARD just rejected —
+          // propagating a stale fix to bikes.lat/lng would be worse than
+          // waiting for the burst window to catch a genuinely newer one).
+          // Emitted so bikes.lat/lng (owned by the storage layer, not this
+          // Drizzle-free module) can pick it up via lockGpsEvents.
+          const armed = (result.rowCount ?? 0) > 0 ? consumePendingGpsRefresh(imei) : null;
+          if (armed) {
+            lockGpsEvents.emit(LOCK_GPS_REFRESHED, {
+              imei, bikeId: armed.bikeId, lat: message.fix.lat, lng: message.fix.lng,
+            } satisfies LockGpsRefreshedPayload);
+          }
         } else {
           await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
         }

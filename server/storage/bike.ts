@@ -46,6 +46,29 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
 
     async getBike(id: string) { return (await db.select().from(bikes).where(eq(bikes.id, id)).limit(1))[0] as Bike | undefined; }
 
+    /** See IBikeStorage.applyGpsRefresh for the full contract. */
+    async applyGpsRefresh(
+      this: IBikeStorage & IParkingStorage & {
+        recalculateBikeParking(bike: Pick<Bike, "id" | "lat" | "lng">): Promise<void>;
+      },
+      payload: { bikeId: string; imei: string; lat: number; lng: number },
+    ): Promise<void> {
+      const existing = await this.getBike(payload.bikeId);
+      if (!existing) return; // bike deleted since the burst was armed
+      // rented: a ride owns bikes.lat/lng for its duration (see updateBike's
+      // own status-sync guard and server/storage/ride.ts). archived: soft-
+      // deleted, nothing to show. Either way, overwriting position here would
+      // fight the actual owner of this bike's state.
+      if (existing.status === "rented" || existing.status === "archived") return;
+      // The lock may have been unbound/re-bound to a different bike in the
+      // window between arming the burst and this fix landing (admin lock
+      // swap) — a fix for a now-foreign IMEI must never be attributed here.
+      if (existing.lockImei !== payload.imei) return;
+      const { x, y } = realToMap(payload.lat, payload.lng);
+      const updated = await this.updateBike(existing.id, { lat: y, lng: x });
+      if (updated) await this.recalculateBikeParking(updated);
+    }
+
     async updateBike(
       this: { invalidateBikesCache(opts?: { silent?: boolean }): void; getBike(id: string): Promise<Bike | undefined> },
       id: string,

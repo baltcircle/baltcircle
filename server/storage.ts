@@ -5,7 +5,9 @@ export { db, pool, bootstrapReady };
 
 // Re-exported for external callers (SSE fan-out, admin bike-list broadcast).
 export { bikeEvents, BIKE_EVENT_CHANNEL } from "./storage/events";
-import { rideEvents } from "./storage/events";
+import { rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED } from "./storage/events";
+import type { LockGpsRefreshedPayload } from "./storage/events";
+import { log } from "./logger";
 export { rideEvents };
 import type { RideEventReason } from "./storage/events";
 export type { RideEventReason };
@@ -61,3 +63,13 @@ export class DatabaseStorage
 }
 
 export const storage = new DatabaseStorage();
+
+// Bridge: server/omni/store.ts (kept dependency-free of Drizzle/storage, see
+// its file header) emits here once an opportunistic GPS-refresh burst
+// (server/omni/server.ts's requestGpsRefresh) catches a fix; only this
+// storage layer can turn that into a bikes.lat/lng update + parking
+// recalculation. Best-effort: a failure here must not crash the OMNI TCP
+// process or the admin request that originally armed the burst.
+lockGpsEvents.on(LOCK_GPS_REFRESHED, (payload: LockGpsRefreshedPayload) => {
+  storage.applyGpsRefresh(payload).catch((err) => log(`gps-refresh apply failed: ${(err as Error).message}`));
+});

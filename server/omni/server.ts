@@ -10,7 +10,8 @@
 // tests against a fake store without a live Postgres.
 import { createServer, type Server, type Socket } from "node:net";
 import type { Logger } from "pino";
-import { realToMap } from "@shared/geo";
+import { realToMap, RIDE_GPS_TRACKING_INTERVAL_SECONDS, GPS_REFRESH_BURST_WINDOW_MS } from "@shared/geo";
+import { registerPendingGpsRefresh, clearPendingGpsRefresh } from "./gps-refresh-registry";
 import {
   OmniFramer, batteryPercent, buildAck, buildServerPacket, decodeMessage,
   parseDeviceFrame, type OmniMessage,
@@ -113,6 +114,8 @@ export class OmniTcpServer {
    */
   private readonly imeiCommandInFlight = new Set<string>();
   private offlineSweepTimer: NodeJS.Timeout | null = null;
+  /** Auto-stop timers for an armed GPS-refresh burst (requestGpsRefresh), keyed by IMEI. */
+  private readonly gpsRefreshStopTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(private readonly options: OmniServerOptions) {
     this.log = options.logger.child({ module: "omni-tcp" });
@@ -176,9 +179,56 @@ export class OmniTcpServer {
    * false when the device has no live socket.
    */
   sendToDevice(imei: string, cmd: string, params: (string | number)[] = []): boolean {
+    // Any D1 send — a ride starting/ending (server/storage/ride.ts), the
+    // onboarding diagnostic probe, or a fresh requestGpsRefresh burst — takes
+    // over this lock's tracking state. A stale auto-stop timer left running
+    // from an earlier GPS-refresh burst must not later switch tracking off
+    // out from under whoever just issued this command (most importantly: an
+    // active ride's own continuous tracking).
+    if (cmd === "D1") this.cancelGpsRefreshAutoStop(imei);
     const conn = this.byImei.get(imei);
     if (!conn) return false;
     return conn.send(buildServerPacket({ imei, cmd, params }));
+  }
+
+  private cancelGpsRefreshAutoStop(imei: string): void {
+    const timer = this.gpsRefreshStopTimers.get(imei);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.gpsRefreshStopTimers.delete(imei);
+    clearPendingGpsRefresh(imei);
+  }
+
+  private stopGpsRefreshBurstEarly(imei: string): void {
+    const timer = this.gpsRefreshStopTimers.get(imei);
+    if (!timer) return; // no refresh burst in flight (e.g. this fix came from an active ride's own tracking)
+    clearTimeout(timer);
+    this.gpsRefreshStopTimers.delete(imei);
+    this.sendToDevice(imei, "D1", [0]);
+  }
+
+  /**
+   * Opportunistically refresh a parked bike's position: a lock's idle
+   * heartbeat carries no GPS at all (omni_lock_diagnostics.md), so a bike
+   * that was physically moved without a ride starting never gets a fresh fix
+   * on its own. Called from the admin status-change PATCH (server/http/
+   * catalog.ts) on every status transition. Fire-and-forget by design: a
+   * disconnected or slow-to-fix lock must never fail or delay that request.
+   */
+  requestGpsRefresh(imei: string, bikeId: string): void {
+    if (!this.byImei.has(imei)) return; // lock not connected — nothing to ask
+    // sendToDevice("D1", ...) clears any *stale* GPS-refresh bookkeeping for
+    // this IMEI as a side effect (see its comment) — register the new
+    // expectation AFTER sending, or this call would immediately erase itself.
+    this.sendToDevice(imei, "D1", [RIDE_GPS_TRACKING_INTERVAL_SECONDS]);
+    registerPendingGpsRefresh(imei, bikeId, GPS_REFRESH_BURST_WINDOW_MS);
+    const timer = setTimeout(() => {
+      this.gpsRefreshStopTimers.delete(imei);
+      clearPendingGpsRefresh(imei);
+      this.sendToDevice(imei, "D1", [0]);
+    }, GPS_REFRESH_BURST_WINDOW_MS);
+    timer.unref?.();
+    this.gpsRefreshStopTimers.set(imei, timer);
   }
 
   /** Send L0 and resolve when the lock echoes the same user/timestamp tuple. */
@@ -408,6 +458,10 @@ export class OmniTcpServer {
 
     this.byImei.delete(conn.imei);
     const imei = conn.imei;
+    // A GPS-refresh burst armed for this lock can never land a fix once the
+    // socket is gone — drop the bookkeeping now instead of leaving a dangling
+    // timer/registry entry to expire naturally in up to GPS_REFRESH_BURST_WINDOW_MS.
+    this.cancelGpsRefreshAutoStop(imei);
     this.pendingUnlocks.forEach((pending, key) => {
       if (!key.startsWith(`${imei}:`)) return;
       clearTimeout(pending.timer);
@@ -433,6 +487,13 @@ export class OmniTcpServer {
       }
     }
     if (message.type === "unlockResult") this.resolveUnlock(imei, message);
+    // A valid fix landing while a GPS-refresh burst is armed for this lock
+    // means requestGpsRefresh() got what it asked for — switch tracking back
+    // off immediately rather than waiting out the rest of the window. Guarded
+    // by gpsRefreshStopTimers, not just "message is a valid position": a fix
+    // arriving from an active ride's own D1 tracking must never be turned off
+    // here (that timer only exists while a refresh burst, not a ride, owns D1).
+    if (message.type === "position" && message.valid) this.stopGpsRefreshBurstEarly(imei);
     if (!bikeId) return;
 
     const built = buildTelemetry(bikeId, imei, message, receivedAt);
