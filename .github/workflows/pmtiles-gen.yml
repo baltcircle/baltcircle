@@ -99,7 +99,7 @@ jobs:
           echo "URL: $(cat "$GITHUB_WORKSPACE/pmtiles_url.txt")"
 
       - name: Upload PMTiles URL artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pmtiles-url
           path: pmtiles_url.txt
