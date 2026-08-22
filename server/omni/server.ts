@@ -100,6 +100,22 @@ export class OmniTcpServer {
   /** Fixed-window new-connection counters, keyed by normalised source IP. */
   private readonly connectionAttempts = new Map<string, { count: number; windowStart: number }>();
   private readonly lastStatusWrite = new Map<string, number>();
+  /**
+   * Keyed by IMEI, not by a user/timestamp tuple: `imeiCommandInFlight`
+   * below already guarantees at most one outstanding unlock per lock, so the
+   * IMEI alone is a sufficient and unambiguous correlation key. This also
+   * sidesteps a real-world protocol gap discovered 2026-08-22 — L0's echo
+   * handshake was only ever *specified* to mirror our (user, second) pair,
+   * never empirically confirmed against the physical lock the way D1 was
+   * (omni_lock_diagnostics.md covers only D1). If the device instead echoes
+   * its own clock or otherwise doesn't reproduce our exact values, a
+   * compound-key match silently never fires and every real unlock times out
+   * after 15s regardless of whether the lock actually opened — which matches
+   * a rider's report of the rental flow failing on every attempt. Matching
+   * on IMEI alone only needs `result` (open/not-open) from the echo, which
+   * IS well-defined by the protocol, and stays correct even if the
+   * timestamp/userId fields turn out to be echoed loosely or not at all.
+   */
   private readonly pendingUnlocks = new Map<string, {
     resolve: (value: { success: boolean }) => void;
     reject: (reason: Error) => void;
@@ -107,10 +123,9 @@ export class OmniTcpServer {
     imei: string;
   }>();
   /**
-   * True per-IMEI mutex (audit F-07): `pendingUnlocks` is keyed by
-   * imei+user+second, so two different user/second tuples targeting the same
-   * lock were never mutually exclusive. This set is the single source of
-   * truth for "a command is currently outstanding for this lock".
+   * True per-IMEI mutex (audit F-07): the single source of truth for "a
+   * command is currently outstanding for this lock". `pendingUnlocks` is now
+   * keyed the same way (by IMEI) for the same reason — see its comment.
    */
   private readonly imeiCommandInFlight = new Set<string>();
   private offlineSweepTimer: NodeJS.Timeout | null = null;
@@ -250,12 +265,10 @@ export class OmniTcpServer {
       return Promise.reject(new Error("a command is already pending for this lock"));
     }
     const seconds = Math.floor(Date.now() / 1000);
-    const key = unlockKey(imei, user, seconds);
-    if (this.pendingUnlocks.has(key)) return Promise.reject(new Error("unlock command already pending"));
     this.imeiCommandInFlight.add(imei);
     return new Promise((resolve, reject) => {
       const settle = (fn: () => void) => {
-        this.pendingUnlocks.delete(key);
+        this.pendingUnlocks.delete(imei);
         this.imeiCommandInFlight.delete(imei);
         fn();
       };
@@ -263,7 +276,7 @@ export class OmniTcpServer {
         settle(() => reject(new Error("unlock command timed out")));
       }, 15_000);
       timer.unref?.();
-      this.pendingUnlocks.set(key, {
+      this.pendingUnlocks.set(imei, {
         resolve: (value) => settle(() => resolve(value)),
         reject: (err) => settle(() => reject(err)),
         timer,
@@ -468,12 +481,13 @@ export class OmniTcpServer {
     // socket is gone — drop the bookkeeping now instead of leaving a dangling
     // timer/registry entry to expire naturally in up to GPS_REFRESH_BURST_WINDOW_MS.
     this.cancelGpsRefreshAutoStop(imei);
-    this.pendingUnlocks.forEach((pending, key) => {
-      if (!key.startsWith(`${imei}:`)) return;
-      clearTimeout(pending.timer);
-      this.pendingUnlocks.delete(key);
-      pending.reject(new Error(`lock disconnected: ${reason}`));
-    });
+    const pendingUnlock = this.pendingUnlocks.get(imei);
+    if (pendingUnlock) {
+      clearTimeout(pendingUnlock.timer);
+      this.pendingUnlocks.delete(imei);
+      this.imeiCommandInFlight.delete(imei);
+      pendingUnlock.reject(new Error(`lock disconnected: ${reason}`));
+    }
     this.options.store.setLockOnline(imei, false, Date.now())
       .catch((err) => this.log.error({ err, imei }, "failed to mark lock offline"));
     this.log.info({ imei, bikeId: conn.bikeId, connId: conn.id, reason }, "lock disconnected");
@@ -517,12 +531,24 @@ export class OmniTcpServer {
   }
 
   private resolveUnlock(imei: string, message: Extract<OmniMessage, { type: "unlockResult" }>): void {
-    if (message.at === null) return;
-    const key = unlockKey(imei, message.userId, Math.floor(message.at / 1000));
-    const pending = this.pendingUnlocks.get(key);
-    if (!pending) return;
+    const pending = this.pendingUnlocks.get(imei);
+    if (!pending) {
+      this.log.info(
+        { imei, userId: message.userId, success: message.success, at: message.at },
+        "unlockResult: no pending unlock for this lock (late echo or unsolicited report)",
+      );
+      return;
+    }
+    if (message.userId && message.userId !== "") {
+      // Informational only — matching is by IMEI (see pendingUnlocks' comment),
+      // but a mismatch here would mean two riders' commands got crossed at the
+      // protocol level, which is worth surfacing even though we still trust
+      // the mutex-guaranteed single-flight IMEI match to resolve correctly.
+      this.log.debug({ imei, echoedUserId: message.userId }, "unlockResult echo received");
+    }
     clearTimeout(pending.timer);
-    this.pendingUnlocks.delete(key);
+    this.pendingUnlocks.delete(imei);
+    this.imeiCommandInFlight.delete(imei);
     pending.resolve({ success: message.success });
   }
 
@@ -895,10 +921,6 @@ export function buildTelemetry(
       // telemetry, so they do not belong in bike_telemetry.
       return null;
   }
-}
-
-function unlockKey(imei: string, userId: string, timestampSeconds: number): string {
-  return `${imei}:${userId}:${timestampSeconds}`;
 }
 
 // ---------------------------------------------------------------------------

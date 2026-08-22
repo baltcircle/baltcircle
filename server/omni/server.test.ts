@@ -666,6 +666,39 @@ describe("Phase 2 lock registry projection", () => {
     device.sendRaw(device.packet("L0", [0, command2.params[1], command2.params[2]]));
     expect(await second).toEqual({ success: true });
   });
+
+  it("resolves an unlock even when the lock echoes a different user/timestamp than sent (2026-08-22 production incident)", async () => {
+    // The L0 handshake's (user, second) echo was only ever *specified*, never
+    // empirically confirmed against real hardware the way D1 was. A real
+    // rider hit exactly this: every unlock attempt timed out because the
+    // physical lock's echo didn't reproduce our exact values. Matching is now
+    // by IMEI alone (the F-07 mutex already guarantees single-flight per
+    // lock), so a loose/mismatched echo must still resolve correctly.
+    const { server, store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    const unlock = server.sendUnlockCommand(IMEI_A, "1234");
+    const command = await device.nextCommand();
+    expect(command.cmd).toBe("L0");
+    // Deliberately echo a DIFFERENT user id and timestamp than we sent.
+    device.sendRaw(device.packet("L0", [0, "9999", 1000000000]));
+    expect(await unlock).toEqual({ success: true });
+    expect(await device.nextCommand()).toEqual({ cmd: "Re", params: ["L0"] });
+  });
+
+  it("reports a failed unlock (result=1) even with a mismatched echo", async () => {
+    const { server, store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    const unlock = server.sendUnlockCommand(IMEI_A, "1234");
+    await device.nextCommand();
+    device.sendRaw(device.packet("L0", [1, "0", 0]));
+    expect(await unlock).toEqual({ success: false });
+  });
 });
 
 describe("telemetry persistence", () => {
