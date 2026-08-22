@@ -205,6 +205,7 @@ export class OmniTcpServer {
     clearTimeout(timer);
     this.gpsRefreshStopTimers.delete(imei);
     this.sendToDevice(imei, "D1", [0]);
+    this.log.info({ imei }, "gps-refresh: fix landed, stopping burst early");
   }
 
   /**
@@ -216,16 +217,21 @@ export class OmniTcpServer {
    * disconnected or slow-to-fix lock must never fail or delay that request.
    */
   requestGpsRefresh(imei: string, bikeId: string): void {
-    if (!this.byImei.has(imei)) return; // lock not connected — nothing to ask
+    if (!this.byImei.has(imei)) {
+      this.log.info({ imei, bikeId }, "gps-refresh: skipped, lock not connected");
+      return;
+    }
     // sendToDevice("D1", ...) clears any *stale* GPS-refresh bookkeeping for
     // this IMEI as a side effect (see its comment) — register the new
     // expectation AFTER sending, or this call would immediately erase itself.
     this.sendToDevice(imei, "D1", [RIDE_GPS_TRACKING_INTERVAL_SECONDS]);
     registerPendingGpsRefresh(imei, bikeId, GPS_REFRESH_BURST_WINDOW_MS);
+    this.log.info({ imei, bikeId, windowMs: GPS_REFRESH_BURST_WINDOW_MS }, "gps-refresh: armed");
     const timer = setTimeout(() => {
       this.gpsRefreshStopTimers.delete(imei);
       clearPendingGpsRefresh(imei);
       this.sendToDevice(imei, "D1", [0]);
+      this.log.info({ imei, bikeId }, "gps-refresh: window expired without a landed fix");
     }, GPS_REFRESH_BURST_WINDOW_MS);
     timer.unref?.();
     this.gpsRefreshStopTimers.set(imei, timer);

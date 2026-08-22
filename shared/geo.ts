@@ -76,7 +76,16 @@ export const RIDE_GPS_TRACKING_INTERVAL_SECONDS = 10;
 // field (omni_lock_diagnostics.md, Наблюдение 3), so this window must clear
 // that with margin before giving up and switching D1 back off to bound the
 // extra battery/traffic cost.
-export const GPS_REFRESH_BURST_WINDOW_MS = 3 * 60 * 1000;
+//
+// 2026-08-22 production observation: a real status-change test needed
+// noticeably longer than the original 3-minute window before the fix
+// actually landed (diagnostics itself saw the module still settling
+// ~5 minutes in, on a window sill) — 3 minutes was cutting the documented
+// worst case too close. Widened to 6 minutes for margin; the early-stop
+// path (stopGpsRefreshBurstEarly) still turns tracking off the moment a fix
+// lands, so the common case pays no extra battery cost from this change —
+// only a slow/marginal-signal fix benefits from the longer ceiling.
+export const GPS_REFRESH_BURST_WINDOW_MS = 6 * 60 * 1000;
 
 // Helper: tariff price in integer kopecks (money is stored/charged in kopecks).
 export function tariffPriceKopecks(t: Tariff): number {
