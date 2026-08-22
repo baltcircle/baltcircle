@@ -116,8 +116,12 @@ export function TicketMixin<TBase extends Constructor>(Base: TBase) {
       if (patch.returnBikeToAvailable) {
         const bike = await this.getBike(existing.bikeId);
         if (bike && bike.status === "maintenance") {
-          await this.updateBike(bike.id, { status: "available" });
-          await this.recalculateBikeParking(bike);
+          // updateBike() also syncs lat/lng from the lock's current GPS fix on
+          // this status change — recalculate against its return value, not
+          // the pre-update `bike`, or parking would be matched against the
+          // bike's stale pre-service position instead of where it actually is.
+          const updated = await this.updateBike(bike.id, { status: "available" });
+          if (updated) await this.recalculateBikeParking(updated);
           await this.addEvent(id, actor, `Велосипед ${bike.id} возвращён в доступные`, "event");
         }
       }

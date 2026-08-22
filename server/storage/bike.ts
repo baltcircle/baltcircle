@@ -225,6 +225,15 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       // where it actually is now.
       if (patch.status === "available" && existing.status !== "available") {
         await this.recalculateBikeParking(syncedPos ? { ...existing, ...syncedPos } : existing);
+      } else if (patch.status !== undefined && patch.parkingId === undefined) {
+        // Any other status change (maintenance/offline/storage/etc, or
+        // resubmitting the same status) with no explicit operator-chosen
+        // parkingId in this PATCH: re-derive parkingId from the just-synced
+        // GPS position so parking occupancy (listParkings()) doesn't go
+        // stale when a bike is physically moved during service. An explicit
+        // patch.parkingId is still a full manual override here, unlike the
+        // into-available transition above which always wins over it.
+        await this.recalculateBikeParking(syncedPos ? { ...existing, ...syncedPos } : existing);
       }
       if (swappingLock) {
         if (existing.lockImei) await this.syncLockRegistryBinding(existing.lockImei, null);

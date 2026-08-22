@@ -145,4 +145,45 @@ describe("automatic parking assignment on availability transitions", () => {
 
     expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ parkingId: null }));
   });
+
+  it("re-derives parkingId from GPS on a non-available status change with no explicit parkingId in the PATCH", async () => {
+    // Bug fix: previously only the transition INTO "available" recalculated
+    // parkingId, even though every status change syncs lat/lng from the
+    // lock's live GPS fix. A bike moved to a new spot during e.g.
+    // available -> offline must not keep pointing at its old parking.
+    // Real-world coords that round-trip to map point (217, 350) via
+    // realToMap() — inside parkingRow()'s default radius (lat:350, lng:215, radius:30).
+    const lockRow = { imei: "IMEI-1", lastLatitude: 54.9442, lastLongitude: 20.156381515574246 } as any;
+    const bike = bikeRow({ status: "available", lockImei: "IMEI-1", parkingId: "P-old" });
+    const updated = bikeRow({ status: "offline", lockImei: "IMEI-1", parkingId: "P-new" });
+    const selectResults: unknown[][] = [[bike], [lockRow], [parkingRow()], [], [], [updated]];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    const setSpy = vi.fn();
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: (value: unknown) => { setSpy(value); return chain; }, where: () => Promise.resolve() };
+      return chain;
+    });
+
+    await storage.adminUpdateBike("BC-01", { status: "offline" });
+
+    expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ parkingId: "P-new" }));
+  });
+
+  it("honors an explicit parkingId override in the PATCH on a non-available status change", async () => {
+    const bike = bikeRow({ status: "available", lockImei: null, parkingId: "P-old" });
+    const updated = bikeRow({ status: "offline", parkingId: "P-operator-choice" });
+    const selectResults: unknown[][] = [[bike], [updated]];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    const setSpy = vi.fn();
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: (value: unknown) => { setSpy(value); return chain; }, where: () => Promise.resolve() };
+      return chain;
+    });
+
+    await storage.adminUpdateBike("BC-01", { status: "offline", parkingId: "P-operator-choice" });
+
+    // No parkings/bikes select should happen — recalculateBikeParking must be skipped.
+    expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ parkingId: "P-operator-choice" }));
+    expect(setSpy).not.toHaveBeenCalledWith(expect.objectContaining({ parkingId: "P-new" }));
+  });
 });
