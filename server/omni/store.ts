@@ -10,7 +10,9 @@
 // INSERTs: reports accumulate in memory and land as one multi-row statement per
 // flush window.
 import type { OmniMessage } from "@shared/omni/protocol";
+import { haversineM, MAX_PLAUSIBLE_GPS_JUMP_M } from "@shared/geo";
 import { pool } from "../db/bootstrap";
+import { logger } from "../logger";
 import { consumePendingPause } from "./pause-registry";
 import { consumePendingGpsRefresh } from "./gps-refresh-registry";
 import { rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, type LockGpsRefreshedPayload } from "../storage/events";
@@ -165,6 +167,41 @@ export class PgOmniStore implements OmniStore {
         return;
       case "position":
         if (message.valid && message.fix) {
+          // Sanity-bound the fix against the lock's own last stored position
+          // before trusting it (production incident, 2026-08-23: a single
+          // structurally-valid-but-wrong "flyaway" fix — passes nmeaToDecimal's
+          // +/-90/+/-180 bounds check but is physically hundreds of km off —
+          // got stored verbatim, corrupted bikes.lat/lng via applyLiveUpdates,
+          // and blocked ride start via the radius gate in server/storage/ride.ts,
+          // since both read this same last_latitude/last_longitude). Best-effort
+          // read-then-decide: a concurrent write for the same imei landing
+          // between the SELECT and this UPDATE is the same class of race the
+          // NEWEST_REPORT_GUARD above already tolerates for telemetry, not a
+          // financial/safety-critical path.
+          // node-postgres does not globally parse NUMERIC (OID 1700) to a JS
+          // number (only BIGINT/OID 20 is, in db/client.ts) — it comes back as
+          // a string here, so coerce explicitly before doing arithmetic.
+          const prevRow = (await pool.query<{ last_latitude: string | null; last_longitude: string | null }>(
+            "SELECT last_latitude, last_longitude FROM locks WHERE imei = $1",
+            [imei],
+          )).rows[0];
+          const prevLat = prevRow?.last_latitude != null ? Number(prevRow.last_latitude) : null;
+          const prevLng = prevRow?.last_longitude != null ? Number(prevRow.last_longitude) : null;
+          const jumpM = prevLat != null && prevLng != null
+            ? haversineM(prevLat, prevLng, message.fix.lat, message.fix.lng)
+            : null;
+          if (jumpM !== null && jumpM > MAX_PLAUSIBLE_GPS_JUMP_M) {
+            logger.warn(
+              {
+                imei, jumpM: Math.round(jumpM),
+                prevLat, prevLng,
+                newLat: message.fix.lat, newLng: message.fix.lng,
+              },
+              "omni: rejected implausible GPS fix (jump exceeds MAX_PLAUSIBLE_GPS_JUMP_M)",
+            );
+            await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
+            return;
+          }
           const result = await pool.query(`UPDATE locks SET ${base}, last_latitude = $3,
             last_longitude = $4, last_location_at = $2 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
             [imei, at, message.fix.lat, message.fix.lng]);

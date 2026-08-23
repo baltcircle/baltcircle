@@ -58,6 +58,19 @@ vi.mock("../db/bootstrap", () => ({
   pool: {
     async query(sql: string, params: unknown[] = []) {
       const text = sql.trim();
+      if (text.startsWith("SELECT last_latitude, last_longitude FROM locks")) {
+        const imei = params[0] as string;
+        const row = fake.locks.get(imei);
+        // Mirrors real node-postgres: NUMERIC columns come back as strings
+        // (see server/db/client.ts — only BIGINT/OID 20 is parsed to Number),
+        // so the store must coerce with Number() before doing arithmetic.
+        return {
+          rows: row === undefined ? [] : [{
+            last_latitude: row.last_latitude != null ? String(row.last_latitude) : null,
+            last_longitude: row.last_longitude != null ? String(row.last_longitude) : null,
+          }],
+        };
+      }
       if (text.startsWith("UPDATE locks")) {
         const imei = params[0] as string;
         const row = fake.locks.get(imei) ?? { last_seen_at: null };
@@ -137,6 +150,44 @@ describe("persistLockReport ordering guard (audit F-08)", () => {
     await store.persistLockReport(IMEI, stale, 1000);
 
     expect(fake.locks.get(IMEI)).toMatchObject({ last_latitude: 54.7104, last_longitude: 20.4522, last_seen_at: 2000 });
+  });
+
+  it("rejects an implausible GPS jump even when it is genuinely the newest report (production incident, 2026-08-23)", async () => {
+    const good: OmniMessage = {
+      type: "position", cmd: "D0", tracking: true, valid: true,
+      fix: { lat: 54.7104, lng: 20.4522, satellites: 8, hdop: 1, altitudeM: 10, fixedAt: 1000 },
+    };
+    // Structurally valid (passes nmeaToDecimal's +/-90/+/-180 bounds) but a
+    // ~600km jump — the class of GNSS cold-fix/flyaway artifact that
+    // corrupted BC-001's stored position in production. Arrives LATER than
+    // `good`, so the NEWEST_REPORT_GUARD alone would happily accept it —
+    // only the plausibility check should stop this one.
+    const flyaway: OmniMessage = {
+      type: "position", cmd: "D0", tracking: true, valid: true,
+      fix: { lat: 60.5, lng: 30.5, satellites: 8, hdop: 1, altitudeM: 10, fixedAt: 2000 },
+    };
+
+    await store.persistLockReport(IMEI, good, 1000);
+    await store.persistLockReport(IMEI, flyaway, 2000);
+
+    // Position stays pinned at the last good fix; last_seen_at still advances
+    // (the lock is online and reporting, it just didn't land a trustworthy fix).
+    expect(fake.locks.get(IMEI)).toMatchObject({
+      last_latitude: 54.7104, last_longitude: 20.4522, last_seen_at: 2000,
+    });
+  });
+
+  it("accepts the very first fix ever recorded for a lock regardless of magnitude (nothing to compare against)", async () => {
+    const firstEver: OmniMessage = {
+      type: "position", cmd: "D0", tracking: true, valid: true,
+      fix: { lat: 54.7104, lng: 20.4522, satellites: 8, hdop: 1, altitudeM: 10, fixedAt: 1000 },
+    };
+
+    await store.persistLockReport(IMEI, firstEver, 1000);
+
+    expect(fake.locks.get(IMEI)).toMatchObject({
+      last_latitude: 54.7104, last_longitude: 20.4522, last_seen_at: 1000,
+    });
   });
 });
 

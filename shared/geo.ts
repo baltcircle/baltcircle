@@ -87,6 +87,19 @@ export const RIDE_GPS_TRACKING_INTERVAL_SECONDS = 10;
 // only a slow/marginal-signal fix benefits from the longer ceiling.
 export const GPS_REFRESH_BURST_WINDOW_MS = 6 * 60 * 1000;
 
+// Sanity bound on a single incoming GPS fix vs. the lock's own last stored
+// fix. A cheap embedded GNSS chip occasionally reports a structurally valid
+// but physically nonsensical "flyaway"/cold-fix position — passes the
+// nmeaToDecimal +/-90/+/-180 bounds check while being hundreds of km off
+// (production incident, 2026-08-23: a single bad fix corrupted a bike's
+// stored position, dropped it off the map, and blocked ride start via the
+// radius gate). 15km comfortably covers real relocation of a bike between
+// service towns while rejecting the multi-hundred-km class of bad fixes seen
+// in production. Only guards against a JUMP from a known-good fix; the very
+// first fix ever recorded for a lock has nothing to compare against and is
+// always accepted (see persistLockReport in server/omni/store.ts).
+export const MAX_PLAUSIBLE_GPS_JUMP_M = 15_000;
+
 // Helper: tariff price in integer kopecks (money is stored/charged in kopecks).
 export function tariffPriceKopecks(t: Tariff): number {
   return Math.round(t.price * 100);
