@@ -252,7 +252,13 @@ export class OmniTcpServer {
     this.gpsRefreshStopTimers.set(imei, timer);
   }
 
-  /** Send L0 and resolve when the lock echoes the same user/timestamp tuple. */
+  /**
+   * Send L0 and resolve when the lock echoes an L0 result for this IMEI
+   * (see F-07 `imeiCommandInFlight` for the one-outstanding-command guard).
+   * `userId` is passed through verbatim on the wire and must be an unsigned
+   * integer per the OMNI protocol — callers must NOT pass the app's UUID
+   * user id (see server/storage/ride.ts, which passes the numeric ride id).
+   */
   sendUnlockCommand(imei: string, userId: string | number): Promise<{ success: boolean }> {
     const conn = this.byImei.get(imei);
     if (!conn) return Promise.reject(new Error("lock is not connected"));

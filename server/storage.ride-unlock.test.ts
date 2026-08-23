@@ -181,7 +181,11 @@ describe("startRide physical unlock gate (audit F-04)", () => {
 
     const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: true });
 
-    expect(sendUnlockCommandMock).toHaveBeenCalledWith("868000000000001", "user-1");
+    // Regression (2026-08-22/23 production incident): the app's userId is a
+    // UUID (users.id is server-generated text), which fails OMNI's
+    // unsigned-integer validation for every real rider — the ride's own
+    // serial id must be sent instead, never the raw userId.
+    expect(sendUnlockCommandMock).toHaveBeenCalledWith("868000000000001", 7);
     expect(result).not.toHaveProperty("error");
   });
 

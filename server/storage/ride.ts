@@ -287,7 +287,14 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           try {
             const gateway = getLockGateway();
             if (!gateway) throw new Error("OMNI gateway is not running");
-            const outcome = await gateway.sendUnlockCommand(lockImei, userId);
+            // The OMNI L0 command's user-id field must be an unsigned integer
+            // (enforced in sendUnlockCommand) — our app's `userId` is a UUID
+            // (users.id is server-generated text, see shared/schema.ts) and can
+            // never satisfy that, so every real unlock attempt was rejected
+            // before a command ever reached the lock (production incident,
+            // 2026-08-22/23). rides.id is a real serial integer, already unique
+            // per attempt, and available here — use that instead.
+            const outcome = await gateway.sendUnlockCommand(lockImei, result.id);
             unlocked = outcome.success;
           } catch (err) {
             log(`startRide: unlock failed imei=${lockImei} ride=${result.id}: ${(err as Error).message}`);
