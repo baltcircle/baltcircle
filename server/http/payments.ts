@@ -923,7 +923,7 @@ export function registerPaymentRoutes(app: Express): void {
       if (outcome === "paid") {
         // Start the ride now (guarded — a racing webhook cannot double-start).
         // Shared with the webhook path via startRideForPaidOrder().
-        const started = await startRideForPaidOrder(order, paymentId);
+        const started = await startRideForPaidOrder(order, paymentId, cfg);
         if (!started.ok) {
           return res.status(409).json({ error: started.reason });
         }

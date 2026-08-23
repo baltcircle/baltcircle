@@ -10,6 +10,60 @@ import {
 import type { TbankConfig } from "../tbank";
 import { log } from "../index";
 import { sendToUserAsync } from "../push";
+import { TARIFFS } from "@shared/geo";
+
+// Reverse an already-captured ride charge whose ride never started (unlock
+// or bike-availability failure in storage.startRide). Same claim-then-/Cancel
+// pattern as refundVerificationCharge() below, applied to a ride-payment
+// order instead of a payment method: storage.claimRideRefund() is an atomic
+// compare-and-swap so a racing sync-route response and webhook notification
+// can't both fire /Cancel for the same PaymentId. The description mirrors
+// the original Init/Charge receipt (54-ФЗ requires the refund's fiscal item
+// to match what was actually sold) — falls back to a generic line if the
+// tariff can no longer be resolved (e.g. removed from the catalog).
+async function reverseRidePayment(
+  order: PaymentOrder,
+  paymentId: string,
+  cfg: TbankConfig | null | undefined,
+): Promise<void> {
+  const claimed = await storage.claimRideRefund(order.id);
+  if (!claimed) {
+    log(
+      `[tbank] ride refund SKIP order=${order.orderId} PaymentId=${paymentId}: already claimed by a concurrent ` +
+        `caller (sync route/webhook race) — not calling /Cancel twice for the same charge.`,
+      "tbank",
+    );
+    return;
+  }
+  if (!cfg) {
+    log(`[tbank] ride refund FAILED order=${order.orderId} PaymentId=${paymentId}: T-Bank is not configured`, "tbank");
+    await storage.updateRidePaymentOrder(order.id, { refundStatus: "failed", refundError: "T-Bank не настроен" });
+    return;
+  }
+  const tariffDef = TARIFFS.find((t) => t.id === order.tariffId);
+  const description = `Аренда велосипеда ${order.bikeId} • ${tariffDef?.name ?? order.tariffId}`;
+  const user = await storage.getUser(order.userId).catch(() => undefined);
+  try {
+    const outcome = await tbankRefundVerificationCharge(cfg, {
+      paymentId,
+      amountKopecks: order.amountKopecks,
+      description,
+      customerEmail: user?.email,
+      customerPhone: user?.phone,
+    });
+    if (outcome.result === "failed") {
+      log(`[tbank] ride refund FAILED order=${order.orderId} PaymentId=${paymentId}: ${outcome.reason}`, "tbank");
+      await storage.updateRidePaymentOrder(order.id, { refundStatus: "failed", refundError: outcome.reason });
+    } else {
+      log(`[tbank] ride refund OK order=${order.orderId} PaymentId=${paymentId}: ${outcome.result} (${outcome.status})`, "tbank");
+      await storage.updateRidePaymentOrder(order.id, { refundStatus: "refunded", refundError: null });
+    }
+  } catch (err: any) {
+    const reason = String(err?.message ?? "неизвестная ошибка возврата");
+    log(`[tbank] ride refund ERROR order=${order.orderId} PaymentId=${paymentId}: ${reason}`, "tbank");
+    await storage.updateRidePaymentOrder(order.id, { refundStatus: "failed", refundError: reason });
+  }
+}
 
 // Start (or reuse) a prepaid ride for a ride-payment order that has just been
 // PAID, guarding against a double-start. Shared by the synchronous saved-card
@@ -24,9 +78,14 @@ import { sendToUserAsync } from "../push";
 // The order row is always updated to "paid" with the resolved rideId (on success)
 // or the failure reason (on ride-start failure). Idempotent: an order that
 // already carries a rideId reuses it and never starts a second ride.
+//
+// `cfg` is only used for the failure path (reversing the just-captured charge
+// via reverseRidePayment) — passed in rather than re-resolved here so both
+// callers reuse the exact config they already validated the request against.
 export async function startRideForPaidOrder(
   order: PaymentOrder,
   paymentId: string,
+  cfg?: TbankConfig | null,
 ): Promise<{ ok: true; rideId: number } | { ok: false; reason: string }> {
   let rideId: number | null = order.rideId ?? null;
   if (rideId == null) {
@@ -41,11 +100,24 @@ export async function startRideForPaidOrder(
         prepaid: true,
       });
       if ("error" in started) {
+        const resolvedPaymentId = paymentId || order.paymentId;
         await storage.updateRidePaymentOrder(order.id, {
           status: "paid",
-          paymentId: paymentId || order.paymentId,
+          paymentId: resolvedPaymentId,
           lastErrorMessage: started.error,
         });
+        // The charge already settled on T-Bank's side before this call (Init+
+        // Charge in server/http/payments.ts, or CONFIRMED in the webhook) but
+        // the ride never actually started — the rider must not be left paying
+        // for a bike they never got. Fire-and-forget: /Cancel can retry with
+        // backoff, and neither caller (sync route, async webhook) should block
+        // on it; the outcome persists onto the order via refundStatus/refundError
+        // (mirrors payment_methods' verification-charge reversal).
+        if (resolvedPaymentId) {
+          void reverseRidePayment(order, resolvedPaymentId, cfg);
+        } else {
+          log(`[tbank] cannot reverse ride charge for order=${order.orderId}: no PaymentId on record`, "tbank");
+        }
         return { ok: false, reason: started.error };
       }
       rideId = started.id;
@@ -161,7 +233,7 @@ export async function handleTbankNotification(body: Record<string, unknown>, cfg
     // prefixes / distinct tables), and a paid ride is the time-critical action.
     const order = await storage.getRidePaymentOrder(orderId);
     if (order) {
-      await handleRidePaymentNotification(order, body);
+      await handleRidePaymentNotification(order, body, cfg);
       return;
     }
 
@@ -253,6 +325,7 @@ export async function handleSbpBindingNotification(
 export async function handleRidePaymentNotification(
   order: PaymentOrder,
   body: Record<string, unknown>,
+  cfg?: TbankConfig | null,
 ): Promise<void> {
   if (order.status === "paid") return; // already resolved — idempotent
 
@@ -263,17 +336,28 @@ export async function handleRidePaymentNotification(
 
   if (outcome === "paid") {
     // Start (or reuse) the ride via the shared guarded helper — a racing or
-    // duplicate notification cannot create a second ride. On a ride-start
-    // failure the helper already marks the order paid with the reason; the
-    // webhook just acks (no client to notify here).
-    await startRideForPaidOrder(order, paymentId);
-    sendToUserAsync(order.userId, {
-      title: "Поездка началась",
-      body: `Велосипед ${order.bikeId} — тариф ${order.tariffId.toUpperCase()}. Счастливого пути!`,
-      url: "/",
-      tag: `ride:${order.orderId}`,
-      data: { kind: "ride-start", orderId: order.orderId },
-    });
+    // duplicate notification cannot create a second ride. Check the result:
+    // a ride-start failure already triggers a reversal of the just-captured
+    // charge inside the helper, so the rider must be told about THAT outcome,
+    // not a "ride started" push they'd rightly find confusing/alarming.
+    const started = await startRideForPaidOrder(order, paymentId, cfg);
+    if (started.ok) {
+      sendToUserAsync(order.userId, {
+        title: "Поездка началась",
+        body: `Велосипед ${order.bikeId} — тариф ${order.tariffId.toUpperCase()}. Счастливого пути!`,
+        url: "/",
+        tag: `ride:${order.orderId}`,
+        data: { kind: "ride-start", orderId: order.orderId },
+      });
+    } else {
+      sendToUserAsync(order.userId, {
+        title: "Не удалось начать поездку",
+        body: "Замок не ответил. Списанные средства возвращаются автоматически.",
+        url: "/",
+        tag: `ride:${order.orderId}`,
+        data: { kind: "ride-start-failed", orderId: order.orderId },
+      });
+    }
   } else if (outcome === "failed") {
     await storage.updateRidePaymentOrder(order.id, {
       status: "failed",

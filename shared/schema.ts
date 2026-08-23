@@ -994,6 +994,13 @@ export const paymentOrders = pgTable("payment_orders", {
   lastErrorCode: text("last_error_code"),
   lastErrorMessage: text("last_error_message"),
   lastErrorDetails: text("last_error_details"),
+  // Reversal of an already-captured charge whose ride never actually started
+  // (lock didn't unlock, bike taken in a race, etc. — see abortUnstartedRide
+  // in server/storage/ride.ts and reverseRidePayment in
+  // server/payments/tbank-handlers.ts). Mirrors paymentMethods.refundStatus/
+  // refundError — same claim-then-/Cancel pattern, now for ride charges too.
+  refundStatus: text("refund_status"),        // null | pending | refunded | failed
+  refundError: text("refund_error"),          // human-readable reason when refundStatus = failed
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }),
 }, (t) => [

@@ -109,6 +109,7 @@ export interface IPaymentMethodStorage {
   // (the notification webhook and the client's refresh-bind polling can both
   // observe the same method going "active" concurrently).
   claimRefund(methodId: number): Promise<boolean>;
+  claimRideRefund(orderId: number): Promise<boolean>;
   findPendingCardMethod(userId: string): Promise<PaymentMethod | undefined>;
   findCardMethodByOrderId(orderId: string): Promise<PaymentMethod | undefined>;
   findCardMethodByRequestKey(userId: string, requestKey: string): Promise<PaymentMethod | undefined>;

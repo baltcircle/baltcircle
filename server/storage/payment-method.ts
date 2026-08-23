@@ -437,6 +437,23 @@ export function PaymentMethodMixin<TBase extends Constructor>(Base: TBase) {
         .limit(1))[0] as PaymentOrder | undefined;
     }
 
+    // Same atomic claim as claimRefund() above, for a paid ride-payment order
+    // whose ride never actually started (unlock/availability failure) — the
+    // sync saved-card route and the async notification webhook can both
+    // observe the failure at nearly the same time (see startRideForPaidOrder
+    // in server/payments/tbank-handlers.ts), and /Cancel must run at most once
+    // per PaymentId.
+    async claimRideRefund(orderId: number): Promise<boolean> {
+      const result = await db.update(paymentOrders)
+        .set({ refundStatus: "pending", refundError: null, updatedAt: Date.now() } as any)
+        .where(sql`${paymentOrders.id} = ${orderId} AND (
+          ${paymentOrders.refundStatus} IS NULL
+          OR ${paymentOrders.refundStatus} NOT IN ('pending', 'refunded')
+        )`)
+        .returning({ id: paymentOrders.id });
+      return result.length > 0;
+    }
+
     async updateRidePaymentOrder(id: number, patch: Partial<PaymentOrder>) {
       const set: Record<string, unknown> = { ...patch, updatedAt: Date.now() };
       delete set.id;

@@ -19,6 +19,7 @@ const storageMock = vi.hoisted(() => ({
   updatePaymentMethod: vi.fn(),
   findActiveCardDuplicate: vi.fn(),
   claimRefund: vi.fn(),
+  claimRideRefund: vi.fn(),
   // Consulted first in handleTbankNotification's routing (CRITICAL #1's
   // wallet top-up path) — defaults to "no matching top-up order" so the
   // routing tests below fall through to the ride/card-binding paths they
@@ -36,10 +37,11 @@ const tbankRefundVerificationChargeMock = vi.hoisted(() => vi.fn());
 const tbankInitBindCardMock = vi.hoisted(() => vi.fn());
 
 const logMock = vi.hoisted(() => vi.fn());
+const sendToUserAsyncMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../storage", () => ({ storage: storageMock }));
 vi.mock("../index", () => ({ log: logMock }));
-vi.mock("../push", () => ({ sendToUserAsync: vi.fn() }));
+vi.mock("../push", () => ({ sendToUserAsync: sendToUserAsyncMock }));
 vi.mock("../tbank", async () => {
   const actual = await vi.importActual<typeof import("../tbank")>("../tbank");
   return {
@@ -159,6 +161,61 @@ describe("startRideForPaidOrder", () => {
       expect.objectContaining({ status: "paid", lastErrorMessage: "Велосипед недоступен" }),
     );
   });
+
+  it("reverses the just-captured charge when the ride cannot start, so the rider is never left paying for nothing", async () => {
+    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.startRide.mockResolvedValue({ error: "Замок не ответил" });
+    storageMock.claimRideRefund.mockResolvedValue(true);
+    storageMock.getUser.mockResolvedValue({ email: "rider@example.com", phone: "+79991234567" });
+    tbankRefundVerificationChargeMock.mockResolvedValue({ result: "refunded", status: "REVERSED" });
+
+    const res = await startRideForPaidOrder(makeOrder({ amountKopecks: 30000 }), "pay-1", makeCfg());
+    // Let the fire-and-forget reversal flush.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(res).toEqual({ ok: false, reason: "Замок не ответил" });
+    expect(storageMock.claimRideRefund).toHaveBeenCalledWith(1);
+    expect(tbankRefundVerificationChargeMock).toHaveBeenCalledWith(
+      makeCfg(),
+      expect.objectContaining({
+        paymentId: "pay-1",
+        amountKopecks: 30000,
+        customerEmail: "rider@example.com",
+        customerPhone: "+79991234567",
+      }),
+    );
+    expect(storageMock.updateRidePaymentOrder).toHaveBeenCalledWith(1, {
+      refundStatus: "refunded",
+      refundError: null,
+    });
+  });
+
+  it("does not attempt a reversal twice for the same failed order (concurrency guard)", async () => {
+    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.startRide.mockResolvedValue({ error: "Замок не ответил" });
+    storageMock.claimRideRefund.mockResolvedValue(false); // already claimed by a concurrent caller
+
+    await startRideForPaidOrder(makeOrder(), "pay-1", makeCfg());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(storageMock.claimRideRefund).toHaveBeenCalledWith(1);
+    expect(tbankRefundVerificationChargeMock).not.toHaveBeenCalled();
+  });
+
+  it("records a failed reversal instead of silently leaving the rider charged when no T-Bank config is available", async () => {
+    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.startRide.mockResolvedValue({ error: "Замок не ответил" });
+    storageMock.claimRideRefund.mockResolvedValue(true);
+
+    await startRideForPaidOrder(makeOrder(), "pay-1", null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(tbankRefundVerificationChargeMock).not.toHaveBeenCalled();
+    expect(storageMock.updateRidePaymentOrder).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ refundStatus: "failed" }),
+    );
+  });
 });
 
 describe("handleRidePaymentNotification", () => {
@@ -172,6 +229,33 @@ describe("handleRidePaymentNotification", () => {
     });
 
     expect(storageMock.startRide).toHaveBeenCalledOnce();
+    expect(sendToUserAsyncMock).toHaveBeenCalledWith(
+      "user-1",
+      expect.objectContaining({ data: expect.objectContaining({ kind: "ride-start" }) }),
+    );
+  });
+
+  it("pushes a start-failed notice — not a misleading 'ride started' push — when the ride cannot start", async () => {
+    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.startRide.mockResolvedValue({ error: "Замок не ответил" });
+    storageMock.claimRideRefund.mockResolvedValue(true);
+
+    await handleRidePaymentNotification(makeOrder(), {
+      Status: "CONFIRMED",
+      PaymentId: "pay-1",
+    }, makeCfg());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sendToUserAsyncMock).toHaveBeenCalledWith(
+      "user-1",
+      expect.objectContaining({ data: expect.objectContaining({ kind: "ride-start-failed" }) }),
+    );
+    expect(sendToUserAsyncMock).not.toHaveBeenCalledWith(
+      "user-1",
+      expect.objectContaining({ data: expect.objectContaining({ kind: "ride-start" }) }),
+    );
+    // The webhook path reuses the same reversal as the sync route.
+    expect(storageMock.claimRideRefund).toHaveBeenCalledWith(1);
   });
 
   it("short-circuits (idempotent) when the order is already paid", async () => {

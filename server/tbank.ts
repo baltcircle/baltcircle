@@ -824,22 +824,32 @@ const ALREADY_SETTLED_STATUSES: readonly string[] = [
   "DEADLINE_EXPIRED",
 ];
 
-// Robustly reverse/refund the 1 ₽ verification charge and REPORT the outcome.
+// Robustly reverse/refund ANY T-Bank payment (card or SBP) via /Cancel and
+// REPORT the outcome. Generic despite the historical name: originally built
+// for the 1 ₽ card-verification charge, now also the reversal path for a
+// prepaid ride whose lock never unlocked (see abortUnstartedRide in
+// server/storage/ride.ts) — same acquirer semantics apply regardless of what
+// was being charged (T-Bank picks reversal vs. refund from the payment's own
+// stage, see the /Cancel comment above cancelOnce).
 //
 // Why this is not a fire-and-forget one-liner: a plain /Cancel on a payment that
-// has not settled yet, or a transient acquirer error, silently leaves the rider's
-// 1 ₽ charged. So we:
+// has not settled yet, or a transient acquirer error, silently leaves the rider
+// charged. So we:
 //   1. Read the current status via /GetState (unless we already know it).
 //   2. Skip if the payment already settled/reversed (nothing to give back).
 //   3. Call /Cancel with a few retries for transient failures.
 //   4. Return a structured outcome so the caller can PERSIST refund state and a
-//      stuck 1 ₽ becomes observable in the DB/UI instead of only in logs.
+//      stuck charge becomes observable in the DB/UI instead of only in logs.
 export interface RefundVerificationChargeInput {
   paymentId: string;
   knownStatus?: string;
   amountKopecks: number;
   customerEmail?: string | null;
   customerPhone?: string | null;
+  // Receipt line description shown on the reversal's fiscal receipt. Defaults
+  // to the card-verification text for backwards compatibility with the
+  // original caller; ride-payment reversals pass their own ride description.
+  description?: string;
 }
 
 export async function tbankRefundVerificationCharge(
@@ -871,12 +881,15 @@ export async function tbankRefundVerificationCharge(
     return { result: "nothing_to_cancel", status };
   }
 
-  // Keep this receipt identical to the original Init+Recurrent verification
-  // receipt so the provider can issue the corresponding refund fiscal receipt.
+  // Keep this receipt identical to the ORIGINAL charge's receipt (54-ФЗ
+  // requires a refund's fiscal item to correspond to what was actually sold)
+  // — callers must pass the same description they used at Init time. Falls
+  // back to the card-verification text for the original caller, which never
+  // set this field.
   const receipt = buildReceipt({
     customerEmail: input.customerEmail,
     customerPhone: input.customerPhone,
-    description: CARD_BIND_RECEIPT_DESCRIPTION,
+    description: input.description ?? CARD_BIND_RECEIPT_DESCRIPTION,
     amountKopecks: input.amountKopecks,
   });
 
