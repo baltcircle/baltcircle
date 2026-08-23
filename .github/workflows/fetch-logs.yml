@@ -1,0 +1,44 @@
+name: Fetch production logs (diagnostic)
+
+# One-off diagnostic tool: dumps recent app container logs, filtered to a
+# keyword, into the workflow run output so they can be read via the GitHub
+# API without SSH access to the production VM. Read-only — never touches
+# running containers or app state. Gated behind the same "production"
+# environment manual-approval used by deploy.yml, since it still executes on
+# the production self-hosted runner.
+on:
+  workflow_dispatch:
+    inputs:
+      grep:
+        description: "Keyword to filter logs by (case-insensitive, extended regex)"
+        required: true
+        default: "unlockResult|gps-refresh|unlock"
+      since:
+        description: "How far back to look (docker logs --since value, e.g. 2h, 30m)"
+        required: true
+        default: "2h"
+      lines:
+        description: "Max matching lines to print (most recent)"
+        required: true
+        default: "300"
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-logs:
+    name: Dump filtered app logs
+    runs-on:
+      - self-hosted
+      - baltcircle-prod
+    environment: production
+    steps:
+      - name: Docker logs (filtered)
+        run: |
+          set -e
+          echo "Container: baltcircle-mvp | since=${{ github.event.inputs.since }} | grep=${{ github.event.inputs.grep }}"
+          echo "----------------------------------------------------------------"
+          docker logs --since "${{ github.event.inputs.since }}" baltcircle-mvp 2>&1 \
+            | grep -iE "${{ github.event.inputs.grep }}" \
+            | tail -n "${{ github.event.inputs.lines }}" \
+            || echo "(no matching lines found)"
