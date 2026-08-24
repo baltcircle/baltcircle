@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Lock, Route, Pause, Play, PlusCircle, Loader2, X } from "lucide-react";
+import { Lock, Route, Pause, PlusCircle, Loader2, X } from "lucide-react";
 import { PauseGraceCountdown } from "@/components/PauseGraceCountdown";
 import type { Ride } from "@shared/schema";
 import type { Tariff } from "@shared/geo";
@@ -103,9 +103,7 @@ export function ActiveRideCard({
         >
           {pausing || resuming ? (
             <Loader2 className="w-4 h-4 animate-spin" />
-          ) : paused || awaitingLockClose ? (
-            <Play className="w-4 h-4" />
-          ) : (
+          ) : paused || awaitingLockClose ? null : (
             <Pause className="w-4 h-4" />
           )}
           {paused ? (
