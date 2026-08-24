@@ -2,6 +2,7 @@ import { pgTable, text, integer, bigint, doublePrecision, boolean, serial, numer
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { feedbackTierForRating, FEEDBACK_REASON_IDS } from "./feedback";
 
 /* ------- USERS (rider registration) ------- */
 // Minimal rider identity captured at first rental. No sensitive payment data
@@ -752,6 +753,41 @@ export type AdminRide = Ride & {
   userName: string | null;
   userPhone: string | null;
 };
+
+/* ------- POST-RIDE FEEDBACK ------- */
+// One feedback row per ride, submitted by the rider right after ending it
+// (client-triggered — never forced, always skippable). `reasons` holds ids
+// from the pool matching the submitted rating's tier (shared/feedback.ts).
+// Reason ids are re-validated against that pool server-side in
+// storage.submitRideFeedback — this schema only checks shape, not content,
+// because the allowed set depends on `rating` (cross-field).
+export const rideFeedback = pgTable("ride_feedback", {
+  id: serial("id").primaryKey(),
+  rideId: integer("ride_id").notNull().references(() => rides.id),
+  userId: text("user_id").notNull().references(() => users.id),
+  rating: integer("rating").notNull(),   // 1..5
+  reasons: text("reasons").array().notNull().default(sql`'{}'::text[]`),
+  comment: text("comment"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+}, (t) => [
+  // One feedback per ride — resubmitting (e.g. dialog reopened) updates the
+  // existing row instead of creating a duplicate (see onConflictDoUpdate).
+  uniqueIndex("uidx_ride_feedback_ride").on(t.rideId),
+  index("idx_ride_feedback_rating").on(t.rating),
+  index("idx_ride_feedback_created").on(t.createdAt),
+]);
+export type RideFeedback = typeof rideFeedback.$inferSelect;
+
+export const createRideFeedbackSchema = z.object({
+  rating: z.number().int().min(1).max(5),
+  reasons: z.array(z.string().trim().min(1).max(40)).max(15).default([]),
+  comment: z.union([z.string().trim().max(500), z.literal("")]).optional(),
+});
+export type CreateRideFeedbackInput = z.infer<typeof createRideFeedbackSchema>;
+
+// Re-exported so server storage doesn't need a second import from
+// shared/feedback.ts just for these two symbols.
+export { feedbackTierForRating, FEEDBACK_REASON_IDS };
 
 /* ------- SERVICE / MAINTENANCE TICKETS ------- */
 // Operational service tickets for the fleet. A ticket tracks one issue on one

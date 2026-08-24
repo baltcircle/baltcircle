@@ -13,6 +13,7 @@ import {
   adminCreateBikeSchema, adminUpdateBikeSchema,
   createTicketSchema, updateTicketSchema, addTicketCommentSchema,
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
+  createRideFeedbackSchema,
 } from "@shared/schema";
 import type { PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
 import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./../sms";
@@ -37,7 +38,7 @@ import { sendToUserAsync } from "./../push";
 import {
   riderId, isStaffSession, canManageRide, actorName, clientIp,
   requireRole, requireAuth, requireRoleWhenConfigured,
-  otpLimiter, paymentLimiter, parsePageParams,
+  otpLimiter, paymentLimiter, parsePageParams, feedbackLimiter,
 } from "./context";
 
 export function registerRideRoutes(app: Express): void {
@@ -213,6 +214,21 @@ export function registerRideRoutes(app: Express): void {
     if (!ride) return res.status(404).json({ error: "Поездка не активна" });
     if (!(await canManageRide(req, ride))) return res.status(403).json({ error: "Нет доступа" });
     const r = await storage.cancelPendingEnd(Number(req.params.id));
+    if ("error" in r) return res.status(400).json(r);
+    res.json(r);
+  });
+  // Post-ride feedback: rating + a reason pool that depends on the rating
+  // tier (see shared/feedback.ts). Always attributed to the ride owner
+  // (ride.userId), never the acting session user, so a staff member ending
+  // a rider's ride on their behalf never gets recorded as the feedback author.
+  app.post("/api/rides/:id/feedback", feedbackLimiter, async (req, res) => {
+    const ride = await storage.getRide(Number(req.params.id));
+    if (!ride) return res.status(404).json({ error: "Поездка не найдена" });
+    if (!(await canManageRide(req, ride))) return res.status(403).json({ error: "Нет доступа" });
+    if (ride.status === "active") return res.status(409).json({ error: "Поездка ещё не завершена" });
+    const parsed = createRideFeedbackSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Некорректные данные отзыва" });
+    const r = await storage.submitRideFeedback(ride.id, ride.userId, parsed.data);
     if ("error" in r) return res.status(400).json(r);
     res.json(r);
   });

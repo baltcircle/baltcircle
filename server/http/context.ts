@@ -149,3 +149,13 @@ export const reservationLimiter = rateLimit({
   skip: rateLimitDisabled,
   message: { error: "Слишком много запросов. Попробуйте позже." },
 });
+// One legitimate submission per ride, but the dialog resubmits on edit — this
+// only needs to stop scripted spam, not throttle real usage.
+export const feedbackLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: rateLimitDisabled,
+  message: { error: "Слишком много запросов. Попробуйте позже." },
+});

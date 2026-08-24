@@ -25,6 +25,7 @@ import { usePaymentBanner } from "./map/use-payment-banner";
 import { useReservationBanner } from "./map/use-reservation-banner";
 import { usePendingBikeScan } from "./map/use-pending-bike-scan";
 import { ActiveRideCard } from "./map/ActiveRideCard";
+import { RideFeedbackDialog } from "@/components/RideFeedbackDialog";
 import { ScanAndPaymentBanner } from "./map/ScanAndPaymentBanner";
 import { ReservationBanner } from "./map/ReservationBanner";
 
@@ -89,6 +90,7 @@ export function MapPage() {
   const [rentalMulti, setRentalMulti] = useState(false);
   const [regOpen, setRegOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
+  const [feedbackRideId, setFeedbackRideId] = useState<number | null>(null);
 
   const { drawerOpen, setDrawerOpen, drawerMountedOpen, drawerInstantTick } = useDrawerState();
   const { geoCenter, lastPosRef, handleGeolocate } = useGeolocation();
@@ -179,6 +181,7 @@ export function MapPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
       queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
       toast.toast({ title: "Поездка завершена", description: "Спасибо, что выбрали TakeRide!" });
+      setFeedbackRideId(data.id);
     },
     onError: (err: any) => {
       toast.toast({
@@ -516,6 +519,12 @@ export function MapPage() {
         onOpenChange={setRentalOpen}
         bike={bike ?? availableBikes[0] ?? null}
         multi={rentalMulti}
+      />
+
+      <RideFeedbackDialog
+        open={feedbackRideId !== null}
+        onOpenChange={(v) => !v && setFeedbackRideId(null)}
+        rideId={feedbackRideId}
       />
     </div>
   );

@@ -15,6 +15,7 @@ import type {
   SupportConversation, SupportMessage, SupportMessageRole, AdminSupportConversationRow,
   Lock, AdminCreateLockInput, AdminUpdateLockInput, WalletTopupOrder,
   OauthIdentity, OauthProvider, Reservation,
+  RideFeedback, CreateRideFeedbackInput,
 } from "@shared/schema";
 
 export interface IUserStorage {
@@ -285,6 +286,15 @@ export interface IAnalyticsStorage {
   adminAnalytics(range: { from: number; to: number }): Promise<any>;
 }
 
+export interface IFeedbackStorage {
+  submitRideFeedback(
+    rideId: number,
+    userId: string,
+    input: CreateRideFeedbackInput,
+  ): Promise<RideFeedback | { error: string }>;
+  getRideFeedback(rideId: number): Promise<RideFeedback | undefined>;
+}
+
 export interface IReservationStorage {
   // Product rule: a rider may hold at most ONE active reservation at a time
   // (across any bike) — see createReservation's implementation for the
@@ -317,4 +327,5 @@ export interface IStorage
     ITicketStorage,
     IMapObjectStorage,
     IAnalyticsStorage,
-    IReservationStorage {}
+    IReservationStorage,
+    IFeedbackStorage {}
