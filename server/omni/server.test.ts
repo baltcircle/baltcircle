@@ -51,6 +51,10 @@ class FakeStore implements OmniStore {
   readonly sightings = new Map<string, { firstSeen: number; lastSeen: number }>();
   /** Set to make recordUnassignedLock throw, simulating a database outage. */
   sightingError: Error | null = null;
+  /** IMEIs whose *next* "position" report persistLockReport should reject
+   *  (returns false, skips lat/lng), mirroring PgOmniStore's plausibility
+   *  guard without needing real haversine math in this unit-level fake. */
+  readonly rejectNextPosition = new Set<string>();
 
   async findBikeIdByImei(imei: string): Promise<string | null> {
     if (this.lookupGate) await this.lookupGate;
@@ -95,7 +99,7 @@ class FakeStore implements OmniStore {
     this.offlineSweeps.push(before);
   }
 
-  async persistLockReport(imei: string, message: OmniMessage, at: number): Promise<void> {
+  async persistLockReport(imei: string, message: OmniMessage, at: number): Promise<boolean> {
     const row = this.locks.get(imei) ?? {};
     Object.assign(row, { status: "active", lastSeenAt: at });
     switch (message.type) {
@@ -106,7 +110,17 @@ class FakeStore implements OmniStore {
         lastSignalStrength: message.signal,
       }); break;
       case "position":
-        if (message.fix) Object.assign(row, { lastLatitude: message.fix.lat, lastLongitude: message.fix.lng, lastLocationAt: at });
+        // Test double keeps the real plausibility semantics out of scope
+        // (covered directly against PgOmniStore in store.test.ts); it only
+        // needs to honor rejectNextPosition so server.test.ts can exercise
+        // record()'s wiring of the returned boolean into the live update.
+        if (message.fix) {
+          if (this.rejectNextPosition.delete(imei)) {
+            this.locks.set(imei, row);
+            return false;
+          }
+          Object.assign(row, { lastLatitude: message.fix.lat, lastLongitude: message.fix.lng, lastLocationAt: at });
+        }
         break;
       case "alarm": Object.assign(row, {
         lastAlarmType: ({ 1: "illegal_movement", 2: "fall", 6: "fall_cleared" } as Record<number, string>)[message.code] ?? String(message.code),
@@ -118,6 +132,7 @@ class FakeStore implements OmniStore {
       case "mac": Object.assign(row, { macAddress: message.macAddress }); break;
     }
     this.locks.set(imei, row);
+    return true;
   }
 
   rowsFor(cmd: string): TelemetryRow[] {
@@ -737,6 +752,32 @@ describe("telemetry persistence", () => {
     expect(row.satellites).toBe(9);
     expect(row.t).toBe(at);
     expect(store.live.some((u) => u.bikeId === "bike-a" && u.x === row.x && u.y === row.y)).toBe(true);
+  });
+
+  it("withholds a plausibility-rejected fix from the bikes.lat/lng live update too", async () => {
+    // Regression for the production incident's second half (2026-08-23):
+    // persistLockReport's GPS-jump rejection only protected locks.last_
+    // latitude/last_longitude. buildTelemetry()'s live.x/y is computed
+    // independently from the raw fix, so record() must also withhold it
+    // when persistLockReport reports the fix as rejected — otherwise the
+    // map-displayed position (bikes.lat/lng) still gets corrupted even
+    // though the canonical lock position was correctly protected.
+    const { store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    const at = Math.floor((Date.now() - 60_000) / 1000) * 1000;
+
+    store.rejectNextPosition.add(IMEI_A);
+    device.sendPosition(54.9442, 20.1561, { satellites: 9, at });
+
+    await waitFor(() => store.rowsFor("D0").length === 1);
+    // The telemetry row (ride-track history) still records the raw fix —
+    // only the *live* current-position update is withheld.
+    const row = store.rowsFor("D0")[0];
+    expect(row.x).not.toBeNull();
+    const update = store.live.find((u) => u.bikeId === "bike-a" && u.t === at);
+    expect(update).toBeDefined();
+    expect(update?.x).toBeUndefined();
+    expect(update?.y).toBeUndefined();
   });
 
   it("ignores an implausible GPS clock and timestamps the row on arrival", async () => {

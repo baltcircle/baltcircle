@@ -49,7 +49,7 @@ class FakeStore implements OmniStore {
   // No-op: irrelevant to requestGpsRefresh's own behaviour, and the real
   // gps-refresh-registry integration is already covered by
   // store.gps-refresh.test.ts against the production PgOmniStore.
-  async persistLockReport(_imei: string, _message: OmniMessage, _at: number): Promise<void> {}
+  async persistLockReport(_imei: string, _message: OmniMessage, _at: number): Promise<boolean> { return true; }
 }
 
 const silentLogger = pino({ level: "silent" });

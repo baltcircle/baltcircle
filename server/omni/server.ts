@@ -505,9 +505,16 @@ export class OmniTcpServer {
     const imei = conn.imei;
     if (!imei) return;
 
+    // `undefined` (store doesn't implement persistLockReport, or the write
+    // itself threw) defaults to "accepted" — only an explicit `false` (the
+    // GPS-plausibility rejection in PgOmniStore.persistLockReport) withholds
+    // the fix from the live map update below. A transient write error is a
+    // different failure mode than "this fix is untrustworthy" and must not
+    // be conflated with it.
+    let positionAccepted = true;
     if (this.options.store.persistLockReport) {
       try {
-        await this.options.store.persistLockReport(imei, message, receivedAt);
+        positionAccepted = await this.options.store.persistLockReport(imei, message, receivedAt);
       } catch (err) {
         this.log.error({ err, imei, type: message.type }, "failed to persist lock report");
       }
@@ -524,6 +531,17 @@ export class OmniTcpServer {
 
     const built = buildTelemetry(bikeId, imei, message, receivedAt);
     if (!built) return;
+
+    // Mirror the same rejection into the bikes.lat/lng live update: without
+    // this, an implausible fix would still corrupt the map position even
+    // though locks.last_latitude/last_longitude just rejected it, since the
+    // two are otherwise written independently (production incident,
+    // 2026-08-23). Dropping x/y leaves `t` (and any other field) intact, so
+    // applyLiveUpdates' COALESCE just keeps the bike's last good position.
+    if (message.type === "position" && !positionAccepted && built.live) {
+      delete built.live.x;
+      delete built.live.y;
+    }
 
     // Positionless status chatter is throttled per bike so a misbehaving device
     // cannot turn into a write storm. Positions and alarms always land.

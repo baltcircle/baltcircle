@@ -87,7 +87,17 @@ export interface OmniStore {
    * framing.
    */
   resolveLock?(imei: string, at: number): Promise<LockAuthResult>;
-  persistLockReport?(imei: string, message: OmniMessage, at: number): Promise<void>;
+  /**
+   * Returns `false` when a "position" message's fix was rejected as an
+   * implausible jump (see MAX_PLAUSIBLE_GPS_JUMP_M) and therefore NOT written
+   * to locks.last_latitude/last_longitude — the caller (server.ts `record()`)
+   * uses this to also withhold the fix from the bikes.lat/lng live update, so
+   * a bad fix cannot corrupt one "current position" column while the other
+   * stays correct. Always `true` for non-position message types and for a
+   * position message that was written normally (including the always-
+   * accepted first-ever fix for a lock).
+   */
+  persistLockReport?(imei: string, message: OmniMessage, at: number): Promise<boolean>;
   markLocksOfflineBefore?(before: number): Promise<void>;
 }
 
@@ -139,7 +149,7 @@ export class PgOmniStore implements OmniStore {
     return { authorized: true, bikeId: updated.rows[0].bike_id };
   }
 
-  async persistLockReport(imei: string, message: OmniMessage, at: number): Promise<void> {
+  async persistLockReport(imei: string, message: OmniMessage, at: number): Promise<boolean> {
     // Audit F-08: reports for one IMEI are decoded in arrival order but their
     // async DB writes race in the pool, so an earlier (older) report's
     // UPDATE can complete after a later (newer) one's. GREATEST() alone kept
@@ -159,12 +169,12 @@ export class PgOmniStore implements OmniStore {
       case "checkin":
         await pool.query(`UPDATE locks SET ${base}, last_battery_voltage = $3 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
           [imei, at, voltage(message.voltageCv)]);
-        return;
+        return true;
       case "heartbeat":
         await pool.query(`UPDATE locks SET ${base}, last_lock_state = $3,
           last_battery_voltage = $4, last_signal_strength = $5 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
           [imei, at, message.locked ? "locked" : "unlocked", voltage(message.voltageCv), message.signal]);
-        return;
+        return true;
       case "position":
         if (message.valid && message.fix) {
           // Sanity-bound the fix against the lock's own last stored position
@@ -200,7 +210,7 @@ export class PgOmniStore implements OmniStore {
               "omni: rejected implausible GPS fix (jump exceeds MAX_PLAUSIBLE_GPS_JUMP_M)",
             );
             await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
-            return;
+            return false;
           }
           const result = await pool.query(`UPDATE locks SET ${base}, last_latitude = $3,
             last_longitude = $4, last_location_at = $2 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
@@ -223,12 +233,12 @@ export class PgOmniStore implements OmniStore {
         } else {
           await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
         }
-        return;
+        return true;
       case "alarm": {
         const alarmType = ({ 1: "illegal_movement", 2: "fall", 6: "fall_cleared" } as Record<number, string>)[message.code] ?? String(message.code);
         await pool.query(`UPDATE locks SET ${base}, last_alarm_type = $3, last_alarm_at = $2 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
           [imei, at, alarmType]);
-        return;
+        return true;
       }
       case "lockReport": {
         await pool.query(`UPDATE locks SET ${base}, last_lock_state = 'locked' WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
@@ -248,7 +258,7 @@ export class PgOmniStore implements OmniStore {
           );
           if (updated.rows[0]) {
             rideEvents.emit(updated.rows[0].user_id, "point");
-            return;
+            return true;
           }
           // Ride no longer active/already paused by the time the report landed
           // (e.g. rider ended the ride while the closure was in flight) — fall
@@ -271,20 +281,21 @@ export class PgOmniStore implements OmniStore {
             [at, bikeId],
           );
         }
-        return;
+        return true;
       }
       case "firmware":
         await pool.query(`UPDATE locks SET ${base}, firmware_version = $3, device_type_code = $4 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
           [imei, at, message.firmwareVersion, message.deviceTypeCode]);
-        return;
+        return true;
       case "iccid":
         await pool.query(`UPDATE locks SET ${base}, sim_iccid = $3 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at, message.simIccid]);
-        return;
+        return true;
       case "mac":
         await pool.query(`UPDATE locks SET ${base}, mac_address = $3 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at, message.macAddress]);
-        return;
+        return true;
       default:
         await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
+        return true;
     }
   }
 
