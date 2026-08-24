@@ -43,13 +43,6 @@
       "when": 1787337300987,
       "tag": "0005_test_lock_qr_and_is_test",
       "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1787525671675,
-      "tag": "0006_regular_wild_child",
-      "breakpoints": true
     }
   ]
 }
