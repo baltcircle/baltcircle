@@ -118,12 +118,55 @@ export function MapPage() {
   }, [activeRide?.id, activeRide?.pausedAt]);
   useEffect(() => () => clearLockCloseTimer(), []);
 
+  // Аналогично awaitingLockClose/lockCloseTimer выше, но для flow завершения —
+  // отдельное состояние, чтобы ActiveRideCard могла отличать ожидание
+  // паузы от ожидания завершения (разный текст/кнопка) и оба могут быть
+  // активны независимо друг от друга (хотя на одном замке они взаимоисключаются
+  // на сервере — requestEndRide чистит pending-паузу того же замка).
+  const [awaitingEndLockClose, setAwaitingEndLockClose] = useState(false);
+  const endLockCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearEndLockCloseTimer = () => {
+    if (endLockCloseTimer.current) {
+      clearTimeout(endLockCloseTimer.current);
+      endLockCloseTimer.current = null;
+    }
+  };
+  // Как только поездка реально завершилась (activeRide пришёл по SSE как null,
+  // когда асинхронный endRide отработал на lockReport) или сменилась на другую,
+  // ожидание больше не актуально.
+  useEffect(() => {
+    if (!activeRide) {
+      clearEndLockCloseTimer();
+      setAwaitingEndLockClose(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRide?.id]);
+  useEffect(() => () => clearEndLockCloseTimer(), []);
+
+  type EndResponse = Ride | { status: "awaiting_lock_close"; expiresInMs: number };
+
   const endMut = useMutation({
     mutationFn: async (rideId: number) => {
       const res = await apiRequest("POST", `/api/rides/${rideId}/end`);
-      return res.json() as Promise<Ride>;
+      return res.json() as Promise<EndResponse>;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      if ("expiresInMs" in data) {
+        setAwaitingEndLockClose(true);
+        clearEndLockCloseTimer();
+        endLockCloseTimer.current = setTimeout(() => {
+          setAwaitingEndLockClose(false);
+          toast.toast({
+            title: "Не дождались закрытия замка",
+            description: "Попробуйте завершить поездку ещё раз.",
+            variant: "destructive",
+          });
+        }, data.expiresInMs);
+        queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+        return;
+      }
+      clearEndLockCloseTimer();
+      setAwaitingEndLockClose(false);
       queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
       queryClient.invalidateQueries({ queryKey: ["/api/rides"] });
       queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
@@ -134,6 +177,24 @@ export function MapPage() {
     onError: (err: any) => {
       toast.toast({
         title: "Не удалось завершить",
+        description: err?.message ?? "Попробуйте ещё раз",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const cancelEndMut = useMutation({
+    mutationFn: async (rideId: number) => {
+      const res = await apiRequest("POST", `/api/rides/${rideId}/cancel-end`);
+      return res.json() as Promise<{ ok: true }>;
+    },
+    onSuccess: () => {
+      clearEndLockCloseTimer();
+      setAwaitingEndLockClose(false);
+    },
+    onError: (err: any) => {
+      toast.toast({
+        title: "Не удалось отменить",
         description: err?.message ?? "Попробуйте ещё раз",
         variant: "destructive",
       });
@@ -343,6 +404,9 @@ export function MapPage() {
             pausing={pauseMut.isPending}
             resuming={resumeMut.isPending}
             awaitingLockClose={awaitingLockClose}
+            awaitingEndLockClose={awaitingEndLockClose}
+            onCancelEnd={() => cancelEndMut.mutate(activeRide.id)}
+            cancellingEnd={cancelEndMut.isPending}
             onExtend={(tariff) => extendMut.mutate({ rideId: activeRide.id, tariff })}
             extending={extendMut.isPending}
           />

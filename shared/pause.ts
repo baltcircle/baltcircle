@@ -62,15 +62,36 @@ export function liveElapsedRidingMs(ride: PausableRide, now: number): number {
 }
 
 /**
+ * The paid-until instant as of `now`, folding in whatever free-grace credit
+ * the current in-progress pause would contribute if resolved right now.
+ * Single source of truth shared by computeLiveOverage and liveRemainingPaidMs
+ * so the countdown display and the overage calculation never disagree about
+ * where the paid window actually ends.
+ */
+export function effectivePaidUntilAt(ride: PausableRide, now: number): number {
+  const basePaidUntilAt = ride.paidUntilAt ?? ride.startedAt;
+  return basePaidUntilAt + pendingPauseCreditMs(ride, now);
+}
+
+/**
  * Live overage preview, consistent with what endRide will actually settle:
  * usedMs is raw wall-clock (endRide never subtracts paused time from it —
- * only paidUntilAt moves), paidMs reflects paidUntilAt plus whatever free
- * credit the current in-progress pause would contribute if resolved now.
+ * only paidUntilAt moves), paidMs reflects effectivePaidUntilAt.
  */
 export function computeLiveOverage(ride: PausableRide, now: number): OverageResult {
-  const basePaidUntilAt = ride.paidUntilAt ?? ride.startedAt;
-  const effectivePaidUntilAt = basePaidUntilAt + pendingPauseCreditMs(ride, now);
   const usedMs = now - ride.startedAt;
-  const paidMs = effectivePaidUntilAt - ride.startedAt;
+  const paidMs = effectivePaidUntilAt(ride, now) - ride.startedAt;
   return computeOverage(usedMs, paidMs);
+}
+
+/**
+ * "В пути" countdown display: remaining paid time, i.e. the exact complement
+ * of liveElapsedRidingMs relative to the paid budget — freezes during a
+ * within-grace pause and resumes counting down once grace is exhausted,
+ * same as the elapsed timer freezes/resumes, since both anchor on the same
+ * effectivePaidUntilAt. Never negative — overage is shown separately via
+ * computeLiveOverage/LiveOverage, not as a negative countdown.
+ */
+export function liveRemainingPaidMs(ride: PausableRide, now: number): number {
+  return Math.max(0, effectivePaidUntilAt(ride, now) - now);
 }

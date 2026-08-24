@@ -5,8 +5,8 @@ export { db, pool, bootstrapReady };
 
 // Re-exported for external callers (SSE fan-out, admin bike-list broadcast).
 export { bikeEvents, BIKE_EVENT_CHANNEL } from "./storage/events";
-import { rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED } from "./storage/events";
-import type { LockGpsRefreshedPayload } from "./storage/events";
+import { rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, pendingEndEvents, LOCK_CLOSED_FOR_END } from "./storage/events";
+import type { LockGpsRefreshedPayload, LockClosedForEndPayload } from "./storage/events";
 import { log } from "./logger";
 export { rideEvents };
 import type { RideEventReason } from "./storage/events";
@@ -72,4 +72,15 @@ export const storage = new DatabaseStorage();
 // process or the admin request that originally armed the burst.
 lockGpsEvents.on(LOCK_GPS_REFRESHED, (payload: LockGpsRefreshedPayload) => {
   storage.applyGpsRefresh(payload).catch((err) => log(`gps-refresh apply failed: ${(err as Error).message}`));
+});
+
+// Bridge: server/omni/store.ts consumes a rider's armed "завершить" request
+// once the OMNI lock reports a physical closure and emits here — only this
+// storage layer can run the full transactional settlement (billing, bike
+// release, geofence check). Best-effort: a failure here (including the
+// expected "stale GPS" gate) must not crash the OMNI TCP process; the rider's
+// client-side TTL will expire and let them retry, which fast-paths via the
+// physically_locked_at flag store.ts already set alongside this event.
+pendingEndEvents.on(LOCK_CLOSED_FOR_END, (payload: LockClosedForEndPayload) => {
+  storage.endRide(payload.rideId).catch((err) => log(`pending-end settle failed: ride=${payload.rideId} ${(err as Error).message}`));
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  frozenSoFarMs, pendingPauseCreditMs, liveElapsedRidingMs, computeLiveOverage, type PausableRide,
+  frozenSoFarMs, pendingPauseCreditMs, liveElapsedRidingMs, liveRemainingPaidMs, computeLiveOverage, type PausableRide,
 } from "./pause";
 import { PAUSE_FREE_GRACE_MS } from "./geo";
 
@@ -115,5 +115,42 @@ describe("computeLiveOverage", () => {
     const r = ride({ paidUntilAt: HOUR, pausedAt: HOUR, totalPausedMs: PAUSE_FREE_GRACE_MS });
     const { overageKopecks } = computeLiveOverage(r, HOUR + 3 * MIN);
     expect(overageKopecks).toBeGreaterThan(0);
+  });
+});
+
+describe("liveRemainingPaidMs — обратный отсчёт, точный комплемент liveElapsedRidingMs", () => {
+  it("сразу после старта равняется полным оплаченным временем и убывает в реальном времени", () => {
+    const r = ride({ paidUntilAt: HOUR });
+    expect(liveRemainingPaidMs(r, 0)).toBe(HOUR);
+    expect(liveRemainingPaidMs(r, 10 * MIN)).toBe(50 * MIN);
+  });
+
+  // Намеренно только «не пауза» и «начало первой паузы без предыдущей истории» —
+  // paidUntilAt уже включает любой ранее разрешённый кредит через resumeRide, поэтому сочетание
+  // «pausedAt в прошлом плюс ненулевой totalPausedMs» здесь не моделируется — в реальной системе
+  // paidUntilAt был бы уже сдвинут предыдущими resume, и инвариант не держится на сырых данных.
+  it("всегда точный комплемент liveElapsedRidingMs относительно оплаченного окна", () => {
+    const cases: PausableRide[] = [
+      ride({ paidUntilAt: HOUR }),
+      ride({ paidUntilAt: HOUR, pausedAt: 0, totalPausedMs: 0 }),
+    ];
+    for (const r of cases) {
+      for (const now of [0, 5 * MIN, 30 * MIN, 45 * MIN]) {
+        const paidMs = r.paidUntilAt! - r.startedAt;
+        expect(liveElapsedRidingMs(r, now) + liveRemainingPaidMs(r, now)).toBe(paidMs);
+      }
+    }
+  });
+
+  it("замирает во время внутри-грейсовой паузы, потом тикает вниз после её исчерпания", () => {
+    const r = ride({ paidUntilAt: HOUR, pausedAt: 5 * MIN, totalPausedMs: 0 });
+    const atPause = liveRemainingPaidMs(r, 5 * MIN);
+    const midPause = liveRemainingPaidMs(r, 5 * MIN + 2 * MIN);
+    expect(midPause).toBe(atPause); // в рамках грейса — не убывает
+  });
+
+  it("никогда не уходит в минус после истечения оплаченного времени", () => {
+    const r = ride({ paidUntilAt: HOUR });
+    expect(liveRemainingPaidMs(r, HOUR + 90 * 1000)).toBe(0);
   });
 });

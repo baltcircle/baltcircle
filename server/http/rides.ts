@@ -188,16 +188,31 @@ export function registerRideRoutes(app: Express): void {
     if ("error" in r) return res.status(400).json(r);
     res.json(r);
   });
+  // End is gated on the OMNI lock's own physical-closure report, mirroring
+  // pause above (see server/omni/pending-end-registry.ts) — this endpoint
+  // ARMS the expectation (or, for legacy no-lock bikes / an already-confirmed
+  // closure, settles immediately via endRide) and never assumes success from
+  // the tap alone.
   app.post("/api/rides/:id/end", async (req, res) => {
     const ride = await storage.getRide(Number(req.params.id));
     if (!ride) return res.status(404).json({ error: "Поездка не активна" });
     if (!(await canManageRide(req, ride))) return res.status(403).json({ error: "Нет доступа" });
-    const r = await storage.endRide(Number(req.params.id));
+    const r = await storage.requestEndRide(Number(req.params.id));
     if (!r) return res.status(404).json({ error: "Поездка не активна" });
-    // Radius-gating (Phase 2): endRide now returns a { error } shape (not a
-    // thrown exception or undefined) when the bike isn't in a parking zone or
-    // the lock's GPS fix is stale — the rider endpoint must surface this as a
-    // 400, not fall through to res.json(r) as if it were a settled ride.
+    // Radius-gating (Phase 2): the settled-immediately branch can still return
+    // an { error } shape (bike isn't in a parking zone / stale lock GPS) —
+    // must surface as 400, not fall through to res.json(r) as a settled ride.
+    if ("error" in r) return res.status(400).json(r);
+    res.json(r);
+  });
+  // Cancel an armed (not-yet-confirmed) end request while keeping the ride
+  // active — mirrors /resume doubling as "cancel my pending pause", but end
+  // never writes ride state while awaiting_lock_close, so this is registry-only.
+  app.post("/api/rides/:id/cancel-end", async (req, res) => {
+    const ride = await storage.getRide(Number(req.params.id));
+    if (!ride) return res.status(404).json({ error: "Поездка не активна" });
+    if (!(await canManageRide(req, ride))) return res.status(403).json({ error: "Нет доступа" });
+    const r = await storage.cancelPendingEnd(Number(req.params.id));
     if ("error" in r) return res.status(400).json(r);
     res.json(r);
   });

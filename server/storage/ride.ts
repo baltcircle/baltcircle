@@ -4,13 +4,14 @@ import { eq, sql, and, desc, asc, inArray, count } from "drizzle-orm";
 import {
   TARIFFS, tariffPriceKopecks, tariffDurationMs, realToMap,
   findNearestParkingWithinRadius, findNearestParkingWithinRadiusFromRealCoords,
-  LOCK_GPS_LIVE_MS, RIDE_GPS_TRACKING_INTERVAL_SECONDS, PAUSE_ARM_TTL_MS,
+  LOCK_GPS_LIVE_MS, RIDE_GPS_TRACKING_INTERVAL_SECONDS, PAUSE_ARM_TTL_MS, END_ARM_TTL_MS,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
 import { pendingPauseCreditMs } from "@shared/pause";
 import { sendToUserAsync } from "../push";
 import { getLockGateway } from "../omni/gateway";
 import { registerPendingPause, clearPendingPause } from "../omni/pause-registry";
+import { registerPendingEnd, clearPendingEnd } from "../omni/pending-end-registry";
 import { log } from "../logger";
 import { db, pool } from "../db/bootstrap";
 import { rideEvents } from "./events";
@@ -665,6 +666,57 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       }
       registerPendingPause(bike.lockImei, rideId, ride.userId, PAUSE_ARM_TTL_MS);
       return { status: "awaiting_lock_close" as const, expiresInMs: PAUSE_ARM_TTL_MS };
+    }
+
+    // Rider tapped "Завершить поездку". Same physical-confirmation rationale as
+    // requestPauseRide above: the server cannot command the lock closed, only
+    // await its own report — so a smart-lock bike ARMS a short expectation
+    // (pending-end-registry.ts) instead of settling immediately. The actual
+    // endRide() runs from server/omni/store.ts's lockReport handler via the
+    // pendingEndEvents bridge (server/storage.ts) once the closure is confirmed.
+    //
+    // Fast path via physicallyLockedAt: if a previous end attempt already got
+    // as far as a confirmed physical closure (this ride's dual-purpose F-04
+    // column, set either by the anomaly fallback or by this same flow's own
+    // lockReport branch) but the eventual endRide() settlement failed — e.g.
+    // endRide's stale-GPS geofence gate — the lock is already closed and will
+    // never send a second closure report. Re-arming here would hang the pending-
+    // end registry forever waiting for an event that can't happen. Instead,
+    // once physically_locked_at is set, every retry calls endRide() directly and
+    // synchronously, surfacing its error to the client exactly like the
+    // pre-this-feature direct-tap behaviour.
+    async requestEndRide(
+      this: {
+        endRide(rideId: number, opts?: { skipGeofence?: boolean }): Promise<Ride | { error: string } | undefined>;
+        invalidateBikesCache(opts?: { silent?: boolean }): void;
+        loadRidePoints(rideId: number, executor: { execute: (query: ReturnType<typeof sql>) => Promise<{ rows: unknown[] }> }): Promise<[number, number, number][]>;
+      },
+      rideId: number,
+    ): Promise<{ status: "awaiting_lock_close"; expiresInMs: number } | Ride | { error: string } | undefined> {
+      const ride = (await db.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride | undefined;
+      if (!ride || ride.status !== "active") return { error: "Поездка не активна" };
+      const bike = (await db.select().from(bikes).where(eq(bikes.id, ride.bikeId)).limit(1))[0] as Bike | undefined;
+      if (!bike?.lockImei || ride.physicallyLockedAt != null) {
+        return this.endRide(rideId);
+      }
+      registerPendingEnd(bike.lockImei, rideId, ride.userId, END_ARM_TTL_MS);
+      // End supersedes any stale pending pause armed on the same lock — the
+      // rider is now leaving the bike for good, so a late pause-closure report
+      // must not fire instead of (or in a race with) the end.
+      clearPendingPause(bike.lockImei);
+      return { status: "awaiting_lock_close" as const, expiresInMs: END_ARM_TTL_MS };
+    }
+
+    // Best-effort cancel of an armed "Завершить" expectation, mirroring how
+    // resumeRide doubles as "cancel my pending pause" above. Only clears the
+    // registry entry — the ride itself was never touched by requestEndRide's
+    // awaiting_lock_close branch, so there's no DB state to roll back.
+    async cancelPendingEnd(rideId: number): Promise<{ ok: true } | { error: string }> {
+      const ride = (await db.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride | undefined;
+      if (!ride) return { error: "Поездка не найдена" };
+      const bike = (await db.select().from(bikes).where(eq(bikes.id, ride.bikeId)).limit(1))[0] as Bike | undefined;
+      if (bike?.lockImei) clearPendingEnd(bike.lockImei);
+      return { ok: true as const };
     }
 
     // Resume is rider-initiated and takes effect immediately — unlike pause, it

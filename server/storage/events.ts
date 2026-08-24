@@ -40,3 +40,21 @@ export interface LockGpsRefreshedPayload {
   lat: number;
   lng: number;
 }
+
+// Pending-end bridge: mirrors the GPS-refresh bridge above. A rider's
+// "завершить" request arms a short expectation (server/omni/pending-end-registry.ts)
+// instead of settling immediately, because ending must wait for the OMNI
+// lock's own physical-closure report. Once that report lands,
+// persistLockReport's "lockReport" case consumes the armed expectation and
+// emits this so the full transactional settlement (storage.endRide, which
+// this Drizzle-free module intentionally cannot call directly — see
+// server/omni/store.ts's file header) runs on the storage layer. Wired in
+// server/storage.ts, alongside the LOCK_GPS_REFRESHED listener.
+export const pendingEndEvents = new EventEmitter();
+pendingEndEvents.setMaxListeners(0);
+export const LOCK_CLOSED_FOR_END = "closed-for-end";
+export interface LockClosedForEndPayload {
+  rideId: number;
+  userId: string;
+  imei: string;
+}

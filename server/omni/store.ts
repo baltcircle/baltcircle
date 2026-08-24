@@ -14,8 +14,12 @@ import { haversineM, MAX_PLAUSIBLE_GPS_JUMP_M } from "@shared/geo";
 import { pool } from "../db/bootstrap";
 import { logger } from "../logger";
 import { consumePendingPause } from "./pause-registry";
+import { consumePendingEnd } from "./pending-end-registry";
 import { consumePendingGpsRefresh } from "./gps-refresh-registry";
-import { rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, type LockGpsRefreshedPayload } from "../storage/events";
+import {
+  rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, type LockGpsRefreshedPayload,
+  pendingEndEvents, LOCK_CLOSED_FOR_END, type LockClosedForEndPayload,
+} from "../storage/events";
 
 // Keep the public TCP process decoupled from the full Drizzle schema graph: it
 // is started before HTTP routes and should only need the constants it owns.
@@ -242,6 +246,39 @@ export class PgOmniStore implements OmniStore {
       }
       case "lockReport": {
         await pool.query(`UPDATE locks SET ${base}, last_lock_state = 'locked' WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
+
+        // End feature: a rider taps "Завершить" and the app tells them to close
+        // the lock; the actual settlement only runs on THIS report, via the
+        // event bridge (this module stays Drizzle-free — see file header),
+        // since ending is the full transactional endRide(), not a raw UPDATE
+        // like pause below. Checked BEFORE the pause check — requestEndRide
+        // clears any stale pending pause on the same lock when it arms, so
+        // the two are mutually exclusive in practice, but end takes priority
+        // if both were somehow armed.
+        //
+        // Also flags physically_locked_at (same column F-04 uses below) even
+        // though this closure is expected, not anomalous: if the eventual
+        // storage.endRide() settlement fails (e.g. stale lock GPS — see its
+        // geofence gate), the rider's retried "завершить" tap must be able to
+        // fast-path straight to endRide() via requestEndRide's
+        // physicallyLockedAt check instead of re-arming and waiting forever
+        // for a second closure report that will never come (the lock is
+        // already closed and won't report again until it's reopened).
+        const armedEnd = consumePendingEnd(imei);
+        if (armedEnd) {
+          pendingEndEvents.emit(LOCK_CLOSED_FOR_END, {
+            rideId: armedEnd.rideId, userId: armedEnd.userId, imei,
+          } satisfies LockClosedForEndPayload);
+          const bikeIdForEnd = await this.findBikeIdByImei(imei);
+          if (bikeIdForEnd) {
+            await pool.query(
+              `UPDATE rides SET physically_locked_at = $1
+               WHERE bike_id = $2 AND status = 'active' AND physically_locked_at IS NULL`,
+              [at, bikeIdForEnd],
+            );
+          }
+          return true;
+        }
 
         // Pause feature: a rider taps "Пауза" and the app tells them to close
         // the lock; the actual pause only activates on THIS report, once the
