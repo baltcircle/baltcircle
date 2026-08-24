@@ -1,0 +1,101 @@
+name: One-off data fix — reset BC-001 position to P-16 (manual)
+
+# Narrowly-scoped, single-use data correction for the 2026-08-23 GPS-
+# corruption incident. Resets BC-001's stored position (both the real-GPS
+# locks columns and the map-space bikes columns) to parking P-16's known-good
+# coordinates, now that the code fix (main@5ecaf18) that caused the
+# corruption is confirmed live. Never auto-runs — workflow_dispatch only,
+# requires typing an exact confirmation phrase, and is gated behind the same
+# "production" environment manual-approval used by deploy.yml since it write
+# to the production database. Intended to be deleted (or left inert) once
+# used — this is a one-off runbook step, not a recurring admin tool.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type exactly: RESET-BC001-TO-P16'
+        required: true
+
+permissions: {}
+
+jobs:
+  fix-position:
+    name: Reset BC-001 lat/lng to P-16
+    runs-on:
+      - self-hosted
+      - baltcircle-prod
+    environment: production
+    steps:
+      - name: Validate confirmation phrase
+        run: |
+          set -e
+          if [ "${{ github.event.inputs.confirm }}" != "RESET-BC001-TO-P16" ]; then
+            echo "❌ Confirmation phrase did not match — refusing to touch production data."
+            exit 1
+          fi
+
+      - name: Write correction SQL
+        run: |
+          cat > "${{ github.workspace }}/fix-bc001.sql" <<'SQL'
+          BEGIN;
+
+          -- Guard: abort (rolling back the whole transaction) if P-16's
+          -- stored coordinates have drifted since they were verified against
+          -- the live public API this session. Prevents writing a stale target
+          -- position if an operator has since re-pinned this parking.
+          DO $$
+          DECLARE
+            p_lat double precision;
+            p_lng double precision;
+          BEGIN
+            SELECT lat, lng INTO p_lat, p_lng FROM parkings WHERE id = 'P-16';
+            IF p_lat IS NULL THEN
+              RAISE EXCEPTION 'parking P-16 not found';
+            END IF;
+            IF abs(p_lat - 3588.0955023763804) > 0.001 OR abs(p_lng - 868.5580980288846) > 0.001 THEN
+              RAISE EXCEPTION 'P-16 coordinates changed since verification (lat=%, lng=%) -- aborting, re-derive target values', p_lat, p_lng;
+            END IF;
+          END $$;
+
+          SELECT 'bikes BEFORE' AS phase, id, lat, lng, last_seen FROM bikes WHERE id = 'BC-001';
+          SELECT 'locks BEFORE' AS phase, imei, last_latitude, last_longitude, last_location_at FROM locks WHERE imei = '862596083776074';
+
+          -- bikes.lat/lng are stored in the same abstract map space as
+          -- parkings.lat/lng (see shared/schema.ts) -- copy directly, no
+          -- projection needed.
+          UPDATE bikes
+             SET lat = (SELECT lat FROM parkings WHERE id = 'P-16'),
+                 lng = (SELECT lng FROM parkings WHERE id = 'P-16')
+           WHERE id = 'BC-001';
+
+          -- locks.last_latitude/last_longitude are real WGS84 GPS. The
+          -- values below are mapToReal(P-16.lng, P-16.lat) computed with the
+          -- production shared/geo.ts function itself (not hand-derived),
+          -- verified this session to round-trip back to P-16's exact stored
+          -- map coordinates via realToMap().
+          UPDATE locks
+             SET last_latitude = 54.68301491626494,
+                 last_longitude = 20.474050086167978,
+                 last_location_at = (extract(epoch from now()) * 1000)::bigint
+           WHERE imei = '862596083776074';
+
+          SELECT 'bikes AFTER' AS phase, id, lat, lng, last_seen FROM bikes WHERE id = 'BC-001';
+          SELECT 'locks AFTER' AS phase, imei, last_latitude, last_longitude, last_location_at FROM locks WHERE imei = '862596083776074';
+
+          COMMIT;
+          SQL
+
+      - name: Apply correction
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -e
+          if [ -z "$DATABASE_URL" ]; then
+            echo "❌ Secret DATABASE_URL is not set."
+            exit 1
+          fi
+          docker run --rm \
+            -e DATABASE_URL \
+            -v "${{ github.workspace }}/fix-bc001.sql:/fix.sql:ro" \
+            postgres:16-alpine \
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /fix.sql
