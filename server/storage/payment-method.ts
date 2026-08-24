@@ -349,6 +349,12 @@ export function PaymentMethodMixin<TBase extends Constructor>(Base: TBase) {
         paymentMethodId?: number;
         rebillId?: string;
         idempotencyKey: string;
+        // Set ONLY for a ride-EXTEND charge (never for a ride-start charge). This
+        // is the sole discriminator startRideForPaidOrder/extendRideForPaidOrder
+        // use to tell the two flows apart once the order is later loaded from a
+        // webhook or the synchronous route — it must be present at creation time,
+        // not patched in after payment.
+        rideId?: number;
       },
     ): Promise<{ order: PaymentOrder; created: boolean }> {
       const existing = await this.getRidePaymentOrderByIdempotencyKey(input.userId, input.idempotencyKey);
@@ -363,6 +369,7 @@ export function PaymentMethodMixin<TBase extends Constructor>(Base: TBase) {
           amountKopecks: input.amountKopecks,
           source: input.source ?? "hosted",
           paymentMethodId: input.paymentMethodId ?? null,
+          rideId: input.rideId ?? null,
           // Write-once audit-trail copy (never read back) — encrypted at rest
           // for defense-in-depth consistency with payment_methods (audit HIGH #9).
           rebillId: input.rebillId ? encryptToken(input.rebillId) : null,

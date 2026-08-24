@@ -778,24 +778,31 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       return ride;
     }
 
-    // Extend the paid window by a tariff's duration, charging its price from
-    // the wallet — always available, including while paused (product decision:
-    // extension is independent of the pause state). Same atomic
-    // conditional-UPDATE debit pattern as startRide (audit CRITICAL #5) so a
-    // concurrent debit/credit against the same wallet can never be lost.
-    async extendRide(rideId: number, tariff: string) {
+    // Extend the paid window by a tariff's duration — always available,
+    // including while paused (product decision: extension is independent of
+    // the pause state). Two payment paths, mirroring startRide:
+    //   - prepaid = true  -> the rider already paid via T-Bank (hosted/saved
+    //     card/SBP) BEFORE this call — the wallet must NOT be debited again.
+    //   - prepaid = false -> internal/legacy flow: debit the tariff price from
+    //     the wallet balance atomically as part of extending (same atomic
+    //     conditional-UPDATE pattern as startRide, audit CRITICAL #5, so a
+    //     concurrent debit/credit against the same wallet can never be lost).
+    async extendRide(rideId: number, tariff: string, opts?: { prepaid?: boolean }) {
+      const prepaid = opts?.prepaid ?? false;
       const tariffDef = TARIFFS.find((t) => t.id === tariff);
       if (!tariffDef) return { error: "Неизвестный тариф" };
       const costKopecks = tariffPriceKopecks(tariffDef);
       const outcome = await db.transaction(async (tx) => {
         const r = (await tx.select().from(rides).where(eq(rides.id, rideId)).for("update").limit(1))[0] as Ride | undefined;
         if (!r || r.status !== "active") return { error: "Поездка не активна" };
-        const debited = await tx.execute(sql`
-          UPDATE wallet SET balance = balance - ${costKopecks}
-          WHERE user_id = ${r.userId} AND balance >= ${costKopecks}
-          RETURNING balance
-        `);
-        if (debited.rows.length === 0) return { error: "Недостаточно средств на балансе" };
+        if (!prepaid && costKopecks > 0) {
+          const debited = await tx.execute(sql`
+            UPDATE wallet SET balance = balance - ${costKopecks}
+            WHERE user_id = ${r.userId} AND balance >= ${costKopecks}
+            RETURNING balance
+          `);
+          if (debited.rows.length === 0) return { error: "Недостаточно средств на балансе" };
+        }
         await tx.insert(payments).values({
           userId: r.userId, amount: -costKopecks, kind: "ride_charge",
           description: `Продление аренды ${r.bikeId} • ${tariffDef.name}`, createdAt: Date.now(),

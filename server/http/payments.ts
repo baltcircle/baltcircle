@@ -7,7 +7,7 @@ import {
   adminSetRoleSchema, adminSetBlockedSchema,
   phoneChangeStartSchema, phoneChangeVerifySchema,
   linkPaymentMethodSchema, createSupportTicketSchema, rideInitPaymentSchema,
-  rideChargeSavedCardSchema, walletTopupInitSchema,
+  rideChargeSavedCardSchema, rideExtendSavedCardSchema, walletTopupInitSchema,
   adminCreateBikeSchema, adminUpdateBikeSchema,
   createTicketSchema, updateTicketSchema, addTicketCommentSchema,
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
@@ -25,10 +25,11 @@ import {
   tbankAddAccountQr, tbankGetAddAccountQrState, tbankRemoveCard,
   generateSbpBindOrderId, extractQrPayload, classifyAccountBinding,
   tbankInitSbpCharge, tbankChargeQr, generateSbpRideChargeOrderId,
+  generateExtendRideOrderId,
 } from "./../tbank";
 import type { TbankConfig } from "./../tbank";
 import {
-  startRideForPaidOrder, tbankErrorBody, handleTbankNotification,
+  startRideForPaidOrder, extendRideForPaidOrder, tbankErrorBody, handleTbankNotification,
   bindingErrorPatch, refundVerificationCharge, bindViaVerificationPayment,
   maskPan, cardBrand, extractLast4FromLabel, terminalBindingFailurePatch,
 } from "./../payments/tbank-handlers";
@@ -937,6 +938,176 @@ export function registerPaymentRoutes(app: Express): void {
           ...bindingErrorPatch(charge),
         });
         // 402 Payment Required — the charge was declined; bike stays available.
+        return res.status(402).json(tbankErrorBody(charge));
+      }
+
+      // Deferred (e.g. 3DS step-up). Leave pending; the webhook resolves it and
+      // the client polls the status endpoint below.
+      return res.json({ orderId, status: "pending", amountKopecks });
+    } catch (err: any) {
+      return res.status(502).json({ error: err?.message ?? "Не удалось списать оплату. Попробуйте позже." });
+    }
+  });
+
+  // Extend the rider's OWN active ride by charging their saved card/SBP method
+  // — the card-based counterpart to /api/rides/:id/extend (which debits the
+  // wallet). Mirrors /ride/charge-saved-card structurally (idempotency-first,
+  // reserve-before-acquirer-call, Init+Charge, classify outcome) but on "paid"
+  // applies the charge to the EXISTING ride via extendRideForPaidOrder instead
+  // of starting a new one. bikeId/rideId are resolved server-side from the
+  // rider's active ride — never taken from the request body — so a tampered
+  // payload can never extend or charge for someone else's ride.
+  app.post("/api/payments/tbank/ride/extend-saved-card", paymentLimiter, async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Требуется вход" });
+    const user = await storage.getUser(userId);
+    if (!user) return res.status(401).json({ error: "Требуется вход" });
+    if (user.blockedAt) {
+      return res.status(403).json({ error: "Аккаунт заблокирован. Обратитесь в поддержку." });
+    }
+
+    const idem = readIdempotencyKey(req);
+    if ("error" in idem) return res.status(400).json({ error: idem.error });
+
+    const parsed = rideExtendSavedCardSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+
+    // Idempotency check BEFORE any ride/tariff validation or acquirer call
+    // (same audit HIGH #2 rule as charge-saved-card — Charge moves real money).
+    const existingByKey = await storage.getRidePaymentOrderByIdempotencyKey(userId, idem.key);
+    if (existingByKey) {
+      if (existingByKey.status === "paid") {
+        return res.json({
+          orderId: existingByKey.orderId,
+          status: "paid",
+          rideId: existingByKey.rideId,
+          amountKopecks: existingByKey.amountKopecks,
+        });
+      }
+      if (existingByKey.status === "failed") {
+        return res.status(402).json(tbankErrorBody({
+          ErrorCode: existingByKey.lastErrorCode ?? undefined,
+          Message: existingByKey.lastErrorMessage ?? undefined,
+          Details: existingByKey.lastErrorDetails ?? undefined,
+        }));
+      }
+      return res.json({ orderId: existingByKey.orderId, status: "pending", amountKopecks: existingByKey.amountKopecks });
+    }
+
+    const activeRide = await storage.getActiveRide(userId);
+    if (!activeRide) return res.status(409).json({ error: "Нет активной поездки" });
+
+    const tariffDef = TARIFFS.find((t) => t.id === parsed.data.tariffId);
+    if (!tariffDef) return res.status(400).json({ error: "Неизвестный тариф" });
+    const amountKopecks = Math.round(tariffDef.price * 100);
+
+    const cfg = getTbankConfig();
+    if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
+
+    const card = await storage.getActiveSavedCard(userId, parsed.data.paymentMethodId);
+    const sbp = card ? undefined : await storage.getActiveSavedSbp(userId, parsed.data.paymentMethodId);
+    const method = card ?? sbp;
+    if (!method) {
+      return res.status(409).json({ error: "Нет сохранённого способа оплаты для списания. Выберите другой способ." });
+    }
+    const kind: "card" | "sbp" = card ? "card" : "sbp";
+
+    const orderId = generateExtendRideOrderId();
+
+    let order: PaymentOrder;
+    try {
+      const reserved = await storage.reserveRidePaymentOrder({
+        orderId,
+        userId: user.id,
+        bikeId: activeRide.bikeId,
+        tariffId: tariffDef.id,
+        amountKopecks,
+        source: kind === "card" ? "saved_card" : "saved_sbp",
+        paymentMethodId: method.id,
+        rebillId: kind === "card" ? (card!.rebillId ?? undefined) : undefined,
+        idempotencyKey: idem.key,
+        // Set at RESERVE time — the discriminator that tells
+        // handleRidePaymentNotification/this route to extend the ride instead
+        // of starting a new one (see reserveRidePaymentOrder).
+        rideId: activeRide.id,
+      });
+      if (!reserved.created) {
+        const o = reserved.order;
+        if (o.status === "paid") {
+          return res.json({ orderId: o.orderId, status: "paid", rideId: o.rideId, amountKopecks: o.amountKopecks });
+        }
+        if (o.status === "failed") {
+          return res.status(402).json(tbankErrorBody({
+            ErrorCode: o.lastErrorCode ?? undefined,
+            Message: o.lastErrorMessage ?? undefined,
+            Details: o.lastErrorDetails ?? undefined,
+          }));
+        }
+        return res.json({ orderId: o.orderId, status: "pending", amountKopecks: o.amountKopecks });
+      }
+      order = reserved.order;
+    } catch (dbErr) {
+      log(`[tbank] failed to reserve extend order: ${(dbErr as Error)?.message ?? "?"}`, "tbank");
+      return res.status(500).json({ error: "Не удалось сохранить заказ оплаты. Попробуйте позже." });
+    }
+
+    try {
+      const init = kind === "card"
+        ? await tbankInitSavedCardCharge(cfg, {
+            orderId,
+            amountKopecks,
+            customerKey: method.customerKey ?? user.id,
+            description: `Продление аренды ${activeRide.bikeId} • ${tariffDef.name}`,
+            customerEmail: user.email,
+            customerPhone: user.phone,
+            notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
+          })
+        : await tbankInitSbpCharge(cfg, {
+            orderId,
+            amountKopecks,
+            description: `Продление аренды ${activeRide.bikeId} • ${tariffDef.name}`,
+            customerKey: method.customerKey ?? user.id,
+            notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
+          });
+      if (!init.Success || init.PaymentId == null) {
+        await storage.updateRidePaymentOrder(order.id, { status: "failed", ...bindingErrorPatch(init) });
+        return res.status(502).json(tbankErrorBody(init));
+      }
+      const paymentId = String(init.PaymentId);
+
+      try {
+        await storage.updateRidePaymentOrder(order.id, { paymentId });
+      } catch (dbErr) {
+        log(`[tbank] failed to persist extend order: ${(dbErr as Error)?.message ?? "?"}`, "tbank");
+        return res.status(500).json({ error: "Не удалось сохранить заказ оплаты. Попробуйте позже." });
+      }
+
+      const charge = kind === "card"
+        ? await tbankCharge(cfg, { paymentId, rebillId: card!.rebillId! })
+        : await tbankChargeQr(cfg, { paymentId, accountToken: sbp!.accountToken! });
+      const status = typeof charge.Status === "string" ? charge.Status : "";
+      const outcome = classifyRidePayment({ status, success: charge.Success === false ? false : undefined });
+
+      if (outcome === "paid") {
+        // Apply the charge to the SAME ride the order was reserved against (guarded
+        // — a racing webhook cannot double-apply). Shared with the webhook path via
+        // extendRideForPaidOrder().
+        const extended = await extendRideForPaidOrder(order, paymentId);
+        if (!extended.ok) {
+          return res.status(409).json({ error: extended.reason });
+        }
+        return res.json({ orderId, status: "paid", rideId: extended.rideId, amountKopecks });
+      }
+
+      if (outcome === "failed") {
+        await storage.updateRidePaymentOrder(order.id, {
+          status: "failed",
+          paymentId,
+          ...bindingErrorPatch(charge),
+        });
         return res.status(402).json(tbankErrorBody(charge));
       }
 

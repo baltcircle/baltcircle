@@ -16,19 +16,30 @@ import { TRACK_GAP_MS } from "@/lib/geoSmoothing";
  *         (браузер приостанавливает watchPosition в фоне);
  *       — временной разрыв между принятыми GPS-точками > TRACK_GAP_MS (потеря
  *         сигнала без ухода в фон).
+ *     Оба сигнала предупреждают только о разрыве ТЕЛЕФОННОГО трека. Пока
+ *     авторитетным источником считается бортовой трекер замка (см.
+ *     use-ride-track-poll → MergedTrack.source === "tracker"), уход телефона
+ *     в фон никак не влияет на записанный маршрут — тост в этом случае вводит
+ *     в заблуждение и подавляется через `trackedByLock`.
  *
  * Рендер трека рвёт линию сам по timestamp'ам точек (см. segmentTrack) — этот
  * хук отвечает только за wake lock и уведомление пользователя.
  */
-export function useRideGuard(active: boolean) {
+export function useRideGuard(active: boolean, trackedByLock: boolean = false) {
   const { toast } = useToast();
   // WakeLockSentinel типизирован не во всех окружениях — держим как any.
   const wakeLockRef = useRef<any>(null);
   const hiddenAtRef = useRef<number | null>(null);
   const lastPointAtRef = useRef<number | null>(null);
   const announcedRef = useRef(false);
+  // Читается из замыканий, созданных один раз в эффекте по [active] — обычный
+  // проп протух бы при смене source без переподписки. Ref обновляется на
+  // каждом рендере отдельным эффектом ниже.
+  const trackedByLockRef = useRef(trackedByLock);
+  useEffect(() => { trackedByLockRef.current = trackedByLock; }, [trackedByLock]);
 
   const announceGap = (ms: number) => {
+    if (trackedByLockRef.current) return; // трек идёт от замка — разрыв на телефоне не в счёт
     if (announcedRef.current) return; // не дублируем на «двойном» сигнале
     announcedRef.current = true;
     // Сбрасываем флаг чуть позже — следующий реальный разрыв снова сообщим.

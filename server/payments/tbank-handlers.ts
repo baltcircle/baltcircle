@@ -62,6 +62,57 @@ export async function startRideForPaidOrder(
   return { ok: true, rideId };
 }
 
+// Apply a card charge that has just been PAID to an ALREADY-RUNNING ride's
+// paid window, guarding against a double-application. Shared by the
+// synchronous saved-card/SBP extend route and the async notification webhook
+// (same duplication hazard as startRideForPaidOrder above). The order's
+// `rideId` is set at RESERVE time (reserveRidePaymentOrder), never patched in
+// afterwards — this is what lets handleRidePaymentNotification tell an extend
+// order apart from a ride-start order (whose rideId is still null at this
+// point). Idempotent: an order already marked "paid" must never reach here
+// (the caller checks order.status first), so extendRide's balance/ledger
+// effects can only ever run once per order.
+export async function extendRideForPaidOrder(
+  order: PaymentOrder,
+  paymentId: string,
+): Promise<{ ok: true; rideId: number } | { ok: false; reason: string }> {
+  const rideId = order.rideId; // set at reservation time for every extend order
+  if (rideId == null) {
+    // Defensive only — reserveRidePaymentOrder always sets rideId for an
+    // extend order before this is ever reachable; a null here means a caller
+    // mis-routed a start order into the extend path.
+    await storage.updateRidePaymentOrder(order.id, {
+      status: "paid",
+      paymentId: paymentId || order.paymentId,
+      lastErrorMessage: "extend order missing rideId",
+    });
+    return { ok: false, reason: "внутренняя ошибка: заказ продления без rideId" };
+  }
+  const outcome = await storage.extendRide(rideId, order.tariffId, { prepaid: true });
+  if ("error" in outcome) {
+    // Money was already captured by T-Bank — keep the order "paid" with the
+    // failure reason (audit trail) rather than "failed", mirroring how
+    // startRideForPaidOrder handles a post-charge ride-start failure. The
+    // rider needs support to reconcile (e.g. ride ended between charge and
+    // webhook), same class of rare race as the ride-start path already
+    // accepts.
+    await storage.updateRidePaymentOrder(order.id, {
+      status: "paid",
+      paymentId: paymentId || order.paymentId,
+      lastErrorMessage: outcome.error,
+    });
+    return { ok: false, reason: outcome.error };
+  }
+  await storage.updateRidePaymentOrder(order.id, {
+    status: "paid",
+    paymentId: paymentId || order.paymentId,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    lastErrorDetails: null,
+  });
+  return { ok: true, rideId };
+}
+
 // Audit LOW: T-Bank's ErrorCode/Message/Details are acquirer-internal
 // diagnostics, not all of them meant for the end rider. Most codes ARE
 // genuinely useful decline reasons ("insufficient funds", "try another
@@ -262,6 +313,34 @@ export async function handleRidePaymentNotification(
   const outcome = classifyRidePayment({ status, success });
 
   if (outcome === "paid") {
+    if (order.rideId != null) {
+      // Extend order (rideId set at RESERVE time, see reserveRidePaymentOrder) —
+      // apply the charge to the already-running ride's paid window instead of
+      // starting a new one. A racing/duplicate notification is a no-op
+      // (extendRideForPaidOrder is guarded by the order.status check above).
+      const result = await extendRideForPaidOrder(order, paymentId);
+      if (result.ok) {
+        sendToUserAsync(order.userId, {
+          title: "Аренда продлена",
+          body: `Велосипед ${order.bikeId} — тариф ${order.tariffId.toUpperCase()}.`,
+          url: "/",
+          tag: `ride-extend:${order.orderId}`,
+          data: { kind: "ride-extend", orderId: order.orderId },
+        });
+      } else {
+        // Money was captured but the extension couldn't be applied (rare race,
+        // e.g. ride ended between charge and webhook) — tell the rider plainly
+        // instead of a false "продлена" so they know to contact support.
+        sendToUserAsync(order.userId, {
+          title: "Оплата прошла, но продлить не удалось",
+          body: "Обратитесь в поддержку — средства списаны, мы разберёмся.",
+          url: "/",
+          tag: `ride-extend:${order.orderId}`,
+          data: { kind: "ride-extend-failed", orderId: order.orderId },
+        });
+      }
+      return;
+    }
     // Start (or reuse) the ride via the shared guarded helper — a racing or
     // duplicate notification cannot create a second ride. On a ride-start
     // failure the helper already marks the order paid with the reason; the

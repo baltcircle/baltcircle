@@ -577,6 +577,21 @@ export function generateSavedCardRideOrderId(): string {
   return `TRSC-${ts}-${rand.slice(0, 6)}`; // e.g. TRSC-lk3p9q2-a8f1zq (~20 chars)
 }
 
+// Build a compact, collision-resistant OrderId for a ride-EXTEND charge
+// against a saved card (recurring RebillId charge). Same constraints as the
+// other generators — <= 50 chars, ASCII latin/digits/dash only. A distinct
+// "TRXT" (TakeRide eXTend) prefix lets the notification handler/logs tell an
+// extend charge apart from a ride-start saved-card charge ("TRSC") at a
+// glance — the actual start/extend routing decision itself is made from
+// payment_orders.ride_id, not from this prefix (see reserveRidePaymentOrder /
+// handleRidePaymentNotification).
+export function generateExtendRideOrderId(): string {
+  const ts = Date.now().toString(36); // ~8 chars through year ~2059
+  let rand = "";
+  while (rand.length < 6) rand += randomInt(36).toString(36);
+  return `TRXT-${ts}-${rand.slice(0, 6)}`; // e.g. TRXT-lk3p9q2-a8f1zq (~20 chars)
+}
+
 // Build a compact, collision-resistant OrderId for a wallet top-up payment
 // (audit CRITICAL #1 fix). Same constraints as the other generators — <= 50
 // chars, ASCII latin/digits/dash only. A distinct "TRWT" (TakeRide Wallet

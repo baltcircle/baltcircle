@@ -1024,6 +1024,16 @@ export const rideChargeSavedCardSchema = z.object({
 });
 export type RideChargeSavedCardInput = z.infer<typeof rideChargeSavedCardSchema>;
 
+// Extend the rider's OWN currently-active ride by charging their saved card/SBP
+// method — no hosted form. bikeId is deliberately NOT accepted from the client:
+// the server resolves it (and validates ownership) from the rider's active ride,
+// so a tampered bikeId can never redirect the charge to someone else's ride.
+export const rideExtendSavedCardSchema = z.object({
+  tariffId: z.enum(["h1", "h2", "h3"]),
+  paymentMethodId: z.number().int().positive().optional(),
+});
+export type RideExtendSavedCardInput = z.infer<typeof rideExtendSavedCardSchema>;
+
 /* ------- PAYMENT ORDERS (T-Bank wallet top-up) ------- */
 // One row per "pay now, credit wallet once confirmed" attempt (audit CRITICAL
 // #1 fix). The wallet balance is credited ONLY by the notification webhook

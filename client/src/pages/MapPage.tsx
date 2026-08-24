@@ -1,8 +1,10 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
+import { useLocation } from "wouter";
 
-import type { Bike, MapObject, Parking, Ride } from "@shared/schema";
+import type { Bike, MapObject, Parking, PublicPaymentMethod, Ride } from "@shared/schema";
 import type { Tariff } from "@shared/geo";
+import { PAYMENT_METHODS_KEY } from "@/lib/payment";
 import { MapLibreMap } from "@/components/MapLibreMap";
 import { RentalStartModal } from "@/components/RentalStartModal";
 import { RegistrationModal } from "@/components/RegistrationModal";
@@ -28,6 +30,7 @@ import { ReservationBanner } from "./map/ReservationBanner";
 
 export function MapPage() {
   const toast = useToast();
+  const [, navigate] = useLocation();
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
   const mapObjectsQ = useQuery<MapObject[]>({ queryKey: ["/api/map-objects"] });
   const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
@@ -46,14 +49,17 @@ export function MapPage() {
   // точки на /api/rides/{id}/point (тротлинг 3с + фильтр GPS-дребезга <5м).
   const rideTracker = useActiveRideTracker(activeRide);
 
-  // Screen Wake Lock + уведомление о разрывах трекинга на время активной аренды.
-  const rideGuard = useRideGuard(!!activeRide);
-
   // Авторитетный трек поездки от бортового трекера велосипеда (репортит даже при
   // заблокированном телефоне). Пока трекер отдаёт точки — рисуем маршрут по ним;
   // если трекера нет/молчит, сервер вернёт source:"phone" и мы падаем обратно на
   // трек из телефона (текущее поведение, без регресса).
   const trackPoll = useRideTrackPoll(activeRide?.id);
+  // Пока замок активно отдаёт свой трек — разрыв телефонного GPS (экран заблокирован,
+  // вкладка в фоне) никак не влияет на записанный маршрут — не пугаем об этом тостом.
+  const trackedByLock = trackPoll.data?.source === "tracker";
+
+  // Screen Wake Lock + уведомление о разрывах трекинга на время активной аренды.
+  const rideGuard = useRideGuard(!!activeRide, trackedByLock);
   const displayRide = useMemo<Ride | null>(() => {
     if (!activeRide) return null;
     const merged = trackPoll.data;
@@ -260,17 +266,59 @@ export function MapPage() {
     },
   });
 
+  // Saved T-Bank card/SBP methods usable for a one-tap extend charge — same
+  // active+RebillId/AccountToken filter as RentalStartModal's ride-start flow.
+  // Only fetched once there's an active ride, since that's the only time
+  // extending is possible.
+  const paymentMethodsQ = useQuery<PublicPaymentMethod[]>({
+    queryKey: PAYMENT_METHODS_KEY,
+    enabled: !!activeRide,
+  });
+  const extendActiveMethods = (paymentMethodsQ.data ?? []).filter(
+    (m) => m.status === "active" && m.provider === "tbank"
+      && ((m.type === "card" && m.hasRebillId) || (m.type === "sbp" && m.hasAccountToken)),
+  );
+
+  // Extending a ride charges the rider's SAVED card/SBP method when one
+  // exists — the wallet-balance route (`/api/rides/:id/extend`) previously
+  // failed with "Недостаточно средств на балансе" for riders who never top
+  // up their wallet and rely purely on a saved card. Riders with no saved
+  // method keep working exactly as before via the wallet route — this is a
+  // pure fallback, not a behavior change for them.
   const extendMut = useMutation({
     mutationFn: async ({ rideId, tariff }: { rideId: number; tariff: Tariff["id"] }) => {
-      const res = await apiRequest("POST", `/api/rides/${rideId}/extend`, { tariff });
-      return res.json() as Promise<Ride>;
+      const method = extendActiveMethods[0];
+      if (!method) {
+        const res = await apiRequest("POST", `/api/rides/${rideId}/extend`, { tariff });
+        return { kind: "wallet" as const, ride: (await res.json()) as Ride };
+      }
+      const res = await apiRequest(
+        "POST",
+        "/api/payments/tbank/ride/extend-saved-card",
+        { tariffId: tariff, paymentMethodId: method.id },
+        { "Idempotency-Key": crypto.randomUUID() },
+      );
+      const data = (await res.json()) as { orderId: string; status: "paid" | "pending"; rideId?: number; amountKopecks: number };
+      return { kind: "card" as const, data };
     },
-    onSuccess: (ride) => {
-      queryClient.setQueryData(["/api/rides/active"], ride);
-      queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
-      toast.toast({ title: "Аренда продлена" });
+    onSuccess: (result) => {
+      if (result.kind === "wallet") {
+        queryClient.setQueryData(["/api/rides/active"], result.ride);
+        queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
+        toast.toast({ title: "Аренда продлена" });
+        return;
+      }
+      if (result.data.status === "paid") {
+        queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
+        toast.toast({ title: "Аренда продлена" });
+        return;
+      }
+      // Deferred (e.g. 3DS step-up) — let the result page poll the order until
+      // the webhook resolves it, same pattern as the ride-start card charge.
+      navigate(`/payment-result?orderId=${encodeURIComponent(result.data.orderId)}`);
     },
     onError: (err: any) => {
       toast.toast({
