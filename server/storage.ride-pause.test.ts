@@ -204,6 +204,45 @@ describe("resumeRide", () => {
     expect(set.totalPausedMs).toBe(3 * 60 * 1000);
   });
 
+  // Regression test for the 2026-08-24 bug: resume used to send "D1" (the
+  // GPS-tracking-enable command) instead of the real L0 unlock, so the ride's
+  // billing/timer state advanced but the physical lock never reopened.
+  it("physically unlocks via sendUnlockCommand (not sendToDevice/D1) when resuming a locked bike", async () => {
+    const pausedAt = NOW - 3 * 60 * 1000;
+    const paused = makeRide({ pausedAt, totalPausedMs: 0 });
+    const { tx } = makeTx([[paused]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    queueSelect([makeBike({ lockImei: "868000000000001" })]);
+    const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+    const sendToDevice = vi.fn().mockReturnValue(true);
+    getLockGatewayMock.mockReturnValue({ sendUnlockCommand, sendToDevice });
+
+    const result = await storage.resumeRide(7);
+
+    expect(result).not.toHaveProperty("error");
+    expect(sendUnlockCommand).toHaveBeenCalledWith("868000000000001", 7);
+    // D1 (GPS tracking) must NOT be re-sent on resume — it was never turned
+    // off by pause in the first place (only endRide disables it).
+    expect(sendToDevice).not.toHaveBeenCalled();
+  });
+
+  it("still resumes (best-effort) when the physical unlock fails or the gateway is down", async () => {
+    const pausedAt = NOW - 3 * 60 * 1000;
+    const paused = makeRide({ pausedAt, totalPausedMs: 0 });
+    const { tx, calls } = makeTx([[paused]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    queueSelect([makeBike({ lockImei: "868000000000001" })]);
+    getLockGatewayMock.mockReturnValue({
+      sendUnlockCommand: vi.fn().mockRejectedValue(new Error("lock is not connected")),
+    });
+
+    const result = await storage.resumeRide(7);
+
+    expect(result).not.toHaveProperty("error");
+    const set = calls.updateSets[0] as any;
+    expect(set.pausedAt).toBeNull();
+  });
+
   it("caps the credit at the remaining cumulative free grace", async () => {
     const pausedAt = NOW - 5 * 60 * 1000; // paused 5 min ago
     // Only 2 minutes of grace remain (10-minute cumulative budget - 8 already used).

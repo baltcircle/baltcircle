@@ -1,0 +1,80 @@
+name: Diagnose ride track source (production, read-only)
+
+# One-off diagnostic: for the most recent rides on the bike bound to a given
+# lock IMEI, shows (a) how many bike_telemetry position rows landed inside
+# each ride's [startedAt, endedAt] window and (b) how many phone-fed points
+# are in ride.track — to confirm whether the "prefer tracker" merge
+# (shared/rideTrack.ts) actually has tracker data to prefer, or is falling
+# back to phone for a real reason (too few/no valid GPS fixes from the lock
+# during the ride) rather than a code bug.
+#
+# STRICTLY READ-ONLY: every statement is a SELECT, no UPDATE/INSERT/DELETE.
+# Still gated behind the "production" environment approval because it runs
+# on the production self-hosted runner and reads the real DATABASE_URL.
+on:
+  workflow_dispatch:
+    inputs:
+      imei:
+        description: "Lock IMEI to inspect (bikes.lock_imei)"
+        required: true
+        default: "862596083776074"
+      ride_limit:
+        description: "How many of the bike's most recent rides to inspect"
+        required: false
+        default: "3"
+
+permissions: {}
+
+jobs:
+  diagnose:
+    name: Inspect bike_telemetry vs ride.track for recent rides
+    runs-on:
+      - self-hosted
+      - baltcircle-prod
+    environment: production
+    steps:
+      - name: Write diagnostic SQL
+        run: |
+          cat > "${{ github.workspace }}/diagnose-track.sql" <<SQL
+          SELECT id AS bike_id, lock_imei FROM bikes WHERE lock_imei = '${{ github.event.inputs.imei }}';
+
+          WITH target_bike AS (
+            SELECT id FROM bikes WHERE lock_imei = '${{ github.event.inputs.imei }}'
+          ),
+          recent_rides AS (
+            SELECT r.id, r.bike_id, r.started_at, r.ended_at, r.paused_at, r.total_paused_ms,
+                   jsonb_array_length(COALESCE(r.track::jsonb, '[]'::jsonb)) AS phone_points
+              FROM rides r, target_bike tb
+             WHERE r.bike_id = tb.id
+             ORDER BY r.started_at DESC
+             LIMIT ${{ github.event.inputs.ride_limit }}
+          )
+          SELECT rr.id AS ride_id, rr.started_at, rr.ended_at, rr.paused_at, rr.total_paused_ms,
+                 rr.phone_points,
+                 (SELECT count(*) FROM bike_telemetry bt
+                   WHERE bt.bike_id = rr.bike_id
+                     AND bt.t >= rr.started_at
+                     AND bt.t <= COALESCE(rr.ended_at, (extract(epoch from now()) * 1000)::bigint)
+                     AND bt.x IS NOT NULL AND bt.y IS NOT NULL) AS tracker_points_in_window,
+                 (SELECT count(*) FROM bike_telemetry bt
+                   WHERE bt.bike_id = rr.bike_id
+                     AND bt.t >= rr.started_at
+                     AND bt.t <= COALESCE(rr.ended_at, (extract(epoch from now()) * 1000)::bigint)) AS telemetry_rows_any_type
+            FROM recent_rides rr
+           ORDER BY rr.started_at DESC;
+          SQL
+
+      - name: Run diagnostic query
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -e
+          if [ -z "$DATABASE_URL" ]; then
+            echo "❌ Secret DATABASE_URL is not set."
+            exit 1
+          fi
+          docker run --rm \
+            -e DATABASE_URL \
+            -v "${{ github.workspace }}/diagnose-track.sql:/diag.sql:ro" \
+            postgres:16-alpine \
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /diag.sql

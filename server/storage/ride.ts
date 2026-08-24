@@ -751,17 +751,28 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       if (bike?.lockImei) clearPendingPause(bike.lockImei);
       if (cancelledPending) return ride;
       rideEvents.emit(ride.userId, "point" as RideEventReason);
-      // Best-effort physical re-unlock, mirroring endRide's D1-disable and
-      // startRide's own unlock dispatch: never rolls the resume back on
-      // failure — the billing/timer state already committed above is
-      // authoritative regardless of whether the lock itself confirms.
+      // Best-effort physical re-unlock, mirroring startRide's own unlock
+      // dispatch: never rolls the resume back on failure — the billing/timer
+      // state already committed above is authoritative regardless of whether
+      // the lock itself confirms. D1 (live GPS tracking) is deliberately NOT
+      // re-sent here: pause never disables it (endRide's D1-disable is the
+      // only place D1 is turned off), so it has stayed on, uninterrupted,
+      // since startRide.
+      //
+      // Bug fixed 2026-08-24: this used to send "D1" (GPS-tracking-enable)
+      // instead of the real L0 unlock — a copy-paste of startRide's separate
+      // GPS-enable call — so resuming from pause updated billing/timer state
+      // but never actually opened the physical lock.
       if (bike?.lockImei) {
         try {
           const gateway = getLockGateway();
-          const sent = gateway?.sendToDevice(bike.lockImei, "D1", [RIDE_GPS_TRACKING_INTERVAL_SECONDS]);
-          if (!sent) log(`resumeRide: failed to dispatch unlock imei=${bike.lockImei} ride=${rideId}`);
+          if (!gateway) throw new Error("OMNI gateway is not running");
+          // Same rideId-as-pseudo-user-id workaround as startRide (userId is a
+          // UUID; the OMNI L0 command's user field must be an unsigned int).
+          const outcome = await gateway.sendUnlockCommand(bike.lockImei, rideId);
+          if (!outcome.success) log(`resumeRide: unlock did not confirm imei=${bike.lockImei} ride=${rideId}`);
         } catch (err) {
-          log(`resumeRide: error dispatching unlock imei=${bike.lockImei} ride=${rideId}: ${(err as Error).message}`);
+          log(`resumeRide: unlock failed imei=${bike.lockImei} ride=${rideId}: ${(err as Error).message}`);
         }
       }
       return ride;

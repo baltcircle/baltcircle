@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Lock, Route, Pause, Play, PlusCircle, Loader2, X } from "lucide-react";
+import { PauseGraceCountdown } from "@/components/PauseGraceCountdown";
 import type { Ride } from "@shared/schema";
 import type { Tariff } from "@shared/geo";
 import { RideTimer } from "@/components/RideTimer";
@@ -39,9 +40,17 @@ export function ActiveRideCard({
     >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-widest text-accent">
-            <span className={`w-1.5 h-1.5 rounded-full bg-accent ${paused ? "" : "ride-pulse"}`} />
-            {paused ? "На паузе" : "В пути"}
+          <div
+            className={`flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest ${
+              paused ? "text-amber-600 dark:text-amber-400" : "text-green-600 dark:text-green-400"
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                paused ? "bg-amber-500" : "bg-green-500 ride-pulse"
+              }`}
+            />
+            {paused ? "Пауза" : "В пути"}
           </div>
           <div className="font-display text-base font-light leading-tight tabular-nums" data-testid="text-ride-duration">
             <RideTimer ride={ride} />
@@ -99,7 +108,16 @@ export function ActiveRideCard({
           ) : (
             <Pause className="w-4 h-4" />
           )}
-          {paused ? "Продолжить" : awaitingLockClose ? "Отмена" : "Пауза"}
+          {paused ? (
+            <span className="flex items-baseline gap-1.5">
+              <PauseGraceCountdown ride={ride} />
+              <span>Продолжить</span>
+            </span>
+          ) : awaitingLockClose ? (
+            "Отмена"
+          ) : (
+            "Пауза"
+          )}
         </button>
         <button
           type="button"

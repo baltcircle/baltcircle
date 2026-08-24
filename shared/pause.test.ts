@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  frozenSoFarMs, pendingPauseCreditMs, liveElapsedRidingMs, liveRemainingPaidMs, computeLiveOverage, type PausableRide,
+  frozenSoFarMs, pendingPauseCreditMs, liveElapsedRidingMs, liveRemainingPaidMs, computeLiveOverage,
+  remainingFreeGraceMs, type PausableRide,
 } from "./pause";
 import { PAUSE_FREE_GRACE_MS } from "./geo";
 
@@ -152,5 +153,30 @@ describe("liveRemainingPaidMs — обратный отсчёт, точный к
   it("никогда не уходит в минус после истечения оплаченного времени", () => {
     const r = ride({ paidUntilAt: HOUR });
     expect(liveRemainingPaidMs(r, HOUR + 90 * 1000)).toBe(0);
+  });
+});
+
+describe("remainingFreeGraceMs", () => {
+  it("равен полному бюджету, если пауз ещё не было", () => {
+    expect(remainingFreeGraceMs(ride(), 0)).toBe(PAUSE_FREE_GRACE_MS);
+  });
+
+  it("тикает вниз в реальном времени во время текущей паузы", () => {
+    const r = ride({ pausedAt: 1000, totalPausedMs: 0 });
+    expect(remainingFreeGraceMs(r, 1000 + 3 * MIN)).toBe(PAUSE_FREE_GRACE_MS - 3 * MIN);
+  });
+
+  it("учитывает уже использованный грейс из предыдущих пауз этой поездки", () => {
+    const r = ride({ pausedAt: 1000, totalPausedMs: 6 * MIN });
+    expect(remainingFreeGraceMs(r, 1000 + 1 * MIN)).toBe(PAUSE_FREE_GRACE_MS - 6 * MIN - 1 * MIN);
+  });
+
+  it("замирает на 0, когда грейс исчерпан, и не уходит в минус", () => {
+    const r = ride({ pausedAt: 1000, totalPausedMs: PAUSE_FREE_GRACE_MS });
+    expect(remainingFreeGraceMs(r, 1000 + 5 * MIN)).toBe(0);
+  });
+
+  it("не зависит от того, идёт ли пауза прямо сейчас — просто отражает totalPausedMs, capped", () => {
+    expect(remainingFreeGraceMs(ride({ pausedAt: null, totalPausedMs: 4 * MIN }), 999 * MIN)).toBe(PAUSE_FREE_GRACE_MS - 4 * MIN);
   });
 });

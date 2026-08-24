@@ -95,3 +95,14 @@ export function computeLiveOverage(ride: PausableRide, now: number): OverageResu
 export function liveRemainingPaidMs(ride: PausableRide, now: number): number {
   return Math.max(0, effectivePaidUntilAt(ride, now) - now);
 }
+
+/**
+ * Pause-button countdown: how much of the CUMULATIVE free-pause budget
+ * (PAUSE_FREE_GRACE_MS, currently 10 min) is still unused as of `now`. Ticks
+ * down 1:1 while genuinely paused and the budget isn't exhausted yet, then
+ * freezes at 0 — matching frozenSoFarMs, so this never disagrees with what
+ * resume/end will actually settle. 0 whenever not paused (button hides it).
+ */
+export function remainingFreeGraceMs(ride: PausableRide, now: number): number {
+  return Math.max(0, PAUSE_FREE_GRACE_MS - frozenSoFarMs(ride, now));
+}
