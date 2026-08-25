@@ -780,6 +780,10 @@ export const rideFeedback = pgTable("ride_feedback", {
   uniqueIndex("uidx_ride_feedback_ride").on(t.rideId),
   index("idx_ride_feedback_rating").on(t.rating),
   index("idx_ride_feedback_created").on(t.createdAt),
+  // Audit (scalability): listUsers()'s per-user rating aggregate does
+  // `WHERE user_id IN (...) GROUP BY user_id` — without this it's a full
+  // table scan that grows with total feedback rows, not user count.
+  index("idx_ride_feedback_user").on(t.userId),
 ]);
 export type RideFeedback = typeof rideFeedback.$inferSelect;
 

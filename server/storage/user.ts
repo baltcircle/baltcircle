@@ -9,6 +9,10 @@ import type { Constructor } from "./mixin";
 import type { IUserStorage } from "./interfaces";
 import { resolveRole, normalizePhone } from "./base";
 
+// Audit (scalability): safety ceiling for listUsers()'s "no limit given"
+// full-list path — see the comment at the call site.
+const UNBOUNDED_USER_LIST_CAP = 5000;
+
 export function UserMixin<TBase extends Constructor>(Base: TBase) {
   return class extends Base implements IUserStorage {
     // Apply the env-driven admin override so callers always see the effective
@@ -135,11 +139,20 @@ export function UserMixin<TBase extends Constructor>(Base: TBase) {
     // the admin table shows the same role the rest of the app enforces (the
     // ADMIN_PHONE_NUMBERS override can make a stored "rider" effectively admin).
     // Optional limit/offset let callers page the list (audit M5). When no limit is
-    // given the full list is returned (preserves consumers that need every row:
-    // client-side search, CSV export). The HTTP layer clamps limit to a sane max.
+    // given the full list is returned up to UNBOUNDED_USER_LIST_CAP (preserves
+    // consumers that need every row: client-side search, CSV export) — the
+    // HTTP layer clamps an explicit limit to a sane max separately.
     async listUsers(opts?: { limit?: number; offset?: number }): Promise<AdminUser[]> {
       let q = db.select().from(users).where(isNull(users.deletedAt)).orderBy(desc(users.createdAt)).$dynamic();
-      if (opts?.limit !== undefined) q = q.limit(opts.limit).offset(opts.offset ?? 0);
+      // Audit (scalability): the admin UI does client-side search/pagination
+      // over the full list (no server-side search endpoint exists yet), so
+      // an absent `limit` intentionally means "everything" — don't silently
+      // truncate accounts out of search results. But "everything" must not
+      // mean literally unbounded: cap the worst case so one request can't
+      // pull an unlimited number of rows into memory or into the per-user
+      // aggregate IN-lists below. Once the table nears this ceiling, replace
+      // with real server-side search instead of raising the constant.
+      q = opts?.limit !== undefined ? q.limit(opts.limit).offset(opts.offset ?? 0) : q.limit(UNBOUNDED_USER_LIST_CAP);
       const rows = (await q) as User[];
       if (rows.length === 0) return [];
 

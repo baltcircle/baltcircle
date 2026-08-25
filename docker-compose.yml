@@ -11,6 +11,15 @@ services:
         VITE_YANDEX_MAPS_API_KEY: ${VITE_YANDEX_MAPS_API_KEY:-}
     container_name: baltcircle-mvp
     restart: unless-stopped
+    # Audit (scalability): json-file driver has no size cap by default, and
+    # every request is logged at info level (server/logger.ts) - unbounded
+    # growth would eventually fill the single VM's disk as traffic grows.
+    # Rotate at 20MB x 5 files (~100MB ceiling) per service.
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     environment:
       NODE_ENV: production
       PORT: 5000

@@ -50,6 +50,13 @@
       "when": 1787587918848,
       "tag": "0006_common_crusher_hogan",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787696294624,
+      "tag": "0007_ride_feedback_user_index",
+      "breakpoints": true
     }
   ]
 }

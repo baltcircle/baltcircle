@@ -1,0 +1,1 @@
+CREATE INDEX "idx_ride_feedback_user" ON "ride_feedback" USING btree ("user_id");
