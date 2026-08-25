@@ -9,6 +9,10 @@ import { Button } from "@/components/ui/button";
 import {
   Table, TableBody, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Search, Users, Ban, AlertTriangle } from "lucide-react";
 import { TablePager, useClientPagination } from "@/components/table-pager";
@@ -24,6 +28,7 @@ export function UsersPage() {
   const { role: actorRole, user: actor } = useCurrentUser();
   const usersQ = useQuery<User[]>({ queryKey: USERS_KEY });
   const [search, setSearch] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
 
   const roleMut = useMutation({
     mutationFn: async (p: { id: string; role: UserRole }) => {
@@ -47,6 +52,19 @@ export function UsersPage() {
       toast.toast({ title: vars.blocked ? "Аккаунт заблокирован" : "Аккаунт разблокирован" });
     },
     onError: (e: Error) => toast.toast({ title: "Не удалось изменить статус", description: cleanErr(e), variant: "destructive" }),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("DELETE", `/api/admin/users/${id}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: USERS_KEY });
+      toast.toast({ title: "Аккаунт удалён" });
+      setDeleteTarget(null);
+    },
+    onError: (e: Error) => toast.toast({ title: "Не удалось удалить аккаунт", description: cleanErr(e), variant: "destructive" }),
   });
 
   const users = usersQ.data ?? [];
@@ -121,6 +139,7 @@ export function UsersPage() {
                 <TableHead>Согласие</TableHead>
                 <TableHead>Регистрация</TableHead>
                 <TableHead>Статус</TableHead>
+                {actorRole === "admin" && <TableHead>Действия</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -132,7 +151,8 @@ export function UsersPage() {
                   actorRole={actorRole}
                   onRole={(role) => roleMut.mutate({ id: u.id, role })}
                   onBlockToggle={() => blockMut.mutate({ id: u.id, blocked: !u.blockedAt })}
-                  busy={roleMut.isPending || blockMut.isPending}
+                  onDeleteRequest={() => setDeleteTarget(u)}
+                  busy={roleMut.isPending || blockMut.isPending || (deleteMut.isPending && deleteTarget?.id === u.id)}
                 />
               ))}
             </TableBody>
@@ -140,6 +160,30 @@ export function UsersPage() {
         )}
         <TablePager page={page} pageCount={pageCount} total={filtered.length} onPage={setPage} testid="users-pager" />
       </Card>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent data-testid="dialog-delete-user">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить аккаунт «{deleteTarget?.name}»?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие нельзя отменить. Мы отвяжем сохранённые карты и СБП, удалим данные профиля,
+              обращения в поддержку и push-подписки. История поездок и платежей останется в обезличенном
+              виде для учёта, а аккаунт исчезнет из этого списка.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMut.isPending}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteTarget && deleteMut.mutate(deleteTarget.id)}
+              disabled={deleteMut.isPending}
+              className="bg-destructive text-destructive-foreground border border-destructive-border hover:bg-destructive/90"
+              data-testid="button-confirm-delete-user"
+            >
+              {deleteMut.isPending ? "Удаляем…" : "Удалить"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

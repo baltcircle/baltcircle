@@ -8,7 +8,7 @@ import {
 import {
   Tooltip, TooltipContent, TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ShieldCheck, Ban, Check } from "lucide-react";
+import { ShieldCheck, Ban, Check, Trash2 } from "lucide-react";
 import { fmtDate, ROLE_LABEL } from "@/lib/format";
 
 const ROLE_TONE: Record<UserRole, string> = {
@@ -28,12 +28,13 @@ const ROLE_HINT: Record<UserRole, string> = {
   admin: "Администратор: полный доступ, включая управление ролями.",
 };
 
-export function UserRowItem({ u, isSelf, actorRole, onRole, onBlockToggle, busy }: {
+export function UserRowItem({ u, isSelf, actorRole, onRole, onBlockToggle, onDeleteRequest, busy }: {
   u: User;
   isSelf: boolean;
   actorRole: UserRole | null;
   onRole: (role: UserRole) => void;
   onBlockToggle: () => void;
+  onDeleteRequest?: () => void;
   busy: boolean;
 }) {
   const role = (u.role as UserRole) ?? "rider";
@@ -50,6 +51,9 @@ export function UserRowItem({ u, isSelf, actorRole, onRole, onBlockToggle, busy 
     : ["rider", "mechanic", "operator"];
   // Operators can't block admins; nobody can block themselves.
   const blockDisabled = busy || isSelf || (role === "admin" && !isAdminActor);
+  // Deletion is admin-only and irreversible: never offer it for the acting
+  // admin's own row or for another admin (matches the server-side guard).
+  const deleteDisabled = busy || isSelf || role === "admin";
 
   return (
     <TableRow data-testid={`user-row-${u.id}`} className={blocked ? "opacity-60" : ""}>
@@ -127,6 +131,20 @@ export function UserRowItem({ u, isSelf, actorRole, onRole, onBlockToggle, busy 
           </Button>
         </div>
       </TableCell>
+      {isAdminActor && (
+        <TableCell>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={deleteDisabled}
+            onClick={onDeleteRequest}
+            className="text-destructive border-destructive/40 hover:bg-destructive/10"
+            data-testid={`button-delete-${u.id}`}
+          >
+            <Trash2 className="w-3.5 h-3.5 mr-1" />Удалить
+          </Button>
+        </TableCell>
+      )}
     </TableRow>
   );
 }
