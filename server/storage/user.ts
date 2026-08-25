@@ -1,9 +1,9 @@
 import {
-  users, rides, phoneChangeRequests, emailChangeRequests, oauthIdentities, pushSubscriptions,
+  users, rides, rideFeedback, phoneChangeRequests, emailChangeRequests, oauthIdentities, pushSubscriptions,
   otpRequests, paymentMethods, supportTickets, supportConversations, supportMessages, paymentOrders,
 } from "@shared/schema";
-import type { User, UserRole, UpdateProfileInput } from "@shared/schema";
-import { eq, and, isNull, sql, desc, count } from "drizzle-orm";
+import type { User, AdminUser, UserRole, UpdateProfileInput } from "@shared/schema";
+import { eq, and, isNull, inArray, sql, desc, count, avg } from "drizzle-orm";
 import { db } from "../db/bootstrap";
 import type { Constructor } from "./mixin";
 import type { IUserStorage } from "./interfaces";
@@ -137,11 +137,37 @@ export function UserMixin<TBase extends Constructor>(Base: TBase) {
     // Optional limit/offset let callers page the list (audit M5). When no limit is
     // given the full list is returned (preserves consumers that need every row:
     // client-side search, CSV export). The HTTP layer clamps limit to a sane max.
-    async listUsers(opts?: { limit?: number; offset?: number }) {
+    async listUsers(opts?: { limit?: number; offset?: number }): Promise<AdminUser[]> {
       let q = db.select().from(users).where(isNull(users.deletedAt)).orderBy(desc(users.createdAt)).$dynamic();
       if (opts?.limit !== undefined) q = q.limit(opts.limit).offset(opts.offset ?? 0);
       const rows = (await q) as User[];
-      return rows.map((u) => this.withResolvedRole(u)!);
+      if (rows.length === 0) return [];
+
+      // Per-user aggregates for the admin table: completed-ride count and mean
+      // feedback rating. Two grouped queries (rides has no rating, ride_feedback
+      // has no status) instead of one join, so neither table's row count
+      // inflates the other's aggregate; merged into the page in memory below.
+      const ids = rows.map((u) => u.id);
+      const [rideCounts, ratingRows] = await Promise.all([
+        db.select({ userId: rides.userId, c: count() })
+          .from(rides)
+          .where(and(inArray(rides.userId, ids), eq(rides.status, "completed")))
+          .groupBy(rides.userId),
+        db.select({ userId: rideFeedback.userId, avgRating: avg(rideFeedback.rating) })
+          .from(rideFeedback)
+          .where(inArray(rideFeedback.userId, ids))
+          .groupBy(rideFeedback.userId),
+      ]);
+      const rideCountByUser = new Map(rideCounts.map((r) => [r.userId, r.c]));
+      const avgRatingByUser = new Map(
+        ratingRows.map((r) => [r.userId, r.avgRating === null ? null : Math.round(Number(r.avgRating) * 100) / 100]),
+      );
+
+      return rows.map((u) => ({
+        ...this.withResolvedRole(u)!,
+        rideCount: rideCountByUser.get(u.id) ?? 0,
+        avgRating: avgRatingByUser.get(u.id) ?? null,
+      }));
     }
 
     async countUsers() {

@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import type { User, UserRole } from "@shared/schema";
+import type { AdminUser, UserRole } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { Card } from "@/components/ui/card";
@@ -26,9 +26,9 @@ export function UsersPage() {
   // The signed-in operator/admin — used to gate who may assign the admin role
   // (mirrors the server-side rule so the UI doesn't offer a forbidden action).
   const { role: actorRole, user: actor } = useCurrentUser();
-  const usersQ = useQuery<User[]>({ queryKey: USERS_KEY });
+  const usersQ = useQuery<AdminUser[]>({ queryKey: USERS_KEY });
   const [search, setSearch] = useState("");
-  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
 
   const roleMut = useMutation({
     mutationFn: async (p: { id: string; role: UserRole }) => {
@@ -138,8 +138,9 @@ export function UsersPage() {
                 <TableHead>Роль</TableHead>
                 <TableHead>Согласие</TableHead>
                 <TableHead>Регистрация</TableHead>
+                <TableHead>Поездки</TableHead>
+                <TableHead>Ср. оценка</TableHead>
                 <TableHead>Статус</TableHead>
-                {actorRole === "admin" && <TableHead>Действия</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>

@@ -8,7 +8,7 @@
 
 import type {
   Bike, Parking, ZoneRow, Ride, AdminRide, Ticket, TicketWithComments,
-  Payment, Wallet, MapObject, InsertMapObject, User, OtpRequest, UserRole,
+  Payment, Wallet, MapObject, InsertMapObject, User, AdminUser, OtpRequest, UserRole,
   UpdateProfileInput, PaymentMethod, SupportTicket, SupportTicketWithUser,
   SupportTicketStatus, PaymentOrder, AdminCreateBikeInput, AdminUpdateBikeInput,
   CreateTicketInput, UpdateTicketInput, AdminCreateParkingInput, AdminUpdateParkingInput,
@@ -29,7 +29,7 @@ export interface IUserStorage {
    */
   deleteAccount(userId: string): Promise<{ ok: true } | { error: "active_ride" | "not_found" }>;
   // admin user management
-  listUsers(opts?: { limit?: number; offset?: number }): Promise<User[]>;
+  listUsers(opts?: { limit?: number; offset?: number }): Promise<AdminUser[]>;
   countUsers(): Promise<number>;
   setUserRole(id: string, role: UserRole): Promise<{ user: User } | { error: string }>;
   setUserBlocked(id: string, blocked: boolean, reason?: string): Promise<{ user: User } | { error: string }>;

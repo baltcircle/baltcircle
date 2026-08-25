@@ -43,6 +43,11 @@ export const adminSetRoleSchema = z.object({
 });
 export type AdminSetRoleInput = z.infer<typeof adminSetRoleSchema>;
 
+// Admin users list: base User row enriched with per-user ride/feedback
+// aggregates, joined in at read time (never persisted). rideCount counts only
+// completed rides; avgRating is null when the user has left no ride feedback.
+export type AdminUser = User & { rideCount: number; avgRating: number | null };
+
 // Admin block/unblock. `blocked: true` disables the account; an optional reason
 // is stored for the audit trail and shown back in the admin table.
 export const adminSetBlockedSchema = z.object({

@@ -54,6 +54,15 @@ export function fmtRelative(ts: number) {
 export function fmtDate(ts: number) {
   return new Date(ts).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
+// Date-only variant (no time) for contexts where the exact minute doesn't
+// matter — e.g. a user's registration date in the admin table.
+export function fmtDateOnly(ts: number) {
+  return new Date(ts).toLocaleString("ru-RU", { day: "2-digit", month: "short", year: "numeric" });
+}
+// Average ride rating: one decimal place, "—" when the user has no feedback.
+export function fmtRating(avg: number | null) {
+  return avg === null ? "—" : avg.toFixed(1);
+}
 
 // Legacy tariff ids may still appear on older rides; keep readable fallbacks.
 const LEGACY_TARIFF_LABELS: Record<string, string> = {

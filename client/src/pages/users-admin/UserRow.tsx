@@ -1,4 +1,4 @@
-import type { User, UserRole } from "@shared/schema";
+import type { AdminUser, UserRole } from "@shared/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
@@ -8,8 +8,8 @@ import {
 import {
   Tooltip, TooltipContent, TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ShieldCheck, Ban, Check, Trash2 } from "lucide-react";
-import { fmtDate, ROLE_LABEL } from "@/lib/format";
+import { ShieldCheck, Ban, Check, Trash2, Bike, Star } from "lucide-react";
+import { fmtDate, fmtDateOnly, fmtRating, ROLE_LABEL } from "@/lib/format";
 
 const ROLE_TONE: Record<UserRole, string> = {
   rider: "",
@@ -29,7 +29,7 @@ const ROLE_HINT: Record<UserRole, string> = {
 };
 
 export function UserRowItem({ u, isSelf, actorRole, onRole, onBlockToggle, onDeleteRequest, busy }: {
-  u: User;
+  u: AdminUser;
   isSelf: boolean;
   actorRole: UserRole | null;
   onRole: (role: UserRole) => void;
@@ -66,30 +66,29 @@ export function UserRowItem({ u, isSelf, actorRole, onRole, onBlockToggle, onDel
         <div className="text-xs text-muted-foreground">{u.email ?? "—"}</div>
       </TableCell>
       <TableCell>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className={ROLE_TONE[role]} data-testid={`role-label-${u.id}`}>{ROLE_LABEL[role]}</Badge>
-          <Select
-            value={role}
-            onValueChange={(v) => onRole(v as UserRole)}
-            disabled={roleSelectDisabled}
-          >
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <SelectTrigger className="h-8 w-[130px]" data-testid={`select-role-${u.id}`}>
-                  <SelectValue />
-                </SelectTrigger>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs">{ROLE_HINT[role]}</TooltipContent>
-            </Tooltip>
-            <SelectContent>
-              {roleOptions.map((r) => (
-                <SelectItem key={r} value={r} data-testid={`select-role-${u.id}-option-${r}`} title={ROLE_HINT[r]}>
-                  {ROLE_LABEL[r]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {/* Role select doubles as the role indicator (colored border/text via
+            ROLE_TONE) — no separate badge needed alongside it. */}
+        <Select
+          value={role}
+          onValueChange={(v) => onRole(v as UserRole)}
+          disabled={roleSelectDisabled}
+        >
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SelectTrigger className={`h-8 w-[140px] ${ROLE_TONE[role]}`} data-testid={`select-role-${u.id}`}>
+                <SelectValue />
+              </SelectTrigger>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">{ROLE_HINT[role]}</TooltipContent>
+          </Tooltip>
+          <SelectContent>
+            {roleOptions.map((r) => (
+              <SelectItem key={r} value={r} data-testid={`select-role-${u.id}-option-${r}`} title={ROLE_HINT[r]}>
+                {ROLE_LABEL[r]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </TableCell>
       <TableCell>
         {u.consentAcceptedAt ? (
@@ -104,12 +103,25 @@ export function UserRowItem({ u, isSelf, actorRole, onRole, onBlockToggle, onDel
           <div className="text-xs text-muted-foreground">{u.consentVersion}</div>
         )}
       </TableCell>
-      <TableCell className="text-sm">{fmtDate(u.createdAt)}</TableCell>
+      <TableCell className="text-sm">{fmtDateOnly(u.createdAt)}</TableCell>
+      <TableCell className="text-sm">
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground" data-testid={`ride-count-${u.id}`}>
+          <Bike className="w-3.5 h-3.5" />{u.rideCount}
+        </span>
+      </TableCell>
+      <TableCell className="text-sm">
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground" data-testid={`avg-rating-${u.id}`}>
+          <Star className="w-3.5 h-3.5" />{fmtRating(u.avgRating)}
+        </span>
+      </TableCell>
       <TableCell>
-        <div className="flex items-center gap-2">
+        {/* Status badge + block/delete toggles compacted into one column —
+            icon-only buttons (matching the bikes table pattern) instead of
+            full-width text buttons for each action. */}
+        <div className="flex items-center gap-1">
           {blocked ? (
             <Badge variant="outline" className="text-destructive border-destructive/40" data-testid={`status-${u.id}`}>
-              Заблокирован
+              Блок
             </Badge>
           ) : (
             <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400 border-emerald-500/40" data-testid={`status-${u.id}`}>
@@ -117,34 +129,28 @@ export function UserRowItem({ u, isSelf, actorRole, onRole, onBlockToggle, onDel
             </Badge>
           )}
           <Button
-            size="sm"
-            variant="outline"
+            variant="ghost" size="icon"
             disabled={blockDisabled}
             onClick={onBlockToggle}
+            title={blocked ? "Разблокировать" : "Заблокировать"}
             data-testid={`button-block-${u.id}`}
           >
-            {blocked ? (
-              <><Check className="w-3.5 h-3.5 mr-1" />Разблокировать</>
-            ) : (
-              <><Ban className="w-3.5 h-3.5 mr-1" />Заблокировать</>
-            )}
+            {blocked ? <Check className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
           </Button>
+          {isAdminActor && (
+            <Button
+              variant="ghost" size="icon"
+              disabled={deleteDisabled}
+              onClick={onDeleteRequest}
+              className="text-destructive hover:text-destructive"
+              title="Удалить"
+              data-testid={`button-delete-${u.id}`}
+            >
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          )}
         </div>
       </TableCell>
-      {isAdminActor && (
-        <TableCell>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={deleteDisabled}
-            onClick={onDeleteRequest}
-            className="text-destructive border-destructive/40 hover:bg-destructive/10"
-            data-testid={`button-delete-${u.id}`}
-          >
-            <Trash2 className="w-3.5 h-3.5 mr-1" />Удалить
-          </Button>
-        </TableCell>
-      )}
     </TableRow>
   );
 }
