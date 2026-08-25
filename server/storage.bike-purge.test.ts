@@ -68,7 +68,8 @@ function makeTx(opts: {
   return { tx, deletes, updates };
 }
 
-const ARCHIVED_TEST_BIKE = { id: "bike-1", isTestBike: true, status: "archived", lockImei: null };
+const ARCHIVED_TEST_BIKE = { id: "bike-1", isTestBike: true, seed: false, status: "archived", lockImei: null };
+const ARCHIVED_SEED_BIKE = { id: "bike-2", isTestBike: false, seed: true, status: "archived", lockImei: null };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -84,12 +85,12 @@ describe("DatabaseStorage.purgeArchivedTestBike", () => {
     expect(dbMock.transaction).not.toHaveBeenCalled();
   });
 
-  it("refuses a bike that is not flagged as a test unit", async () => {
-    mockGetBike({ ...ARCHIVED_TEST_BIKE, isTestBike: false });
+  it("refuses a bike that is neither a flagged test unit nor a seed/demo row", async () => {
+    mockGetBike({ ...ARCHIVED_TEST_BIKE, isTestBike: false, seed: false });
 
     const result = await new DatabaseStorage().purgeArchivedTestBike("bike-1");
 
-    expect(result).toEqual({ error: "Безвозвратно удалить можно только велосипед с флагом «тестовый»" });
+    expect(result).toEqual({ error: "Безвозвратно удалить можно только велосипед с флагом «тестовый» или демо-сидированный" });
     expect(dbMock.transaction).not.toHaveBeenCalled();
   });
 
@@ -190,5 +191,31 @@ describe("DatabaseStorage.purgeArchivedTestBike", () => {
     await new DatabaseStorage().purgeArchivedTestBike("bike-1");
 
     expect(updates).toHaveLength(0);
+  });
+
+  it("purges a seed/demo bike even though its rides aren't flagged isTest", async () => {
+    // Demo fleet rows (seed=true) can carry real-looking ride/order rows
+    // from staff poking at the demo environment — none of that history was
+    // ever retroactively marked isTest, so the non-test-ride and paid-order
+    // guards must be skipped entirely for seed bikes.
+    mockGetBike(ARCHIVED_SEED_BIKE);
+    const { tx, deletes } = makeTx({
+      rideIds: [30, 31], ticketIds: [40], realRidesCount: 2, paidOrdersCount: 1,
+    });
+    dbMock.transaction.mockImplementation((cb: (t: unknown) => unknown) => cb(tx));
+
+    const result = await new DatabaseStorage().purgeArchivedTestBike("bike-2");
+
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
+    expect(deletes).toContain(bikes);
+  });
+
+  it("still refuses a seed bike that has not been archived yet", async () => {
+    mockGetBike({ ...ARCHIVED_SEED_BIKE, status: "active" });
+
+    const result = await new DatabaseStorage().purgeArchivedTestBike("bike-2");
+
+    expect(result).toEqual({ error: "Сначала переведите велосипед в архив" });
+    expect(dbMock.transaction).not.toHaveBeenCalled();
   });
 });

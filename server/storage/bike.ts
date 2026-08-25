@@ -344,7 +344,16 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
     > {
       const existing = await this.getBike(id);
       if (!existing) return { error: "Велосипед не найден" };
-      if (!existing.isTestBike) return { error: "Безвозвратно удалить можно только велосипед с флагом «тестовый»" };
+      // Two independent ways a bike earns the right to be purged:
+      //  - isTestBike: a real fleet bike explicitly flagged for staff testing.
+      //  - seed: a demo/seed row inserted by the reseed migration, never a
+      //    real fleet unit — its rides are synthetic technical runs even
+      //    though they were never (retroactively) flagged isTest at
+      //    ride-start time, so the non-test-ride/paid-order guards below
+      //    are skipped for seed bikes specifically.
+      if (!existing.isTestBike && !existing.seed) {
+        return { error: "Безвозвратно удалить можно только велосипед с флагом «тестовый» или демо-сидированный" };
+      }
       if (existing.status !== "archived") return { error: "Сначала переведите велосипед в архив" };
 
       return db.transaction(async (tx) => {
@@ -353,16 +362,18 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
         const ticketRows = await tx.select({ id: tickets.id }).from(tickets).where(eq(tickets.bikeId, id));
         const ticketIds = ticketRows.map((r) => r.id);
 
-        const realRides = rideIds.length
-          ? (await tx.select({ c: count() }).from(rides).where(and(eq(rides.bikeId, id), eq(rides.isTest, false))))[0].c
-          : 0;
-        if (realRides > 0) {
-          return { error: `На велосипеде есть ${realRides} нетестовых поездок — удаление запрещено` };
-        }
-        const paidOrders = (await tx.select({ c: count() }).from(paymentOrders)
-          .where(and(eq(paymentOrders.bikeId, id), eq(paymentOrders.status, "paid"))))[0].c;
-        if (paidOrders > 0) {
-          return { error: `На велосипеде есть ${paidOrders} оплаченных заказов — удаление запрещено` };
+        if (!existing.seed) {
+          const realRides = rideIds.length
+            ? (await tx.select({ c: count() }).from(rides).where(and(eq(rides.bikeId, id), eq(rides.isTest, false))))[0].c
+            : 0;
+          if (realRides > 0) {
+            return { error: `На велосипеде есть ${realRides} нетестовых поездок — удаление запрещено` };
+          }
+          const paidOrders = (await tx.select({ c: count() }).from(paymentOrders)
+            .where(and(eq(paymentOrders.bikeId, id), eq(paymentOrders.status, "paid"))))[0].c;
+          if (paidOrders > 0) {
+            return { error: `На велосипеде есть ${paidOrders} оплаченных заказов — удаление запрещено` };
+          }
         }
 
         const rideFeedbackDeleted = rideIds.length

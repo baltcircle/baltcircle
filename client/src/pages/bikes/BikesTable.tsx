@@ -167,11 +167,11 @@ export function BikesTable({
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   )}
-                  {isAdmin && b.status === "archived" && b.isTestBike && (
+                  {isAdmin && b.status === "archived" && (b.isTestBike || b.seed) && (
                     <Button
                       variant="ghost" size="icon"
                       onClick={() => setPurgeTarget(b)}
-                      title="Удалить безвозвратно (тестовый)"
+                      title="Удалить безвозвратно (тестовый/демо)"
                       className="text-destructive"
                       data-testid={`button-purge-${b.id}`}
                     >
@@ -196,12 +196,13 @@ export function BikesTable({
       <AlertDialog open={!!purgeTarget} onOpenChange={(open) => !open && setPurgeTarget(null)}>
         <AlertDialogContent data-testid="dialog-purge-bike">
           <AlertDialogHeader>
-            <AlertDialogTitle>Удалить тестовый велосипед «{purgeTarget?.id}» безвозвратно?</AlertDialogTitle>
+            <AlertDialogTitle>Удалить велосипед «{purgeTarget?.id}» безвозвратно?</AlertDialogTitle>
             <AlertDialogDescription>
               В отличие от обычного удаления, здесь вместе с велосипедом безвозвратно исчезнут все его
               поездки, заявки, заказы на оплату, резервы, алерты и история GPS-телеметрии. Действие доступно
-              только для архивных тестовых велосипедов и будет отклонено, если на него есть реальные поездки или
-              оплата.
+              только для архивных тестовых или демо-сидированных велосипедов. Для тестового (не demo)
+              велосипеда будет отклонено, если на него есть реальные поездки или оплата; для demo-сидированного
+              — удалится всегда, так как его история синтетическая.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

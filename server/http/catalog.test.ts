@@ -435,14 +435,14 @@ describe("POST /api/admin/bikes/:id/purge", () => {
     sessionUserId = admin.id;
     storageMock.getUser.mockResolvedValue(admin);
     storageMock.purgeArchivedTestBike.mockResolvedValue({
-      error: "Безвозвратно удалить можно только велосипед с флагом «тестовый»",
+      error: "Безвозвратно удалить можно только велосипед с флагом «тестовый» или демо-сидированный",
     });
 
     const res = await lockRequest("/api/admin/bikes/bike-1/purge", "POST");
 
     expect(res.status).toBe(400);
     expect(res.body).toEqual({
-      error: "Безвозвратно удалить можно только велосипед с флагом «тестовый»",
+      error: "Безвозвратно удалить можно только велосипед с флагом «тестовый» или демо-сидированный",
     });
   });
 
