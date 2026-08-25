@@ -19,6 +19,7 @@ const storageMock = vi.hoisted(() => ({
   updateLock: vi.fn(),
   decommissionLock: vi.fn(),
   getActiveRideForBike: vi.fn(),
+  purgeArchivedTestBike: vi.fn(),
 }));
 
 vi.mock("../storage", () => ({
@@ -382,5 +383,77 @@ describe("lock device registry admin CRUD", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("decommissioned");
+  });
+});
+
+describe("POST /api/admin/bikes/:id/purge", () => {
+  const operator = { id: "operator-2", role: "operator" };
+  const admin = { id: "admin-1", role: "admin" };
+
+  it("rejects an operator — only admin may permanently purge a bike", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+
+    const res = await lockRequest("/api/admin/bikes/bike-1/purge", "POST");
+
+    expect(res.status).toBe(403);
+    expect(storageMock.purgeArchivedTestBike).not.toHaveBeenCalled();
+  });
+
+  it("requires a session", async () => {
+    const res = await lockRequest("/api/admin/bikes/bike-1/purge", "POST");
+
+    expect(res.status).toBe(401);
+    expect(storageMock.purgeArchivedTestBike).not.toHaveBeenCalled();
+  });
+
+  it("lets an admin purge an archived test bike and returns the deleted counts", async () => {
+    sessionUserId = admin.id;
+    storageMock.getUser.mockResolvedValue(admin);
+    storageMock.purgeArchivedTestBike.mockResolvedValue({
+      ok: true,
+      deleted: {
+        rides: 2, tickets: 0, paymentOrders: 0, reservations: 0, alerts: 0,
+        ticketComments: 0, rideFeedback: 2, ridePoints: 30, telemetry: 100,
+      },
+    });
+
+    const res = await lockRequest("/api/admin/bikes/bike-1/purge", "POST");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      ok: true,
+      deleted: {
+        rides: 2, tickets: 0, paymentOrders: 0, reservations: 0, alerts: 0,
+        ticketComments: 0, rideFeedback: 2, ridePoints: 30, telemetry: 100,
+      },
+    });
+    expect(storageMock.purgeArchivedTestBike).toHaveBeenCalledWith("bike-1");
+  });
+
+  it("maps a guard rejection (not a test bike) to 400", async () => {
+    sessionUserId = admin.id;
+    storageMock.getUser.mockResolvedValue(admin);
+    storageMock.purgeArchivedTestBike.mockResolvedValue({
+      error: "Безвозвратно удалить можно только велосипед с флагом «тестовый»",
+    });
+
+    const res = await lockRequest("/api/admin/bikes/bike-1/purge", "POST");
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({
+      error: "Безвозвратно удалить можно только велосипед с флагом «тестовый»",
+    });
+  });
+
+  it("404s when the bike does not exist", async () => {
+    sessionUserId = admin.id;
+    storageMock.getUser.mockResolvedValue(admin);
+    storageMock.purgeArchivedTestBike.mockResolvedValue({ error: "Велосипед не найден" });
+
+    const res = await lockRequest("/api/admin/bikes/ghost/purge", "POST");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Велосипед не найден" });
   });
 });

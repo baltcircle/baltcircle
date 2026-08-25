@@ -1,6 +1,9 @@
-import { bikes, unassignedLocks, locks, parkings, rides, tickets, paymentOrders } from "@shared/schema";
+import {
+  bikes, unassignedLocks, locks, parkings, rides, tickets, paymentOrders,
+  reservations, alerts, bikeTelemetry, rideFeedback, ridePoints, ticketComments,
+} from "@shared/schema";
 import type { Bike, Lock, Parking, AdminCreateBikeInput, AdminUpdateBikeInput } from "@shared/schema";
-import { eq, count } from "drizzle-orm";
+import { eq, and, count, inArray, or } from "drizzle-orm";
 import { MAP_W, MAP_H, realToMap } from "@shared/geo";
 import { db, pool } from "../db/bootstrap";
 import type { Constructor } from "./mixin";
@@ -315,6 +318,89 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       await db.delete(bikes).where(eq(bikes.id, id));
       this.invalidateBikesCache();
       return { ok: true as const };
+    }
+
+    // Permanent purge for a decommissioned TEST unit, including its ride/
+    // ticket/payment-order/reservation/alert/telemetry history. Deliberately
+    // NOT a general-purpose hard delete: restricted to isTestBike===true AND
+    // already archived, so a real fleet bike can never reach this path even
+    // by mistake. A test flag flipped AFTER real customers rode the bike must
+    // still not wipe their data — any non-test ride or any PAID payment order
+    // on this bike blocks the purge outright instead of silently dropping
+    // financial/analytics rows (mirrors deleteAccount's "never delete the
+    // ledger" rule for accounts).
+    async purgeArchivedTestBike(
+      this: {
+        getBike(id: string): Promise<Bike | undefined>;
+        invalidateBikesCache(opts?: { silent?: boolean }): void;
+      },
+      id: string,
+    ): Promise<
+      | { ok: true; deleted: Record<
+          "rides" | "tickets" | "paymentOrders" | "reservations" | "alerts" | "ticketComments" | "rideFeedback" | "ridePoints" | "telemetry",
+          number
+        > }
+      | { error: string }
+    > {
+      const existing = await this.getBike(id);
+      if (!existing) return { error: "Велосипед не найден" };
+      if (!existing.isTestBike) return { error: "Безвозвратно удалить можно только велосипед с флагом «тестовый»" };
+      if (existing.status !== "archived") return { error: "Сначала переведите велосипед в архив" };
+
+      return db.transaction(async (tx) => {
+        const rideRows = await tx.select({ id: rides.id }).from(rides).where(eq(rides.bikeId, id));
+        const rideIds = rideRows.map((r) => r.id);
+        const ticketRows = await tx.select({ id: tickets.id }).from(tickets).where(eq(tickets.bikeId, id));
+        const ticketIds = ticketRows.map((r) => r.id);
+
+        const realRides = rideIds.length
+          ? (await tx.select({ c: count() }).from(rides).where(and(eq(rides.bikeId, id), eq(rides.isTest, false))))[0].c
+          : 0;
+        if (realRides > 0) {
+          return { error: `На велосипеде есть ${realRides} нетестовых поездок — удаление запрещено` };
+        }
+        const paidOrders = (await tx.select({ c: count() }).from(paymentOrders)
+          .where(and(eq(paymentOrders.bikeId, id), eq(paymentOrders.status, "paid"))))[0].c;
+        if (paidOrders > 0) {
+          return { error: `На велосипеде есть ${paidOrders} оплаченных заказов — удаление запрещено` };
+        }
+
+        const rideFeedbackDeleted = rideIds.length
+          ? (await tx.delete(rideFeedback).where(inArray(rideFeedback.rideId, rideIds))).rowCount ?? 0
+          : 0;
+        const ridePointsDeleted = rideIds.length
+          ? (await tx.delete(ridePoints).where(inArray(ridePoints.rideId, rideIds))).rowCount ?? 0
+          : 0;
+        const ticketCommentsDeleted = ticketIds.length
+          ? (await tx.delete(ticketComments).where(inArray(ticketComments.ticketId, ticketIds))).rowCount ?? 0
+          : 0;
+
+        const paymentOrdersDeleted = (await tx.delete(paymentOrders).where(eq(paymentOrders.bikeId, id))).rowCount ?? 0;
+        const ticketsDeleted = (await tx.delete(tickets).where(eq(tickets.bikeId, id))).rowCount ?? 0;
+        const reservationsDeleted = rideIds.length
+          ? (await tx.delete(reservations).where(or(eq(reservations.bikeId, id), inArray(reservations.claimedRideId, rideIds)))).rowCount ?? 0
+          : (await tx.delete(reservations).where(eq(reservations.bikeId, id))).rowCount ?? 0;
+        const alertsDeleted = (await tx.delete(alerts).where(eq(alerts.bikeId, id))).rowCount ?? 0;
+        const telemetryDeleted = (await tx.delete(bikeTelemetry).where(eq(bikeTelemetry.bikeId, id))).rowCount ?? 0;
+        const ridesDeleted = (await tx.delete(rides).where(eq(rides.bikeId, id))).rowCount ?? 0;
+
+        // Keep the lock registry in step — the row survives (ON DELETE SET
+        // NULL), but the legacy binding lived on the bike we're about to drop.
+        if (existing.lockImei) {
+          await tx.update(locks).set({ bikeId: null, updatedAt: Date.now() } as any).where(eq(locks.imei, existing.lockImei));
+        }
+
+        await tx.delete(bikes).where(eq(bikes.id, id));
+        this.invalidateBikesCache();
+        return {
+          ok: true as const,
+          deleted: {
+            rides: ridesDeleted, tickets: ticketsDeleted, paymentOrders: paymentOrdersDeleted,
+            reservations: reservationsDeleted, alerts: alertsDeleted, ticketComments: ticketCommentsDeleted,
+            rideFeedback: rideFeedbackDeleted, ridePoints: ridePointsDeleted, telemetry: telemetryDeleted,
+          },
+        };
+      });
     }
   };
 }

@@ -288,5 +288,17 @@ export function registerCatalogRoutes(app: Express): void {
     }
     res.json(result);
   });
+  // Permanent purge of an already-archived TEST bike (and its ride/ticket/
+  // payment-order history) — admin-only. Stricter than the routes above:
+  // operators can archive/attempt-delete, but only an admin may permanently
+  // erase history, mirroring the admin-only account hard-delete route.
+  app.post("/api/admin/bikes/:id/purge", requireRole("admin"), async (req, res) => {
+    const result = await storage.purgeArchivedTestBike(String(req.params.id));
+    if ("error" in result) {
+      const status = result.error.includes("не найден") ? 404 : 400;
+      return res.status(status).json(result);
+    }
+    res.json(result);
+  });
   app.get("/api/zones", async (_req, res) => res.json(await storage.listZones()));
 }

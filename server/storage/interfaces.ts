@@ -185,6 +185,13 @@ export interface IBikeStorage {
   adminUpdateBike(id: string, patch: AdminUpdateBikeInput): Promise<{ bike: Bike } | { error: string }>;
   archiveBike(id: string): Promise<{ bike: Bike } | { error: string }>;
   deleteBike(id: string): Promise<{ ok: true } | { error: string; archived?: Bike }>;
+  purgeArchivedTestBike(id: string): Promise<
+    | { ok: true; deleted: Record<
+        "rides" | "tickets" | "paymentOrders" | "reservations" | "alerts" | "ticketComments" | "rideFeedback" | "ridePoints" | "telemetry",
+        number
+      > }
+    | { error: string }
+  >;
   // Registry locks that have not yet been fitted to a bike.
   listUnassignedLocks(): Promise<{ imei: string; lastSeen: number | null }[]>;
   /**

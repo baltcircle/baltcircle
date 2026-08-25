@@ -1,7 +1,9 @@
 import { useMutation } from "@tanstack/react-query";
+import { useState } from "react";
 import type { Bike, BikeStatus, Parking } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +11,11 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  Pencil, QrCode, Archive, Trash2, Bike as BikeIcon, Wrench,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Pencil, QrCode, Archive, Trash2, Bike as BikeIcon, Wrench, FlaskConical,
 } from "lucide-react";
 import { Link } from "wouter";
 import { TablePager, useClientPagination } from "@/components/table-pager";
@@ -26,7 +32,9 @@ export function BikesTable({
   onEdit: (bike: Bike) => void;
 }) {
   const toast = useToast();
+  const { isAdmin } = useCurrentUser();
   const { page, setPage, pageCount, pageItems } = useClientPagination(bikes);
+  const [purgeTarget, setPurgeTarget] = useState<Bike | null>(null);
   const parkingName = (id: string | null) =>
     id ? parkings.find((p) => p.id === id)?.name ?? id : "—";
 
@@ -61,6 +69,30 @@ export function BikesTable({
         description: err?.message?.replace(/^\d+:\s*/, "") ?? "У велосипеда есть история поездок",
       });
     },
+  });
+
+  // Permanent purge — admin-only, only for already-archived test bikes
+  // (enforced again server-side; this button is just the UI-level gate).
+  const purgeMut = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/admin/bikes/${encodeURIComponent(id)}/purge`);
+      return res.json() as Promise<{ ok: true; deleted: Record<string, number> }>;
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ADMIN_BIKES_KEY });
+      queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
+      const ridesDeleted = result.deleted.rides ?? 0;
+      toast.toast({
+        title: "Велосипед удалён безвозвратно",
+        description: `удалено поездок: ${ridesDeleted}`,
+      });
+      setPurgeTarget(null);
+    },
+    onError: (err: any) => toast.toast({
+      title: "Не удалось удалить",
+      description: err?.message?.replace(/^\d+:\s*/, ""),
+      variant: "destructive",
+    }),
   });
 
   return (
@@ -135,6 +167,17 @@ export function BikesTable({
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   )}
+                  {isAdmin && b.status === "archived" && b.isTestBike && (
+                    <Button
+                      variant="ghost" size="icon"
+                      onClick={() => setPurgeTarget(b)}
+                      title="Удалить безвозвратно (тестовый)"
+                      className="text-destructive"
+                      data-testid={`button-purge-${b.id}`}
+                    >
+                      <FlaskConical className="w-4 h-4" />
+                    </Button>
+                  )}
                 </div>
               </TableCell>
             </TableRow>
@@ -149,6 +192,31 @@ export function BikesTable({
         </TableBody>
       </Table>
       <TablePager page={page} pageCount={pageCount} total={bikes.length} onPage={setPage} testid="bikes-pager" />
+
+      <AlertDialog open={!!purgeTarget} onOpenChange={(open) => !open && setPurgeTarget(null)}>
+        <AlertDialogContent data-testid="dialog-purge-bike">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить тестовый велосипед «{purgeTarget?.id}» безвозвратно?</AlertDialogTitle>
+            <AlertDialogDescription>
+              В отличие от обычного удаления, здесь вместе с велосипедом безвозвратно исчезнут все его
+              поездки, заявки, заказы на оплату, резервы, алерты и история GPS-телеметрии. Действие доступно
+              только для архивных тестовых велосипедов и будет отклонено, если на него есть реальные поездки или
+              оплата.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={purgeMut.isPending}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => purgeTarget && purgeMut.mutate(purgeTarget.id)}
+              disabled={purgeMut.isPending}
+              className="bg-destructive text-destructive-foreground border border-destructive-border hover:bg-destructive/90"
+              data-testid="button-confirm-purge-bike"
+            >
+              {purgeMut.isPending ? "удаляем…" : "удалить безвозвратно"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }
