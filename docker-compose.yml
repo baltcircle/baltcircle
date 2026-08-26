@@ -20,9 +20,29 @@ services:
       options:
         max-size: "20m"
         max-file: "5"
+    # Audit (scalability): no cap existed, so a leak or a runaway burst (e.g.
+    # a lock flood, or a slow client-holding-connections spike) could OOM the
+    # whole 4 vCPU / 4GB host — there's nothing else here to fail over to.
+    # This is the only container on the VM besides the GitHub Actions runner
+    # and nginx (both host-level, not containerized), so cap well under the
+    # host total: 3 of 4 vCPU, 3 of 4 GB RAM, leaving headroom for the OS,
+    # nginx, the runner's own build steps, and the managed-Postgres client
+    # connections' local overhead. Raise only alongside a VM resize.
+    deploy:
+      resources:
+        limits:
+          cpus: "3.0"
+          memory: 3072M
     environment:
       NODE_ENV: production
       PORT: 5000
+      # V8's default old-space sizing is based on the host's total memory as
+      # seen inside the container, not the cgroup limit above — without this,
+      # the heap can grow past the 3072M container cap and get OOM-killed by
+      # the kernel instead of Node handling memory pressure gracefully.
+      # 2048MB leaves ~1GB of the cap for non-heap usage (buffers, native
+      # modules, thread stacks, the OMNI TCP gateway's socket registry).
+      NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=2048}
       # Managed PostgreSQL connection string (Yandex Cloud). SECRET — read from
       # the host env (set by the deploy workflow from the GitHub `DATABASE_URL`
       # secret). Required: the app fails fast if the pool cannot connect. Format:

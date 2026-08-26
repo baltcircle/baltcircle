@@ -218,6 +218,25 @@ app.use((req, res, next) => {
   process.once("SIGTERM", () => { clearTimeout(initialReservationSweepTimer); clearInterval(reservationSweepTimer); });
   process.once("SIGINT", () => { clearTimeout(initialReservationSweepTimer); clearInterval(reservationSweepTimer); });
 
+  // Audit (scalability): bike_telemetry (lock heartbeat/GPS check-ins) had no
+  // retention policy and grows without bound as the fleet and ping rate grow
+  // — unlike ride_points (permanent per-ride track), it's disposable noise
+  // past TELEMETRY_RETENTION_MS (30 days, server/storage/bike.ts). Same
+  // in-process-timer pattern as the sweeps above; batched internally so a
+  // large backlog can't hold a long-running delete against a hot table.
+  const runTelemetryPurge = () => {
+    void storage.purgeOldTelemetry()
+      .then((count) => {
+        if (count > 0) logger.info({ count }, "purged old bike telemetry");
+      })
+      .catch((err) => logger.error({ err }, "telemetry purge failed"));
+  };
+  const TELEMETRY_PURGE_INTERVAL_MS = 60 * 60 * 1000; // hourly, matches contact-request purge
+  const initialTelemetryPurgeTimer = setTimeout(runTelemetryPurge, 45_000);
+  const telemetryPurgeTimer = setInterval(runTelemetryPurge, TELEMETRY_PURGE_INTERVAL_MS);
+  process.once("SIGTERM", () => { clearTimeout(initialTelemetryPurgeTimer); clearInterval(telemetryPurgeTimer); });
+  process.once("SIGINT", () => { clearTimeout(initialTelemetryPurgeTimer); clearInterval(telemetryPurgeTimer); });
+
   // The gateway is a standalone TCP listener (not an HTTP route), but it shares
   // this process so the authenticated pilot-control endpoint can address its
   // in-memory socket registry without a second control plane.

@@ -203,6 +203,15 @@ export interface IBikeStorage {
    * a different bike — all signs the fix is now stale/misattributed.
    */
   applyGpsRefresh(payload: { bikeId: string; imei: string; lat: number; lng: number }): Promise<void>;
+  /**
+   * Deletes raw lock heartbeat/telemetry rows older than the retention
+   * window. Independent of ride_points (permanent per-ride track history) —
+   * bike_telemetry is high-volume check-in noise with no ride linkage.
+   * Batched: deletes at most `maxBatches * batchSize` rows per call so a
+   * large backlog (e.g. first run after enabling retention) can't hold a
+   * single long-running transaction/lock. Returns rows actually deleted.
+   */
+  purgeOldTelemetry(opts?: { maxBatches?: number; batchSize?: number }): Promise<number>;
 }
 
 export interface ILockStorage {

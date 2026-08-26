@@ -15,6 +15,14 @@ import type { IBikeStorage, IParkingStorage } from "./interfaces";
 // instead of a 500.
 const LOCK_TAKEN = "Этот замок только что назначили другому велосипеду — выберите другой";
 
+// Audit (scalability): bike_telemetry is unbounded heartbeat/GPS check-in
+// noise from every lock (Q0/H0/D0/S5/W0 reports), unrelated to ride_points
+// (permanent per-ride track history, never purged). 30 days covers the
+// realistic window for investigating a lock/dispute complaint about a past
+// date while keeping the table from growing forever as the fleet and ping
+// rate grow. See purgeOldTelemetry, called on a timer from server/index.ts.
+export const TELEMETRY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
 // Radius-gating (rental spec, Phase 2): bikes.lat/lng is the position-of-
 // record whenever a lock has no live GPS fix yet — it's the fallback source
 // startRide/endRide use for the geofence check. Keep it in step with the
@@ -412,6 +420,32 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
           },
         };
       });
+    }
+
+    // Audit (scalability): see TELEMETRY_RETENTION_MS above. Deletes in
+    // batches (default 2000 rows x up to 25 batches = 50k/call) rather than
+    // one unbounded statement — a first-run backlog on a fleet that's been
+    // live for months must not hold a single long DELETE against a table
+    // every OMNI ingest write also touches. Called hourly from
+    // server/index.ts; a backlog larger than one call's cap just gets
+    // finished on the next tick.
+    async purgeOldTelemetry(opts?: { maxBatches?: number; batchSize?: number }): Promise<number> {
+      const batchSize = opts?.batchSize ?? 2000;
+      const maxBatches = opts?.maxBatches ?? 25;
+      const cutoff = Date.now() - TELEMETRY_RETENTION_MS;
+      let totalDeleted = 0;
+      for (let i = 0; i < maxBatches; i++) {
+        const result = await pool.query(
+          `DELETE FROM bike_telemetry WHERE id IN (
+             SELECT id FROM bike_telemetry WHERE t < $1 ORDER BY id LIMIT $2
+           )`,
+          [cutoff, batchSize],
+        );
+        const deleted = result.rowCount ?? 0;
+        totalDeleted += deleted;
+        if (deleted < batchSize) break; // caught up — nothing older left
+      }
+      return totalDeleted;
     }
   };
 }
