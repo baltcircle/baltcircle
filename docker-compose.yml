@@ -93,7 +93,21 @@ services:
       # Runtime dir for support-chat attachment uploads; defaults to ./uploads
       # inside the container when empty. Kept independent of the bind mount
       # path below so the app-side default and the host path can diverge.
+      # LEGACY FALLBACK only — used when YANDEX_OS_BUCKET below is unset. Once
+      # the migration script has moved existing files to Object Storage this
+      # bind mount / var can eventually be removed.
       UPLOADS_DIR: ${UPLOADS_DIR:-/app/uploads}
+      # Yandex Object Storage — support-chat attachments (private bucket,
+      # presigned GET URLs; see server/storage/object-storage.ts). Empty
+      # YANDEX_OS_BUCKET -> app falls back to local disk (UPLOADS_DIR above),
+      # which is what dev/CI use since they have no real cloud credentials.
+      # Values read from the host env (set by the deploy workflow from GitHub
+      # secrets); access key/secret are SECRET, never commit real values.
+      YANDEX_OS_BUCKET: ${YANDEX_OS_BUCKET:-}
+      YANDEX_OS_ENDPOINT: ${YANDEX_OS_ENDPOINT:-https://storage.yandexcloud.net}
+      YANDEX_OS_REGION: ${YANDEX_OS_REGION:-ru-central1}
+      YANDEX_OS_ACCESS_KEY_ID: ${YANDEX_OS_ACCESS_KEY_ID:-}
+      YANDEX_OS_SECRET_ACCESS_KEY: ${YANDEX_OS_SECRET_ACCESS_KEY:-}
       # T-Bank / T-Kassa acquiring — backend-only runtime config (never inlined
       # into the client bundle). Terminal key + password are SECRET and read from
       # the host env (set by the deploy workflow from GitHub secrets). When the

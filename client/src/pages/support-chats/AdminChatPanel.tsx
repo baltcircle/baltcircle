@@ -23,7 +23,7 @@ export function AdminChatPanel({
   const messages = chatQ.data?.messages ?? [];
 
   const [text, setText] = useState("");
-  const [attachment, setAttachment] = useState<{ url: string; mime: string; localName: string } | null>(null);
+  const [attachment, setAttachment] = useState<{ url: string; previewUrl: string; mime: string; localName: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -109,8 +109,8 @@ export function AdminChatPanel({
         mime: file.type,
         dataBase64: dataUrl,
       });
-      const saved = (await res.json()) as { url: string; mime: string };
-      setAttachment({ url: saved.url, mime: saved.mime, localName: file.name });
+      const saved = (await res.json()) as { url: string; previewUrl: string; mime: string };
+      setAttachment({ url: saved.url, previewUrl: saved.previewUrl, mime: saved.mime, localName: file.name });
     } catch (err: any) {
       toast.toast({
         title: "Не удалось загрузить",
@@ -190,7 +190,7 @@ export function AdminChatPanel({
         {attachment && (
           <div className="mb-2 flex items-center gap-2 rounded-md border border-border/60 bg-muted/40 p-2">
             <div className="w-10 h-10 rounded overflow-hidden bg-muted flex items-center justify-center shrink-0">
-              <img src={attachment.url} alt="" className="w-full h-full object-cover" />
+              <img src={attachment.previewUrl} alt="" className="w-full h-full object-cover" />
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-xs truncate">{attachment.localName}</div>

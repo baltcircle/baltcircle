@@ -174,6 +174,68 @@ jobs:
           docker run --rm -v "$LEGACY_VOLUME":/legacy alpine:3.20 sh -c 'date -u +%FT%TZ > /legacy/.migrated-to-pg'
           echo "✅ Migration finished and marked complete."
 
+      # One-shot data migration: support-chat attachments on local disk ->
+      # Yandex Object Storage. Runs only when the bucket secrets are actually
+      # configured (skips cleanly on every deploy until then) AND the local
+      # uploads dir still has files (empty/fresh installs skip too). A marker
+      # file inside the bind-mounted uploads dir itself stops it re-running on
+      # every subsequent deploy. Idempotent (safe to re-run after a partial
+      # failure) — see script/migrate-support-attachments.ts.
+      - name: Migrate support attachments to Object Storage (one-shot)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          YANDEX_OS_BUCKET: ${{ vars.YANDEX_OS_BUCKET }}
+          YANDEX_OS_ENDPOINT: ${{ vars.YANDEX_OS_ENDPOINT }}
+          YANDEX_OS_REGION: ${{ vars.YANDEX_OS_REGION }}
+          YANDEX_OS_ACCESS_KEY_ID: ${{ secrets.YANDEX_OS_ACCESS_KEY_ID }}
+          YANDEX_OS_SECRET_ACCESS_KEY: ${{ secrets.YANDEX_OS_SECRET_ACCESS_KEY }}
+        run: |
+          set -e
+          HOST_UPLOADS_DIR="/home/yc-user/uploads"
+          MARKER="$HOST_UPLOADS_DIR/.migrated-to-object-storage"
+
+          if [ -z "$YANDEX_OS_BUCKET" ]; then
+            echo "ℹ️ YANDEX_OS_BUCKET not set — Object Storage not configured yet. Skipping."
+            exit 0
+          fi
+          if [ -f "$MARKER" ]; then
+            echo "✅ Attachment migration already completed earlier (marker present). Skipping."
+            exit 0
+          fi
+          if [ ! -d "$HOST_UPLOADS_DIR/support" ] || [ -z "$(ls -A "$HOST_UPLOADS_DIR/support" 2>/dev/null)" ]; then
+            echo "ℹ️ No local attachment files found — nothing to migrate. Marking done."
+            date -u +%FT%TZ > "$MARKER"
+            exit 0
+          fi
+
+          echo "➡️ Running one-shot support-attachment migration to Object Storage..."
+          docker run --rm \
+            --network host \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e YANDEX_OS_BUCKET="$YANDEX_OS_BUCKET" \
+            -e YANDEX_OS_ENDPOINT="$YANDEX_OS_ENDPOINT" \
+            -e YANDEX_OS_REGION="$YANDEX_OS_REGION" \
+            -e YANDEX_OS_ACCESS_KEY_ID="$YANDEX_OS_ACCESS_KEY_ID" \
+            -e YANDEX_OS_SECRET_ACCESS_KEY="$YANDEX_OS_SECRET_ACCESS_KEY" \
+            -e LOCAL_UPLOADS_DIR=/legacy-uploads \
+            -e NODE_EXTRA_CA_CERTS=/tmp/yc-root.crt \
+            -v "$GITHUB_WORKSPACE":/src:ro \
+            -v "$HOST_UPLOADS_DIR":/legacy-uploads \
+            -w /build \
+            node:20-bookworm-slim \
+            bash -c '
+              set -e
+              apt-get update >/dev/null && apt-get install -y --no-install-recommends curl ca-certificates rsync >/dev/null
+              curl -fsSL -o /tmp/yc-root.crt https://storage.yandexcloud.net/cloud-certs/CA.pem
+              mkdir -p /build
+              rsync -a --exclude node_modules /src/ /build/
+              npm ci
+              npx tsx script/migrate-support-attachments.ts
+            '
+
+          date -u +%FT%TZ > "$MARKER"
+          echo "✅ Attachment migration finished and marked complete."
+
       - name: Rebuild and restart Docker app
         env:
           DOCKER_BUILDKIT: "1"
@@ -214,6 +276,11 @@ jobs:
           OMNI_DIAG_IMEI: ${{ vars.OMNI_DIAG_IMEI }}
           OMNI_DIAG_SEND_D1_SECONDS: ${{ vars.OMNI_DIAG_SEND_D1_SECONDS }}
           UPLOADS_DIR: ${{ vars.UPLOADS_DIR }}
+          YANDEX_OS_BUCKET: ${{ vars.YANDEX_OS_BUCKET }}
+          YANDEX_OS_ENDPOINT: ${{ vars.YANDEX_OS_ENDPOINT }}
+          YANDEX_OS_REGION: ${{ vars.YANDEX_OS_REGION }}
+          YANDEX_OS_ACCESS_KEY_ID: ${{ secrets.YANDEX_OS_ACCESS_KEY_ID }}
+          YANDEX_OS_SECRET_ACCESS_KEY: ${{ secrets.YANDEX_OS_SECRET_ACCESS_KEY }}
           RUSENDER_API_KEY: ${{ secrets.RUSENDER_API_KEY }}
           RUSENDER_KEY_ID: ${{ secrets.RUSENDER_KEY_ID }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}

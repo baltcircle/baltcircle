@@ -8,7 +8,7 @@ export function ChatInputForm({
   uploading, sending, text, setText,
 }: {
   onSubmit: (e: React.FormEvent) => void;
-  attachment: { url: string; mime: string; localName: string } | null;
+  attachment: { url: string; previewUrl: string; mime: string; localName: string } | null;
   onRemoveAttachment: () => void;
   fileRef: RefObject<HTMLInputElement>;
   onPickFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -25,7 +25,7 @@ export function ChatInputForm({
       {attachment && (
         <div className="mb-2 flex items-center gap-2 rounded-md border border-border/60 bg-muted/40 p-2">
           <div className="w-10 h-10 rounded overflow-hidden bg-muted flex items-center justify-center shrink-0">
-            <img src={attachment.url} alt="" className="w-full h-full object-cover" />
+            <img src={attachment.previewUrl} alt="" className="w-full h-full object-cover" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-xs truncate">{attachment.localName}</div>

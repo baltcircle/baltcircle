@@ -20,7 +20,7 @@ export function SupportPage() {
   const messages = chatQ.data?.messages ?? [];
 
   const [text, setText] = useState("");
-  const [attachment, setAttachment] = useState<{ url: string; mime: string; localName: string } | null>(null);
+  const [attachment, setAttachment] = useState<{ url: string; previewUrl: string; mime: string; localName: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -104,8 +104,8 @@ export function SupportPage() {
         mime: file.type,
         dataBase64: dataUrl,
       });
-      const saved = (await res.json()) as { url: string; mime: string };
-      setAttachment({ url: saved.url, mime: saved.mime, localName: file.name });
+      const saved = (await res.json()) as { url: string; previewUrl: string; mime: string };
+      setAttachment({ url: saved.url, previewUrl: saved.previewUrl, mime: saved.mime, localName: file.name });
     } catch (err: any) {
       toast.toast({
         title: "Не удалось загрузить файл",

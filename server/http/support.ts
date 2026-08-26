@@ -5,10 +5,16 @@ import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { storage } from "../storage";
+import type { SupportMessage } from "@shared/schema";
 import { sendSupportMessageSchema } from "@shared/schema";
 import { matchFaq, wantsOperator, BOT_FALLBACK, BOT_HANDOFF } from "@shared/support-faq";
 import { riderId, requireAuth, requireRole, actorName } from "./context";
 import { sendToUserAsync } from "../push";
+import {
+  isObjectStorageConfigured, putSupportAttachment, presignSupportAttachment,
+  PREVIEW_URL_TTL_SECONDS, MESSAGE_URL_TTL_SECONDS,
+} from "../storage/object-storage";
+import { logger } from "../logger";
 
 // -------- SSE fan-out для поддержки --------
 // Event name = conversation_id (число как строка) → пуш идёт только владельцу
@@ -17,13 +23,23 @@ const supportEvents = new EventEmitter();
 supportEvents.setMaxListeners(0);
 
 // -------- Загрузка файлов --------
-// MVP: base64 из JSON → файл на локальный диск. Позже перенос на Yandex Object
-// Storage: заменяется реализация saveAttachment(), URL остаётся стабильным.
-// Корневая uploads-директория выбирается в index.ts (UPLOADS_DIR env или ./uploads).
-// Здесь мы кладём вложения поддержки в подпапку support/.
+// Прод: Yandex Object Storage (приватный бакет, presigned URL, см.
+// ../storage/object-storage.ts). Без секретов YANDEX_OS_* (dev/CI/тесты) —
+// откат на локальный диск, как в исходном MVP.
+//
+// Хранимое в БД значение attachmentUrl двух видов, различимых по префиксу:
+//   - начинается с "/"           → legacy: абсолютный путь на локальном диске,
+//                                    отдаётся статикой /uploads как раньше.
+//   - не начинается с "/"        → ключ объекта в Object Storage
+//                                    ("support/<uuid>.<ext>"); реальный URL
+//                                    получается через resolveAttachmentUrl()
+//                                    прямо перед отправкой клиенту — никогда
+//                                    не кладём presigned-ссылку в БД, она бы
+//                                    протухла.
 const UPLOADS_ROOT = process.env.UPLOADS_DIR ?? path.resolve(process.cwd(), "uploads");
 const UPLOADS_DIR = path.join(UPLOADS_ROOT, "support");
 const UPLOAD_PUBLIC_PREFIX = "/uploads/support";
+const OS_KEY_PREFIX = "support/";
 
 // Разрешённые MIME: только изображения. Ограничение — 8 МБ (после base64 ~10.6 МБ).
 const ALLOWED_MIMES = new Set([
@@ -52,13 +68,48 @@ function extForMime(mime: string): string {
   return "bin";
 }
 
-async function saveAttachment(buf: Buffer, mime: string): Promise<{ url: string; mime: string }> {
-  await ensureUploadDir();
+/** Записывает вложение и возвращает { url, previewUrl, mime }:
+ *  - `url`      — долгоживущее значение для хранения в БД (attachmentUrl в
+ *              POST /api/support/chat) — ключ Object Storage или локальный путь.
+ *  - `previewUrl` — сразу работающая ссылка для превью в композере до
+ *              отправки сообщения (для локального диска совпадает с `url`).
+ */
+export async function saveAttachment(buf: Buffer, mime: string): Promise<{ url: string; previewUrl: string; mime: string }> {
   const id = randomUUID();
   const ext = extForMime(mime);
+  if (isObjectStorageConfigured()) {
+    const key = `${OS_KEY_PREFIX}${id}.${ext}`;
+    await putSupportAttachment(key, buf, mime);
+    const previewUrl = await presignSupportAttachment(key, PREVIEW_URL_TTL_SECONDS);
+    return { url: key, previewUrl, mime };
+  }
+  // Локальный диск (dev/CI или прод до настройки бакета).
+  await ensureUploadDir();
   const filename = `${id}.${ext}`;
   await fs.writeFile(path.join(UPLOADS_DIR, filename), buf);
-  return { url: `${UPLOAD_PUBLIC_PREFIX}/${filename}`, mime };
+  const url = `${UPLOAD_PUBLIC_PREFIX}/${filename}`;
+  return { url, previewUrl: url, mime };
+}
+
+/** Превращает собщения в отдаваемый клиенту вид: attachmentUrl содержит
+ * рабочую ссылку, а не внутренний ключ хранения. Присваивание — чисто
+ * локальное вычисление (без сетевого вызова), безопасно делать на каждое
+ * сообщение при каждой выдаче истории. Ошибка presign не должна ронять выдачу
+ * сообщений — логируется, вложение пришлёт как null.
+ */
+export async function resolveOutgoingMessage(msg: SupportMessage): Promise<SupportMessage> {
+  if (!msg.attachmentUrl || msg.attachmentUrl.startsWith("/")) return msg;
+  try {
+    const url = await presignSupportAttachment(msg.attachmentUrl, MESSAGE_URL_TTL_SECONDS);
+    return { ...msg, attachmentUrl: url };
+  } catch (err) {
+    logger.error({ err, messageId: msg.id }, "support: не удалось подписать URL вложения");
+    return { ...msg, attachmentUrl: null };
+  }
+}
+
+export async function resolveOutgoingMessages(msgs: SupportMessage[]): Promise<SupportMessage[]> {
+  return Promise.all(msgs.map(resolveOutgoingMessage));
 }
 
 // ------------------------------------------------------------------------------------
@@ -70,9 +121,10 @@ export function registerSupportChatRoutes(app: Express): void {
     const uid = riderId(req);
     const conv = await storage.ensureSupportConversation(uid);
     const after = Number.parseInt(String(req.query.after ?? ""), 10);
-    const messages = await storage.listSupportMessages(conv.id, {
+    const rawMessages = await storage.listSupportMessages(conv.id, {
       afterId: Number.isFinite(after) && after > 0 ? after : undefined,
     });
+    const messages = await resolveOutgoingMessages(rawMessages);
     res.json({ conversation: conv, messages });
   });
 
@@ -96,9 +148,10 @@ export function registerSupportChatRoutes(app: Express): void {
       attachmentUrl: parsed.data.attachmentUrl ?? null,
       attachmentMime: parsed.data.attachmentMime ?? null,
     });
-    supportEvents.emit(String(conv.id), msg);
+    const resolvedMsg = await resolveOutgoingMessage(msg);
+    supportEvents.emit(String(conv.id), resolvedMsg);
     supportEvents.emit("inbox", { conversationId: conv.id }); // будит SSE админа
-    res.status(201).json(msg);
+    res.status(201).json(resolvedMsg);
 
     // 2. Бот-логика — только если разговор ещё в режиме 'bot'. В human-режиме
     //    (оператор уже подключён) бот молчит. Отвечаем асинхронно после ответа
@@ -171,7 +224,7 @@ export function registerSupportChatRoutes(app: Express): void {
       return res.status(400).json({ error: "Файл слишком большой (макс. 8 МБ)" });
     }
     const saved = await saveAttachment(buf, mime);
-    res.status(201).json(saved);
+    res.status(201).json({ url: saved.url, previewUrl: saved.previewUrl, mime: saved.mime });
   });
 
   // -------------------- OPERATOR SIDE --------------------
@@ -188,9 +241,10 @@ export function registerSupportChatRoutes(app: Express): void {
     const conv = await storage.getSupportConversation(id);
     if (!conv) return res.status(404).json({ error: "Разговор не найден" });
     const after = Number.parseInt(String(req.query.after ?? ""), 10);
-    const messages = await storage.listSupportMessages(id, {
+    const rawMessages = await storage.listSupportMessages(id, {
       afterId: Number.isFinite(after) && after > 0 ? after : undefined,
     });
+    const messages = await resolveOutgoingMessages(rawMessages);
     res.json({ conversation: conv, messages });
   });
 
@@ -220,7 +274,8 @@ export function registerSupportChatRoutes(app: Express): void {
     });
     // Сохраним имя оператора в системном поле? Не нужно — фронт может показать "Оператор" при senderRole=operator.
     void opName;
-    supportEvents.emit(String(id), msg);
+    const resolvedMsg = await resolveOutgoingMessage(msg);
+    supportEvents.emit(String(id), resolvedMsg);
     supportEvents.emit("inbox", { conversationId: id });
     // Web Push клиенту-владельцу разговора. Fire-and-forget.
     const preview = (parsed.data.body ?? "").trim();
@@ -232,7 +287,7 @@ export function registerSupportChatRoutes(app: Express): void {
       tag: `support:${id}`,
       data: { kind: "support", conversationId: id },
     });
-    res.status(201).json(msg);
+    res.status(201).json(resolvedMsg);
   });
 
   // Пометить прочитанным со стороны оператора.
@@ -267,7 +322,7 @@ export function registerSupportChatRoutes(app: Express): void {
       return res.status(400).json({ error: "Файл слишком большой (макс. 8 МБ)" });
     }
     const saved = await saveAttachment(buf, mime);
-    res.status(201).json(saved);
+    res.status(201).json({ url: saved.url, previewUrl: saved.previewUrl, mime: saved.mime });
   });
 }
 
