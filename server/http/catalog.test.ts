@@ -20,6 +20,7 @@ const storageMock = vi.hoisted(() => ({
   decommissionLock: vi.fn(),
   getActiveRideForBike: vi.fn(),
   purgeArchivedTestBike: vi.fn(),
+  adminUpdateBike: vi.fn(),
 }));
 
 vi.mock("../storage", () => ({
@@ -455,5 +456,96 @@ describe("POST /api/admin/bikes/:id/purge", () => {
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: "Велосипед не найден" });
+  });
+});
+
+describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status change", () => {
+  const operator = { id: "operator-3", role: "operator" };
+  const bike = {
+    id: "BC-100", model: "Cruiser", battery: 80, lat: 100, lng: 100,
+    lastSeen: 0, idleHours: 0, flagged: false, parkingId: null,
+    lockImei: "862596083776074", lockOnline: true, lockLastSeen: 0,
+    notes: null, maintenanceReason: null, seed: false,
+  };
+
+  beforeEach(() => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+  });
+
+  it.each(["offline", "maintenance", "archived", "storage"])(
+    "unlocks the lock (opaque userId 0) when status changes to %s, with no active ride",
+    async (status) => {
+      storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status } });
+      storageMock.getActiveRideForBike.mockResolvedValue(undefined);
+      const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+      setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+
+      const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status });
+      await new Promise((r) => setTimeout(r, 0)); // let the fire-and-forget promise settle
+
+      expect(res.status).toBe(200);
+      expect(sendUnlockCommand).toHaveBeenCalledWith(bike.lockImei, 0);
+    },
+  );
+
+  it("does not unlock for an in-rotation status (available)", async () => {
+    storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "available" } });
+    const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+    setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+
+    const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "available" });
+
+    expect(res.status).toBe(200);
+    expect(sendUnlockCommand).not.toHaveBeenCalled();
+  });
+
+  it("does not unlock for \"lost\" \u2014 alarming on movement is the desired behavior there", async () => {
+    storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "lost" } });
+    const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+    setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+
+    const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "lost" });
+
+    expect(res.status).toBe(200);
+    expect(sendUnlockCommand).not.toHaveBeenCalled();
+  });
+
+  it("refuses to unlock when the bike has an active ride (safety)", async () => {
+    storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "maintenance" } });
+    storageMock.getActiveRideForBike.mockResolvedValue({ id: 9, bikeId: bike.id, userId: "rider-1", status: "active" });
+    const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+    setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+
+    const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "maintenance" });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(res.status).toBe(200);
+    expect(sendUnlockCommand).not.toHaveBeenCalled();
+  });
+
+  it("does not fail the request when the lock is offline / unlock rejects", async () => {
+    storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "storage" } });
+    storageMock.getActiveRideForBike.mockResolvedValue(undefined);
+    const sendUnlockCommand = vi.fn().mockRejectedValue(new Error("lock is not connected"));
+    setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+
+    const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "storage" });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(res.status).toBe(200);
+    expect(sendUnlockCommand).toHaveBeenCalledWith(bike.lockImei, 0);
+  });
+
+  it("skips entirely when the bike has no fitted lock", async () => {
+    storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, lockImei: null, status: "archived" } });
+    const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+    setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+
+    const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "archived" });
+
+    expect(res.status).toBe(200);
+    expect(sendUnlockCommand).not.toHaveBeenCalled();
+    expect(storageMock.getActiveRideForBike).not.toHaveBeenCalled();
   });
 });

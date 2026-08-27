@@ -13,7 +13,7 @@ import {
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
   adminCreateLockSchema, adminUpdateLockSchema,
 } from "@shared/schema";
-import type { PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
+import type { Bike, BikeStatus, PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
 import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./../sms";
 import {
   getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
@@ -38,6 +38,48 @@ import {
   requireRole, requireAuth, requireRoleWhenConfigured,
   otpLimiter, paymentLimiter, parsePageParams,
 } from "./context";
+
+// The OMNI lock's onboard shake/tamper sensor only arms while the shackle is
+// closed (confirmed empirically on a live test lock; the vendor protocol,
+// checked against its published spec, documents no remote arm/disarm or mute
+// command for the W0 illegal-movement alarm at all). The only lever the
+// software has is unlocking the shackle before staff move the bike — that
+// opens it, which disarms the sensor as a side effect. Deliberately excludes
+// "lost": for a lost bike, alarming on movement is exactly the point.
+const MOVEMENT_ALARM_SUPPRESSED_STATUSES: ReadonlySet<string> = new Set(
+  ["offline", "maintenance", "archived", "storage"] satisfies BikeStatus[],
+);
+
+// Fire-and-forget, mirroring the GPS-refresh call beside it: never blocks the
+// PATCH response on lock I/O, and any failure (lock offline, no gateway, lock
+// declines) is merely logged — this is a best-effort convenience, not a
+// guaranteed disarm. Refuses to unlock a bike mid-ride for safety, mirroring
+// the F-07 guard on the manual /api/admin/locks/:id/unlock endpoint: an admin
+// archiving/offlining a bike must never silently pop the lock out from under
+// an active renter (that case would be a data bug elsewhere, but we don't
+// trust it here).
+async function suppressMovementAlarmOnStatusChange(bike: Bike): Promise<void> {
+  if (!bike.lockImei) return;
+  const activeRide = await storage.getActiveRideForBike(bike.id);
+  if (activeRide) {
+    log(
+      `movement-alarm suppression skipped: bike ${bike.id} -> ${bike.status} has active ride ${activeRide.id}`,
+    );
+    return;
+  }
+  try {
+    // userId is an opaque wire value here (echoed back for logging only, see
+    // resolveUnlock in server/omni/server.ts) — 0 marks "system, no rider".
+    const result = await getLockGateway()?.sendUnlockCommand(bike.lockImei, 0);
+    if (result && !result.success) {
+      log(`movement-alarm suppression: lock ${bike.lockImei} (bike ${bike.id}) declined unlock`);
+    }
+  } catch (err) {
+    log(
+      `movement-alarm suppression failed for bike ${bike.id} (${bike.lockImei}): ${(err as Error).message}`,
+    );
+  }
+}
 
 export function registerCatalogRoutes(app: Express): void {
   // -------------- Bikes / Parkings / Zones --------------
@@ -178,6 +220,12 @@ export function registerCatalogRoutes(app: Express): void {
     // just asks the lock for a NEW one in case it moved further since then.
     if (parsed.data.status !== undefined && result.bike.lockImei) {
       getLockGateway()?.requestGpsRefresh(result.bike.lockImei, result.bike.id);
+      // See suppressMovementAlarmOnStatusChange: unlock so staff can move the
+      // bike into these out-of-rotation statuses without the lock's own
+      // shake-sensor siren going off.
+      if (MOVEMENT_ALARM_SUPPRESSED_STATUSES.has(result.bike.status)) {
+        void suppressMovementAlarmOnStatusChange(result.bike);
+      }
     }
     res.json(result.bike);
   });
