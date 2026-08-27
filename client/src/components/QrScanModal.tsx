@@ -83,11 +83,9 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
     }
   }, []);
 
-  // Accepts raw scanned/typed text as-is — resolveScannedCode tries the
-  // normal "BC-XXX" bike code first, then falls back to matching a
-  // manufacturer-printed lock QR (bikes[].externalQrCode) verbatim, so a QR
-  // whose content never looks like a bike code (e.g. a bare numeric serial)
-  // still resolves instead of being rejected before it gets here.
+  // Accepts raw scanned/typed text as-is — resolveScannedCode matches the
+  // normal "BC-XXX" bike code (camera decode, manual entry, or embedded in
+  // a URL) against bikes[].id.
   const resolveCode = useCallback(
     (raw: string): boolean => {
       const result = resolveScannedCode(raw, bikes);

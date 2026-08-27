@@ -451,7 +451,6 @@ function ExportBar() {
         { header: "Статус", value: (b) => b.status },
         { header: "Заряд замка, %", value: (b) => b.battery },
         { header: "Простой, ч", value: (b) => b.idleHours.toFixed(1) },
-        { header: "Серийный", value: (b) => b.serial ?? "" },
         { header: "Парковка", value: (b) => b.parkingId ?? "" },
       ]);
     });

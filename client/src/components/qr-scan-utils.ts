@@ -39,15 +39,10 @@ export function normalizeCode(raw: string): string {
 }
 
 /**
- * Resolves any raw scanned/typed QR text to a bike, trying in order:
- *  1. The normal "BC-XXX" bike-code pattern (camera decode, manual entry, or
- *     embedded in a URL) — matched against `bikes[].id`.
- *  2. A manufacturer-printed lock QR whose raw content doesn't look like a
- *     bike code at all (e.g. a bare numeric serial/activation code) —
- *     matched verbatim against `bikes[].externalQrCode`. This is how a
- *     physical lock's own QR sticker (never otherwise used by the app) can
- *     start a real rental on the exact bike it's fitted to — see
- *     `bikes.isTestBike` / `rides.isTest` for how that ride gets tagged.
+ * Resolves any raw scanned/typed QR text to a bike via the normal "BC-XXX"
+ * bike-code pattern (camera decode, manual entry, or embedded in a URL) —
+ * matched against `bikes[].id`. The manufacturer-printed lock QR fallback
+ * (bikes[].externalQrCode) has been removed along with that field.
  * Returns the matched bike, or an error message key describing why nothing
  * matched (bike not found vs. found but not currently rentable).
  */
@@ -58,9 +53,7 @@ export function resolveScannedCode(
   const trimmed = raw.trim();
   const bikeCode = extractBikeCode(trimmed);
 
-  const match = bikeCode
-    ? bikes.find((b) => b.id.toUpperCase() === bikeCode)
-    : bikes.find((b) => !!b.externalQrCode && b.externalQrCode === trimmed);
+  const match = bikeCode ? bikes.find((b) => b.id.toUpperCase() === bikeCode) : undefined;
 
   if (!match) return { error: "not-found" };
   if (match.status !== "available") return { error: "not-available" };

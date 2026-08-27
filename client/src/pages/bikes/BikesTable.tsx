@@ -105,7 +105,6 @@ export function BikesTable({
             <TableHead>Статус</TableHead>
             <TableHead>Замок ID</TableHead>
             <TableHead>Парковка</TableHead>
-            <TableHead>Серийный</TableHead>
             <TableHead className="text-right">Действия</TableHead>
           </TableRow>
         </TableHeader>
@@ -125,7 +124,6 @@ export function BikesTable({
               </TableCell>
               <TableCell className="text-sm text-muted-foreground font-mono">{b.lockImei || "—"}</TableCell>
               <TableCell className="text-sm text-muted-foreground">{parkingName(b.parkingId)}</TableCell>
-              <TableCell className="text-sm text-muted-foreground font-mono">{b.serial || "—"}</TableCell>
               <TableCell>
                 <div className="flex items-center justify-end gap-1">
                   <Button variant="ghost" size="icon" onClick={() => onQr(b)} title="QR-код" data-testid={`button-qr-${b.id}`}>
@@ -167,11 +165,11 @@ export function BikesTable({
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   )}
-                  {isAdmin && b.status === "archived" && (b.isTestBike || b.seed) && (
+                  {isAdmin && b.status === "archived" && b.seed && (
                     <Button
                       variant="ghost" size="icon"
                       onClick={() => setPurgeTarget(b)}
-                      title="Удалить безвозвратно (тестовый/демо)"
+                      title="Удалить безвозвратно (демо)"
                       className="text-destructive"
                       data-testid={`button-purge-${b.id}`}
                     >
@@ -200,9 +198,8 @@ export function BikesTable({
             <AlertDialogDescription>
               В отличие от обычного удаления, здесь вместе с велосипедом безвозвратно исчезнут все его
               поездки, заявки, заказы на оплату, резервы, алерты и история GPS-телеметрии. Действие доступно
-              только для архивных тестовых или демо-сидированных велосипедов. Для тестового (не demo)
-              велосипеда будет отклонено, если на него есть реальные поездки или оплата; для demo-сидированного
-              — удалится всегда, так как его история синтетическая.
+              только для архивных демо-сидированных велосипедов — удаляется всегда, так как их
+              история синтетическая.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

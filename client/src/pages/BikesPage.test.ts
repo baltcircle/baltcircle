@@ -93,8 +93,6 @@ describe("bike save payload", () => {
     id: "BC-100",
     model: "City",
     status: "available" as const,
-    serial: "",
-    lockId: "",
     lockImei: IMEI,
     parkingId: "",
     notes: "",

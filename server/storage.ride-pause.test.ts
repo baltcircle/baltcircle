@@ -33,10 +33,9 @@ function makeBike(overrides: Partial<Bike> = {}): Bike {
   return {
     id: "BC-01", model: "Cruiser", status: "in_use", battery: 80,
     lat: 1, lng: 2, lastSeen: NOW, idleHours: 0, flagged: false,
-    serial: null, lockId: null, parkingId: null,
+    parkingId: null,
     lockImei: null, lockOnline: false, lockLastSeen: null,
     notes: null, seed: false,
-    externalQrCode: null, isTestBike: false,
     ...overrides,
   } as Bike;
 }

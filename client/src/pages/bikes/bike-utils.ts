@@ -28,21 +28,13 @@ export const STATUS_TONE: Record<BikeStatus, string> = {
 
 export type BikeSaveForm = {
   id: string;
-  model: string;
   status: BikeStatus;
-  serial: string;
-  lockId: string;
   lockImei: string;
-  parkingId: string;
   notes: string;
-  externalQrCode: string;
-  isTestBike: boolean;
 };
 
 export const emptyBikeForm: BikeSaveForm = {
-  id: "", model: "", status: "available",
-  serial: "", lockId: "", lockImei: "", parkingId: "", notes: "",
-  externalQrCode: "", isTestBike: false,
+  id: "", status: "available", lockImei: "", notes: "",
 };
 
 export type LockBatterySnapshot = {
@@ -79,14 +71,8 @@ export function buildBikeSavePayload(
   editing: Pick<Bike, "id" | "lockImei"> | null,
 ) {
   const common = {
-    model: form.model,
     status: form.status,
-    serial: form.serial,
-    lockId: form.lockId,
-    parkingId: form.parkingId === "none" ? "" : form.parkingId,
     notes: form.notes,
-    externalQrCode: form.externalQrCode,
-    isTestBike: form.isTestBike,
   };
 
   if (editing) {
@@ -95,7 +81,10 @@ export function buildBikeSavePayload(
     const lockPatch = form.lockImei && form.lockImei !== editing.lockImei
       ? { lockImei: form.lockImei }
       : {};
-    return { ...common, ...lockPatch };
+    // Only send `id` when it actually changed: an untouched edit must not
+    // trigger the rename transaction server-side.
+    const idPatch = form.id && form.id !== editing.id ? { id: form.id } : {};
+    return { ...common, ...lockPatch, ...idPatch };
   }
 
   return { id: form.id, lockImei: form.lockImei, ...common };

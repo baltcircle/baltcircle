@@ -33,9 +33,8 @@ function bikeRow(overrides: Partial<Bike> = {}): Bike {
   return {
     id: "BC-01", model: "City", status: "available", battery: 100,
     lat: 100, lng: 100, lastSeen: 0, idleHours: 0, flagged: false,
-    serial: null, lockId: null, lockImei: IMEI, lockOnline: false,
-    lockLastSeen: null, parkingId: null, notes: null, seed: false, isTestBike: false,
-    externalQrCode: null,
+    lockImei: IMEI, lockOnline: false,
+    lockLastSeen: null, parkingId: null, notes: null, seed: false,
     ...overrides,
   } as Bike;
 }

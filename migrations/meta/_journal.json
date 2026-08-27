@@ -57,6 +57,13 @@
       "when": 1787696294624,
       "tag": "0007_ride_feedback_user_index",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787835993364,
+      "tag": "0008_bikes_drop_legacy_fields_id_cascade",
+      "breakpoints": true
     }
   ]
 }

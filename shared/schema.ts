@@ -262,25 +262,7 @@ export const bikes = pgTable("bikes", {
   lastSeen: bigint("last_seen", { mode: "number" }).notNull(),  // unix ms
   idleHours: doublePrecision("idle_hours").notNull(),   // hours
   flagged: boolean("flagged").notNull().default(false),
-  // ----- Real-fleet operations fields (added for admin management) -----
-  serial: text("serial"),                    // manufacturer serial / frame number
-  lockId: text("lock_id"),                   // vendor-facing lock id printed on the unit
   parkingId: text("parking_id").references(() => parkings.id, { onDelete: "set null" }), // optional home parking station id
-  // Raw value encoded in the QR sticker the LOCK MANUFACTURER printed on the
-  // physical unit (a serial/activation code, format opaque and vendor-defined
-  // — NOT the OMNI-protocol IMEI). Lets QrScanModal resolve that QR to this
-  // bike as an alternate entry point alongside the normal "BC-XXX" code, e.g.
-  // for QA on a live production lock. Nullable — most bikes have no such QR
-  // registered. Not unique-indexed: low cardinality, admin-managed, and a
-  // stale duplicate here is a data-entry mistake, not a race to guard against.
-  externalQrCode: text("external_qr_code"),
-  // Marks a physical unit used to exercise real lock/geofence/tracking logic
-  // end-to-end without a real customer. Every ride started on this bike is
-  // automatically tagged rides.isTest (see storage.startRide) — this is the
-  // single source of truth for that tag, regardless of how the rider found
-  // the bike (normal QR, manual code, or the manufacturer-QR lookup above).
-  // Never auto-set by any sweep/migration — an operator flips it deliberately.
-  isTestBike: boolean("is_test_bike").notNull().default(false),
   // ----- OMNI smart lock (TCP ingest, server/omni/) -----
   // The lock's IMEI is how an inbound TCP connection is resolved to a bike, so
   // it must be unique across the fleet — enforced by the partial UNIQUE index
@@ -343,7 +325,7 @@ export const unassignedLocks = pgTable("unassigned_locks", {
 // audit trail of who booked what and whether they followed through.
 export const reservations = pgTable("reservations", {
   id: serial("id").primaryKey(),
-  bikeId: text("bike_id").notNull().references(() => bikes.id),
+  bikeId: text("bike_id").notNull().references(() => bikes.id, { onUpdate: "cascade" }),
   userId: text("user_id").notNull().references(() => users.id),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
@@ -366,7 +348,7 @@ export type ReservationStatus = (typeof RESERVATION_STATUSES)[number];
 // from it.
 export const alerts = pgTable("alerts", {
   id: serial("id").primaryKey(),
-  bikeId: text("bike_id").notNull().references(() => bikes.id),
+  bikeId: text("bike_id").notNull().references(() => bikes.id, { onUpdate: "cascade" }),
   kind: text("kind").notNull(),          // see ALERT_KINDS
   severity: text("severity").notNull().default("high"), // low | medium | high | critical
   message: text("message").notNull(),
@@ -412,7 +394,7 @@ export const locks = pgTable("locks", {
   id: serial("id").primaryKey(),
   imei: text("imei").notNull(),
   macAddress: text("mac_address"),
-  bikeId: text("bike_id").references(() => bikes.id, { onDelete: "set null" }),
+  bikeId: text("bike_id").references(() => bikes.id, { onDelete: "set null", onUpdate: "cascade" }),
   simIccid: text("sim_iccid"),
   firmwareVersion: text("firmware_version"),
   apn: text("apn").notNull().default("cmiot"),
@@ -518,41 +500,39 @@ export const UNASSIGNED_LOCK_TTL_MS = 24 * 60 * 60 * 1000;
  */
 export const UNASSIGNED_LOCK_MAX_ROWS = 500;
 
-// Admin: create a bike. Id/model required; status defaults to available. Map
-// coordinates are optional (default to a station/centre server-side). Battery
-// defaults to 100 for a freshly provisioned lock.
-const bikeIdRegex = /^[A-Za-z0-9-]{2,20}$/;
+// Admin: create a bike. Id/lock IMEI required; status defaults to available.
+// Map coordinates are optional (default to a station/centre server-side).
+// Battery defaults to 100 for a freshly provisioned lock. Model is fixed
+// server-side (DEFAULT_BIKE_MODEL), not accepted from the client.
+export const bikeIdRegex = /^[A-Za-z0-9-]{2,20}$/;
+// Model is no longer client-editable — every bike is provisioned with this
+// fixed model server-side (see storage.createBike). The DB column stays
+// NOT NULL for backward-compat with existing display/export code.
+export const DEFAULT_BIKE_MODEL = "City Bicycle";
 export const adminCreateBikeSchema = z.object({
   id: z.string().trim().regex(bikeIdRegex, "Код: латиница, цифры и дефис (2–20 символов)"),
   // Required: a bike without a lock cannot be rented or tracked, and the only
   // way an operator learns an IMEI is by picking a lock that has dialled in.
   lockImei: lockImeiSchema,
-  model: z.string().trim().min(1, "Укажите модель").max(60),
   status: z.enum(BIKE_STATUSES).default("available"),
   battery: z.number().int().min(0).max(100).default(100),
-  serial: z.union([z.string().trim().max(60), z.literal("")]).optional(),
-  lockId: z.union([z.string().trim().max(60), z.literal("")]).optional(),
   parkingId: z.union([z.string().trim().max(40), z.literal("")]).optional(),
   notes: z.union([z.string().trim().max(500), z.literal("")]).optional(),
-  externalQrCode: z.union([z.string().trim().max(40), z.literal("")]).optional(),
-  isTestBike: z.boolean().optional(),
 });
 export type AdminCreateBikeInput = z.infer<typeof adminCreateBikeSchema>;
 
-// Admin: edit a bike. All fields optional; id is immutable (path param).
+// Admin: edit a bike. All fields optional. `id` (the bike's own code) is now
+// editable post-creation — omitted means "keep the current code"; see
+// storage.adminUpdateBike for the rename transaction and its guards.
 export const adminUpdateBikeSchema = z.object({
+  id: z.string().trim().regex(bikeIdRegex, "Код: латиница, цифры и дефис (2–20 символов)").optional(),
   // Optional on edit: a lock can be swapped when the fitted one dies, but an
   // untouched form must not have to resend it.
   lockImei: lockImeiSchema.optional(),
-  model: z.string().trim().min(1).max(60).optional(),
   status: z.enum(BIKE_STATUSES).optional(),
   battery: z.number().int().min(0).max(100).optional(),
-  serial: z.union([z.string().trim().max(60), z.literal("")]).optional(),
-  lockId: z.union([z.string().trim().max(60), z.literal("")]).optional(),
   parkingId: z.union([z.string().trim().max(40), z.literal("")]).optional(),
   notes: z.union([z.string().trim().max(500), z.literal("")]).optional(),
-  externalQrCode: z.union([z.string().trim().max(40), z.literal("")]).optional(),
-  isTestBike: z.boolean().optional(),
 });
 export type AdminUpdateBikeInput = z.infer<typeof adminUpdateBikeSchema>;
 
@@ -677,7 +657,7 @@ export type UpdateMapObjectInput = z.infer<typeof updateMapObjectSchema>;
 /* ------- RIDES ------- */
 export const rides = pgTable("rides", {
   id: serial("id").primaryKey(),
-  bikeId: text("bike_id").notNull().references(() => bikes.id),
+  bikeId: text("bike_id").notNull().references(() => bikes.id, { onUpdate: "cascade" }),
   userId: text("user_id").notNull().references(() => users.id),
   startedAt: bigint("started_at", { mode: "number" }).notNull(),
   endedAt: bigint("ended_at", { mode: "number" }),
@@ -716,11 +696,10 @@ export const rides = pgTable("rides", {
   // bikes.parking_id at start time). Used by the 5-minute cancel-with-refund
   // rule: eligible only while the bike is still at this same parking.
   startParkingId: text("start_parking_id").references(() => parkings.id, { onDelete: "set null" }),
-  // Copied from bikes.is_test_bike at startRide time (never client-supplied —
-  // see storage.startRide). Marks a ride run end-to-end against real lock
-  // control/geofence/tracking on a designated test unit, so ops/analytics can
-  // exclude it from real rental numbers later. Frozen at start: swapping a
-  // bike's isTestBike flag mid-ride does not retroactively change this.
+  // Was copied from bikes.is_test_bike at startRide time; that per-bike flag
+  // was removed (no more designated test units), so this is now hardcoded
+  // false by storage.startRide. Column kept for backward-compat with existing
+  // rows/analytics rather than dropped outright.
   isTest: boolean("is_test").notNull().default(false),
 }, (t) => [
   index("idx_rides_user_status").on(t.userId, t.status),
@@ -805,7 +784,7 @@ export { feedbackTierForRating, FEEDBACK_REASON_IDS };
 // legacy auto-flag kinds kept for backward compatibility with seeded rows.
 export const tickets = pgTable("tickets", {
   id: serial("id").primaryKey(),
-  bikeId: text("bike_id").notNull().references(() => bikes.id),
+  bikeId: text("bike_id").notNull().references(() => bikes.id, { onUpdate: "cascade" }),
   kind: text("kind").notNull(),          // issue type — see TICKET_KINDS
   priority: text("priority").notNull().default("medium"), // see TICKET_PRIORITIES
   title: text("title").notNull().default(""),     // short summary
@@ -1015,7 +994,7 @@ export const paymentOrders = pgTable("payment_orders", {
   id: serial("id").primaryKey(),
   orderId: text("order_id").notNull().unique(),   // our Init OrderId (<= 50 chars, echoed in notifications)
   userId: text("user_id").notNull().references(() => users.id),
-  bikeId: text("bike_id").notNull().references(() => bikes.id),
+  bikeId: text("bike_id").notNull().references(() => bikes.id, { onUpdate: "cascade" }),
   tariffId: text("tariff_id").notNull(),          // h1 | h2 | h3
   amountKopecks: integer("amount_kopecks").notNull(),
   paymentId: text("payment_id"),                  // T-Bank PaymentId returned by Init

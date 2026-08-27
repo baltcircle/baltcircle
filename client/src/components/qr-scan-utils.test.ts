@@ -6,10 +6,9 @@ function makeBike(overrides: Partial<Bike> = {}): Bike {
   return {
     id: "BC-01", model: "City Bicycle", status: "available", battery: 80,
     lat: 1, lng: 2, lastSeen: 0, idleHours: 0, flagged: false,
-    serial: null, lockId: null, parkingId: null,
+    parkingId: null,
     lockImei: null, lockOnline: false, lockLastSeen: null,
     notes: null, seed: false,
-    externalQrCode: null, isTestBike: false,
     ...overrides,
   } as Bike;
 }
@@ -53,28 +52,9 @@ describe("resolveScannedCode", () => {
     expect(result).toEqual({ bike: bikes[1] });
   });
 
-  it("falls back to externalQrCode for a manufacturer-printed lock QR", () => {
-    const testBike = makeBike({ id: "BC-01", externalQrCode: "1738907596", isTestBike: true });
-    const bikes = [testBike, makeBike({ id: "BC-02" })];
-    const result = resolveScannedCode("1738907596", bikes);
-    expect(result).toEqual({ bike: testBike });
-  });
-
-  it("does not match externalQrCode against a bike that has none set", () => {
-    const bikes = [makeBike({ id: "BC-01", externalQrCode: null })];
-    const result = resolveScannedCode("1738907596", bikes);
-    expect(result).toEqual({ error: "not-found" });
-  });
-
   it("reports not-available when the matched bike isn't available, without silently falling through", () => {
     const bikes = [makeBike({ id: "BC-01", status: "rented" })];
     const result = resolveScannedCode("BC-01", bikes);
-    expect(result).toEqual({ error: "not-available" });
-  });
-
-  it("reports not-available for a rented test bike matched by its external QR", () => {
-    const bikes = [makeBike({ id: "BC-01", externalQrCode: "1738907596", isTestBike: true, status: "maintenance" })];
-    const result = resolveScannedCode("1738907596", bikes);
     expect(result).toEqual({ error: "not-available" });
   });
 

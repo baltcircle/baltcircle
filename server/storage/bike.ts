@@ -3,7 +3,8 @@ import {
   reservations, alerts, bikeTelemetry, rideFeedback, ridePoints, ticketComments,
 } from "@shared/schema";
 import type { Bike, Lock, Parking, AdminCreateBikeInput, AdminUpdateBikeInput } from "@shared/schema";
-import { eq, and, count, inArray, or } from "drizzle-orm";
+import { DEFAULT_BIKE_MODEL, bikeIdRegex } from "@shared/schema";
+import { eq, count, inArray, or } from "drizzle-orm";
 import { MAP_W, MAP_H, realToMap } from "@shared/geo";
 import { db, pool } from "../db/bootstrap";
 import type { Constructor } from "./mixin";
@@ -170,20 +171,16 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       try {
         await db.insert(bikes).values({
           id,
-          model: input.model.trim(),
+          model: DEFAULT_BIKE_MODEL,
           status: input.status,
           battery: input.battery,
           lat, lng,
           lastSeen: now,
           idleHours: 0,
           flagged: false,
-          serial: this.optStr(input.serial),
-          lockId: this.optStr(input.lockId),
           lockImei,
           parkingId,
           notes: this.optStr(input.notes),
-          externalQrCode: this.optStr(input.externalQrCode),
-          isTestBike: input.isTestBike ?? false,
           seed: false,
         } as any);
       } catch (err) {
@@ -211,8 +208,41 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       const existing = await this.getBike(id);
       if (!existing) return { error: "Велосипед не найден" };
 
+      // Rename: bikes.id is referenced by FK (ON UPDATE CASCADE) from
+      // reservations/alerts/locks/rides/tickets/paymentOrders, so a single
+      // UPDATE on the parent row propagates everywhere automatically. The
+      // one exception is bike_telemetry (deliberately no FK — high-volume
+      // raw-SQL table), which we cascade by hand in the same transaction.
+      // Blocked mid-ride: a live ride's in-memory OMNI/live-track state is
+      // keyed by the pre-rename id and must not be swapped out from under it.
+      let workingId = id;
+      if (patch.id !== undefined) {
+        const newId = patch.id.trim().toUpperCase();
+        if (newId !== existing.id) {
+          if (!bikeIdRegex.test(newId)) {
+            return { error: "Код: латиница, цифры и дефис (2–20 символов)" };
+          }
+          if (existing.status === "rented") {
+            return { error: "Нельзя изменить код велосипеда во время активной аренды" };
+          }
+          if (await this.getBike(newId)) {
+            return { error: "Велосипед с таким кодом уже существует" };
+          }
+          try {
+            await db.transaction(async (tx) => {
+              await tx.update(bikes).set({ id: newId } as any).where(eq(bikes.id, existing.id));
+              await tx.update(bikeTelemetry).set({ bikeId: newId }).where(eq(bikeTelemetry.bikeId, existing.id));
+            });
+          } catch (err) {
+            if (this.isUniqueViolation(err)) return { error: "Велосипед с таким кодом уже существует" };
+            throw err;
+          }
+          workingId = newId;
+          this.invalidateBikesCache();
+        }
+      }
+
       const set: Partial<Bike> = {};
-      if (patch.model !== undefined) set.model = patch.model.trim();
       if (patch.status !== undefined) set.status = patch.status;
       if (patch.battery !== undefined) set.battery = patch.battery;
       // Radius-gating (Phase 2): AdminUpdateBikeInput carries no lat/lng field
@@ -225,11 +255,7 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
         syncedPos = await resolveLockPositionForBikeStatusChange(existing.lockImei);
         if (syncedPos) { set.lat = syncedPos.lat; set.lng = syncedPos.lng; }
       }
-      if (patch.serial !== undefined) set.serial = this.optStr(patch.serial);
-      if (patch.lockId !== undefined) set.lockId = this.optStr(patch.lockId);
       if (patch.notes !== undefined) set.notes = this.optStr(patch.notes);
-      if (patch.externalQrCode !== undefined) set.externalQrCode = this.optStr(patch.externalQrCode);
-      if (patch.isTestBike !== undefined) set.isTestBike = patch.isTestBike;
       if (patch.parkingId !== undefined) {
         const parkingId = this.optStr(patch.parkingId);
         set.parkingId = parkingId;
@@ -244,7 +270,7 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
         set.lockLastSeen = null;
       }
       try {
-        await db.update(bikes).set(set as any).where(eq(bikes.id, id));
+        await db.update(bikes).set(set as any).where(eq(bikes.id, workingId));
       } catch (err) {
         if (this.isUniqueViolation(err)) return { error: LOCK_TAKEN };
         throw err;
@@ -271,11 +297,11 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       }
       if (swappingLock) {
         if (existing.lockImei) await this.syncLockRegistryBinding(existing.lockImei, null);
-        await this.syncLockRegistryBinding(set.lockImei!, id);
+        await this.syncLockRegistryBinding(set.lockImei!, workingId);
         await this.forgetUnassignedLock(set.lockImei!);
       }
       this.invalidateBikesCache();
-      return { bike: (await this.getBike(id))! };
+      return { bike: (await this.getBike(workingId))! };
     }
 
     // Soft delete: mark a bike archived so it drops out of the public list and
@@ -328,15 +354,13 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       return { ok: true as const };
     }
 
-    // Permanent purge for a decommissioned TEST unit, including its ride/
+    // Permanent purge for a decommissioned DEMO unit, including its ride/
     // ticket/payment-order/reservation/alert/telemetry history. Deliberately
-    // NOT a general-purpose hard delete: restricted to isTestBike===true AND
-    // already archived, so a real fleet bike can never reach this path even
-    // by mistake. A test flag flipped AFTER real customers rode the bike must
-    // still not wipe their data — any non-test ride or any PAID payment order
-    // on this bike blocks the purge outright instead of silently dropping
-    // financial/analytics rows (mirrors deleteAccount's "never delete the
-    // ledger" rule for accounts).
+    // NOT a general-purpose hard delete: restricted to seed===true AND
+    // already archived. The per-bike isTestBike flag this used to also honour
+    // has been removed (no more designated test units on the real fleet), so
+    // demo/seed rows from the reseed migration are now the only ones ever
+    // eligible — a real fleet bike can never reach this path.
     async purgeArchivedTestBike(
       this: {
         getBike(id: string): Promise<Bike | undefined>;
@@ -352,15 +376,11 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
     > {
       const existing = await this.getBike(id);
       if (!existing) return { error: "Велосипед не найден" };
-      // Two independent ways a bike earns the right to be purged:
-      //  - isTestBike: a real fleet bike explicitly flagged for staff testing.
-      //  - seed: a demo/seed row inserted by the reseed migration, never a
-      //    real fleet unit — its rides are synthetic technical runs even
-      //    though they were never (retroactively) flagged isTest at
-      //    ride-start time, so the non-test-ride/paid-order guards below
-      //    are skipped for seed bikes specifically.
-      if (!existing.isTestBike && !existing.seed) {
-        return { error: "Безвозвратно удалить можно только велосипед с флагом «тестовый» или демо-сидированный" };
+      // The isTestBike operator flag is gone (no more per-bike test units), so
+      // a demo/seed row from the reseed migration is now the only thing that
+      // can ever reach this path.
+      if (!existing.seed) {
+        return { error: "Безвозвратно удалить можно только демо-сидированный велосипед" };
       }
       if (existing.status !== "archived") return { error: "Сначала переведите велосипед в архив" };
 
@@ -369,20 +389,6 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
         const rideIds = rideRows.map((r) => r.id);
         const ticketRows = await tx.select({ id: tickets.id }).from(tickets).where(eq(tickets.bikeId, id));
         const ticketIds = ticketRows.map((r) => r.id);
-
-        if (!existing.seed) {
-          const realRides = rideIds.length
-            ? (await tx.select({ c: count() }).from(rides).where(and(eq(rides.bikeId, id), eq(rides.isTest, false))))[0].c
-            : 0;
-          if (realRides > 0) {
-            return { error: `На велосипеде есть ${realRides} нетестовых поездок — удаление запрещено` };
-          }
-          const paidOrders = (await tx.select({ c: count() }).from(paymentOrders)
-            .where(and(eq(paymentOrders.bikeId, id), eq(paymentOrders.status, "paid"))))[0].c;
-          if (paidOrders > 0) {
-            return { error: `На велосипеде есть ${paidOrders} оплаченных заказов — удаление запрещено` };
-          }
-        }
 
         const rideFeedbackDeleted = rideIds.length
           ? (await tx.delete(rideFeedback).where(inArray(rideFeedback.rideId, rideIds))).rowCount ?? 0

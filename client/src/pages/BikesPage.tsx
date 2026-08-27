@@ -52,8 +52,7 @@ export function BikesPage() {
       .filter((b) =>
         !q ||
         b.id.toLowerCase().includes(q) ||
-        b.model.toLowerCase().includes(q) ||
-        (b.serial ?? "").toLowerCase().includes(q),
+        b.model.toLowerCase().includes(q),
       )
       .sort((a, b) => a.id.localeCompare(b.id));
   }, [bikes, search, showArchived]);
@@ -142,7 +141,6 @@ export function BikesPage() {
         open={formOpen}
         onOpenChange={setFormOpen}
         editing={editing}
-        parkings={parkings}
         canWrite={canWrite}
       />
 

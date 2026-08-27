@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { Bike, BikeStatus, Parking } from "@shared/schema";
+import type { Bike, BikeStatus } from "@shared/schema";
 import { BIKE_STATUSES } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -8,7 +8,6 @@ import { Field } from "@/components/FormField";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -23,12 +22,11 @@ import {
 } from "./bike-utils";
 
 export function BikeFormDialog({
-  open, onOpenChange, editing, parkings, canWrite,
+  open, onOpenChange, editing, canWrite,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editing: Bike | null;
-  parkings: Parking[];
   canWrite: boolean;
 }) {
   const toast = useToast();
@@ -42,15 +40,9 @@ export function BikeFormDialog({
     setFormError(null);
     setForm(editing ? {
       id: editing.id,
-      model: editing.model,
       status: editing.status as BikeStatus,
-      serial: editing.serial ?? "",
-      lockId: editing.lockId ?? "",
       lockImei: editing.lockImei ?? "",
-      parkingId: editing.parkingId ?? "",
       notes: editing.notes ?? "",
-      externalQrCode: editing.externalQrCode ?? "",
-      isTestBike: editing.isTestBike ?? false,
     } : emptyBikeForm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editing]);
@@ -123,18 +115,9 @@ export function BikeFormDialog({
           <Field label="Код / ID">
             <Input
               value={form.id}
-              disabled={!!editing}
               onChange={(e) => setForm((f) => ({ ...f, id: e.target.value.toUpperCase() }))}
               placeholder="Напр. BC-006"
               data-testid="input-bike-id"
-            />
-          </Field>
-          <Field label="Модель">
-            <Input
-              value={form.model}
-              onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-              placeholder="Напр. BC City+"
-              data-testid="input-bike-model"
             />
           </Field>
           <div className="grid grid-cols-2 gap-3">
@@ -170,39 +153,6 @@ export function BikeFormDialog({
             currentImei={editing?.lockImei ?? null}
             required={!editing}
           />
-          <Field label="Парковка (необязательно)">
-            <Select
-              value={form.parkingId || "none"}
-              onValueChange={(v) => setForm((f) => ({ ...f, parkingId: v }))}
-            >
-              <SelectTrigger data-testid="select-bike-parking"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Не назначена</SelectItem>
-                {parkings.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Серийный № (необязательно)">
-              <Input
-                value={form.serial}
-                onChange={(e) => setForm((f) => ({ ...f, serial: e.target.value }))}
-                data-testid="input-bike-serial"
-              />
-            </Field>
-            {/* Legacy free-text label, kept for inventory notes. The IMEI
-                above is what actually binds a lock to this bike. */}
-            <Field label="Инв. номер замка (необязательно)">
-              <Input
-                value={form.lockId}
-                onChange={(e) => setForm((f) => ({ ...f, lockId: e.target.value }))}
-                placeholder="Своя маркировка"
-                data-testid="input-bike-lock"
-              />
-            </Field>
-          </div>
           <Field label="Заметки (необязательно)">
             <Textarea
               value={form.notes}
@@ -211,28 +161,6 @@ export function BikeFormDialog({
               data-testid="input-bike-notes"
             />
           </Field>
-          <Field label="QR замка производителя (необязательно)">
-            <Input
-              value={form.externalQrCode}
-              onChange={(e) => setForm((f) => ({ ...f, externalQrCode: e.target.value.trim() }))}
-              placeholder="Напр. 1738907596 — код с наклейки на замке"
-              data-testid="input-bike-external-qr"
-            />
-          </Field>
-          <div className="flex items-center justify-between rounded-md border border-input px-3 py-2">
-            <div>
-              <div className="text-sm font-medium">Тестовый велосипед</div>
-              <p className="text-xs text-muted-foreground">
-                Каждая поездка на нём помечается как тестовая (rides.isTest),
-                при этом замок, геозона и трекинг работают как в реальной аренде.
-              </p>
-            </div>
-            <Switch
-              checked={form.isTestBike}
-              onCheckedChange={(v) => setForm((f) => ({ ...f, isTestBike: v }))}
-              data-testid="switch-bike-is-test"
-            />
-          </div>
 
           {formError && (
             <div className="text-xs text-destructive" data-testid="bike-form-error">{formError}</div>
