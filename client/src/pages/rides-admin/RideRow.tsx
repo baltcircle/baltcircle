@@ -1,8 +1,7 @@
 import type { AdminRide } from "@shared/schema";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
-import { Activity, StopCircle } from "lucide-react";
+import { StopCircle } from "lucide-react";
 import { fmtDate, fmtRub, fmtDuration, fmtTariff } from "@/lib/format";
 
 export function RideRowItem({ r, onEnd, busy }: { r: AdminRide; onEnd: () => void; busy: boolean }) {
@@ -24,7 +23,6 @@ export function RideRowItem({ r, onEnd, busy }: { r: AdminRide; onEnd: () => voi
       <TableCell className="text-right font-mono text-sm">
         {fmtRub(r.cost)}
       </TableCell>
-      <TableCell><RideStatusBadge status={r.status} /></TableCell>
       <TableCell className="text-right">
         {active && (
           <Button
@@ -40,20 +38,5 @@ export function RideRowItem({ r, onEnd, busy }: { r: AdminRide; onEnd: () => voi
         )}
       </TableCell>
     </TableRow>
-  );
-}
-
-function RideStatusBadge({ status }: { status: string }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    active: { label: "Активна", cls: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200" },
-    completed: { label: "Завершена", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200" },
-    cancelled: { label: "Отменена", cls: "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200" },
-  };
-  const s = map[status] ?? map.cancelled;
-  return (
-    <Badge className={`${s.cls} border-0`}>
-      {status === "active" && <Activity className="w-3 h-3 mr-1" />}
-      {s.label}
-    </Badge>
   );
 }

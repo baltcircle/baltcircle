@@ -133,21 +133,24 @@ export function ParkingMixin<TBase extends Constructor>(Base: TBase) {
       return { parking: (await this.getParking(id))! };
     }
 
-    // Soft delete: stamp archivedAt so the point drops out of every list while
-    // staying referenceable from bikes/history that point at its id.
+    // Soft delete: stamp archivedAt AND force status to inactive so the point
+    // drops out of the public map immediately (status is no longer operator-
+    // editable — archive/restore is now the only lifecycle control, mirroring
+    // bikes) while staying referenceable from bikes/history that point at its id.
     async archiveParking(
       this: { getParking(id: string): Promise<Parking | undefined> },
       id: string,
     ) {
       const existing = await this.getParking(id);
       if (!existing) return { error: "Парковка не найдена" };
-      await db.update(parkings).set({ archivedAt: Date.now(), updatedAt: Date.now() } as any).where(eq(parkings.id, id));
+      await db.update(parkings).set({ archivedAt: Date.now(), status: "inactive", updatedAt: Date.now() } as any).where(eq(parkings.id, id));
       return { parking: (await this.getParking(id))! };
     }
 
-    // Undo a soft delete: clear archivedAt and force status to inactive so the
-    // point returns muted on the admin maps but never re-appears on the public
-    // map until an operator explicitly re-activates it.
+    // Undo a soft delete: clear archivedAt and restore status to active — with
+    // the Статус control removed from the admin UI, archive/restore is the only
+    // lifecycle toggle, so restoring must bring the point straight back to live
+    // (public-visible), analogous to un-archiving a bike.
     async restoreParking(
       this: { getParking(id: string): Promise<Parking | undefined> },
       id: string,
@@ -155,7 +158,7 @@ export function ParkingMixin<TBase extends Constructor>(Base: TBase) {
       const existing = await this.getParking(id);
       if (!existing) return { error: "Парковка не найдена" };
       if (!existing.archivedAt) return { error: "Парковка не в архиве" };
-      await db.update(parkings).set({ archivedAt: null, status: "inactive", updatedAt: Date.now() } as any).where(eq(parkings.id, id));
+      await db.update(parkings).set({ archivedAt: null, status: "active", updatedAt: Date.now() } as any).where(eq(parkings.id, id));
       return { parking: (await this.getParking(id))! };
     }
 

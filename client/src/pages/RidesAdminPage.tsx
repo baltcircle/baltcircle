@@ -25,12 +25,11 @@ const RIDES_KEY = ["/api/admin/rides"];
 // админ-истории, чтобы показывать только реальные аренды.
 const DEMO_USER_IDS = new Set(["demo", "user-2", "user-3", "user-4", "user-5"]);
 
-type RideTab = "active" | "completed" | "all";
+type RideTab = "active" | "completed";
 
 const TABS: { id: RideTab; label: string; testId: string }[] = [
   { id: "active", label: "Активные", testId: "tab-rides-active" },
   { id: "completed", label: "Завершённые", testId: "tab-rides-completed" },
-  { id: "all", label: "Все", testId: "tab-rides-all" },
 ];
 
 export function RidesAdminPage() {
@@ -60,19 +59,20 @@ export function RidesAdminPage() {
     },
   });
 
+  // Отменённые поездки никогда не попадают в админ-историю поездок —
+  // включены только активные и завершённые.
   const rides = useMemo(
-    () => (ridesQ.data ?? []).filter((r) => !DEMO_USER_IDS.has(r.userId)),
+    () => (ridesQ.data ?? []).filter((r) => !DEMO_USER_IDS.has(r.userId) && r.status !== "cancelled"),
     [ridesQ.data],
   );
 
   const counts = useMemo(() => ({
     active: rides.filter((r) => r.status === "active").length,
     completed: rides.filter((r) => r.status === "completed").length,
-    all: rides.length,
   }), [rides]);
 
   const filtered = useMemo(() => {
-    const byTab = tab === "all" ? rides : rides.filter((r) => r.status === tab);
+    const byTab = rides.filter((r) => r.status === tab);
     const q = search.trim().toLowerCase();
     if (!q) return byTab;
     return byTab.filter((r) =>
@@ -154,7 +154,6 @@ export function RidesAdminPage() {
                 <TableHead>Начало</TableHead>
                 <TableHead>Длительность</TableHead>
                 <TableHead className="text-right">Стоимость</TableHead>
-                <TableHead>Статус</TableHead>
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>

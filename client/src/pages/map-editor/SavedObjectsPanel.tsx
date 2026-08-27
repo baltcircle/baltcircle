@@ -11,17 +11,15 @@ import {
   ChevronLeft,
   Pencil,
 } from "lucide-react";
-import { HintBlock } from "./panels";
 import { TYPE_LABEL, type Kind } from "./types";
 
 export function SavedObjectsPanel({
-  objects, panelOpen, setPanelOpen, activeKind,
+  objects, panelOpen, setPanelOpen,
   onEdit, onToggle, disableToggle, onDelete, disableDelete,
 }: {
   objects: MapObject[] | undefined;
   panelOpen: boolean;
   setPanelOpen: (updater: (v: boolean) => boolean) => void;
-  activeKind: Kind;
   onEdit: (o: MapObject) => void;
   onToggle: (o: MapObject) => void;
   disableToggle: boolean;
@@ -110,8 +108,6 @@ export function SavedObjectsPanel({
             ))
           )}
         </div>
-
-        <HintBlock kind={activeKind} />
       </Card>
 
       {/* Кнопка сворачивания панели */}

@@ -49,11 +49,7 @@ export function BikesPage() {
     const q = search.trim().toLowerCase();
     return bikes
       .filter((b) => showArchived || b.status !== "archived")
-      .filter((b) =>
-        !q ||
-        b.id.toLowerCase().includes(q) ||
-        b.model.toLowerCase().includes(q),
-      )
+      .filter((b) => !q || b.id.toLowerCase().includes(q))
       .sort((a, b) => a.id.localeCompare(b.id));
   }, [bikes, search, showArchived]);
 
@@ -103,7 +99,7 @@ export function BikesPage() {
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Поиск по коду / модели / серийному"
+              placeholder="Поиск по коду"
               className="pl-9 w-64"
               data-testid="input-bikes-search"
             />

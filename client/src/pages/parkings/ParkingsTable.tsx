@@ -1,6 +1,6 @@
 import { Fragment, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
-import type { Parking, ParkingStatus } from "@shared/schema";
+import type { Parking } from "@shared/schema";
 import { PARKING_CITIES } from "@shared/schema";
 import { mapToReal } from "@shared/geo";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -12,15 +12,15 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Pencil, Archive, Trash2, MapPin, RotateCcw } from "lucide-react";
-import { ADMIN_PARKINGS_KEY, STATUS_LABEL, STATUS_TONE, type StatusFilter } from "./parking-utils";
+import { ADMIN_PARKINGS_KEY } from "./parking-utils";
 
 export function ParkingsTable({
-  parkings, search, statusFilter, onEdit,
+  parkings, search, showArchived, onEdit,
 }: {
-  /** Already filtered by the page (search + status/archive view). */
+  /** Already filtered by the page (search + archive view). */
   parkings: Parking[];
   search: string;
-  statusFilter: StatusFilter;
+  showArchived: boolean;
   onEdit: (p: Parking) => void;
 }) {
   const toast = useToast();
@@ -67,7 +67,7 @@ export function ParkingsTable({
     onSuccess: (p) => {
       queryClient.invalidateQueries({ queryKey: ADMIN_PARKINGS_KEY });
       queryClient.invalidateQueries({ queryKey: ["/api/parkings"] });
-      toast.toast({ title: "Парковка восстановлена", description: `${p.name} · неактивна` });
+      toast.toast({ title: "Парковка восстановлена", description: p.name });
     },
     onError: (err: any) => toast.toast({ title: "Не удалось", description: err?.message?.replace(/^\d+:\s*/, ""), variant: "destructive" }),
   });
@@ -99,7 +99,6 @@ export function ParkingsTable({
           <TableRow>
             <TableHead className="w-24">Код</TableHead>
             <TableHead>Название</TableHead>
-            <TableHead>Статус</TableHead>
             <TableHead className="text-right">Занято / Вмест.</TableHead>
             <TableHead>Координаты</TableHead>
             <TableHead className="text-right">Действия</TableHead>
@@ -109,7 +108,7 @@ export function ParkingsTable({
           {grouped.map(([city, rows]) => (
             <Fragment key={`grp-${city}`}>
               <TableRow className="bg-muted/50 hover:bg-muted/50" data-testid={`parking-city-group-${city}`}>
-                <TableCell colSpan={6} className="py-2">
+                <TableCell colSpan={5} className="py-2">
                   <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     <MapPin className="w-3.5 h-3.5" />{city}
                     <span className="font-normal normal-case tracking-normal">· {rows.length}</span>
@@ -131,19 +130,15 @@ export function ParkingsTable({
                       </span>
                     </TableCell>
                     <TableCell className="text-sm">
-                      <div>{p.name}</div>
+                      <div className="flex items-center gap-2">
+                        {p.name}
+                        {isArchived && (
+                          <Badge className="bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 border-0">
+                            Архив
+                          </Badge>
+                        )}
+                      </div>
                       {p.notes && <div className="text-xs text-muted-foreground truncate max-w-xs">{p.notes}</div>}
-                    </TableCell>
-                    <TableCell>
-                      {isArchived ? (
-                        <Badge className="bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 border-0">
-                          Архив
-                        </Badge>
-                      ) : (
-                        <Badge className={`${STATUS_TONE[p.status as ParkingStatus] ?? STATUS_TONE.inactive} border-0`}>
-                          {STATUS_LABEL[p.status as ParkingStatus] ?? p.status}
-                        </Badge>
-                      )}
                     </TableCell>
                     <TableCell className="text-right text-sm font-mono">{p.occupied} / {p.capacity}</TableCell>
                     <TableCell className="text-xs text-muted-foreground font-mono">
@@ -156,7 +151,7 @@ export function ParkingsTable({
                             variant="ghost" size="sm"
                             onClick={() => restoreMut.mutate(p.id)}
                             disabled={restoreMut.isPending}
-                            title="Восстановить как неактивную"
+                            title="Восстановить из архива"
                             data-testid="button-restore-parking"
                           >
                             <RotateCcw className="w-4 h-4 mr-1" /> Восстановить
@@ -199,10 +194,10 @@ export function ParkingsTable({
           ))}
           {parkings.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="text-center text-muted-foreground py-12" data-testid="parkings-empty">
+              <TableCell colSpan={5} className="text-center text-muted-foreground py-12" data-testid="parkings-empty">
                 {search
                   ? "Ничего не найдено"
-                  : statusFilter === "archive"
+                  : showArchived
                     ? "В архиве пока нет парковок."
                     : "Парковок пока нет — добавьте первую."}
               </TableCell>

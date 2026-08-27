@@ -16,8 +16,7 @@ import {
   Pencil,
   X,
 } from "lucide-react";
-import { ADMIN_OBJECTS_KEY, TYPE_OPTIONS, type ObjType, type Kind } from "./map-editor/types";
-import { DraftInfo } from "./map-editor/panels";
+import { ADMIN_OBJECTS_KEY, TYPE_OPTIONS, type ObjType } from "./map-editor/types";
 import { SavedObjectsPanel } from "./map-editor/SavedObjectsPanel";
 
 export function MapEditorPage() {
@@ -264,14 +263,8 @@ export function MapEditorPage() {
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <DraftInfo
-              draft={draft}
-              minPoints={minPoints}
-              kind={activeType.kind}
-            />
-
-            <div className="ml-auto flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex items-center gap-1.5">
               <Button
                 type="button"
                 variant="outline"
@@ -314,7 +307,6 @@ export function MapEditorPage() {
         objects={objectsQ.data}
         panelOpen={panelOpen}
         setPanelOpen={setPanelOpen}
-        activeKind={activeType.kind}
         onEdit={startEdit}
         onToggle={(o) => toggleM.mutate({ id: o.id, active: !o.active })}
         disableToggle={toggleM.isPending}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import type { Parking, ParkingStatus } from "@shared/schema";
+import type { Parking } from "@shared/schema";
 import { PARKING_CITIES } from "@shared/schema";
 import { realToMap, mapToReal } from "@shared/geo";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -17,6 +17,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { ADMIN_PARKINGS_KEY, emptyParkingForm, type ParkingFormState } from "./parking-utils";
+// Статус больше не редактируется вручную — управляется только архивом/восстановлением.
 
 export function ParkingFormDialog({
   open, onOpenChange, editing, parkings,
@@ -41,7 +42,6 @@ export function ParkingFormDialog({
       capacity: String(editing.capacity),
       occupied: String(editing.occupied),
       radius: String(editing.radius),
-      status: editing.status as ParkingStatus,
       notes: editing.notes ?? "",
       x: editing.lng,
       y: editing.lat,
@@ -58,7 +58,8 @@ export function ParkingFormDialog({
     capacity: Number(form.capacity) || 0,
     occupied: Number(form.occupied) || 0,
     radius: Number(form.radius) || 30,
-    status: form.status,
+    // Превью на карте всегда показывается как live-точка — статус теперь управляется только архивом.
+    status: "active",
     notes: null, archivedAt: null, seed: false, createdAt: null, updatedAt: null,
   };
 
@@ -137,7 +138,8 @@ export function ParkingFormDialog({
       capacity,
       radius,
       // occupied больше не вводится вручную — считается на сервере от велосипедов.
-      status: form.status,
+      // status больше не отправляется вручную — сервер ставит "active" при создании
+      // и управляет его дальше только через архив/восстановление.
       notes: form.notes,
     };
     if (editing) {
@@ -201,15 +203,6 @@ export function ParkingFormDialog({
               </Select>
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Статус">
-                <Select value={form.status} onValueChange={(v) => setForm((f) => ({ ...f, status: v as ParkingStatus }))}>
-                  <SelectTrigger data-testid="select-parking-status"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="active">Активна</SelectItem>
-                    <SelectItem value="inactive">Неактивна</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
               <Field label="Вместимость">
                 <Input
                   type="number" min={0}

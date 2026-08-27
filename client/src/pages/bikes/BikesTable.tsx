@@ -101,7 +101,6 @@ export function BikesTable({
         <TableHeader>
           <TableRow>
             <TableHead className="w-28">Код</TableHead>
-            <TableHead>Модель</TableHead>
             <TableHead>Статус</TableHead>
             <TableHead>Замок ID</TableHead>
             <TableHead>Парковка</TableHead>
@@ -116,7 +115,6 @@ export function BikesTable({
                   <BikeIcon className="w-3.5 h-3.5 text-muted-foreground" />{b.id}
                 </span>
               </TableCell>
-              <TableCell className="text-sm">{b.model}</TableCell>
               <TableCell>
                 <Badge className={`${STATUS_TONE[b.status as BikeStatus] ?? STATUS_TONE.offline} border-0`}>
                   {STATUS_LABEL[b.status as BikeStatus] ?? b.status}
@@ -182,7 +180,7 @@ export function BikesTable({
           ))}
           {bikes.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} className="text-center text-muted-foreground py-12" data-testid="bikes-empty">
+              <TableCell colSpan={5} className="text-center text-muted-foreground py-12" data-testid="bikes-empty">
                 {search ? "Ничего не найдено" : "Велосипедов пока нет — добавьте первый."}
               </TableCell>
             </TableRow>
