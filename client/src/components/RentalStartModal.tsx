@@ -248,7 +248,6 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
             <div>
               <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Велосипед</div>
               <div className="font-display text-xl font-light">{bike.id}</div>
-              <div className="text-sm text-muted-foreground">{bike.model}</div>
             </div>
             <div className="flex flex-col items-end gap-2">
               <Badge>

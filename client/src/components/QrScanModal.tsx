@@ -6,13 +6,13 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { QrCode, Bike as BikeIcon, Loader2 } from "lucide-react";
+import { QrCode, Loader2 } from "lucide-react";
 import { resolveScannedCode } from "./qr-scan-utils";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // Available bikes used to resolve a scanned/typed code and to pick a test bike.
+  // Bikes used to resolve a scanned/typed code.
   bikes: Bike[];
   // Called once a bike has been scanned / chosen, to continue into rental.
   onBikeSelected: (bike: Bike) => void;
@@ -69,8 +69,6 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
   const controlsRef = useRef<IScannerControls | null>(null);
   // Guards against double-resolving a bike from rapid successive decodes.
   const handledRef = useRef(false);
-
-  const availableBikes = bikes.filter((b) => b.status === "available");
 
   const stopCamera = useCallback(() => {
     controlsRef.current?.stop();
@@ -253,17 +251,6 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
     resolveCode(raw);
   };
 
-  const useTestBike = () => {
-    const bike = availableBikes[0];
-    if (!bike) {
-      setError("Нет доступных велосипедов для теста");
-      return;
-    }
-    stopCamera();
-    onOpenChange(false);
-    onBikeSelected(bike);
-  };
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -355,16 +342,6 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
             <div className="text-xs text-destructive" data-testid="qr-scan-error">{error}</div>
           )}
         </div>
-
-        <Button
-          type="button"
-          variant="secondary"
-          className="w-full"
-          onClick={useTestBike}
-          data-testid="button-use-test-bike"
-        >
-          <BikeIcon className="w-4 h-4 mr-2" /> Использовать тестовый велосипед
-        </Button>
       </DialogContent>
     </Dialog>
   );

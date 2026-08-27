@@ -36,6 +36,12 @@ describe("extractBikeCode", () => {
   it("returns null for empty input", () => {
     expect(extractBikeCode("   ")).toBeNull();
   });
+
+  it("matches a BC code typed with Cyrillic В/С (homoglyph keyboard layout)", () => {
+    expect(extractBikeCode("ВС-014")).toBe("BC-014");
+    expect(extractBikeCode("вс014")).toBe("BC-014");
+    expect(extractBikeCode("Вc-7")).toBe("BC-7"); // mixed Cyrillic/Latin
+  });
 });
 
 describe("normalizeCode", () => {

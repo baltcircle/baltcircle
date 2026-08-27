@@ -1,11 +1,29 @@
 import type { Bike } from "@shared/schema";
 
+// Cyrillic letters that are visually identical to the Latin "B"/"C" used in
+// bike codes (В=U+0412/в=U+0432 look like B; С=U+0421/с=U+0441 look like C).
+// A rider typing a code manually (no camera) on a Cyrillic keyboard layout
+// can easily produce "ВС-014" instead of "BC-014" — this swaps those specific
+// homoglyphs back to Latin before pattern matching, so both layouts resolve
+// to the same bike. Deliberately narrow (just B/C, not a full Cyrillic→Latin
+// transliteration) to avoid mangling anything else typed into the field.
+const CYRILLIC_BC_HOMOGLYPHS: Record<string, string> = {
+  "\u0412": "B", "\u0432": "B", // В / в
+  "\u0421": "C", "\u0441": "C", // С / с
+};
+
+function deCyrillicizeBikeCode(text: string): string {
+  return text.replace(/[\u0412\u0432\u0421\u0441]/g, (ch) => CYRILLIC_BC_HOMOGLYPHS[ch] ?? ch);
+}
+
 // Extract a bike code from raw QR text. Accepts a plain id ("BC-001") or a URL
 // that carries the id in the path — both the clean ".../bike/BC-001" and the
 // legacy hash ".../#/bike/BC-001" forms — or a query param (?bike=BC-001 /
-// ?id=BC-001). Returns an upper-cased code or null.
+// ?id=BC-001). Also accepts "BC" typed with Cyrillic В/С (same glyph shape as
+// Latin B/C) so manual entry works regardless of keyboard layout. Returns an
+// upper-cased code or null.
 export function extractBikeCode(raw: string): string | null {
-  const text = raw.trim();
+  const text = deCyrillicizeBikeCode(raw.trim());
   if (!text) return null;
 
   const codePattern = /BC-?\d{1,5}/i;

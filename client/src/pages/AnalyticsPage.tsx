@@ -136,7 +136,7 @@ export function AnalyticsPage() {
             <PeriodButton active={period === "today"} onClick={() => setPeriod("today")} testId="analytics-period-today">Сегодня</PeriodButton>
             <PeriodButton active={period === "7d"} onClick={() => setPeriod("7d")} testId="analytics-period-7d">7 дней</PeriodButton>
             <PeriodButton active={period === "30d"} onClick={() => setPeriod("30d")} testId="analytics-period-30d">30 дней</PeriodButton>
-            <PeriodButton active={period === "all"} onClick={() => setPeriod("all")} testId="analytics-period-all">за все время</PeriodButton>
+            <PeriodButton active={period === "all"} onClick={() => setPeriod("all")} testId="analytics-period-all">За все время</PeriodButton>
             <PeriodButton active={period === "custom"} onClick={() => setPeriod("custom")} testId="analytics-period-custom">Период</PeriodButton>
           </div>
           {period === "custom" && (
