@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 
 /* ---------- Period filter ---------- */
-type PeriodId = "today" | "7d" | "30d" | "custom";
+type PeriodId = "today" | "7d" | "30d" | "all" | "custom";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -95,6 +95,7 @@ export function AnalyticsPage() {
     if (period === "today") return { from: startOfDay(now), to: endOfDay(now) };
     if (period === "7d") return { from: startOfDay(now - 6 * DAY), to: endOfDay(now) };
     if (period === "30d") return { from: startOfDay(now - 29 * DAY), to: endOfDay(now) };
+    if (period === "all") return { from: 0, to: endOfDay(now) };
     // custom
     const from = startOfDay(new Date(customFrom + "T00:00:00").getTime());
     const to = endOfDay(new Date(customTo + "T00:00:00").getTime());
@@ -123,8 +124,7 @@ export function AnalyticsPage() {
       <header className="mb-6">
         <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Операционный центр</div>
         <div className="flex flex-wrap items-center gap-3 mt-1">
-          <h1 className="font-display text-2xl lg:text-3xl font-light">Аналитика v1</h1>
-          <Badge variant="outline">{fmtDate(range.from)} — {fmtDate(range.to)}</Badge>
+          <h1 className="font-display text-2xl lg:text-3xl font-light">Аналитика</h1>
         </div>
       </header>
 
@@ -136,6 +136,7 @@ export function AnalyticsPage() {
             <PeriodButton active={period === "today"} onClick={() => setPeriod("today")} testId="analytics-period-today">Сегодня</PeriodButton>
             <PeriodButton active={period === "7d"} onClick={() => setPeriod("7d")} testId="analytics-period-7d">7 дней</PeriodButton>
             <PeriodButton active={period === "30d"} onClick={() => setPeriod("30d")} testId="analytics-period-30d">30 дней</PeriodButton>
+            <PeriodButton active={period === "all"} onClick={() => setPeriod("all")} testId="analytics-period-all">за все время</PeriodButton>
             <PeriodButton active={period === "custom"} onClick={() => setPeriod("custom")} testId="analytics-period-custom">Период</PeriodButton>
           </div>
           {period === "custom" && (
