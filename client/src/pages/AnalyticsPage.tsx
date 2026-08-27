@@ -15,7 +15,7 @@ import {
 } from "recharts";
 import {
   TrendingUp, Bike as BikeIcon, Wrench, MapPin, Users as UsersIcon,
-  Download, AlertTriangle, Activity, Clock, Wallet, Ban, RefreshCw,
+  Download, AlertTriangle, Activity, Clock, Wallet, RefreshCw,
 } from "lucide-react";
 
 /* ---------- Period filter ---------- */
@@ -232,91 +232,6 @@ export function AnalyticsPage() {
             )}
           </Card>
 
-          {/* Bikes: top + zero-ride */}
-          <div className="grid lg:grid-cols-2 gap-4 mb-6">
-            <Card className="p-5" data-testid="analytics-top-bikes">
-              <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
-                <BikeIcon className="w-4 h-4 text-primary" />Самые используемые
-              </h2>
-              {a.topBikes.length === 0 ? (
-                <EmptyRow text="Нет данных по велосипедам." />
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Велосипед</TableHead>
-                      <TableHead>Модель</TableHead>
-                      <TableHead className="text-right">Поездок</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {a.topBikes.map((b) => (
-                      <TableRow key={b.id} data-testid={`analytics-top-bike-${b.id}`}>
-                        <TableCell className="font-mono">{b.id}</TableCell>
-                        <TableCell className="text-muted-foreground">{b.model}</TableCell>
-                        <TableCell className="text-right font-mono">{b.rides}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </Card>
-
-            <Card className="p-5" data-testid="analytics-zero-bikes">
-              <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
-                <AlertTriangle className="w-4 h-4 text-amber-500" />Без поездок за период
-              </h2>
-              {a.zeroRideBikes.length === 0 ? (
-                <EmptyRow text="Все велосипеды использовались — отлично!" />
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Велосипед</TableHead>
-                      <TableHead>Модель</TableHead>
-                      <TableHead className="text-right">Простой, ч</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {a.zeroRideBikes.slice(0, 15).map((b) => (
-                      <TableRow key={b.id} data-testid={`analytics-zero-bike-${b.id}`}>
-                        <TableCell className="font-mono">{b.id}</TableCell>
-                        <TableCell className="text-muted-foreground">{b.model}</TableCell>
-                        <TableCell className="text-right font-mono">{b.idleHours.toFixed(1)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </Card>
-          </div>
-
-          {/* Users summary + service stats */}
-          <div className="grid lg:grid-cols-2 gap-4 mb-6">
-            <Card className="p-5" data-testid="analytics-users-summary">
-              <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
-                <UsersIcon className="w-4 h-4 text-primary" />Пользователи
-              </h2>
-              <div className="grid grid-cols-2 gap-3">
-                <Mini label="Всего" value={String(a.usersSummary.total)} />
-                <Mini label="Новых за период" value={String(a.usersSummary.newInPeriod)} />
-                <Mini label="С поездками за период" value={String(a.usersSummary.withRidesInPeriod)} />
-                <Mini label="Заблокировано" value={String(a.usersSummary.blocked)} icon={<Ban className="w-3.5 h-3.5 text-destructive" />} />
-              </div>
-            </Card>
-
-            <Card className="p-5" data-testid="analytics-service-stats">
-              <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
-                <Wrench className="w-4 h-4 text-primary" />Сервис
-              </h2>
-              <div className="space-y-3 text-sm">
-                <StatRow title="По приоритету" entries={a.service.byPriority.map((p) => ({ label: PRIORITY_LABEL[p.priority] ?? p.priority, count: p.c }))} />
-                <StatRow title="По статусу" entries={a.service.byStatus.map((s) => ({ label: STATUS_LABEL[s.status] ?? s.status, count: s.c }))} />
-                <StatRow title="По типу" entries={a.service.byKind.map((k) => ({ label: KIND_LABEL[k.kind] ?? k.kind, count: k.c }))} />
-              </div>
-            </Card>
-          </div>
-
           {/* Repeated-problem bikes */}
           <Card className="p-5 mb-6" data-testid="analytics-repeated-bikes">
             <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
@@ -513,32 +428,6 @@ function Kpi({ label, value, testId, icon }: { label: string; value: string; tes
       </div>
       <div className="font-display text-xl lg:text-2xl font-light mt-1">{value}</div>
     </Card>
-  );
-}
-
-function Mini({ label, value, icon }: { label: string; value: string; icon?: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border border-card-border p-3">
-      <div className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-muted-foreground">{icon}{label}</div>
-      <div className="font-display text-lg font-light mt-0.5">{value}</div>
-    </div>
-  );
-}
-
-function StatRow({ title, entries }: { title: string; entries: { label: string; count: number }[] }) {
-  return (
-    <div>
-      <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">{title}</div>
-      {entries.length === 0 ? (
-        <div className="text-xs text-muted-foreground">Нет заявок</div>
-      ) : (
-        <div className="flex flex-wrap gap-1.5">
-          {entries.map((e) => (
-            <Badge key={e.label} variant="outline">{e.label}: {e.count}</Badge>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 
