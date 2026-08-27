@@ -79,17 +79,49 @@ ALTER TABLE "rides" ADD CONSTRAINT "rides_bike_id_bikes_id_fk" FOREIGN KEY ("bik
 --> statement-breakpoint
 ALTER TABLE "tickets" ADD CONSTRAINT "tickets_bike_id_bikes_id_fk" FOREIGN KEY ("bike_id") REFERENCES "public"."bikes"("id") ON DELETE no action ON UPDATE cascade NOT VALID;
 --> statement-breakpoint
-ALTER TABLE "alerts" VALIDATE CONSTRAINT "alerts_bike_id_bikes_id_fk";
+-- VALIDATE checks EVERY existing row and is not safe to assume clean:
+-- production has pre-existing rows whose bike_id no longer matches any
+-- bikes.id (confirmed live for payment_orders — history predates this FK
+-- ever being enforced there). Each VALIDATE is wrapped so a
+-- foreign_key_violation on legacy data logs a warning and leaves that one
+-- constraint NOT VALID (still enforced for all new inserts/updates from now
+-- on — only pre-existing rows stay unchecked) instead of aborting the whole
+-- migration. Cleaning up the orphaned legacy rows is a separate follow-up.
+DO $$ BEGIN
+  ALTER TABLE "alerts" VALIDATE CONSTRAINT "alerts_bike_id_bikes_id_fk";
+EXCEPTION WHEN foreign_key_violation THEN
+  RAISE WARNING 'alerts_bike_id_bikes_id_fk left NOT VALID: pre-existing rows reference a missing bikes.id';
+END $$;
 --> statement-breakpoint
-ALTER TABLE "locks" VALIDATE CONSTRAINT "locks_bike_id_bikes_id_fk";
+DO $$ BEGIN
+  ALTER TABLE "locks" VALIDATE CONSTRAINT "locks_bike_id_bikes_id_fk";
+EXCEPTION WHEN foreign_key_violation THEN
+  RAISE WARNING 'locks_bike_id_bikes_id_fk left NOT VALID: pre-existing rows reference a missing bikes.id';
+END $$;
 --> statement-breakpoint
-ALTER TABLE "payment_orders" VALIDATE CONSTRAINT "payment_orders_bike_id_bikes_id_fk";
+DO $$ BEGIN
+  ALTER TABLE "payment_orders" VALIDATE CONSTRAINT "payment_orders_bike_id_bikes_id_fk";
+EXCEPTION WHEN foreign_key_violation THEN
+  RAISE WARNING 'payment_orders_bike_id_bikes_id_fk left NOT VALID: pre-existing rows reference a missing bikes.id';
+END $$;
 --> statement-breakpoint
-ALTER TABLE "reservations" VALIDATE CONSTRAINT "reservations_bike_id_bikes_id_fk";
+DO $$ BEGIN
+  ALTER TABLE "reservations" VALIDATE CONSTRAINT "reservations_bike_id_bikes_id_fk";
+EXCEPTION WHEN foreign_key_violation THEN
+  RAISE WARNING 'reservations_bike_id_bikes_id_fk left NOT VALID: pre-existing rows reference a missing bikes.id';
+END $$;
 --> statement-breakpoint
-ALTER TABLE "rides" VALIDATE CONSTRAINT "rides_bike_id_bikes_id_fk";
+DO $$ BEGIN
+  ALTER TABLE "rides" VALIDATE CONSTRAINT "rides_bike_id_bikes_id_fk";
+EXCEPTION WHEN foreign_key_violation THEN
+  RAISE WARNING 'rides_bike_id_bikes_id_fk left NOT VALID: pre-existing rows reference a missing bikes.id';
+END $$;
 --> statement-breakpoint
-ALTER TABLE "tickets" VALIDATE CONSTRAINT "tickets_bike_id_bikes_id_fk";
+DO $$ BEGIN
+  ALTER TABLE "tickets" VALIDATE CONSTRAINT "tickets_bike_id_bikes_id_fk";
+EXCEPTION WHEN foreign_key_violation THEN
+  RAISE WARNING 'tickets_bike_id_bikes_id_fk left NOT VALID: pre-existing rows reference a missing bikes.id';
+END $$;
 --> statement-breakpoint
 ALTER TABLE "bikes" DROP COLUMN IF EXISTS "serial";
 --> statement-breakpoint
