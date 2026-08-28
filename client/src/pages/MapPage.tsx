@@ -169,6 +169,13 @@ export function MapPage() {
             description: "Попробуйте завершить поездку ещё раз.",
             variant: "destructive",
           });
+          // Защитная сетка: если push через SSE был пропущен (сеть/фон на
+          // мобильном), TTL — единственный шанс заметить рассинхронизацию.
+          // Обычный invalidateQueries тут не годится: без активного
+          // наблюдателя он просто помечает кэш устаревшим, не выполняя
+          // запрос — принудительный refetch подтягивает реальное
+          // состояние (поездка могла уже завершиться на сервере).
+          void queryClient.refetchQueries({ queryKey: ["/api/rides/active"], type: "active" });
         }, data.expiresInMs);
         queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
         return;
@@ -234,6 +241,9 @@ export function MapPage() {
             description: "Попробуйте поставить на паузу ещё раз.",
             variant: "destructive",
           });
+          // См. аналогичный комментарий в endMut — форсируем ресинк на случай
+          // пропущенного SSE-пуша.
+          void queryClient.refetchQueries({ queryKey: ["/api/rides/active"], type: "active" });
         }, data.expiresInMs);
       }
       queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
