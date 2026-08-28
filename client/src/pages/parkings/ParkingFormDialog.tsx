@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { Parking } from "@shared/schema";
 import { PARKING_CITIES } from "@shared/schema";
-import { realToMap, mapToReal } from "@shared/geo";
+import { realToMap } from "@shared/geo";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { MapLibreMap } from "@/components/MapLibreMap";
@@ -94,21 +94,6 @@ export function ParkingFormDialog({
     const { x, y } = realToMap(coords[0], coords[1]);
     setForm((f) => ({ ...f, x, y }));
   };
-  // Real [lat, lng] for the manual fields, derived from the abstract coords so
-  // operators see/edit human-readable values.
-  const real = mapToReal(form.x, form.y);
-  const setLat = (v: string) => {
-    const lat = Number(v);
-    if (!Number.isFinite(lat)) return;
-    const { x, y } = realToMap(lat, real[1]);
-    setForm((f) => ({ ...f, x, y }));
-  };
-  const setLng = (v: string) => {
-    const lng = Number(v);
-    if (!Number.isFinite(lng)) return;
-    const { x, y } = realToMap(real[0], lng);
-    setForm((f) => ({ ...f, x, y }));
-  };
 
   const submitForm = () => {
     setFormError(null);
@@ -157,7 +142,7 @@ export function ParkingFormDialog({
             {editing ? `Редактирование ${editing.id}` : "Новая парковка"}
           </DialogTitle>
           <DialogDescription>
-            Кликните по карте, чтобы выбрать точку, или укажите координаты вручную.
+            Кликните по карте, чтобы выбрать точку.
           </DialogDescription>
         </DialogHeader>
 
@@ -234,22 +219,6 @@ export function ParkingFormDialog({
                 </p>
               </Field>
               <div />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Широта (lat)">
-                <Input
-                  value={real[0].toFixed(5)}
-                  onChange={(e) => setLat(e.target.value)}
-                  data-testid="input-parking-lat"
-                />
-              </Field>
-              <Field label="Долгота (lng)">
-                <Input
-                  value={real[1].toFixed(5)}
-                  onChange={(e) => setLng(e.target.value)}
-                  data-testid="input-parking-lng"
-                />
-              </Field>
             </div>
             <Field label="Инструкции / заметки (необязательно)">
               <Textarea

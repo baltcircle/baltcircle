@@ -2,7 +2,6 @@ import { Fragment, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { Parking } from "@shared/schema";
 import { PARKING_CITIES } from "@shared/schema";
-import { mapToReal } from "@shared/geo";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
@@ -100,7 +99,6 @@ export function ParkingsTable({
             <TableHead className="w-24">Код</TableHead>
             <TableHead>Название</TableHead>
             <TableHead className="text-right">Занято / Вмест.</TableHead>
-            <TableHead>Координаты</TableHead>
             <TableHead className="text-right">Действия</TableHead>
           </TableRow>
         </TableHeader>
@@ -108,7 +106,7 @@ export function ParkingsTable({
           {grouped.map(([city, rows]) => (
             <Fragment key={`grp-${city}`}>
               <TableRow className="bg-muted/50 hover:bg-muted/50" data-testid={`parking-city-group-${city}`}>
-                <TableCell colSpan={5} className="py-2">
+                <TableCell colSpan={4} className="py-2">
                   <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     <MapPin className="w-3.5 h-3.5" />{city}
                     <span className="font-normal normal-case tracking-normal">· {rows.length}</span>
@@ -116,7 +114,6 @@ export function ParkingsTable({
                 </TableCell>
               </TableRow>
               {rows.map((p: Parking) => {
-                const r = mapToReal(p.lng, p.lat);
                 const isArchived = !!p.archivedAt;
                 return (
                   <TableRow
@@ -141,9 +138,6 @@ export function ParkingsTable({
                       {p.notes && <div className="text-xs text-muted-foreground truncate max-w-xs">{p.notes}</div>}
                     </TableCell>
                     <TableCell className="text-right text-sm font-mono">{p.occupied} / {p.capacity}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground font-mono">
-                      {r[0].toFixed(4)}, {r[1].toFixed(4)}
-                    </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
                         {isArchived ? (
@@ -194,7 +188,7 @@ export function ParkingsTable({
           ))}
           {parkings.length === 0 && (
             <TableRow>
-              <TableCell colSpan={5} className="text-center text-muted-foreground py-12" data-testid="parkings-empty">
+              <TableCell colSpan={4} className="text-center text-muted-foreground py-12" data-testid="parkings-empty">
                 {search
                   ? "Ничего не найдено"
                   : showArchived
