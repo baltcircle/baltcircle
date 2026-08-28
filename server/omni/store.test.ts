@@ -191,6 +191,53 @@ describe("persistLockReport ordering guard (audit F-08)", () => {
   });
 });
 
+describe("persistLockReport HDOP accuracy gate", () => {
+  it("rejects a fix whose hdop exceeds MAX_ACCEPTABLE_HDOP, even as the very first fix ever", async () => {
+    const poor: OmniMessage = {
+      type: "position", cmd: "D0", tracking: true, valid: true,
+      fix: { lat: 54.7104, lng: 20.4522, satellites: 5, hdop: 12, altitudeM: 10, fixedAt: 1000 },
+    };
+
+    const accepted = await store.persistLockReport(IMEI, poor, 1000);
+
+    expect(accepted).toBe(false);
+    // last_seen_at still advances (lock is online), but no position is stored.
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_seen_at: 1000 });
+    expect(fake.locks.get(IMEI)?.last_latitude).toBeUndefined();
+  });
+
+  it("accepts a fix at exactly MAX_ACCEPTABLE_HDOP (boundary is inclusive)", async () => {
+    const boundary: OmniMessage = {
+      type: "position", cmd: "D0", tracking: true, valid: true,
+      fix: { lat: 54.7104, lng: 20.4522, satellites: 6, hdop: 10, altitudeM: 10, fixedAt: 1000 },
+    };
+
+    const accepted = await store.persistLockReport(IMEI, boundary, 1000);
+
+    expect(accepted).toBe(true);
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_latitude: 54.7104, last_longitude: 20.4522 });
+  });
+
+  it("does not overwrite a previously-good fix with a later poor-hdop one, even when it is the newest report", async () => {
+    const good: OmniMessage = {
+      type: "position", cmd: "D0", tracking: true, valid: true,
+      fix: { lat: 54.7104, lng: 20.4522, satellites: 10, hdop: 2, altitudeM: 10, fixedAt: 1000 },
+    };
+    const poorButNewer: OmniMessage = {
+      type: "position", cmd: "D0", tracking: true, valid: true,
+      fix: { lat: 54.72, lng: 20.46, satellites: 4, hdop: 15, altitudeM: 10, fixedAt: 2000 },
+    };
+
+    await store.persistLockReport(IMEI, good, 1000);
+    const accepted = await store.persistLockReport(IMEI, poorButNewer, 2000);
+
+    expect(accepted).toBe(false);
+    expect(fake.locks.get(IMEI)).toMatchObject({
+      last_latitude: 54.7104, last_longitude: 20.4522, last_seen_at: 2000,
+    });
+  });
+});
+
 describe("applyLiveUpdates ordering guard (audit F-08)", () => {
   it("rejects a stale buffered live-position row that flushes after a fresher one", async () => {
     await store.applyLiveUpdates([{ bikeId: "bike-a", x: 20.5, y: 54.7, batteryPct: 90, t: 2000 }]);

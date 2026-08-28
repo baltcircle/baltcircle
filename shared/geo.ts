@@ -137,6 +137,30 @@ export const RIDE_END_AWAITING_LOCK_GPS_ERROR =
 // always accepted (see persistLockReport in server/omni/store.ts).
 export const MAX_PLAUSIBLE_GPS_JUMP_M = 15_000;
 
+// GPS accuracy gate (HDOP = Horizontal Dilution of Precision; lower is
+// better). A fix can be structurally "valid" (NMEA A) yet practically
+// useless — obstructed antenna, multipath in dense tree cover or an
+// underground/indoor parking spot. Field data (omni_lock_diagnostics.md,
+// 2026-08-20): a cold-start fix commonly starts at hdop 5-7.5 and converges
+// to 1.8-3.4 within ~5min under open sky. 10 draws the line between "noisy
+// but real" (still accepted, self-heals as more satellites lock on) and
+// "too poor to trust as the current position" — the latter is rejected the
+// same way an implausible-jump fix is (see persistLockReport in
+// server/omni/store.ts): locks.last_latitude/last_longitude/last_location_at
+// simply don't advance, so anything gated on their freshness (e.g. the
+// ride-end geofence check below) correctly keeps waiting instead of trusting
+// a low-quality point.
+export const MAX_ACCEPTABLE_HDOP = 10;
+
+// How many of a lock's most recent ACCEPTED fixes (valid + within
+// MAX_ACCEPTABLE_HDOP) to combine, via a per-axis median, for the ride-end
+// geofence decision specifically. A single fix — even a good one — can still
+// jitter across a parking-radius boundary between consecutive reports;
+// median-of-N absorbs one outlier sample without a hard reject. D1 tracks
+// every RIDE_GPS_TRACKING_INTERVAL_SECONDS (10s), so 3 samples span ~20-30s
+// of recency — comfortably inside LOCK_GPS_LIVE_MS's 5min freshness window.
+export const END_GEOFENCE_SMOOTHING_SAMPLES = 3;
+
 // Helper: tariff price in integer kopecks (money is stored/charged in kopecks).
 export function tariffPriceKopecks(t: Tariff): number {
   return Math.round(t.price * 100);

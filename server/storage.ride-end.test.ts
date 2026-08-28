@@ -433,3 +433,73 @@ describe("endRide — lock-equipped bike GPS/radius gate", () => {
     expect(result).toEqual(completedRide);
   });
 });
+
+// GPS-accuracy item 4: median-of-recent-fixes smoothing for the geofence
+// decision specifically. These pin the tx.execute(sql`... FROM
+// bike_telemetry ...`) query's result being used in place of the single
+// locks.last_* point when telemetry has enough recent, hdop-acceptable rows.
+describe("endRide — lock-equipped bike geofence smoothing (GPS accuracy item 4)", () => {
+  function makeTxWithTelemetry(selectQueue: unknown[][], telemetryRows: { lat: number; lng: number; t: number }[]) {
+    const { tx, calls } = makeTx(selectQueue);
+    const originalExecute = tx.execute.getMockImplementation()!;
+    tx.execute.mockImplementation((query: unknown) => {
+      const chunks = (query as { queryChunks?: { value?: unknown[] }[] })?.queryChunks ?? [];
+      const isTelemetryQuery = chunks.some(
+        (c) => Array.isArray(c?.value) && c.value.some((v) => typeof v === "string" && v.includes("bike_telemetry")),
+      );
+      if (isTelemetryQuery) return Promise.resolve({ rows: telemetryRows });
+      return originalExecute(query);
+    });
+    return { tx, calls };
+  }
+
+  it("settles using the per-axis median of recent telemetry fixes instead of the single last point", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI });
+    // locks.last_* deliberately way off — if the median query's result were
+    // ignored, the parking match / final coords would come from here instead.
+    const staleLooking = makeLock({ lastLatitude: LOCK_REAL_LAT + 5, lastLongitude: LOCK_REAL_LNG + 5 });
+    const parking = makeParkingForRealPoint(LOCK_REAL_LAT, LOCK_REAL_LNG);
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    // Median of [LAT, LAT, LAT+0.01] on both axes lands on LAT/LNG — inside
+    // the parking radius built around the plain LOCK_REAL_LAT/LNG point.
+    const telemetryRows = [
+      { lat: LOCK_REAL_LAT, lng: LOCK_REAL_LNG, t: NOW.getTime() },
+      { lat: LOCK_REAL_LAT, lng: LOCK_REAL_LNG, t: NOW.getTime() - 10_000 },
+      { lat: LOCK_REAL_LAT + 0.01, lng: LOCK_REAL_LNG + 0.01, t: NOW.getTime() - 20_000 },
+    ];
+    const { tx } = makeTxWithTelemetry([[activeRide], [bike], [parking], [staleLooking], [completedRide]], telemetryRows);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+
+    const result = await storage.endRide(activeRide.id);
+
+    expect(result).toEqual(completedRide);
+  });
+
+  it("falls back to the single locks.last_* point when telemetry has no recent hdop-acceptable rows", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI });
+    const freshLock = makeLock();
+    const parking = makeParkingForRealPoint(LOCK_REAL_LAT, LOCK_REAL_LNG);
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx } = makeTxWithTelemetry([[activeRide], [bike], [parking], [freshLock], [completedRide]], []);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+
+    const result = await storage.endRide(activeRide.id);
+
+    expect(result).toEqual(completedRide);
+  });
+
+  it("still blocks with the awaiting-GPS error when neither telemetry nor locks has a fresh point", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI });
+    const staleLock = makeLock({ lastLocationAt: NOW.getTime() - LOCK_GPS_LIVE_MS - 1 });
+    const { tx } = makeTxWithTelemetry([[activeRide], [bike], [], [staleLock]], []);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+
+    const result = await storage.endRide(activeRide.id);
+
+    expect(result).toEqual({ error: RIDE_END_AWAITING_LOCK_GPS_ERROR });
+    expect(tx.update).not.toHaveBeenCalled();
+  });
+});

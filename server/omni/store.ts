@@ -10,7 +10,7 @@
 // INSERTs: reports accumulate in memory and land as one multi-row statement per
 // flush window.
 import type { OmniMessage } from "@shared/omni/protocol";
-import { haversineM, MAX_PLAUSIBLE_GPS_JUMP_M } from "@shared/geo";
+import { haversineM, MAX_PLAUSIBLE_GPS_JUMP_M, MAX_ACCEPTABLE_HDOP } from "@shared/geo";
 import { pool } from "../db/bootstrap";
 import { logger } from "../logger";
 import { consumePendingPause } from "./pause-registry";
@@ -181,6 +181,20 @@ export class PgOmniStore implements OmniStore {
         return true;
       case "position":
         if (message.valid && message.fix) {
+          // Accuracy gate BEFORE the jump check below: cheaper (no extra
+          // SELECT) and catches a class of bad fix the jump check can't —
+          // a lock sitting still can report a fix that hasn't physically
+          // "jumped" anywhere yet is still too imprecise to trust (see
+          // MAX_ACCEPTABLE_HDOP). Same no-op outcome as a rejected jump:
+          // last_seen_at advances, the position columns don't.
+          if (message.fix.hdop != null && message.fix.hdop > MAX_ACCEPTABLE_HDOP) {
+            logger.warn(
+              { imei, hdop: message.fix.hdop, satellites: message.fix.satellites },
+              "omni: rejected low-accuracy GPS fix (hdop exceeds MAX_ACCEPTABLE_HDOP)",
+            );
+            await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
+            return false;
+          }
           // Sanity-bound the fix against the lock's own last stored position
           // before trusting it (production incident, 2026-08-23: a single
           // structurally-valid-but-wrong "flyaway" fix — passes nmeaToDecimal's

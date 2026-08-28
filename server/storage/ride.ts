@@ -5,7 +5,7 @@ import {
   TARIFFS, tariffPriceKopecks, tariffDurationMs, realToMap,
   findNearestParkingWithinRadius, findNearestParkingWithinRadiusFromRealCoords,
   LOCK_GPS_LIVE_MS, RIDE_GPS_TRACKING_INTERVAL_SECONDS, PAUSE_ARM_TTL_MS, END_ARM_TTL_MS,
-  RIDE_END_AWAITING_LOCK_GPS_ERROR,
+  RIDE_END_AWAITING_LOCK_GPS_ERROR, MAX_ACCEPTABLE_HDOP, END_GEOFENCE_SMOOTHING_SAMPLES,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
 import { pendingPauseCreditMs } from "@shared/pause";
@@ -528,16 +528,40 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         let parkingMatch: Parking | null;
         if (bike?.lockImei && !opts?.skipGeofence) {
           const lockRow = (await tx.select().from(locks).where(eq(locks.imei, bike.lockImei)).limit(1))[0] as Lock | undefined;
-          const isFresh = lockRow?.lastLatitude != null && lockRow?.lastLongitude != null
-            && lockRow?.lastLocationAt != null && (Date.now() - lockRow.lastLocationAt) <= LOCK_GPS_LIVE_MS;
+          // Smoothing: a single fix (even a good one) can jitter across a
+          // parking-radius boundary between consecutive reports. Combine the
+          // last few ACCEPTED fixes (hdop already gated at ingest in
+          // persistLockReport, re-checked here since bike_telemetry keeps the
+          // raw history regardless) via a per-axis median instead of trusting
+          // only the latest point. Falls back to the single locks.last_* point
+          // when telemetry has nothing recent enough (e.g. test doubles, or a
+          // lock that has never reported into bike_telemetry) so behaviour is
+          // unchanged in that case.
+          const smoothingRows = (await tx.execute(
+            sql`SELECT lat, lng, t FROM bike_telemetry
+                WHERE bike_id = ${r.bikeId} AND lat IS NOT NULL AND lng IS NOT NULL
+                  AND (hdop IS NULL OR hdop <= ${MAX_ACCEPTABLE_HDOP})
+                  AND t >= ${Date.now() - LOCK_GPS_LIVE_MS}
+                ORDER BY t DESC LIMIT ${END_GEOFENCE_SMOOTHING_SAMPLES}`,
+          )).rows as { lat: number; lng: number; t: number }[];
+          const median = (nums: number[]): number => {
+            const sorted = [...nums].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+          };
+          const smoothedLat = smoothingRows.length > 0 ? median(smoothingRows.map((p) => p.lat)) : lockRow?.lastLatitude ?? null;
+          const smoothedLng = smoothingRows.length > 0 ? median(smoothingRows.map((p) => p.lng)) : lockRow?.lastLongitude ?? null;
+          const smoothedAt = smoothingRows.length > 0 ? Math.max(...smoothingRows.map((p) => p.t)) : lockRow?.lastLocationAt ?? null;
+          const isFresh = smoothedLat != null && smoothedLng != null
+            && smoothedAt != null && (Date.now() - smoothedAt) <= LOCK_GPS_LIVE_MS;
           if (!isFresh) {
             return { error: RIDE_END_AWAITING_LOCK_GPS_ERROR };
           }
-          parkingMatch = findNearestParkingWithinRadiusFromRealCoords(lockRow!.lastLatitude!, lockRow!.lastLongitude!, parkingRowsForEnd);
+          parkingMatch = findNearestParkingWithinRadiusFromRealCoords(smoothedLat!, smoothedLng!, parkingRowsForEnd);
           if (!parkingMatch) {
             return { error: "Велосипед сейчас не в зоне парковки — завершить поездку нельзя. Переместите велосипед в парковочную зону." };
           }
-          const synced = realToMap(lockRow!.lastLatitude!, lockRow!.lastLongitude!);
+          const synced = realToMap(smoothedLat!, smoothedLng!);
           finalLat = synced.y;
           finalLng = synced.x;
         } else {
