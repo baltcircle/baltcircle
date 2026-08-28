@@ -39,3 +39,5 @@ jobs:
           ((ss -ltnp 2>/dev/null | grep 5100) || (netstat -ltnp 2>/dev/null | grep 5100) || echo "no ss/netstat output") | mask
           echo "=== baltcircle-mvp lock gateway logs (last 1h, module=omni-tcp) ==="
           (docker logs baltcircle-mvp --since 1h 2>&1 | grep -i 'omni-tcp' | tail -300 || true) | mask
+          echo "=== baltcircle-mvp app logs (last 1h, pause/end/pending/awaiting keywords, TEMP diag) ==="
+          (docker logs baltcircle-mvp --since 1h 2>&1 | grep -iE 'pause|awaiting_lock_close|pending.?end|pending.?pause|/end|/rides/.*end|/rides/.*pause|/rides/.*cancel-end|/rides/.*resume|settle' | tail -300 || true) | mask
