@@ -214,9 +214,6 @@ export function ParkingFormDialog({
                   disabled
                   data-testid="input-parking-occupied"
                 />
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  Считается автоматически по велосипедам на этой парковке.
-                </p>
               </Field>
               <div />
             </div>
