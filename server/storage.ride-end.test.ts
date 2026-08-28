@@ -21,6 +21,7 @@ vi.mock("./push", () => ({ sendToUserAsync: sendToUserAsyncMock }));
 
 import { storage, rideEvents } from "./storage";
 import { bikes } from "@shared/schema";
+import { realToMap, RIDE_END_AWAITING_LOCK_GPS_ERROR, LOCK_GPS_LIVE_MS } from "@shared/geo";
 
 const HOUR = 60 * 60 * 1000;
 const NOW = new Date("2026-08-11T12:00:00.000Z");
@@ -52,6 +53,29 @@ function makeRide(overrides: Partial<Ride> = {}): Ride {
 // exercising the pre-Phase-2 behaviour unless a test opts in explicitly.
 function makeBike(overrides: Record<string, unknown> = {}) {
   return { id: "BC-01", lockImei: null, ...overrides };
+}
+
+const IMEI = "861234567890123";
+// Arbitrary real-WGS84 point (Kaliningrad area). makeParkingForRealPoint
+// derives a matching map-space parking row from it, so tests that want the
+// lock's fix to land inside a parking radius don't hand-compute coordinates.
+const LOCK_REAL_LAT = 54.7;
+const LOCK_REAL_LNG = 20.5;
+
+function makeParkingForRealPoint(realLat: number, realLng: number, overrides: Record<string, unknown> = {}) {
+  const { x, y } = realToMap(realLat, realLng);
+  return {
+    id: "P-1", lat: y, lng: x, radius: 30, status: "active", archivedAt: null,
+    ...overrides,
+  };
+}
+
+function makeLock(overrides: Record<string, unknown> = {}) {
+  return {
+    imei: IMEI, lastLatitude: LOCK_REAL_LAT, lastLongitude: LOCK_REAL_LNG,
+    lastLocationAt: NOW.getTime(),
+    ...overrides,
+  };
 }
 
 // Detects the loadRidePoints() SELECT (audit HIGH #15 now runs it as
@@ -320,5 +344,92 @@ describe("endRide charge confirmation push", () => {
     expect(calls.insert).toHaveLength(1);
     expect((calls.insert[0].values as any).description).toContain("+90 мин");
     expect(calls.execute).toHaveLength(2); // wallet UPSERT + balance decrement
+  });
+});
+
+// Production incident, 2026-08-27: this hard-block (commit 78eeeeb) had ZERO
+// test coverage before this fix — added alongside the settle-with-retry fix
+// in server/storage.ts so the gate's exact behaviour (and its exact error
+// string, which the retry loop matches on) is pinned going forward.
+describe("endRide — lock-equipped bike GPS/radius gate", () => {
+  it("blocks with the awaiting-GPS error when the lock has never reported a fix", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI });
+    const { tx } = makeTx([[activeRide], [bike], [], []]); // locks select returns no row
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+
+    const result = await storage.endRide(activeRide.id);
+
+    expect(result).toEqual({ error: RIDE_END_AWAITING_LOCK_GPS_ERROR });
+    expect(tx.update).not.toHaveBeenCalled(); // no partial settlement — ride stays active
+  });
+
+  it("blocks with the awaiting-GPS error when the lock's last fix is older than LOCK_GPS_LIVE_MS", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI });
+    const staleLock = makeLock({ lastLocationAt: NOW.getTime() - LOCK_GPS_LIVE_MS - 1 });
+    const { tx } = makeTx([[activeRide], [bike], [], [staleLock]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+
+    const result = await storage.endRide(activeRide.id);
+
+    expect(result).toEqual({ error: RIDE_END_AWAITING_LOCK_GPS_ERROR });
+    expect(tx.update).not.toHaveBeenCalled();
+  });
+
+  it("blocks with a distinct, non-retryable error when the fresh fix is outside any parking radius", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI });
+    const freshLock = makeLock();
+    // Parking far from the lock's real point -> no radius match.
+    const farParking = makeParkingForRealPoint(LOCK_REAL_LAT + 5, LOCK_REAL_LNG + 5);
+    const { tx } = makeTx([[activeRide], [bike], [farParking], [freshLock]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+
+    const result = await storage.endRide(activeRide.id);
+
+    expect(result).toEqual({ error: expect.stringContaining("не в зоне парковки") });
+    expect((result as { error: string }).error).not.toBe(RIDE_END_AWAITING_LOCK_GPS_ERROR);
+    expect(tx.update).not.toHaveBeenCalled();
+  });
+
+  it("settles successfully using the lock's own fix when fresh and inside a parking radius", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI });
+    const freshLock = makeLock();
+    const parking = makeParkingForRealPoint(LOCK_REAL_LAT, LOCK_REAL_LNG);
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx, calls } = makeTx([[activeRide], [bike], [parking], [freshLock], [completedRide]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+
+    const result = await storage.endRide(activeRide.id);
+
+    expect(result).toEqual(completedRide);
+    const bikeUpdate = calls.update.find((c) => c.table === bikes);
+    expect((bikeUpdate!.patch as any).parkingId).toBe("P-1");
+  });
+
+  it("bypasses the gate entirely for a lockless (legacy) bike", async () => {
+    const activeRide = makeRide();
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx } = makeTx([[activeRide], [makeBike()], [], [completedRide]]); // no locks select in the queue
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+
+    const result = await storage.endRide(activeRide.id);
+
+    expect(result).toEqual(completedRide);
+  });
+
+  it("bypasses the gate when the caller explicitly requests skipGeofence (admin force-end)", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI });
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    // No locks select in the queue — skipGeofence must short-circuit before it.
+    const { tx } = makeTx([[activeRide], [bike], [], [completedRide]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+
+    const result = await storage.endRide(activeRide.id, { skipGeofence: true });
+
+    expect(result).toEqual(completedRide);
   });
 });

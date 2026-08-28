@@ -5,6 +5,7 @@ import {
   TARIFFS, tariffPriceKopecks, tariffDurationMs, realToMap,
   findNearestParkingWithinRadius, findNearestParkingWithinRadiusFromRealCoords,
   LOCK_GPS_LIVE_MS, RIDE_GPS_TRACKING_INTERVAL_SECONDS, PAUSE_ARM_TTL_MS, END_ARM_TTL_MS,
+  RIDE_END_AWAITING_LOCK_GPS_ERROR,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
 import { pendingPauseCreditMs } from "@shared/pause";
@@ -530,7 +531,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           const isFresh = lockRow?.lastLatitude != null && lockRow?.lastLongitude != null
             && lockRow?.lastLocationAt != null && (Date.now() - lockRow.lastLocationAt) <= LOCK_GPS_LIVE_MS;
           if (!isFresh) {
-            return { error: "Ждём GPS-сигнал замка для подтверждения места — попробуйте завершить поездку через несколько секунд. Если сигнала долго нет, обратитесь в поддержку." };
+            return { error: RIDE_END_AWAITING_LOCK_GPS_ERROR };
           }
           parkingMatch = findNearestParkingWithinRadiusFromRealCoords(lockRow!.lastLatitude!, lockRow!.lastLongitude!, parkingRowsForEnd);
           if (!parkingMatch) {

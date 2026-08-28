@@ -95,6 +95,35 @@ export const RIDE_GPS_TRACKING_INTERVAL_SECONDS = 10;
 // only a slow/marginal-signal fix benefits from the longer ceiling.
 export const GPS_REFRESH_BURST_WINDOW_MS = 6 * 60 * 1000;
 
+// endRide's stale-lock-GPS gate (see LOCK_GPS_LIVE_MS above) is a transient,
+// self-resolving condition: D1 tracking is already live for the whole ride,
+// so a fresh fix normally lands within seconds — but a momentary bad-signal
+// spot (indoors, dense tree cover, underground parking) at the exact moment
+// the rider closes the lock can leave lastLocationAt stale for longer.
+// Production incident, 2026-08-27: once the lock's physical closure is
+// confirmed (rides.physically_locked_at), it never reports a second closure —
+// so without an automatic retry, a rider stuck behind this gate had no way
+// to settle except re-tapping "Завершить" by hand and hoping GPS recovered
+// before it re-hit the same gate. server/storage.ts retries the settlement
+// on this cadence instead of giving up after the single attempt made when
+// the physical closure first lands.
+export const END_SETTLE_RETRY_INTERVAL_MS = 15 * 1000;
+// Ceiling on the auto-retry above. Generous margin over LOCK_GPS_LIVE_MS's
+// own 5min window — if the lock still hasn't produced a fresh fix by then,
+// something is genuinely wrong (dead GPS antenna, lock stuck indoors) and
+// piling up more retries stops being useful; the rider's manual retry tap
+// (requestEndRide's physicallyLockedAt fast path) remains available after
+// this gives up, and re-arms its own single-shot retry the same way.
+export const END_SETTLE_RETRY_WINDOW_MS = 10 * 60 * 1000;
+
+// Shared verbatim between server/storage/ride.ts (the error endRide returns)
+// and server/storage.ts (the retry-loop's "is this the transient GPS gate,
+// worth retrying, or a different error like out-of-geofence that the rider
+// must act on" check) — one source of truth so the two can never drift apart
+// and silently break the retry matching.
+export const RIDE_END_AWAITING_LOCK_GPS_ERROR =
+  "Ждём GPS-сигнал замка для подтверждения места — попробуйте завершить поездку через несколько секунд. Если сигнала долго нет, обратитесь в поддержку.";
+
 // Sanity bound on a single incoming GPS fix vs. the lock's own last stored
 // fix. A cheap embedded GNSS chip occasionally reports a structurally valid
 // but physically nonsensical "flyaway"/cold-fix position — passes the
