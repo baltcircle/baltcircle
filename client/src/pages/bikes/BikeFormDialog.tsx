@@ -139,17 +139,12 @@ export function BikeFormDialog({
               >
                 {lockBattery.value}
               </div>
-              <p className="mt-1 text-xs text-muted-foreground" data-testid="text-bike-battery-freshness">
-                {lockBattery.freshness}
-              </p>
             </Field>
           </div>
           <LockPicker
             value={form.lockImei}
             onChange={(imei) => setForm((f) => ({ ...f, lockImei: imei }))}
             locks={locksQ.data ?? []}
-            loading={locksQ.isFetching}
-            onRefresh={() => locksQ.refetch()}
             currentImei={editing?.lockImei ?? null}
             required={!editing}
           />

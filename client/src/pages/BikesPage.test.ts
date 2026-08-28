@@ -46,9 +46,10 @@ describe("bike lock picker", () => {
 });
 
 describe("live lock battery display", () => {
-  it("renders charge as a display-only field with a freshness label", () => {
+  it("renders charge as a display-only field without a freshness label or refresh button", () => {
     expect(formSource).toContain('data-testid="display-bike-battery"');
-    expect(formSource).toContain('data-testid="text-bike-battery-freshness"');
+    expect(formSource).not.toContain('data-testid="text-bike-battery-freshness"');
+    expect(formSource).not.toContain('data-testid="button-locks-refresh"');
     expect(formSource).not.toContain('data-testid="input-bike-battery"');
     expect(formSource).not.toContain("form.battery");
   });
