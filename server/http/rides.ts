@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { storage, rideEvents } from "../storage";
 import { z } from "zod";
-import { TARIFFS, tariffPriceKopecks, realToMap } from "@shared/geo";
+import { TARIFFS, tariffPriceKopecks, realToMap, SSE_HEARTBEAT_INTERVAL_MS } from "@shared/geo";
 import { mergeRideTrack, type TrackPoint } from "@shared/rideTrack";
 import { timingSafeEqual } from "node:crypto";
 import {
@@ -115,12 +115,15 @@ export function registerRideRoutes(app: Express): void {
     // Initial snapshot so a freshly-opened stream shows current state at once.
     void push();
 
-    // Heartbeat comment keeps intermediaries from closing an idle connection
-    // and lets us detect a dead socket. SSE comments (": ...") are ignored by
-    // the EventSource client.
+    // Named heartbeat event (not a ": ..." SSE comment, which EventSource's
+    // JS API silently drops): besides keeping intermediaries from closing an
+    // idle connection, this is a signal the CLIENT can actually observe and
+    // use to detect a connection that is dead end-to-end but never fired
+    // onerror (mobile OS/carrier NAT killing an idle TCP session without a
+    // clean close) — see use-active-ride-stream.tsx's watchdog.
     const heartbeat = setInterval(() => {
-      if (!closed) res.write(": ping\n\n");
-    }, 25000);
+      if (!closed) res.write(`event: heartbeat\ndata: ${Date.now()}\n\n`);
+    }, SSE_HEARTBEAT_INTERVAL_MS);
 
     const cleanup = () => {
       if (closed) return;

@@ -57,6 +57,20 @@ export const PAUSE_ARM_TTL_MS = 2 * 60 * 1000;
 // standing next to the bike closing the lock.
 export const END_ARM_TTL_MS = 60 * 1000;
 
+// Cadence of the named "heartbeat" SSE event the active-ride stream sends
+// (server/http/rides.ts) so a client can prove the connection is still alive
+// end-to-end, independent of any real ride data changing.
+export const SSE_HEARTBEAT_INTERVAL_MS = 25 * 1000;
+
+// Client-side watchdog threshold (use-active-ride-stream.tsx): if NEITHER a
+// heartbeat NOR real ride data has arrived within this window, the connection
+// is treated as dead and force-reconnected. Mobile OS/carrier NAT can kill an
+// idle TCP session without ever firing EventSource's onerror or the browser's
+// online/offline events, so this is the deterministic backstop rather than a
+// mere heuristic. ~1.8x the heartbeat interval absorbs jitter/GC pauses
+// without false-triggering on a normal tick.
+export const SSE_STALE_THRESHOLD_MS = 45 * 1000;
+
 // Cancellation window: a rider may cancel with a full refund within this
 // many ms of ride start, provided the bike is still at the start parking.
 export const CANCEL_REFUND_WINDOW_MS = 5 * 60 * 1000;
