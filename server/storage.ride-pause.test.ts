@@ -266,6 +266,29 @@ describe("resumeRide", () => {
 
     expect(result).toHaveProperty("error");
   });
+
+  // Regression test for the lock-close-during-active-ride deadlock fix:
+  // server/omni/store.ts's lockReport handler auto-pauses AND sets
+  // physicallyLockedAt together when the rider closes the lock without
+  // tapping "Пауза". If resume left that flag set, a later "Завершить" tap
+  // would wrongly fast-path straight to endRide() via requestEndRide's
+  // physicallyLockedAt check, without ever confirming a fresh physical
+  // closure (the lock reopens right here, on this resume).
+  it("clears a stale physicallyLockedAt (set by an earlier auto-pause) on real resume", async () => {
+    const pausedAt = NOW - 3 * 60 * 1000;
+    const paused = makeRide({ pausedAt, totalPausedMs: 0, physicallyLockedAt: pausedAt });
+    const { tx, calls } = makeTx([[paused]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    queueSelect([makeBike({ lockImei: "868000000000001" })]);
+    getLockGatewayMock.mockReturnValue({ sendUnlockCommand: vi.fn().mockResolvedValue({ success: true }) });
+
+    const result = await storage.resumeRide(7);
+
+    expect(result).not.toHaveProperty("error");
+    const set = calls.updateSets[0] as any;
+    expect(set.pausedAt).toBeNull();
+    expect(set.physicallyLockedAt).toBeNull();
+  });
 });
 
 describe("extendRide", () => {

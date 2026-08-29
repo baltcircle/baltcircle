@@ -762,6 +762,17 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         const actualPausedMs = Math.max(0, now - r.pausedAt);
         const updated = (await tx.update(rides).set({
           pausedAt: null,
+          // Clears any flag left by an auto-pause (server/omni/store.ts's
+          // lockReport handler sets both paused_at and physically_locked_at
+          // together when the rider closes the lock without tapping
+          // "Пауза"). The lock is physically reopening right now via the
+          // sendUnlockCommand call below, so this flag must not survive the
+          // resume — otherwise a LATER "Завершить" tap would wrongly hit
+          // requestEndRide's physicallyLockedAt fast path and settle the
+          // ride immediately, without ever confirming a fresh physical
+          // closure. No-op when it was already null (the ordinary
+          // app-driven pause path never sets it in the first place).
+          physicallyLockedAt: null,
           totalPausedMs: r.totalPausedMs + actualPausedMs,
           paidUntilAt: (r.paidUntilAt ?? (r.startedAt + tariffDurationMs(r.tariff))) + creditMs,
         } as any).where(eq(rides.id, rideId)).returning())[0] as Ride;

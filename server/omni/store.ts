@@ -317,20 +317,50 @@ export class PgOmniStore implements OmniStore {
           // then just an ordinary physical-lock event again.
         }
 
-        // Audit F-04: this is a device-autonomous report of a physical close
-        // that already happened — there is no way for the server to have
-        // prevented it. If a ride is still "active" on this lock's bike, the
-        // rider closed the lock without the app ending the ride; flag it for
-        // ops (dashboard/admin API) without touching ride/bike lifecycle.
-        // `physically_locked_at IS NULL` keeps the FIRST occurrence, not the
-        // latest, so the discrepancy's start time is preserved.
+        // Audit F-04 / auto-pause: this is a device-autonomous report of a
+        // physical close that already happened — there is no way for the
+        // server to have prevented it, and (unlike the two branches above)
+        // nothing was armed for it. If a ride is still "active" on this
+        // lock's bike, the rider closed the lock without tapping "Пауза" —
+        // and there is no other way to close an OMNI lock (no server-side
+        // close command exists, see this file's header). Leaving the ride
+        // merely "active" here used to strand the rider: resumeRide() (the
+        // only code path that sends an unlock command besides startRide) is
+        // reachable only from a PAUSED ride, so an active-but-physically-
+        // locked bike could never be reopened from the app (production bug).
+        // Auto-pausing here closes that gap by reusing the exact same
+        // paused_at column and semantics as an app-driven pause: same
+        // free-grace billing credit on resume, same "Продолжить" button,
+        // same UI — the client already renders any pausedAt regardless of
+        // its source (see use-active-ride-stream.tsx). It's a single atomic
+        // UPDATE, not two, so there's no window where physically_locked_at
+        // is set but paused_at isn't (or vice-versa) if a settlement races.
+        //
+        // physically_locked_at is set in the SAME statement — COALESCE keeps
+        // the first occurrence (same one-shot semantics the old code had) —
+        // so requestEndRide's fast path can still skip re-arming if the
+        // rider taps "Завершить" while the lock is still closed from this
+        // exact event. `paused_at IS NULL` in the WHERE (rather than
+        // `physically_locked_at IS NULL`) is what makes this idempotent: a
+        // duplicate/retransmitted L1 for a lock that never reopened matches
+        // zero rows the second time, so it can't double-emit or reset a
+        // rider-driven resume that already happened in between.
+        //
+        // resumeRide() clears physically_locked_at again on a real resume,
+        // since the lock reopens then — a LATER "Завершить" tap must wait
+        // for a fresh closure report instead of fast-pathing on this now-
+        // stale flag while the lock might still be open.
         const bikeId = await this.findBikeIdByImei(imei);
         if (bikeId) {
-          await pool.query(
-            `UPDATE rides SET physically_locked_at = $1
-             WHERE bike_id = $2 AND status = 'active' AND physically_locked_at IS NULL`,
+          const updated = await pool.query<{ id: number; user_id: string }>(
+            `UPDATE rides SET
+               physically_locked_at = COALESCE(physically_locked_at, $1),
+               paused_at = $1
+             WHERE bike_id = $2 AND status = 'active' AND paused_at IS NULL
+             RETURNING id, user_id`,
             [at, bikeId],
           );
+          if (updated.rows[0]) rideEvents.emit(updated.rows[0].user_id, "point");
         }
         return true;
       }
