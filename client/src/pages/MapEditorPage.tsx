@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useGeolocation } from "./map/use-geolocation";
 import {
   Save,
   Eraser,
@@ -15,6 +16,7 @@ import {
   Undo2,
   Pencil,
   X,
+  MapPin,
 } from "lucide-react";
 import { ADMIN_OBJECTS_KEY, TYPE_OPTIONS, type ObjType } from "./map-editor/types";
 import { SavedObjectsPanel } from "./map-editor/SavedObjectsPanel";
@@ -30,6 +32,7 @@ export function MapEditorPage() {
   const [draft, setDraft] = useState<[number, number][]>([]);
   const [panelOpen, setPanelOpen] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const { geoCenter, handleGeolocate } = useGeolocation();
 
   const activeType = TYPE_OPTIONS.find((o) => o.id === type) ?? TYPE_OPTIONS[0];
   const minPoints = activeType.kind === "zone" ? 3 : 2;
@@ -187,6 +190,7 @@ export function MapEditorPage() {
         mapObjects={previewObjects}
         height="100%"
         className="absolute inset-0"
+        center={geoCenter}
         onMapClick={(coords) => setDraft((d) => [...d, coords])}
         editorDraft={{
           points: draft,
@@ -197,6 +201,23 @@ export function MapEditorPage() {
             setDraft((d) => d.map((p, i) => (i === index ? coords : p))),
         }}
       />
+
+      {/* Геолокация — тот же стиль, что на пользовательской карте (MapPage.tsx).
+       * Стоит в нижнем правом углу, на одной линии с нижним тулбаром рисования —
+       * как указал пользователь. Сдвигается левее при открытой панели
+       * «Сохранённые» (320приваткок + отступ), чтобы не оказаться под ней. */}
+      <button
+        type="button"
+        onClick={handleGeolocate}
+        aria-label="Моя геопозиция"
+        data-testid="button-editor-geolocate"
+        className={[
+          "absolute bottom-4 z-20 w-12 h-12 rounded-full bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all duration-200",
+          panelOpen ? "right-[348px]" : "right-4",
+        ].join(" ")}
+      >
+        <MapPin className="w-5 h-5" />
+      </button>
 
       {/* ── Верхний тулбар: выбор типа ─────────────────────────────────────── */}
       <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 w-[min(720px,calc(100%-24px))]">
