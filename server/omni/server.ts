@@ -965,6 +965,29 @@ const omniDiagLastAt = new Map<string, number>();
 // (maybeProbeOmniDiagD1 above) this process lifetime — see that method.
 const omniDiagD1Sent = new Set<string>();
 
+/**
+ * Diagnostic-only detail transform. `server/logger.ts` globally redacts any
+ * field literally named `code`/`*.code` (protects OTP/payment codes) — which
+ * blindly also hid the OMNI alarm-type code (W0 `{ type: "alarm", code }`)
+ * during onboarding diagnostics. Renaming it to `alarmCode` here sidesteps
+ * the redaction WITHOUT touching the redact rule itself, so OTP/payment
+ * `code` fields stay protected everywhere else. This function only ever
+ * runs behind the OMNI_DIAG_IMEI gate below — zero effect on the rest of
+ * the fleet, and alarm codes (1/2/6) are not sensitive data.
+ */
+function diagDetailFor(detail: unknown): unknown {
+  if (
+    typeof detail === "object" &&
+    detail !== null &&
+    (detail as { type?: unknown }).type === "alarm" &&
+    "code" in detail
+  ) {
+    const { code, ...rest } = detail as { code: unknown } & Record<string, unknown>;
+    return { ...rest, alarmCode: code };
+  }
+  return detail;
+}
+
 function logOmniDiag(
   log: Logger,
   imei: string | null,
@@ -983,7 +1006,7 @@ function logOmniDiag(
       cmd,
       receivedAtIso: new Date(receivedAt).toISOString(),
       msSinceLastFrame: prev == null ? null : receivedAt - prev,
-      detail,
+      detail: diagDetailFor(detail),
     },
     "omni-diag frame",
   );
