@@ -7,9 +7,11 @@ export { db, pool, bootstrapReady };
 export { bikeEvents, BIKE_EVENT_CHANNEL } from "./storage/events";
 import {
   rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, pendingEndEvents, LOCK_CLOSED_FOR_END,
-  lockAlarmEvents, LOCK_FALL_ALARM,
+  lockAlarmEvents, LOCK_FALL_ALARM, LOCK_MOVEMENT_ALARM,
 } from "./storage/events";
-import type { LockGpsRefreshedPayload, LockClosedForEndPayload, LockFallAlarmPayload } from "./storage/events";
+import type {
+  LockGpsRefreshedPayload, LockClosedForEndPayload, LockFallAlarmPayload, LockMovementAlarmPayload,
+} from "./storage/events";
 import { log } from "./logger";
 import { END_SETTLE_RETRY_INTERVAL_MS, END_SETTLE_RETRY_WINDOW_MS, RIDE_END_AWAITING_LOCK_GPS_ERROR } from "@shared/geo";
 export { rideEvents };
@@ -111,6 +113,14 @@ pendingEndEvents.on(LOCK_CLOSED_FOR_END, (payload: LockClosedForEndPayload) => {
 lockAlarmEvents.on(LOCK_FALL_ALARM, (payload: LockFallAlarmPayload) => {
   storage.createFallAlert(payload.bikeId, payload.at)
     .catch((err) => log(`fall-alert create failed: bike=${payload.bikeId} ${(err as Error).message}`));
+});
+
+// Bridge: server/omni/store.ts detects OMNI alarm code 1 ("illegal movement")
+// and emits here — mirrors the fall-alarm bridge above. Best-effort: must
+// never crash the OMNI TCP process on a transient DB hiccup.
+lockAlarmEvents.on(LOCK_MOVEMENT_ALARM, (payload: LockMovementAlarmPayload) => {
+  storage.createMovementAlert(payload.bikeId, payload.at)
+    .catch((err) => log(`movement-alert create failed: bike=${payload.bikeId} ${(err as Error).message}`));
 });
 
 /**

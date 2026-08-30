@@ -9,7 +9,7 @@ import { fmtRelative, fmtRub } from "@/lib/format";
 import {
   Map as MapIcon, Users as UsersIcon, Wrench,
   Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity, ChevronRight,
-  LifeBuoy, MessageSquare, AlertOctagon,
+  LifeBuoy, MessageSquare, AlertOctagon, ShieldAlert,
 } from "lucide-react";
 import { useSupportUnread } from "@/hooks/use-support-unread";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
@@ -35,8 +35,9 @@ export function AdminPage() {
   // Rider help requests submitted from the /support page. Separate from
   // mechanic tickets (/api/tickets) which describe bike issues.
   const supportQ = useQuery<SupportTicketWithUser[]>({ queryKey: ["/api/admin/support/tickets"] });
-  // Fall-alarm fleet alerts (OMNI lock alarm code 2). Manual ack, persists
-  // even after fall_cleared — separate concept from computed deriveAlerts().
+  // Fleet alerts from OMNI lock alarms (fall = code 2, movement_alarm = code 1).
+  // Manual ack, persists until acknowledged — separate concept from computed
+  // deriveAlerts(). Single endpoint returns all kinds; split by `kind` below.
   const fleetAlertsQ = useQuery<Alert[]>({ queryKey: ["/api/admin/alerts"] });
 
   const bikes = bikesQ.data ?? [];
@@ -52,7 +53,7 @@ export function AdminPage() {
   const support = useSupportUnread();
 
   const toast = useToast();
-  const ackFallAlertMut = useMutation({
+  const ackAlertMut = useMutation({
     mutationFn: async (id: number) => {
       const res = await apiRequest("POST", `/api/admin/alerts/${id}/ack`, {});
       return res.json();
@@ -63,7 +64,8 @@ export function AdminPage() {
     },
     onError: (e: any) => toast.toast({ title: "Не удалось подтвердить алерт", description: String(e?.message ?? e), variant: "destructive" }),
   });
-  const fallAlerts = fleetAlertsQ.data ?? [];
+  const fallAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "fall");
+  const movementAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "movement_alarm");
 
   const m = useMemo(() => deriveMetrics({ bikes, users, rides, tickets, mapObjects, parkings }), [
     bikes, users, rides, tickets, mapObjects, parkings,
@@ -286,9 +288,61 @@ export function AdminPage() {
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={ackFallAlertMut.isPending}
-                    onClick={() => ackFallAlertMut.mutate(a.id)}
+                    disabled={ackAlertMut.isPending}
+                    onClick={() => ackAlertMut.mutate(a.id)}
                     data-testid={`ack-fall-alert-${a.id}`}
+                  >
+                    Подтвердить
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* ---------- Movement-alarm alerts (OMNI lock alarm code 1, manual ack) ---------- */}
+      <div className="grid lg:grid-cols-3 gap-4 mt-4">
+        <Card className="p-5 lg:col-span-3" data-testid="dashboard-movement-alerts">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-display text-lg font-light flex items-center gap-2">
+              <ShieldAlert className={`w-4 h-4 ${movementAlerts.length ? "text-amber-500" : "text-muted-foreground"}`} />
+              Несанкционированное перемещение
+            </h2>
+            {movementAlerts.length > 0 && <Badge variant="destructive">{movementAlerts.length}</Badge>}
+          </div>
+          {fleetAlertsQ.isLoading ? (
+            <div className="text-sm text-muted-foreground py-4">Загружаем данные…</div>
+          ) : movementAlerts.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-4" data-testid="dashboard-movement-alerts-empty">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              Сигналов несанкционированного перемещения нет.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {movementAlerts.map((a) => (
+                <div
+                  key={a.id}
+                  className="flex items-center gap-3 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 p-3"
+                  data-testid={`dashboard-movement-alert-${a.id}`}
+                >
+                  <span className="flex items-center justify-center w-8 h-8 rounded-full shrink-0 bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                    <ShieldAlert className="w-4 h-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <Link href="/admin/bikes" className="text-sm font-medium hover:underline">
+                      {a.bikeId}
+                    </Link>
+                    <div className="text-xs text-muted-foreground truncate">
+                      Несанкционированное движение {fmtRelative(a.createdAt)}
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={ackAlertMut.isPending}
+                    onClick={() => ackAlertMut.mutate(a.id)}
+                    data-testid={`ack-movement-alert-${a.id}`}
                   >
                     Подтвердить
                   </Button>

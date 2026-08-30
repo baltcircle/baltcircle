@@ -72,3 +72,16 @@ export interface LockFallAlarmPayload {
   bikeId: string;
   at: number;
 }
+
+// Movement-alarm bridge: same shape as the fall bridge above, for OMNI alarm
+// code 1 ("illegal movement" — unauthorized movement of a reserved/available
+// bike). Shares the lockAlarmEvents bus since both are "OMNI lock alarm →
+// fleet-dashboard alert" bridges; kept as a distinct event name (not folded
+// into LOCK_FALL_ALARM) because the two map to different `alerts.kind`
+// values and different dashboard cards.
+export const LOCK_MOVEMENT_ALARM = "movement-alarm";
+export interface LockMovementAlarmPayload {
+  imei: string;
+  bikeId: string;
+  at: number;
+}

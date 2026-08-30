@@ -87,6 +87,58 @@ describe("storage.createFallAlert", () => {
   });
 });
 
+describe("storage.createMovementAlert", () => {
+  it("inserts a movement_alarm alert and emits the fleet SSE tick when none is open for the bike", async () => {
+    dbMock.execute.mockResolvedValue({
+      rows: [{
+        id: 7, bike_id: "BC-01", kind: "movement_alarm", severity: "critical",
+        message: "Несанкционированное перемещение велосипеда — требуется проверка",
+        created_at: 12345, acknowledged_at: null, acknowledged_by: null,
+      }],
+    });
+    const received: string[] = [];
+    bikeEvents.once(BIKE_EVENT_CHANNEL, () => received.push("tick"));
+
+    const result = await storage.createMovementAlert("BC-01", 12345);
+
+    expect(result).toEqual({
+      id: 7, bikeId: "BC-01", kind: "movement_alarm", severity: "critical",
+      message: "Несанкционированное перемещение велосипеда — требуется проверка",
+      createdAt: 12345, acknowledgedAt: null, acknowledgedBy: null,
+    });
+    expect(received).toEqual(["tick"]);
+  });
+
+  it("is a no-op (returns null, no emit) when an unacknowledged movement_alarm alert already exists for the bike", async () => {
+    dbMock.execute.mockResolvedValue({ rows: [] });
+    const received: string[] = [];
+    bikeEvents.once(BIKE_EVENT_CHANNEL, () => received.push("tick"));
+
+    const result = await storage.createMovementAlert("BC-01", 12345);
+
+    expect(result).toBeNull();
+    expect(received).toEqual([]);
+  });
+
+  it("does not clash with an open fall alert for the same bike (different `kind`, independent dedup)", async () => {
+    // Sanity check that the shared createAlertRow helper parameterizes `kind`
+    // into both the INSERT and the WHERE NOT EXISTS guard — a fall alert being
+    // open must not block a movement_alarm insert for the same bike.
+    dbMock.execute.mockResolvedValue({
+      rows: [{
+        id: 8, bike_id: "BC-01", kind: "movement_alarm", severity: "critical",
+        message: "Несанкционированное перемещение велосипеда — требуется проверка",
+        created_at: 12345, acknowledged_at: null, acknowledged_by: null,
+      }],
+    });
+
+    const result = await storage.createMovementAlert("BC-01", 12345);
+
+    expect(result).not.toBeNull();
+    expect(dbMock.execute).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("storage.listAlerts", () => {
   it("defaults to unacknowledged-only", async () => {
     selectRows = [makeAlert({ id: 1 }), makeAlert({ id: 2 })];

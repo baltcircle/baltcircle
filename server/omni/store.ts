@@ -20,6 +20,7 @@ import {
   rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, type LockGpsRefreshedPayload,
   pendingEndEvents, LOCK_CLOSED_FOR_END, type LockClosedForEndPayload,
   lockAlarmEvents, LOCK_FALL_ALARM, type LockFallAlarmPayload,
+  LOCK_MOVEMENT_ALARM, type LockMovementAlarmPayload,
 } from "../storage/events";
 
 // Keep the public TCP process decoupled from the full Drizzle schema graph: it
@@ -259,12 +260,15 @@ export class PgOmniStore implements OmniStore {
           `UPDATE locks SET ${base}, last_alarm_type = $3, last_alarm_at = $2 WHERE imei = $1 ${NEWEST_REPORT_GUARD} RETURNING bike_id`,
           [imei, at, alarmType],
         );
-        // Fall alarms feed the fleet-dashboard alert (see storage/events.ts
-        // header) — best-effort, never blocks telemetry ingestion. Skipped
-        // when the lock isn't currently assigned to a bike.
+        // Fall/illegal-movement alarms feed the fleet-dashboard alert (see
+        // storage/events.ts header) — best-effort, never blocks telemetry
+        // ingestion. Skipped when the lock isn't currently assigned to a bike.
         if (alarmType === "fall" && rows[0]?.bike_id) {
           const payload: LockFallAlarmPayload = { imei, bikeId: rows[0].bike_id, at };
           lockAlarmEvents.emit(LOCK_FALL_ALARM, payload);
+        } else if (alarmType === "illegal_movement" && rows[0]?.bike_id) {
+          const payload: LockMovementAlarmPayload = { imei, bikeId: rows[0].bike_id, at };
+          lockAlarmEvents.emit(LOCK_MOVEMENT_ALARM, payload);
         }
         return true;
       }

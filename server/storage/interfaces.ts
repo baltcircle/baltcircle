@@ -225,6 +225,8 @@ export interface ILockStorage {
 export interface IAlertStorage {
   /** Best-effort, dedup-on-insert. See server/storage/alert.ts for details. */
   createFallAlert(bikeId: string, at: number): Promise<Alert | null>;
+  /** Best-effort, dedup-on-insert. See server/storage/alert.ts for details. */
+  createMovementAlert(bikeId: string, at: number): Promise<Alert | null>;
   listAlerts(opts?: { includeAcknowledged?: boolean }): Promise<Alert[]>;
   acknowledgeAlert(id: number, by: string): Promise<Alert | undefined>;
 }

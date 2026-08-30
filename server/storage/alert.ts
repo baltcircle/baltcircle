@@ -22,20 +22,19 @@ function rowToAlert(row: Record<string, unknown>): Alert {
 export function AlertMixin<TBase extends Constructor>(Base: TBase) {
   return class extends Base implements IAlertStorage {
     /**
-     * Best-effort, called from the OMNI fall-alarm event bridge (see
-     * server/storage/events.ts + server/storage.ts). The INSERT ... WHERE
-     * NOT EXISTS below is an atomic dedup: a lock still lying on the ground
-     * keeps re-reporting alarm code 2 on every heartbeat, and this must not
+     * Shared by createFallAlert/createMovementAlert below. The INSERT ...
+     * WHERE NOT EXISTS is an atomic dedup: a lock stuck in an alarm state
+     * keeps re-reporting the same code on every heartbeat, and this must not
      * spam a fresh row for each one. Returns null when an unacknowledged
-     * fall alert for this bike already exists (no-op, not an error).
+     * alert of this `kind` already exists for the bike (no-op, not an error).
      */
-    async createFallAlert(bikeId: string, at: number): Promise<Alert | null> {
+    private async createAlertRow(bikeId: string, kind: string, severity: string, message: string, at: number): Promise<Alert | null> {
       const result = await db.execute(sql`
         INSERT INTO alerts (bike_id, kind, severity, message, created_at)
-        SELECT ${bikeId}, 'fall', 'critical', 'Велосипед упал — требуется проверка', ${at}
+        SELECT ${bikeId}, ${kind}, ${severity}, ${message}, ${at}
         WHERE NOT EXISTS (
           SELECT 1 FROM alerts
-          WHERE bike_id = ${bikeId} AND kind = 'fall' AND acknowledged_at IS NULL
+          WHERE bike_id = ${bikeId} AND kind = ${kind} AND acknowledged_at IS NULL
         )
         RETURNING id, bike_id, kind, severity, message, created_at, acknowledged_at, acknowledged_by
       `);
@@ -43,6 +42,19 @@ export function AlertMixin<TBase extends Constructor>(Base: TBase) {
       if (!row) return null;
       bikeEvents.emit(BIKE_EVENT_CHANNEL);
       return rowToAlert(row);
+    }
+
+    /** Best-effort, called from the OMNI fall-alarm event bridge (alarm code 2). */
+    async createFallAlert(bikeId: string, at: number): Promise<Alert | null> {
+      return this.createAlertRow(bikeId, "fall", "critical", "Велосипед упал — требуется проверка", at);
+    }
+
+    /** Best-effort, called from the OMNI movement-alarm event bridge (alarm code 1). */
+    async createMovementAlert(bikeId: string, at: number): Promise<Alert | null> {
+      return this.createAlertRow(
+        bikeId, "movement_alarm", "critical",
+        "Несанкционированное перемещение велосипеда — требуется проверка", at,
+      );
     }
 
     async listAlerts(opts?: { includeAcknowledged?: boolean }): Promise<Alert[]> {

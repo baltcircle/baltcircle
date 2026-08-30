@@ -4,8 +4,9 @@ import type { Bike, Parking, AdminRide, Ticket, MapObject, Alert } from "@shared
 import { TICKET_CLOSED_STATUSES } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { MapLibreMap, type MapLayers } from "@/components/MapLibreMap";
+import { useGeolocation } from "./map/use-geolocation";
 import {
-  Bike as BikeIcon, MapPin, Route, Wrench,
+  Bike as BikeIcon, MapPin, Route, Wrench, LocateFixed,
   ParkingCircle,
 } from "lucide-react";
 import { DetailCard, type Selection } from "./operations-map/DetailCard";
@@ -71,6 +72,7 @@ export function OperationsMapPage({ embedded = false }: { embedded?: boolean } =
     () => new Set((alertsQ.data ?? []).filter((a) => a.kind === "fall").map((a) => a.bikeId)),
     [alertsQ.data],
   );
+  const { geoCenter, handleGeolocate } = useGeolocation();
 
   const toggleLayer = (key: LayerKey) =>
     setLayers((l) => ({ ...l, [key]: !l[key] }));
@@ -114,22 +116,35 @@ export function OperationsMapPage({ embedded = false }: { embedded?: boolean } =
       </div>
 
       <div className="space-y-3">
-        <MapLibreMap
-          bikes={bikes}
-          parkings={parkings}
-          activeRides={activeRides}
-          tickets={openTickets}
-          mapObjects={activeObjects}
-          fallenBikeIds={fallenBikeIds}
-          layers={layers}
-          height="64vh"
-          className="relative w-full overflow-hidden rounded-xl border border-card-border bg-card"
-          selectedBikeId={selection?.kind === "bike" ? selection.id : null}
-          onSelectBike={(id) => setSelection({ kind: "bike", id })}
-          onSelectParking={(id) => setSelection({ kind: "parking", id })}
-          onSelectRide={(id) => setSelection({ kind: "ride", id })}
-          onSelectTicket={(id) => setSelection({ kind: "ticket", id })}
-        />
+        <div className="relative">
+          <MapLibreMap
+            bikes={bikes}
+            parkings={parkings}
+            activeRides={activeRides}
+            tickets={openTickets}
+            mapObjects={activeObjects}
+            fallenBikeIds={fallenBikeIds}
+            layers={layers}
+            center={geoCenter}
+            height="64vh"
+            className="relative w-full overflow-hidden rounded-xl border border-card-border bg-card"
+            selectedBikeId={selection?.kind === "bike" ? selection.id : null}
+            onSelectBike={(id) => setSelection({ kind: "bike", id })}
+            onSelectParking={(id) => setSelection({ kind: "parking", id })}
+            onSelectRide={(id) => setSelection({ kind: "ride", id })}
+            onSelectTicket={(id) => setSelection({ kind: "ticket", id })}
+          />
+          <Button
+            size="icon"
+            variant="secondary"
+            onClick={handleGeolocate}
+            aria-label="Моя геопозиция"
+            data-testid="button-operations-geolocate"
+            className="absolute bottom-4 right-4 z-10 rounded-full shadow-lg"
+          >
+            <LocateFixed className="w-4 h-4" />
+          </Button>
+        </div>
 
         <DetailCard
           selection={selection}

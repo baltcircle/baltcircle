@@ -107,7 +107,10 @@ vi.mock("../db/bootstrap", () => ({
 }));
 
 import { PgOmniStore } from "./store";
-import { lockAlarmEvents, LOCK_FALL_ALARM, type LockFallAlarmPayload } from "../storage/events";
+import {
+  lockAlarmEvents, LOCK_FALL_ALARM, type LockFallAlarmPayload,
+  LOCK_MOVEMENT_ALARM, type LockMovementAlarmPayload,
+} from "../storage/events";
 
 const IMEI = "861234567890123";
 const store = new PgOmniStore();
@@ -285,6 +288,53 @@ describe("persistLockReport fall-alarm event bridge", () => {
     lockAlarmEvents.on(LOCK_FALL_ALARM, (payload: LockFallAlarmPayload) => received.push(payload));
 
     await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 1000);
+
+    expect(received).toEqual([]);
+  });
+});
+
+describe("persistLockReport movement-alarm event bridge", () => {
+  afterEach(() => {
+    lockAlarmEvents.removeAllListeners(LOCK_MOVEMENT_ALARM);
+  });
+
+  it("emits LOCK_MOVEMENT_ALARM when alarm code 1 (illegal movement) lands on a lock assigned to a bike", async () => {
+    fake.locks.set(IMEI, { last_seen_at: null, bike_id: "bike-a" });
+    const received: LockMovementAlarmPayload[] = [];
+    lockAlarmEvents.on(LOCK_MOVEMENT_ALARM, (payload: LockMovementAlarmPayload) => received.push(payload));
+
+    await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 5000);
+
+    expect(received).toEqual([{ imei: IMEI, bikeId: "bike-a", at: 5000 }]);
+  });
+
+  it("does not emit for other alarm codes (fall / fall_cleared)", async () => {
+    fake.locks.set(IMEI, { last_seen_at: null, bike_id: "bike-a" });
+    const received: LockMovementAlarmPayload[] = [];
+    lockAlarmEvents.on(LOCK_MOVEMENT_ALARM, (payload: LockMovementAlarmPayload) => received.push(payload));
+
+    await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 5000);
+    await store.persistLockReport(IMEI, { type: "alarm", code: 6 }, 6000);
+
+    expect(received).toEqual([]);
+  });
+
+  it("does not emit when the lock has no bike assigned", async () => {
+    fake.locks.set(IMEI, { last_seen_at: null, bike_id: null });
+    const received: LockMovementAlarmPayload[] = [];
+    lockAlarmEvents.on(LOCK_MOVEMENT_ALARM, (payload: LockMovementAlarmPayload) => received.push(payload));
+
+    await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 5000);
+
+    expect(received).toEqual([]);
+  });
+
+  it("does not emit when the report is rejected as stale (ordering guard)", async () => {
+    fake.locks.set(IMEI, { last_seen_at: 9000, bike_id: "bike-a" });
+    const received: LockMovementAlarmPayload[] = [];
+    lockAlarmEvents.on(LOCK_MOVEMENT_ALARM, (payload: LockMovementAlarmPayload) => received.push(payload));
+
+    await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 1000);
 
     expect(received).toEqual([]);
   });
