@@ -710,6 +710,20 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
     // once physically_locked_at is set, every retry calls endRide() directly and
     // synchronously, surfacing its error to the client exactly like the
     // pre-this-feature direct-tap behaviour.
+    //
+    // Fast path via pausedAt: a ride can also already be paused when "Завершить"
+    // is tapped (rider paused first, then decides to end instead of resuming).
+    // Both pause sources — the armed manual pause in server/omni/store.ts's
+    // lockReport handler, and the unarmed auto-pause fallback — only ever set
+    // paused_at AFTER the device's own lockReport confirms the physical
+    // closure; resumeRide() is the only path that reopens the lock, and it
+    // clears pausedAt atomically in the same update. So paused_at != null is
+    // just as reliable a "lock is confirmed closed and hasn't reopened since"
+    // signal as physically_locked_at, and endRide() already prices an
+    // in-progress pause correctly via pendingPauseCreditMs. Without this,
+    // ending from a paused ride would arm a pending end that can never
+    // resolve — the lock won't send a second closure report until reopened —
+    // and would just time out after END_ARM_TTL_MS instead of settling.
     async requestEndRide(
       this: {
         endRide(rideId: number, opts?: { skipGeofence?: boolean }): Promise<Ride | { error: string } | undefined>;
@@ -721,7 +735,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       const ride = (await db.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride | undefined;
       if (!ride || ride.status !== "active") return { error: "Поездка не активна" };
       const bike = (await db.select().from(bikes).where(eq(bikes.id, ride.bikeId)).limit(1))[0] as Bike | undefined;
-      if (!bike?.lockImei || ride.physicallyLockedAt != null) {
+      if (!bike?.lockImei || ride.physicallyLockedAt != null || ride.pausedAt != null) {
         return this.endRide(rideId);
       }
       registerPendingEnd(bike.lockImei, rideId, ride.userId, END_ARM_TTL_MS);

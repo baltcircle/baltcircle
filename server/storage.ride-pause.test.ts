@@ -291,6 +291,77 @@ describe("resumeRide", () => {
   });
 });
 
+// Regression tests for requestEndRide's fast-path gating ("Завершить" tapped
+// while the ride is already paused). These isolate the gating decision from
+// the full endRide() transaction by calling requestEndRide with a stubbed
+// `this` — requestEndRide's own module-level db.select() calls still go
+// through dbMock, but the only thing under test is whether it calls the
+// stubbed endRide() directly vs. arms a pending end.
+function makeEndRideThis() {
+  return {
+    endRide: vi.fn().mockResolvedValue(makeRide({ status: "completed" })),
+    invalidateBikesCache: vi.fn(),
+    loadRidePoints: vi.fn().mockResolvedValue([]),
+  };
+}
+
+describe("requestEndRide", () => {
+  it("fast-paths straight to endRide() when the ride is already paused on a smart-lock bike", async () => {
+    queueSelect([makeRide({ pausedAt: NOW - 60000, physicallyLockedAt: null })]);
+    queueSelect([makeBike({ lockImei: "868000000000001" })]);
+    const fakeThis = makeEndRideThis();
+
+    const result = await storage.requestEndRide.call(fakeThis, 7);
+
+    expect(fakeThis.endRide).toHaveBeenCalledWith(7);
+    expect(registerPendingPauseMock).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: "completed" });
+  });
+
+  it("still arms and waits for a smart-lock bike that is active and not paused/confirmed-closed", async () => {
+    queueSelect([makeRide({ pausedAt: null, physicallyLockedAt: null })]);
+    queueSelect([makeBike({ lockImei: "868000000000001" })]);
+    const fakeThis = makeEndRideThis();
+
+    const result = await storage.requestEndRide.call(fakeThis, 7);
+
+    expect(fakeThis.endRide).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: "awaiting_lock_close" });
+  });
+
+  it("still fast-paths via the pre-existing physicallyLockedAt flag (not paused, but previously confirmed closed)", async () => {
+    queueSelect([makeRide({ pausedAt: null, physicallyLockedAt: NOW - 60000 })]);
+    queueSelect([makeBike({ lockImei: "868000000000001" })]);
+    const fakeThis = makeEndRideThis();
+
+    const result = await storage.requestEndRide.call(fakeThis, 7);
+
+    expect(fakeThis.endRide).toHaveBeenCalledWith(7);
+    expect(result).toMatchObject({ status: "completed" });
+  });
+
+  it("always fast-paths a legacy bike with no smart lock, paused or not", async () => {
+    queueSelect([makeRide({ pausedAt: NOW - 60000 })]);
+    queueSelect([makeBike({ lockImei: null })]);
+    const fakeThis = makeEndRideThis();
+
+    const result = await storage.requestEndRide.call(fakeThis, 7);
+
+    expect(fakeThis.endRide).toHaveBeenCalledWith(7);
+    expect(result).toMatchObject({ status: "completed" });
+  });
+
+  it("rejects ending a non-active ride", async () => {
+    queueSelect([makeRide({ status: "completed" })]);
+    const fakeThis = makeEndRideThis();
+
+    const result = await storage.requestEndRide.call(fakeThis, 7);
+
+    expect(result).toHaveProperty("error");
+    expect(fakeThis.endRide).not.toHaveBeenCalled();
+  });
+});
+
 describe("extendRide", () => {
   it("debits the wallet and pushes paidUntilAt back by the tariff's duration, additively", async () => {
     const active = makeRide({ paidUntilAt: NOW + 10 * 60 * 1000 });
