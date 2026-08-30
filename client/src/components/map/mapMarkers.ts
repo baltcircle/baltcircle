@@ -17,17 +17,26 @@ export function ticketMarkerColor(priority: string): string {
 }
 
 /** Build a small circular DOM marker element (bikes/rides/tickets). */
-export function dotMarkerEl(color: string, opts: { ring?: boolean; size?: number; clickable?: boolean } = {}): HTMLDivElement {
-  const size = opts.size ?? 16;
+export function dotMarkerEl(color: string, opts: { ring?: boolean; size?: number; clickable?: boolean; fallen?: boolean } = {}): HTMLDivElement {
+  const size = opts.fallen ? Math.max(opts.size ?? 16, 22) : (opts.size ?? 16);
   const el = document.createElement("div");
   el.style.width = `${size}px`;
   el.style.height = `${size}px`;
   el.style.borderRadius = "50%";
-  el.style.background = color;
+  el.style.background = opts.fallen ? MARKER_COLORS.fallen : color;
   el.style.border = opts.ring ? "3px solid #fff" : "2px solid #fff";
   el.style.boxShadow = "0 1px 4px rgba(0,0,0,0.35)";
   el.style.boxSizing = "border-box";
   el.style.cursor = opts.clickable ? "pointer" : "default";
+  if (opts.fallen) {
+    el.style.display = "flex";
+    el.style.alignItems = "center";
+    el.style.justifyContent = "center";
+    el.style.color = "#fff";
+    el.style.font = "700 13px/1 system-ui, sans-serif";
+    el.textContent = "!";
+    el.title = "Велосипед упал — требуется проверка";
+  }
   return el;
 }
 

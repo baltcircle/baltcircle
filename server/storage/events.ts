@@ -58,3 +58,17 @@ export interface LockClosedForEndPayload {
   userId: string;
   imei: string;
 }
+
+// Fall-alarm bridge: mirrors the GPS-refresh/pending-end bridges above.
+// server/omni/store.ts (Drizzle-free, see its file header) detects OMNI
+// alarm code 2 ("fall") and emits here; only this storage layer can turn it
+// into a persisted `alerts` row (Drizzle) with fleet-dashboard dedup and the
+// ack workflow. Wired in server/storage.ts alongside the other two bridges.
+export const lockAlarmEvents = new EventEmitter();
+lockAlarmEvents.setMaxListeners(0);
+export const LOCK_FALL_ALARM = "fall-alarm";
+export interface LockFallAlarmPayload {
+  imei: string;
+  bikeId: string;
+  at: number;
+}

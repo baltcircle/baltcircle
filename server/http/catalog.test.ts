@@ -21,6 +21,8 @@ const storageMock = vi.hoisted(() => ({
   getActiveRideForBike: vi.fn(),
   purgeArchivedTestBike: vi.fn(),
   adminUpdateBike: vi.fn(),
+  listAlerts: vi.fn(),
+  acknowledgeAlert: vi.fn(),
 }));
 
 vi.mock("../storage", () => ({
@@ -547,5 +549,93 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
     expect(res.status).toBe(200);
     expect(sendUnlockCommand).not.toHaveBeenCalled();
     expect(storageMock.getActiveRideForBike).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/admin/alerts", () => {
+  it("requires a session", async () => {
+    const res = await lockRequest("/api/admin/alerts");
+
+    expect(res.status).toBe(401);
+    expect(storageMock.listAlerts).not.toHaveBeenCalled();
+  });
+
+  it("refuses a signed-in rider", async () => {
+    sessionUserId = "u-rider";
+    storageMock.getUser.mockResolvedValue({ id: "u-rider", role: "rider" });
+
+    const res = await lockRequest("/api/admin/alerts");
+
+    expect(res.status).toBe(403);
+    expect(storageMock.listAlerts).not.toHaveBeenCalled();
+  });
+
+  it("allows a mechanic (read-only) and returns the open fall alerts", async () => {
+    sessionUserId = "u-mech";
+    storageMock.getUser.mockResolvedValue({ id: "u-mech", role: "mechanic" });
+    storageMock.listAlerts.mockResolvedValue([
+      { id: 1, bikeId: "BC-01", kind: "fall", severity: "critical", message: "Упал", createdAt: 1000, acknowledgedAt: null, acknowledgedBy: null },
+    ]);
+
+    const res = await lockRequest("/api/admin/alerts");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([
+      { id: 1, bikeId: "BC-01", kind: "fall", severity: "critical", message: "Упал", createdAt: 1000, acknowledgedAt: null, acknowledgedBy: null },
+    ]);
+  });
+});
+
+describe("POST /api/admin/alerts/:id/ack", () => {
+  it("requires a session", async () => {
+    const res = await lockRequest("/api/admin/alerts/1/ack", "POST", {});
+
+    expect(res.status).toBe(401);
+    expect(storageMock.acknowledgeAlert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a mechanic (read-only role — ack requires operator/admin)", async () => {
+    sessionUserId = "u-mech2";
+    storageMock.getUser.mockResolvedValue({ id: "u-mech2", role: "mechanic" });
+
+    const res = await lockRequest("/api/admin/alerts/1/ack", "POST", {});
+
+    expect(res.status).toBe(403);
+    expect(storageMock.acknowledgeAlert).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-numeric id without touching storage", async () => {
+    sessionUserId = "u-op";
+    storageMock.getUser.mockResolvedValue({ id: "u-op", role: "operator" });
+
+    const res = await lockRequest("/api/admin/alerts/not-a-number/ack", "POST", {});
+
+    expect(res.status).toBe(404);
+    expect(storageMock.acknowledgeAlert).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges as the resolved actor name and returns the updated row", async () => {
+    sessionUserId = "u-op2";
+    storageMock.getUser.mockResolvedValue({ id: "u-op2", role: "operator", name: "Иван" });
+    storageMock.acknowledgeAlert.mockResolvedValue({
+      id: 1, bikeId: "BC-01", kind: "fall", severity: "critical", message: "Упал",
+      createdAt: 1000, acknowledgedAt: 2000, acknowledgedBy: "Иван",
+    });
+
+    const res = await lockRequest("/api/admin/alerts/1/ack", "POST", {});
+
+    expect(res.status).toBe(200);
+    expect(storageMock.acknowledgeAlert).toHaveBeenCalledWith(1, "Иван");
+    expect(res.body).toMatchObject({ acknowledgedBy: "Иван", acknowledgedAt: 2000 });
+  });
+
+  it("returns 404 when the alert is missing or already acknowledged", async () => {
+    sessionUserId = "u-op3";
+    storageMock.getUser.mockResolvedValue({ id: "u-op3", role: "admin", name: "Админ" });
+    storageMock.acknowledgeAlert.mockResolvedValue(undefined);
+
+    const res = await lockRequest("/api/admin/alerts/999/ack", "POST", {});
+
+    expect(res.status).toBe(404);
   });
 });

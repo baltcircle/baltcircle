@@ -15,6 +15,9 @@ export function useFleetStream() {
       // «Занято» парковок считается от велосипедов → обновляем и их.
       queryClient.invalidateQueries({ queryKey: ["/api/parkings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/parkings"] });
+      // Fall-alarm alerts are created/acknowledged through the same fleet
+      // event bus (server/storage.ts's LOCK_FALL_ALARM bridge + alert.ts).
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/alerts"] });
     };
     es.onerror = () => {}; // EventSource переподключится сам.
     return () => es.close();

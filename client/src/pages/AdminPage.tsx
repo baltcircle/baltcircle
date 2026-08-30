@@ -1,20 +1,23 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Link } from "wouter";
-import type { Bike, User, Ride, Ticket, MapObject, Parking, SupportTicketWithUser } from "@shared/schema";
+import type { Bike, User, Ride, Ticket, MapObject, Parking, SupportTicketWithUser, Alert } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { fmtRelative, fmtRub } from "@/lib/format";
 import {
   Map as MapIcon, Users as UsersIcon, Wrench,
   Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity, ChevronRight,
-  LifeBuoy, MessageSquare,
+  LifeBuoy, MessageSquare, AlertOctagon,
 } from "lucide-react";
 import { useSupportUnread } from "@/hooks/use-support-unread";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { OperationsMapPage } from "./OperationsMapPage";
 import { deriveMetrics, deriveAlerts, fmtNow } from "./admin/metrics";
 import { StatusChip, SummaryRow, RideStatusBadge } from "./admin/dashboard-widgets";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 export function AdminPage() {
   // Pull from existing endpoints. /api/admin/users is staff-protected; the rest
@@ -32,6 +35,9 @@ export function AdminPage() {
   // Rider help requests submitted from the /support page. Separate from
   // mechanic tickets (/api/tickets) which describe bike issues.
   const supportQ = useQuery<SupportTicketWithUser[]>({ queryKey: ["/api/admin/support/tickets"] });
+  // Fall-alarm fleet alerts (OMNI lock alarm code 2). Manual ack, persists
+  // even after fall_cleared — separate concept from computed deriveAlerts().
+  const fleetAlertsQ = useQuery<Alert[]>({ queryKey: ["/api/admin/alerts"] });
 
   const bikes = bikesQ.data ?? [];
   const users = usersQ.data ?? [];
@@ -44,6 +50,20 @@ export function AdminPage() {
 
   // Непрочитанные чаты + звуковое уведомление при новом сообщении от пользователя.
   const support = useSupportUnread();
+
+  const toast = useToast();
+  const ackFallAlertMut = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("POST", `/api/admin/alerts/${id}/ack`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/alerts"] });
+      toast.toast({ title: "Алерт подтверждён" });
+    },
+    onError: (e: any) => toast.toast({ title: "Не удалось подтвердить алерт", description: String(e?.message ?? e), variant: "destructive" }),
+  });
+  const fallAlerts = fleetAlertsQ.data ?? [];
 
   const m = useMemo(() => deriveMetrics({ bikes, users, rides, tickets, mapObjects, parkings }), [
     bikes, users, rides, tickets, mapObjects, parkings,
@@ -221,6 +241,58 @@ export function AdminPage() {
                     {t.userName ?? t.userPhone ?? t.userId}
                   </div>
                 </Link>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* ---------- Fall-alarm alerts (OMNI lock alarm code 2, manual ack) ---------- */}
+      <div className="grid lg:grid-cols-3 gap-4 mt-4">
+        <Card className="p-5 lg:col-span-3" data-testid="dashboard-fall-alerts">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-display text-lg font-light flex items-center gap-2">
+              <AlertOctagon className={`w-4 h-4 ${fallAlerts.length ? "text-rose-500" : "text-muted-foreground"}`} />
+              Упавшие велосипеды
+            </h2>
+            {fallAlerts.length > 0 && <Badge variant="destructive">{fallAlerts.length}</Badge>}
+          </div>
+          {fleetAlertsQ.isLoading ? (
+            <div className="text-sm text-muted-foreground py-4">Загружаем данные…</div>
+          ) : fallAlerts.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-4" data-testid="dashboard-fall-alerts-empty">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              Сигналов падения нет.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {fallAlerts.map((a) => (
+                <div
+                  key={a.id}
+                  className="flex items-center gap-3 rounded-lg border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 p-3"
+                  data-testid={`dashboard-fall-alert-${a.id}`}
+                >
+                  <span className="flex items-center justify-center w-8 h-8 rounded-full shrink-0 bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">
+                    <AlertOctagon className="w-4 h-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <Link href="/admin/bikes" className="text-sm font-medium hover:underline">
+                      {a.bikeId}
+                    </Link>
+                    <div className="text-xs text-muted-foreground truncate">
+                      Упал {fmtRelative(a.createdAt)}
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={ackFallAlertMut.isPending}
+                    onClick={() => ackFallAlertMut.mutate(a.id)}
+                    data-testid={`ack-fall-alert-${a.id}`}
+                  >
+                    Подтвердить
+                  </Button>
+                </div>
               ))}
             </div>
           )}

@@ -24,6 +24,7 @@ export const MARKER_COLORS = {
   ride:           "#1d6f8e",
   ticketHigh:     "#d64545",
   ticketLow:      "#e0972a",
+  fallen:         "#b91c1c",
 } as const;
 
 // NOTE: Kaliningrad oblast contour and land-mask hack removed in Protomaps migration.

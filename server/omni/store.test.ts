@@ -11,7 +11,7 @@
 // the same guard clause the production query now sends
 // (`last_seen_at <= $2`) and skips the whole row update when it does not
 // hold, exactly like Postgres would for a real UPDATE ... WHERE.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OmniMessage } from "@shared/omni/protocol";
 
 interface FakeLockRow {
@@ -19,6 +19,7 @@ interface FakeLockRow {
   last_lock_state?: string;
   last_latitude?: number;
   last_longitude?: number;
+  bike_id?: string | null;
 }
 
 interface FakeBikeRow {
@@ -74,8 +75,11 @@ vi.mock("../db/bootstrap", () => ({
       if (text.startsWith("UPDATE locks")) {
         const imei = params[0] as string;
         const row = fake.locks.get(imei) ?? { last_seen_at: null };
-        applyGuardedUpdate(text, params, row);
+        const applied = applyGuardedUpdate(text, params, row);
         fake.locks.set(imei, row);
+        if (text.includes("RETURNING bike_id")) {
+          return { rows: applied ? [{ bike_id: row.bike_id ?? null }] : [] };
+        }
         return { rows: [] };
       }
       if (text.startsWith("UPDATE bikes")) {
@@ -103,6 +107,7 @@ vi.mock("../db/bootstrap", () => ({
 }));
 
 import { PgOmniStore } from "./store";
+import { lockAlarmEvents, LOCK_FALL_ALARM, type LockFallAlarmPayload } from "../storage/events";
 
 const IMEI = "861234567890123";
 const store = new PgOmniStore();
@@ -235,6 +240,53 @@ describe("persistLockReport HDOP accuracy gate", () => {
     expect(fake.locks.get(IMEI)).toMatchObject({
       last_latitude: 54.7104, last_longitude: 20.4522, last_seen_at: 2000,
     });
+  });
+});
+
+describe("persistLockReport fall-alarm event bridge", () => {
+  afterEach(() => {
+    lockAlarmEvents.removeAllListeners(LOCK_FALL_ALARM);
+  });
+
+  it("emits LOCK_FALL_ALARM when alarm code 2 (fall) lands on a lock assigned to a bike", async () => {
+    fake.locks.set(IMEI, { last_seen_at: null, bike_id: "bike-a" });
+    const received: LockFallAlarmPayload[] = [];
+    lockAlarmEvents.on(LOCK_FALL_ALARM, (payload: LockFallAlarmPayload) => received.push(payload));
+
+    await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 5000);
+
+    expect(received).toEqual([{ imei: IMEI, bikeId: "bike-a", at: 5000 }]);
+  });
+
+  it("does not emit for other alarm codes (illegal movement / fall_cleared)", async () => {
+    fake.locks.set(IMEI, { last_seen_at: null, bike_id: "bike-a" });
+    const received: LockFallAlarmPayload[] = [];
+    lockAlarmEvents.on(LOCK_FALL_ALARM, (payload: LockFallAlarmPayload) => received.push(payload));
+
+    await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 5000);
+    await store.persistLockReport(IMEI, { type: "alarm", code: 6 }, 6000);
+
+    expect(received).toEqual([]);
+  });
+
+  it("does not emit when the lock has no bike assigned", async () => {
+    fake.locks.set(IMEI, { last_seen_at: null, bike_id: null });
+    const received: LockFallAlarmPayload[] = [];
+    lockAlarmEvents.on(LOCK_FALL_ALARM, (payload: LockFallAlarmPayload) => received.push(payload));
+
+    await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 5000);
+
+    expect(received).toEqual([]);
+  });
+
+  it("does not emit when the report is rejected as stale (ordering guard)", async () => {
+    fake.locks.set(IMEI, { last_seen_at: 9000, bike_id: "bike-a" });
+    const received: LockFallAlarmPayload[] = [];
+    lockAlarmEvents.on(LOCK_FALL_ALARM, (payload: LockFallAlarmPayload) => received.push(payload));
+
+    await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 1000);
+
+    expect(received).toEqual([]);
   });
 });
 

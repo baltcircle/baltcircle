@@ -361,7 +361,7 @@ export const alerts = pgTable("alerts", {
   index("idx_alerts_unacked").on(t.createdAt).where(sql`${t.acknowledgedAt} IS NULL`),
 ]);
 export type Alert = typeof alerts.$inferSelect;
-export const ALERT_KINDS = ["movement_alarm", "low_battery"] as const;
+export const ALERT_KINDS = ["movement_alarm", "low_battery", "fall"] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
 export type UnassignedLock = typeof unassignedLocks.$inferSelect;
 

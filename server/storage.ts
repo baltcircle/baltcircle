@@ -5,8 +5,11 @@ export { db, pool, bootstrapReady };
 
 // Re-exported for external callers (SSE fan-out, admin bike-list broadcast).
 export { bikeEvents, BIKE_EVENT_CHANNEL } from "./storage/events";
-import { rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, pendingEndEvents, LOCK_CLOSED_FOR_END } from "./storage/events";
-import type { LockGpsRefreshedPayload, LockClosedForEndPayload } from "./storage/events";
+import {
+  rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, pendingEndEvents, LOCK_CLOSED_FOR_END,
+  lockAlarmEvents, LOCK_FALL_ALARM,
+} from "./storage/events";
+import type { LockGpsRefreshedPayload, LockClosedForEndPayload, LockFallAlarmPayload } from "./storage/events";
 import { log } from "./logger";
 import { END_SETTLE_RETRY_INTERVAL_MS, END_SETTLE_RETRY_WINDOW_MS, RIDE_END_AWAITING_LOCK_GPS_ERROR } from "@shared/geo";
 export { rideEvents };
@@ -28,6 +31,7 @@ import { MapObjectMixin } from "./storage/map-object";
 import { AnalyticsMixin } from "./storage/analytics";
 import { BikeMixin } from "./storage/bike";
 import { LockMixin } from "./storage/lock";
+import { AlertMixin } from "./storage/alert";
 import { ParkingMixin } from "./storage/parking";
 import { RideMixin } from "./storage/ride";
 import { ReservationMixin } from "./storage/reservation";
@@ -55,6 +59,7 @@ export class DatabaseStorage
     .with(AnalyticsMixin)
     .with(BikeMixin)
     .with(LockMixin)
+    .with(AlertMixin)
     .with(ParkingMixin)
     .with(RideMixin)
     .with(ReservationMixin)
@@ -97,6 +102,15 @@ lockGpsEvents.on(LOCK_GPS_REFRESHED, (payload: LockGpsRefreshedPayload) => {
 // zone, etc.).
 pendingEndEvents.on(LOCK_CLOSED_FOR_END, (payload: LockClosedForEndPayload) => {
   settleEndWithRetry(payload.rideId, Date.now());
+});
+
+// Bridge: server/omni/store.ts detects OMNI alarm code 2 ("fall") and emits
+// here — only this storage layer can persist it as a fleet-dashboard alert
+// (with dedup, see storage/alert.ts's createFallAlert). Best-effort: must
+// never crash the OMNI TCP process on a transient DB hiccup.
+lockAlarmEvents.on(LOCK_FALL_ALARM, (payload: LockFallAlarmPayload) => {
+  storage.createFallAlert(payload.bikeId, payload.at)
+    .catch((err) => log(`fall-alert create failed: bike=${payload.bikeId} ${(err as Error).message}`));
 });
 
 /**

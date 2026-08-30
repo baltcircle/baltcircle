@@ -318,6 +318,20 @@ export function registerCatalogRoutes(app: Express): void {
     getLockGateway()?.revokeImei(result.lock.imei);
     res.json(result.lock);
   });
+
+  // -------------- Admin: fleet alerts (fall-alarm dashboard notification) --------------
+  // See server/storage/alert.ts + storage.ts's LOCK_FALL_ALARM bridge for how
+  // rows land here. Read-only for mechanics; only operator/admin can ack.
+  app.get("/api/admin/alerts", requireRole("mechanic", "operator", "admin"), async (_req, res) => {
+    res.json(await storage.listAlerts());
+  });
+  app.post("/api/admin/alerts/:id/ack", requireRole("operator", "admin"), async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id < 1) return res.status(404).json({ error: "Алерт не найден" });
+    const updated = await storage.acknowledgeAlert(id, await actorName(req));
+    if (!updated) return res.status(404).json({ error: "Алерт не найден или уже подтверждён" });
+    res.json(updated);
+  });
   app.post("/api/admin/bikes/:id/archive", requireRole("operator", "admin"), async (req, res) => {
     const result = await storage.archiveBike(String(req.params.id));
     if ("error" in result) {

@@ -15,7 +15,7 @@ import type {
   SupportConversation, SupportMessage, SupportMessageRole, AdminSupportConversationRow,
   Lock, AdminCreateLockInput, AdminUpdateLockInput, WalletTopupOrder,
   OauthIdentity, OauthProvider, Reservation,
-  RideFeedback, CreateRideFeedbackInput,
+  RideFeedback, CreateRideFeedbackInput, Alert,
 } from "@shared/schema";
 
 export interface IUserStorage {
@@ -222,6 +222,13 @@ export interface ILockStorage {
   decommissionLock(id: number): Promise<{ lock: Lock } | { error: string }>;
 }
 
+export interface IAlertStorage {
+  /** Best-effort, dedup-on-insert. See server/storage/alert.ts for details. */
+  createFallAlert(bikeId: string, at: number): Promise<Alert | null>;
+  listAlerts(opts?: { includeAcknowledged?: boolean }): Promise<Alert[]>;
+  acknowledgeAlert(id: number, by: string): Promise<Alert | undefined>;
+}
+
 export interface IParkingStorage {
   listParkings(opts?: { includeInactive?: boolean; includeArchived?: boolean }): Promise<Parking[]>;
   getParking(id: string): Promise<Parking | undefined>;
@@ -337,6 +344,7 @@ export interface IStorage
     ISupportStorage,
     IBikeStorage,
     ILockStorage,
+    IAlertStorage,
     IParkingStorage,
     IRideStorage,
     IWalletStorage,

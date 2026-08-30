@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { Bike, Parking, AdminRide, Ticket, MapObject } from "@shared/schema";
+import type { Bike, Parking, AdminRide, Ticket, MapObject, Alert } from "@shared/schema";
 import { TICKET_CLOSED_STATUSES } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { MapLibreMap, type MapLayers } from "@/components/MapLibreMap";
@@ -35,6 +35,7 @@ export function OperationsMapPage({ embedded = false }: { embedded?: boolean } =
   const ridesQ = useQuery<AdminRide[]>({ queryKey: ["/api/admin/rides"], refetchInterval: LAYER_POLL_MS });
   const ticketsQ = useQuery<Ticket[]>({ queryKey: ["/api/tickets"], refetchInterval: LAYER_POLL_MS });
   const objectsQ = useQuery<MapObject[]>({ queryKey: ["/api/admin/map-objects"], refetchInterval: LAYER_POLL_MS });
+  const alertsQ = useQuery<Alert[]>({ queryKey: ["/api/admin/alerts"], refetchInterval: LAYER_POLL_MS });
 
   const [layers, setLayers] = useState<MapLayers>({
     parkings: true, bikes: true, rides: true, tickets: true, objects: true,
@@ -64,6 +65,11 @@ export function OperationsMapPage({ embedded = false }: { embedded?: boolean } =
   const activeObjects = useMemo(
     () => (objectsQ.data ?? []).filter((o) => o.active),
     [objectsQ.data],
+  );
+  // Unacknowledged "fall" alerts, for the distinct red "!" map marker.
+  const fallenBikeIds = useMemo(
+    () => new Set((alertsQ.data ?? []).filter((a) => a.kind === "fall").map((a) => a.bikeId)),
+    [alertsQ.data],
   );
 
   const toggleLayer = (key: LayerKey) =>
@@ -114,6 +120,7 @@ export function OperationsMapPage({ embedded = false }: { embedded?: boolean } =
           activeRides={activeRides}
           tickets={openTickets}
           mapObjects={activeObjects}
+          fallenBikeIds={fallenBikeIds}
           layers={layers}
           height="64vh"
           className="relative w-full overflow-hidden rounded-xl border border-card-border bg-card"
