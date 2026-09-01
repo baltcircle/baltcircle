@@ -4,6 +4,10 @@ import { qrToSvg } from "@/lib/qrcode";
 interface Props {
   // The payload to encode — typically the bike's public QR link.
   value: string;
+  // Human-readable code (e.g. "BC-001") baked into the SVG below the QR
+  // modules, so a downloaded/printed copy of this exact image always shows
+  // the bike code, not just the on-screen dialog around it.
+  label?: string;
   size?: number;
   className?: string;
   testId?: string;
@@ -12,14 +16,14 @@ interface Props {
 // Renders a QR code for `value` as inline SVG. Generation is local (no network,
 // no runtime dependency). Returns a small placeholder if the value can't be
 // encoded (e.g. too long) so the UI never crashes.
-export function BikeQr({ value, size = 200, className, testId }: Props) {
+export function BikeQr({ value, label, size = 200, className, testId }: Props) {
   const svg = useMemo(() => {
     try {
-      return qrToSvg(value, { size });
+      return qrToSvg(value, { size, label });
     } catch {
       return null;
     }
-  }, [value, size]);
+  }, [value, label, size]);
 
   if (!svg) {
     return (

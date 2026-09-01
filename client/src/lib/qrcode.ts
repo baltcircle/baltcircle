@@ -331,8 +331,23 @@ export function encodeQr(text: string): boolean[][] {
   return best!.modules;
 }
 
-/** Render an encoded matrix as an SVG string with a quiet zone. */
-export function qrToSvg(text: string, opts?: { size?: number; quiet?: number }): string {
+// XML-escape a label before interpolating it into <text> — defends against
+// bike ids/codes that happen to contain &/</>/quotes (operator-controlled
+// free text in some flows), same escaping rules as HTML for these five chars.
+function escapeSvgText(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!
+  ));
+}
+
+/**
+ * Render an encoded matrix as an SVG string with a quiet zone. When `label`
+ * is given, the human-readable code (e.g. "BC-001") is baked into the SVG
+ * itself as a text row below the QR modules — so a downloaded/printed copy
+ * of this exact file always carries the code, not just the on-screen dialog
+ * around it.
+ */
+export function qrToSvg(text: string, opts?: { size?: number; quiet?: number; label?: string }): string {
   const modules = encodeQr(text);
   const count = modules.length;
   const quiet = opts?.quiet ?? 4;
@@ -345,10 +360,23 @@ export function qrToSvg(text: string, opts?: { size?: number; quiet?: number }):
       if (modules[y][x]) path += `M${x + quiet} ${y + quiet}h1v1h-1z`;
     }
   }
+
+  const label = opts?.label?.trim();
+  // Extra vertical space (in QR "module" units) reserved below the code for
+  // the label row. Height grows, width stays tied to `size` so the QR itself
+  // isn't resized.
+  const labelHeight = label ? Math.max(6, Math.round(dim * 0.22)) : 0;
+  const totalHeight = dim + labelHeight;
+  const pxHeight = Math.round(px * (totalHeight / dim));
+  const labelText = label
+    ? `<text x="${dim / 2}" y="${dim + labelHeight * 0.68}" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="${(labelHeight * 0.55).toFixed(2)}" fill="#000000">${escapeSvgText(label)}</text>`
+    : "";
+
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${dim} ${dim}" shape-rendering="crispEdges">`,
-    `<rect width="${dim}" height="${dim}" fill="#ffffff"/>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${pxHeight}" viewBox="0 0 ${dim} ${totalHeight}" shape-rendering="crispEdges">`,
+    `<rect width="${dim}" height="${totalHeight}" fill="#ffffff"/>`,
     `<path d="${path}" fill="#000000"/>`,
+    labelText,
     `</svg>`,
   ].join("");
 }

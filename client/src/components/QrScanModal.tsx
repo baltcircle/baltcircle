@@ -5,7 +5,6 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { QrCode, Loader2 } from "lucide-react";
 import { resolveScannedCode } from "./qr-scan-utils";
 
@@ -54,7 +53,10 @@ function CameraPermissionHelp() {
 }
 
 export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props) {
-  const [code, setCode] = useState("");
+  // Manual entry only ever needs the digits — the "BC-" prefix is fixed and
+  // shown as a non-editable adornment (same pattern as the +7 phone prefix in
+  // RegistrationModal), so a rider can't mistype or omit it.
+  const [digits, setDigits] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   // Когда браузер вернул NotAllowedError — показываем более полезную
@@ -232,7 +234,7 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
   // Auto-start the camera when the modal opens; clean everything up on close.
   useEffect(() => {
     if (open) {
-      setCode("");
+      setDigits("");
       setError(null);
       setCameraError(null);
       startCamera();
@@ -243,12 +245,12 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
   }, [open, startCamera, stopCamera]);
 
   const confirmCode = () => {
-    const raw = code.trim();
+    const raw = digits.trim();
     if (!raw) {
       setError("Введите код велосипеда");
       return;
     }
-    resolveCode(raw);
+    resolveCode(`BC-${raw}`);
   };
 
   return (
@@ -317,18 +319,23 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
           </div>
         )}
 
-        {/* Manual fallback: enter the code printed on the bike. */}
+        {/* Manual fallback: enter the code printed on the bike. "BC-" is fixed
+            so the rider only ever types the digits from the sticker. */}
         <div className="space-y-2">
           <div className="text-sm font-medium">Не сканируется? Введите код вручную</div>
           <div className="flex items-center gap-2">
-            <Input
-              value={code}
-              onChange={(e) => { setCode(e.target.value); setError(null); }}
-              onKeyDown={(e) => { if (e.key === "Enter") confirmCode(); }}
-              placeholder="Напр. BC-014"
-              autoCapitalize="characters"
-              data-testid="input-bike-code"
-            />
+            <div className="flex flex-1 items-center border rounded-md overflow-hidden focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-0">
+              <span className="px-3 py-2 bg-muted text-muted-foreground text-sm font-mono select-none border-r">BC-</span>
+              <input
+                value={digits}
+                onChange={(e) => { setDigits(e.target.value.replace(/\D/g, "").slice(0, 5)); setError(null); }}
+                onKeyDown={(e) => { if (e.key === "Enter") confirmCode(); }}
+                placeholder="014"
+                inputMode="numeric"
+                className="flex-1 min-w-0 px-3 py-2 text-sm bg-background outline-none font-mono"
+                data-testid="input-bike-code"
+              />
+            </div>
             <Button
               type="button"
               variant="outline"
