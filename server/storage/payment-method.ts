@@ -355,6 +355,10 @@ export function PaymentMethodMixin<TBase extends Constructor>(Base: TBase) {
         // webhook or the synchronous route — it must be present at creation time,
         // not patched in after payment.
         rideId?: number;
+        // Server-initiated overage charge at ride-end — see the `purpose` column
+        // comment in shared/schema.ts. Also carries a rideId, but must be
+        // checked BEFORE the rideId-based extend branch in the webhook.
+        purpose?: "ride_overage";
       },
     ): Promise<{ order: PaymentOrder; created: boolean }> {
       const existing = await this.getRidePaymentOrderByIdempotencyKey(input.userId, input.idempotencyKey);
@@ -370,6 +374,7 @@ export function PaymentMethodMixin<TBase extends Constructor>(Base: TBase) {
           source: input.source ?? "hosted",
           paymentMethodId: input.paymentMethodId ?? null,
           rideId: input.rideId ?? null,
+          purpose: input.purpose ?? null,
           // Write-once audit-trail copy (never read back) — encrypted at rest
           // for defense-in-depth consistency with payment_methods (audit HIGH #9).
           rebillId: input.rebillId ? encryptToken(input.rebillId) : null,
@@ -441,6 +446,19 @@ export function PaymentMethodMixin<TBase extends Constructor>(Base: TBase) {
     async getRidePaymentOrder(orderId: string) {
       return (await db.select().from(paymentOrders)
         .where(eq(paymentOrders.orderId, orderId))
+        .limit(1))[0] as PaymentOrder | undefined;
+    }
+
+    // Most recent successfully-PAID saved-card/SBP order for a ride (its start
+    // charge OR any later extend charge) — used at settlement to decide which
+    // payment method (if any) should be charged for overage. A plain read, no
+    // row lock: endRide's own `.for("update")` on the ride row already keeps a
+    // concurrent extend from running while settlement is in progress, so this
+    // only ever sees a consistent, already-committed history.
+    async getLatestPaidRidePaymentOrder(rideId: number) {
+      return (await db.select().from(paymentOrders)
+        .where(sql`${paymentOrders.rideId} = ${rideId} AND ${paymentOrders.status} = 'paid' AND ${paymentOrders.source} != 'hosted'`)
+        .orderBy(desc(paymentOrders.updatedAt))
         .limit(1))[0] as PaymentOrder | undefined;
     }
 

@@ -32,7 +32,16 @@ const storageMock = vi.hoisted(() => ({
   getWalletTopupOrder: vi.fn(),
   topUp: vi.fn(),
   updateWalletTopupOrder: vi.fn(),
+  // ride_overage webhook branch (handleRidePaymentNotification) — raises the
+  // operator alert on a failed deferred/3DS overage charge.
+  createOverageChargeFailedAlert: vi.fn(),
 }));
+
+// The ride_overage "paid" branch writes its own payments ledger row directly
+// via db.insert(payments) (mirrors chargeRideOverageAsync's own ledger write
+// in server/storage/ride.ts) rather than going through the storage facade —
+// mock the db import so those tests don't touch a real Postgres connection.
+const dbMock = vi.hoisted(() => ({ insert: vi.fn(() => ({ values: vi.fn().mockResolvedValue(undefined) })) }));
 
 // tbankRefundVerificationCharge is the ONLY function in server/tbank.ts that ever
 // calls the acquirer's /Cancel endpoint (see server/tbank.ts). Mocking it here
@@ -46,6 +55,7 @@ const logMock = vi.hoisted(() => vi.fn());
 vi.mock("../storage", () => ({ storage: storageMock }));
 vi.mock("../index", () => ({ log: logMock }));
 vi.mock("../push", () => ({ sendToUserAsync: vi.fn() }));
+vi.mock("../db/bootstrap", () => ({ db: dbMock, pool: { query: vi.fn() }, bootstrapReady: Promise.resolve() }));
 vi.mock("../tbank", async () => {
   const actual = await vi.importActual<typeof import("../tbank")>("../tbank");
   return {
@@ -292,6 +302,75 @@ describe("handleRidePaymentNotification", () => {
     ).rejects.toThrow("db unavailable");
 
     expect(storageMock.updateRidePaymentOrder).toHaveBeenCalledWith(1, { status: "pending" });
+  });
+});
+
+// Deferred/3DS-step-up resolution for chargeRideOverageAsync's Init+Charge
+// (server/storage/ride.ts): when that call itself doesn't get a terminal
+// result, the acquirer's later webhook is what actually resolves the order.
+// MUST be checked before the plain rideId-extend branch (a ride_overage order
+// also carries a rideId) — these tests pin that routing and both outcomes.
+describe("handleRidePaymentNotification — ride_overage purpose (deferred/3DS webhook resolution)", () => {
+  function makeOverageOrder(overrides: Partial<PaymentOrder> = {}): PaymentOrder {
+    return makeOrder({
+      purpose: "ride_overage" as any, rideId: 42, amountKopecks: 15000,
+      ...(overrides as any),
+    });
+  }
+
+  it("on paid: marks the order paid, writes a payments ledger row, and pushes a success notification — never touches extendRideForPaidOrder's ride-start/extend path", async () => {
+    const order = makeOverageOrder();
+    storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(order);
+
+    await handleRidePaymentNotification(order, { Status: "CONFIRMED", PaymentId: "pay-1" });
+
+    expect(storageMock.updateRidePaymentOrder).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ status: "paid", paymentId: "pay-1" }),
+    );
+    expect(dbMock.insert).toHaveBeenCalledOnce();
+    // Never routed into the ordinary rideId-extend branch.
+    expect(storageMock.startRide).not.toHaveBeenCalled();
+    expect(storageMock.getActiveRide).not.toHaveBeenCalled();
+  });
+
+  it("on failed: marks the order failed, raises the operator alert, sends the rider the \"недостаточно средств\" push, writes NO ledger row", async () => {
+    const order = makeOverageOrder();
+    storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(order);
+    storageMock.createOverageChargeFailedAlert.mockResolvedValue(undefined);
+
+    await handleRidePaymentNotification(order, {
+      Status: "REJECTED", PaymentId: "pay-1", ErrorCode: "101", Message: "Отказ",
+    });
+
+    expect(storageMock.updateRidePaymentOrder).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ status: "failed", lastErrorCode: "101" }),
+    );
+    expect(storageMock.createOverageChargeFailedAlert).toHaveBeenCalledWith(
+      "BC-01", 42, "user-1", 15000, expect.any(String), expect.any(Number),
+    );
+    expect(dbMock.insert).not.toHaveBeenCalled();
+  });
+
+  it("on failed with no rideId on the order: still marks failed and pushes, but skips the alert (nothing to attribute it to)", async () => {
+    const order = makeOverageOrder({ rideId: null });
+    storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(order);
+
+    await handleRidePaymentNotification(order, { Status: "REJECTED", PaymentId: "pay-1" });
+
+    expect(storageMock.createOverageChargeFailedAlert).not.toHaveBeenCalled();
+    expect(storageMock.updateRidePaymentOrder).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ status: "failed" }),
+    );
+  });
+
+  it("leaves the order pending on an intermediate status, same as ordinary ride orders", async () => {
+    await handleRidePaymentNotification(makeOverageOrder(), { Status: "FORM_SHOWED" });
+
+    expect(storageMock.updateRidePaymentOrder).not.toHaveBeenCalled();
+    expect(dbMock.insert).not.toHaveBeenCalled();
   });
 });
 

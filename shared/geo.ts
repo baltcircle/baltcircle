@@ -225,6 +225,25 @@ export function tariffDurationMs(tariffId: string): number {
   return (t?.durationHours ?? 0) * 60 * 60 * 1000;
 }
 
+// Display label for a CUMULATIVE purchased duration (rides.totalTariffHours):
+// the initial tariff plus every extension, in hours. Exact catalog matches
+// (1/2/3ч) reuse the catalog's own name so a non-extended ride looks exactly
+// as it always has; any other total (e.g. h1+h3 = 4ч has no catalog tariff)
+// falls back to a correctly-pluralized "N час/часа/часов" — Russian's 1/2-4/
+// 5-20 plural-form rule, with the standard 11-14 exception.
+export function tariffLabelForHours(hours: number): string {
+  const exact = TARIFFS.find((t) => t.durationHours === hours);
+  if (exact) return exact.name;
+  const mod10 = hours % 10;
+  const mod100 = hours % 100;
+  let word: string;
+  if (mod100 >= 11 && mod100 <= 14) word = "часов";
+  else if (mod10 === 1) word = "час";
+  else if (mod10 >= 2 && mod10 <= 4) word = "часа";
+  else word = "часов";
+  return `${hours} ${word}`;
+}
+
 // Coastal launch towns (west → east along the Baltic shore).
 // Each town anchors a cluster of parking stations.
 export const TOWNS = [

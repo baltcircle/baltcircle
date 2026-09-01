@@ -60,6 +60,12 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   vi.clearAllMocks();
   poolMock.query.mockResolvedValue({ rows: [] });
+  // endRide's pre-transaction funding-order lookup (see
+  // chargeRideOverageAsync in server/storage/ride.ts) uses the module-level
+  // db.select (not tx.select) — default to "none found" so the two
+  // endRide-driven tests below keep exercising the legacy wallet path via
+  // their tx-scoped selectResults queues, unaffected by this extra call.
+  dbMock.select.mockImplementation(() => selectFrom([]));
 });
 
 afterEach(() => vi.useRealTimers());

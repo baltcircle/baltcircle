@@ -16,7 +16,7 @@ import type { Bike } from "@shared/schema";
 // or an overage that doesn't match the final cost) shows up here even though
 // each function's own isolated unit tests still pass.
 
-const dbMock = vi.hoisted(() => ({ transaction: vi.fn() }));
+const dbMock = vi.hoisted(() => ({ transaction: vi.fn(), select: vi.fn() }));
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 const sendToUserAsyncMock = vi.hoisted(() => vi.fn());
 
@@ -236,6 +236,14 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   vi.clearAllMocks();
   poolMock.query.mockResolvedValue({ rows: [] });
+  // endRide's pre-transaction funding-order lookup (see
+  // chargeRideOverageAsync in server/storage/ride.ts) — every ride in this
+  // suite is wallet-funded, so "no funding order found" keeps the legacy
+  // wallet-debit overage path exercised end-to-end as these tests intend.
+  dbMock.select.mockImplementation(() => {
+    const chain: any = { from: () => chain, where: () => chain, orderBy: () => chain, limit: () => Promise.resolve([]) };
+    return chain;
+  });
 });
 
 afterEach(() => {

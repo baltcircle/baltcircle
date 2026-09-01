@@ -1,5 +1,5 @@
 import { bikes, rides, payments, parkings, ridePoints, users, locks, reservations } from "@shared/schema";
-import type { Ride, AdminRide, User, Parking, Bike, Lock, Reservation } from "@shared/schema";
+import type { Ride, AdminRide, User, Parking, Bike, Lock, Reservation, PaymentMethod, PaymentOrder } from "@shared/schema";
 import { eq, sql, and, desc, asc, inArray, count } from "drizzle-orm";
 import {
   TARIFFS, tariffPriceKopecks, tariffDurationMs, realToMap,
@@ -11,6 +11,10 @@ import {
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
 import { pendingPauseCreditMs } from "@shared/pause";
 import { sendToUserAsync } from "../push";
+import {
+  getTbankConfig, tbankInitSavedCardCharge, tbankCharge, tbankInitSbpCharge, tbankChargeQr,
+  classifyRidePayment, generateOverageChargeOrderId,
+} from "../tbank";
 import { getLockGateway } from "../omni/gateway";
 import { registerPendingPause, clearPendingPause } from "../omni/pause-registry";
 import { registerPendingEnd, clearPendingEnd } from "../omni/pending-end-registry";
@@ -20,6 +24,158 @@ import { rideEvents } from "./events";
 import type { RideEventReason } from "./events";
 import type { Constructor } from "./mixin";
 import type { IRideStorage } from "./interfaces";
+
+
+// T-Bank's ErrorCode/Message/Details, captured onto the order row for support
+// diagnostics. Deliberately NOT reusing tbank-handlers.ts's bindingErrorPatch:
+// that module imports `../storage`, and importing it here (storage/ride.ts)
+// would create storage.ts -> storage/ride.ts -> tbank-handlers.ts -> storage.ts,
+// a circular import. This is the same tiny helper, duplicated on purpose.
+function overageErrorPatch(body: { ErrorCode?: unknown; Message?: unknown; Details?: unknown }) {
+  const str = (v: unknown) => {
+    const s = typeof v === "string" ? v.trim() : v != null ? String(v) : "";
+    return s && s !== "0" ? s : null;
+  };
+  return {
+    lastErrorCode: str(body.ErrorCode),
+    lastErrorMessage: str(body.Message),
+    lastErrorDetails: str(body.Details),
+  };
+}
+
+// Best-effort, post-commit overage settlement against the SAME card/SBP
+// method that funded the ride (resolved by endRide via
+// getLatestPaidRidePaymentOrder). Called fire-and-forget (`.catch(() => {})`)
+// AFTER endRide's transaction has already committed and the bike is already
+// freed — the ride-end response never waits on T-Bank's Init+Charge round
+// trip (see the message to the user explaining sync vs async timing).
+//
+// On any failure to charge (declined card, no usable method, network error,
+// acquirer misconfigured) the wallet is deliberately NOT touched as a
+// fallback — instead an operator alert is raised and the rider gets a push
+// telling them the ride could not be fully settled (per product decision).
+// Exported (only) for direct unit-testing (server/storage.ride-overage.test.ts)
+// — not part of the public IRideStorage surface; callers within this module
+// still reach it via the plain identifier below.
+export async function chargeRideOverageAsync(
+  storage: {
+    getPaymentMethod(id: number): Promise<PaymentMethod | undefined>;
+    reserveRidePaymentOrder(input: {
+      orderId: string; userId: string; bikeId: string; tariffId: string; amountKopecks: number;
+      source?: "hosted" | "saved_card" | "saved_sbp"; paymentMethodId?: number; rebillId?: string;
+      idempotencyKey: string; rideId?: number; purpose?: "ride_overage";
+    }): Promise<{ order: PaymentOrder; created: boolean }>;
+    updateRidePaymentOrder(id: number, patch: Partial<PaymentOrder>): Promise<PaymentOrder | undefined>;
+    createOverageChargeFailedAlert(bikeId: string, rideId: number, userId: string, amountKopecks: number, reason: string, at: number): Promise<unknown>;
+    getUser(id: string): Promise<User | undefined>;
+  },
+  args: { rideId: number; bikeId: string; userId: string; overageKopecks: number; extraMinutes: number; fundingOrder: PaymentOrder },
+): Promise<void> {
+  const { rideId, bikeId, userId, overageKopecks, extraMinutes, fundingOrder } = args;
+
+  const fail = async (reason: string) => {
+    await storage.createOverageChargeFailedAlert(bikeId, rideId, userId, overageKopecks, reason, Date.now()).catch(() => {});
+    sendToUserAsync(userId, {
+      title: "Недостаточно средств",
+      body: "Недостаточно средств для завершения аренды. Пополните карту или свяжитесь с поддержкой.",
+      url: "/rides",
+      tag: `ride:${rideId}:overage-failed`,
+      data: { kind: "ride-overage-failed", rideId },
+    });
+  };
+
+  const method = fundingOrder.paymentMethodId != null ? await storage.getPaymentMethod(fundingOrder.paymentMethodId) : undefined;
+  if (!method || method.status !== "active") return fail("способ оплаты недоступен");
+  const kind: "card" | "sbp" = method.type === "card" ? "card" : "sbp";
+  if (kind === "card" && !method.rebillId) return fail("нет сохранённой карты");
+  if (kind === "sbp" && !method.accountToken) return fail("нет привязанного СБП-счёта");
+
+  const cfg = getTbankConfig();
+  if (!cfg) return fail("платежи не настроены");
+
+  const user = await storage.getUser(userId);
+  const orderId = generateOverageChargeOrderId();
+  const description = `Овертайм аренды ${bikeId} • +${extraMinutes} мин`;
+
+  let order: PaymentOrder;
+  try {
+    const reserved = await storage.reserveRidePaymentOrder({
+      orderId, userId, bikeId, tariffId: "overage", amountKopecks: overageKopecks,
+      source: kind === "card" ? "saved_card" : "saved_sbp",
+      paymentMethodId: method.id,
+      rebillId: kind === "card" ? (method.rebillId ?? undefined) : undefined,
+      // Stable per-ride key: a re-entrant call for the same ride (should never
+      // happen — endRide only runs once per ride — but cheap insurance against
+      // a future caller mistake) reuses the same order instead of double-billing.
+      idempotencyKey: `overage:${rideId}`,
+      rideId,
+      purpose: "ride_overage",
+    });
+    if (!reserved.created) return; // already attempted for this ride — do not retry/duplicate
+    order = reserved.order;
+  } catch (err) {
+    log(`[tbank] overage: failed to reserve order ride=${rideId}: ${(err as Error)?.message ?? "?"}`, "tbank");
+    return fail("не удалось создать заказ оплаты");
+  }
+
+  try {
+    const init = kind === "card"
+      ? await tbankInitSavedCardCharge(cfg, {
+          orderId, amountKopecks: overageKopecks, customerKey: method.customerKey ?? userId,
+          description, customerEmail: user?.email ?? undefined, customerPhone: user?.phone ?? undefined,
+          notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
+        })
+      : await tbankInitSbpCharge(cfg, {
+          orderId, amountKopecks: overageKopecks, description,
+          customerKey: method.customerKey ?? userId,
+          notificationUrl: `${cfg.publicAppUrl}/api/payments/tbank/notification`,
+        });
+    if (!init.Success || init.PaymentId == null) {
+      await storage.updateRidePaymentOrder(order.id, { status: "failed", ...overageErrorPatch(init) });
+      return fail(init.Message || "платёж отклонён");
+    }
+    const paymentId = String(init.PaymentId);
+    await storage.updateRidePaymentOrder(order.id, { paymentId });
+
+    const charge = kind === "card"
+      ? await tbankCharge(cfg, { paymentId, rebillId: method.rebillId! })
+      : await tbankChargeQr(cfg, { paymentId, accountToken: method.accountToken! });
+    const status = typeof charge.Status === "string" ? charge.Status : "";
+    const outcome = classifyRidePayment({ status, success: charge.Success === false ? false : undefined });
+
+    if (outcome === "paid") {
+      await storage.updateRidePaymentOrder(order.id, {
+        status: "paid", paymentId, lastErrorCode: null, lastErrorMessage: null, lastErrorDetails: null,
+      });
+      await db.insert(payments).values({
+        userId, amount: -overageKopecks, kind: "ride_charge", description, createdAt: Date.now(),
+      });
+      sendToUserAsync(userId, {
+        title: "Оплата поездки",
+        body: `Списано ${formatKopecksAsRubles(overageKopecks)} ₽ за овертайм поездки. Спасибо, что пользуетесь TakeRide!`,
+        url: "/rides",
+        tag: `ride:${rideId}:overage`,
+        data: { kind: "ride-charge-confirmed", rideId },
+      });
+      return;
+    }
+
+    if (outcome === "failed") {
+      await storage.updateRidePaymentOrder(order.id, { status: "failed", paymentId, ...overageErrorPatch(charge) });
+      return fail(charge.Message || "платёж отклонён");
+    }
+
+    // Deferred/3DS step-up — leave the order "pending". The notification
+    // webhook resolves it (handleRidePaymentNotification, purpose ===
+    // "ride_overage" branch); no push is sent here since the outcome is not
+    // yet known.
+  } catch (err) {
+    const message = (err as Error)?.message ?? "network error";
+    log(`[tbank] overage charge error ride=${rideId}: ${message}`, "tbank");
+    await storage.updateRidePaymentOrder(order.id, { status: "failed", lastErrorMessage: message }).catch(() => {});
+    return fail("сетевая ошибка при списании");
+  }
+}
 
 export function RideMixin<TBase extends Constructor>(Base: TBase) {
   return class extends Base implements IRideStorage {
@@ -251,6 +407,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
               bikeId, userId, startedAt,
               startLat, startLng,
               track: JSON.stringify(track), distanceM: 0, cost: costKopecks, tariff, status: "active",
+              totalTariffHours: tariffDef?.durationHours ?? 0,
               paidUntilAt, startParkingId: startParkingMatch.id,
               // The per-bike isTestBike flag was removed — no more designated
               // test units, so this is always false now. Column kept (not
@@ -481,10 +638,27 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         invalidateBikesCache(opts?: { silent?: boolean }): void;
         loadRidePoints(rideId: number, executor: { execute: (query: ReturnType<typeof sql>) => Promise<{ rows: unknown[] }> }): Promise<[number, number, number][]>;
         createLowBatteryOfflineAlert(bikeId: string, battery: number, at: number): Promise<unknown>;
+        getLatestPaidRidePaymentOrder(rideId: number): Promise<PaymentOrder | undefined>;
+        getPaymentMethod(id: number): Promise<PaymentMethod | undefined>;
+        reserveRidePaymentOrder(input: {
+          orderId: string; userId: string; bikeId: string; tariffId: string; amountKopecks: number;
+          source?: "hosted" | "saved_card" | "saved_sbp"; paymentMethodId?: number; rebillId?: string;
+          idempotencyKey: string; rideId?: number; purpose?: "ride_overage";
+        }): Promise<{ order: PaymentOrder; created: boolean }>;
+        updateRidePaymentOrder(id: number, patch: Partial<PaymentOrder>): Promise<PaymentOrder | undefined>;
+        createOverageChargeFailedAlert(bikeId: string, rideId: number, userId: string, amountKopecks: number, reason: string, at: number): Promise<unknown>;
+        getUser(id: string): Promise<User | undefined>;
       },
       rideId: number,
       opts?: { skipGeofence?: boolean },
     ): Promise<Ride | { error: string } | undefined> {
+      // Bug fix: overage must be charged to whatever real payment method (card
+      // or SBP) actually funded this ride's tariff — not silently taken from
+      // the wallet — so the rider's card/SBP statement matches what they
+      // agreed to pay. Read BEFORE the transaction: this is a plain lookup,
+      // and the ride row's `.for("update")` lock below already serialises any
+      // concurrent extend/end race that could matter for correctness.
+      const fundingOrder = await this.getLatestPaidRidePaymentOrder(rideId);
       // Atomic: completing a ride touches four tables (ride, bike, wallet,
       // payment ledger). Doing them as separate statements risks a partial state
       // if the process dies mid-way — e.g. wallet debited but ride still active,
@@ -501,8 +675,8 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         tx,
       ): Promise<
         | { error: string }
-        | { ride: Ride; overageKopecks: number; lockImei: string | null; wentOffline: false }
-        | { ride: Ride; overageKopecks: number; lockImei: string | null; wentOffline: true; battery: number }
+        | { ride: Ride; overageKopecks: number; extraMinutes: number; lockImei: string | null; wentOffline: false }
+        | { ride: Ride; overageKopecks: number; extraMinutes: number; lockImei: string | null; wentOffline: true; battery: number }
         | undefined
       > => {
         // `.for("update")` locks the ride row for the duration of this tx (audit
@@ -645,9 +819,13 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         } as any).where(eq(bikes.id, r.bikeId));
 
         // Only the overage is charged at end — the base tariff was already paid at
-        // start (wallet debit or T-Bank). Debit the wallet for the extra hours,
-        // inside the same tx so it rolls back with everything else on failure.
-        if (overageKopecks > 0) {
+        // start (wallet debit or T-Bank). If a real card/SBP order funded this
+        // ride (fundingOrder, resolved before the tx started), overage is
+        // charged the SAME way, post-commit, best-effort — see
+        // chargeRideOverageAsync below. The wallet is debited here ONLY when
+        // the ride was wallet-funded start-to-finish (fundingOrder undefined),
+        // preserving today's exact behaviour for that case.
+        if (overageKopecks > 0 && !fundingOrder) {
           // Same atomic-decrement pattern as startRide's wallet debit (audit
           // CRITICAL #5): a single UPDATE ... SET balance = balance - N,
           // never a SELECT-then-UPDATE round trip through a JS variable. The
@@ -671,6 +849,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         return {
           ride: (await tx.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride,
           overageKopecks,
+          extraMinutes,
           lockImei: bike?.lockImei ?? null,
           ...(wentOffline ? { wentOffline: true as const, battery: finalBattery! } : { wentOffline: false as const }),
         };
@@ -690,13 +869,28 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           .catch(() => {});
       }
       if (result.overageKopecks > 0) {
-        sendToUserAsync(result.ride.userId, {
-          title: "Оплата поездки",
-          body: `Списано ${formatKopecksAsRubles(result.overageKopecks)} ₽ за поездку. Спасибо, что пользуетесь TakeRide!`,
-          url: "/rides",
-          tag: `ride:${result.ride.id}:overage`,
-          data: { kind: "ride-charge-confirmed", rideId: result.ride.id },
-        });
+        if (fundingOrder) {
+          // Real money case: fire-and-forget T-Bank Init+Charge against the same
+          // card/SBP that funded the ride, after the ride is already ended and
+          // the bike already freed — the rider does not wait on this. Success/
+          // failure (push + operator alert) is fully handled inside the helper.
+          chargeRideOverageAsync(this, {
+            rideId: result.ride.id,
+            bikeId: result.ride.bikeId,
+            userId: result.ride.userId,
+            overageKopecks: result.overageKopecks,
+            extraMinutes: result.extraMinutes,
+            fundingOrder,
+          }).catch(() => {});
+        } else {
+          sendToUserAsync(result.ride.userId, {
+            title: "Оплата поездки",
+            body: `Списано ${formatKopecksAsRubles(result.overageKopecks)} ₽ за поездку. Спасибо, что пользуетесь TakeRide!`,
+            url: "/rides",
+            tag: `ride:${result.ride.id}:overage`,
+            data: { kind: "ride-charge-confirmed", rideId: result.ride.id },
+          });
+        }
       }
       // Best-effort: disable D1 GPS tracking now that the ride is over (saves
       // lock battery between rentals). Not billing/safety-critical, log-only.
@@ -901,8 +1095,15 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           description: `Продление аренды ${r.bikeId} • ${tariffDef.name}`, createdAt: Date.now(),
         });
         const basePaidUntilAt = r.paidUntilAt ?? (r.startedAt + tariffDurationMs(r.tariff));
+        // Bug fix: an extension is additional money actually paid on TOP of the
+        // ride's original tariff — cost/totalTariffHours must accumulate, not
+        // stay pinned to the start-time values. r.cost otherwise silently
+        // undercounts every extended ride in history AND in analytics'
+        // SUM(cost) revenue queries (server/storage/analytics.ts).
         const updated = (await tx.update(rides).set({
           paidUntilAt: basePaidUntilAt + tariffDurationMs(tariff),
+          cost: r.cost + costKopecks,
+          totalTariffHours: r.totalTariffHours + tariffDef.durationHours,
         } as any).where(eq(rides.id, rideId)).returning())[0] as Ride;
         return updated;
       });

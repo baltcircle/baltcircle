@@ -64,6 +64,13 @@
       "when": 1787835993364,
       "tag": "0008_bikes_drop_legacy_fields_id_cascade",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788267699221,
+      "tag": "0009_brave_terror",
+      "breakpoints": true
     }
   ]
 }

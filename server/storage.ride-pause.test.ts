@@ -47,6 +47,7 @@ function makeRide(overrides: Partial<Ride> = {}): Ride {
     track: JSON.stringify([[2, 1, NOW]]), distanceM: 0,
     cost: 35000, tariff: "h1", status: "active", physicallyLockedAt: null,
     paidUntilAt: NOW - HOUR + HOUR, pausedAt: null, totalPausedMs: 0,
+    totalTariffHours: 1,
     ...overrides,
   } as Ride;
 }
@@ -375,6 +376,35 @@ describe("extendRide", () => {
     const set = calls.updateSets[0] as any;
     expect(set.paidUntilAt).toBe(active.paidUntilAt! + HOUR); // h1 = 1 hour
     expect(calls.insertValues.some((v: any) => v?.kind === "ride_charge" && v.amount < 0)).toBe(true);
+  });
+
+  // Bug fix: extending a ride previously left `cost`/tariff display at the
+  // ORIGINAL tariff only (paidUntilAt moved, but nothing else did), so an h1
+  // ride extended by another h1 showed "1 час / 350₽" in history/dashboard
+  // instead of "2 часа / 700₽". extendRide must now accumulate both fields.
+  it("accumulates cost and totalTariffHours on top of the ride's existing values, not just paidUntilAt", async () => {
+    const active = makeRide({ cost: 35000, totalTariffHours: 1, paidUntilAt: NOW + 10 * 60 * 1000 });
+    const { tx, calls } = makeTx([[active]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.extendRide(7, "h1");
+
+    expect(result).not.toHaveProperty("error");
+    const set = calls.updateSets[0] as any;
+    expect(set.cost).toBe(70000); // 350₽ + 350₽ = 700₽, in kopecks
+    expect(set.totalTariffHours).toBe(2); // 1h + 1h
+  });
+
+  it("accumulates a THIRD hour correctly (h1 -> extend h2 -> 3 hours total)", async () => {
+    const active = makeRide({ cost: 35000, totalTariffHours: 1, paidUntilAt: NOW + 10 * 60 * 1000 });
+    const { tx, calls } = makeTx([[active]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.extendRide(7, "h2");
+
+    expect(result).not.toHaveProperty("error");
+    const set = calls.updateSets[0] as any;
+    expect(set.totalTariffHours).toBe(3); // 1h (original) + 2h (h2 extension)
   });
 
   it("works while the ride is paused (no pausedAt gating)", async () => {
