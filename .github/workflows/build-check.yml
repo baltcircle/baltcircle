@@ -22,6 +22,15 @@ jobs:
         run: npm ci
       - name: Type check
         run: npx tsc --noEmit
+      # Audit M12: eslint.config.js currently has 0 error-level violations
+      # (verified locally) and ~1100 warn-level ones (mostly pre-existing
+      # `: any` usage, tracked separately — audit M11). `eslint .`'s exit
+      # code only reflects errors, so this fails CI on new error-level
+      # issues without blocking on the existing warning backlog.
+      - name: Lint
+        run: npx eslint .
+      - name: Format check
+        run: npx prettier --check . || echo "::warning::Prettier formatting drift exists (pre-existing, not yet baselined) — see audit M12 follow-up"
       - name: Unit tests
         run: npm test
 

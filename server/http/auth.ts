@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { storage } from "../storage";
+import { errMessage } from "../error-utils";
 import { z } from "zod";
 import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
 import {
@@ -39,7 +40,7 @@ import { log } from "./../index";
 import {
   riderId, isStaffSession, canManageRide, actorName, clientIp,
   requireRole, requireAuth, requireRoleWhenConfigured,
-  otpLimiter, paymentLimiter,
+  otpLimiter, otpPhoneLimiter, paymentLimiter,
 } from "./context";
 
 // Audit LOW: regenerate the session ID on every successful login/registration
@@ -67,7 +68,7 @@ export function registerAuthRoutes(app: Express): void {
   // -------------- Rider registration (SMS OTP) --------------
   // Step 1: rider submits name + phone + consent. We generate a code, persist
   // its hash, and dispatch it by SMS. No session is created yet.
-  app.post("/api/auth/otp/start", otpLimiter, async (req, res) => {
+  app.post("/api/auth/otp/start", otpLimiter, otpPhoneLimiter, async (req, res) => {
     const parsed = otpStartSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
@@ -96,14 +97,15 @@ export function registerAuthRoutes(app: Express): void {
         ...(sent.providerStatus ? { providerStatus: sent.providerStatus } : {}),
         ...(sent.devEcho ? { devCode: result.code } : {}),
       });
-    } catch (err: any) {
-      res.status(502).json({ error: err?.message ?? "Не удалось отправить SMS. Попробуйте позже." });
+    } catch (err) {
+      const message = errMessage(err);
+      res.status(502).json({ error: message ?? "Не удалось отправить SMS. Попробуйте позже." });
     }
   });
 
   // Step 2: rider submits the code. On success we create/activate the rider and
   // bind the session, allowing rental/scan.
-  app.post("/api/auth/otp/verify", otpLimiter, async (req, res) => {
+  app.post("/api/auth/otp/verify", otpLimiter, otpPhoneLimiter, async (req, res) => {
     const parsed = otpVerifySchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
@@ -165,8 +167,9 @@ export function registerAuthRoutes(app: Express): void {
           providerStatus: live.status ?? row.providerStatus ?? undefined,
           providerError: live.error ?? undefined,
         });
-      } catch (err: any) {
-        providerLookup = { httpStatus: 0, found: false, error: err?.message ?? "lookup failed" };
+      } catch (err) {
+        const message = errMessage(err);
+        providerLookup = { httpStatus: 0, found: false, error: message ?? "lookup failed" };
       }
     }
 
@@ -221,8 +224,9 @@ export function registerAuthRoutes(app: Express): void {
   // four endpoints sent real SMS/email and guessed codes with no rate limit
   // at all — an authenticated rider (or anyone who stole/fixed a session)
   // could hammer them to run up SMS cost or brute-force the change code.
-  // Reuse the same IP-keyed otpLimiter as the registration OTP flow.
-  app.post("/api/users/me/phone/start", otpLimiter, async (req, res) => {
+  // Reuse the same IP-keyed otpLimiter as the registration OTP flow, plus
+  // otpPhoneLimiter (audit MEDIUM #3) so it's also bounded per target phone.
+  app.post("/api/users/me/phone/start", otpLimiter, otpPhoneLimiter, async (req, res) => {
     const id = req.session?.userId;
     if (!id) return res.status(401).json({ error: "Требуется вход" });
     const parsed = phoneChangeStartSchema.safeParse(req.body);
@@ -242,12 +246,13 @@ export function registerAuthRoutes(app: Express): void {
         resendInSec: result.resendInSec,
         ...(devEcho ? { devCode: result.code } : {}),
       });
-    } catch (err: any) {
-      res.status(502).json({ error: err?.message ?? "Не удалось отправить SMS. Попробуйте позже." });
+    } catch (err) {
+      const message = errMessage(err);
+      res.status(502).json({ error: message ?? "Не удалось отправить SMS. Попробуйте позже." });
     }
   });
 
-  app.post("/api/users/me/phone/verify", otpLimiter, async (req, res) => {
+  app.post("/api/users/me/phone/verify", otpLimiter, otpPhoneLimiter, async (req, res) => {
     const id = req.session?.userId;
     if (!id) return res.status(401).json({ error: "Требуется вход" });
     const parsed = phoneChangeVerifySchema.safeParse(req.body);
@@ -283,8 +288,9 @@ export function registerAuthRoutes(app: Express): void {
         resendInSec: result.resendInSec,
         ...(devEcho ? { devCode: result.code } : {}),
       });
-    } catch (err: any) {
-      res.status(502).json({ error: err?.message ?? "Не удалось отправить письмо. Попробуйте позже." });
+    } catch (err) {
+      const message = errMessage(err);
+      res.status(502).json({ error: message ?? "Не удалось отправить письмо. Попробуйте позже." });
     }
   });
 

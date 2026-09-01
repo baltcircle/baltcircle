@@ -1,0 +1,6 @@
+dist
+build
+node_modules
+.vite
+pnpm-lock.yaml
+package-lock.json

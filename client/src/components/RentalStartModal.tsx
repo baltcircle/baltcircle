@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { cleanErr } from "@/lib/api-error";
 import type { Bike, PublicPaymentMethod, Reservation } from "@shared/schema";
 import {
   TBANK_CONFIG_KEY, PAYMENT_METHODS_KEY, RESERVATION_ACTIVE_KEY, type TbankConfigResponse,
@@ -423,15 +424,3 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
   );
 }
 
-// apiRequest throws "<status>: <body>" — pull a human message out of the body.
-function cleanErr(e: Error): string {
-  const m = e.message.match(/^\d+:\s*([\s\S]*)$/);
-  const body = m ? m[1] : e.message;
-  try {
-    const parsed = JSON.parse(body);
-    if (parsed?.error) return parsed.error;
-  } catch {
-    // body wasn't JSON; fall through
-  }
-  return body;
-}

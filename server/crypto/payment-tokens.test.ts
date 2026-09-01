@@ -105,6 +105,31 @@ describe("payment-tokens crypto", () => {
     process.env.NODE_ENV = "production";
     delete process.env.PAYMENT_TOKEN_KEY;
     const { encryptToken } = await freshModule();
-    expect(() => encryptToken("x")).toThrow(/PAYMENT_TOKEN_KEY is required in production/);
+    expect(() => encryptToken("x")).toThrow(/PAYMENT_TOKEN_KEY is required/);
+  });
+
+  // Audit MEDIUM #14: an unset/misconfigured NODE_ENV (e.g. an ad hoc staging
+  // box run outside docker-compose/npm start) must fail closed just like
+  // production, instead of silently falling back to the public dev key.
+  it("throws when NODE_ENV is unset and PAYMENT_TOKEN_KEY is unset", async () => {
+    delete process.env.NODE_ENV;
+    delete process.env.PAYMENT_TOKEN_KEY;
+    const { encryptToken } = await freshModule();
+    expect(() => encryptToken("x")).toThrow(/PAYMENT_TOKEN_KEY is required/);
+  });
+
+  it("throws when NODE_ENV is an unrecognised value and PAYMENT_TOKEN_KEY is unset", async () => {
+    process.env.NODE_ENV = "staging";
+    delete process.env.PAYMENT_TOKEN_KEY;
+    const { encryptToken } = await freshModule();
+    expect(() => encryptToken("x")).toThrow(/PAYMENT_TOKEN_KEY is required/);
+  });
+
+  it("uses the insecure dev fallback key when NODE_ENV=development and PAYMENT_TOKEN_KEY is unset", async () => {
+    process.env.NODE_ENV = "development";
+    delete process.env.PAYMENT_TOKEN_KEY;
+    const { encryptToken, decryptToken } = await freshModule();
+    const stored = encryptToken("dev-token");
+    expect(decryptToken(stored)).toBe("dev-token");
   });
 });

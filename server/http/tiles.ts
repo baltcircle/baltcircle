@@ -1,4 +1,9 @@
 import type { Express, Request, Response } from "express";
+import * as fs from "fs";
+import * as nodePath from "path";
+import * as https from "https";
+import * as http from "http";
+import * as zlib from "zlib";
 import { storage } from "../storage";
 import { z } from "zod";
 import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
@@ -54,9 +59,7 @@ import {
 // on a given host is ever out of date.
 function servePmtiles(fileName: string) {
   return (req: Request, res: Response): void => {
-    const fs = require("fs") as typeof import("fs");
-    const path = require("path") as typeof import("path");
-    const filePath = path.join("/app/osm", fileName);
+    const filePath = nodePath.join("/app/osm", fileName);
     if (!fs.existsSync(filePath)) {
       res.status(404).end();
       return;
@@ -96,7 +99,6 @@ export function registerTileRoutes(app: Express): void {
   // Proxies /glyphs/{fontstack}/{range}.pbf → protomaps GitHub Pages CDN.
   // Serving fonts same-origin avoids CORS issues in iOS WKWebView.
   app.use("/glyphs", (req: Request, res: Response) => {
-    const https = require("https") as typeof import("https");
     const upstream = `https://protomaps.github.io/basemaps-assets/fonts${req.path}`;
     const proxyReq = https.get(upstream, (proxyRes) => {
       const chunks: Buffer[] = [];
@@ -115,7 +117,6 @@ export function registerTileRoutes(app: Express): void {
     const tilePath = req.path; // e.g. "/data/kaliningrad.json"
     const tileHost = process.env.NODE_ENV === "production" ? "host.docker.internal" : "localhost";
     const upstreamUrl = `http://${tileHost}:8080${tilePath}`;
-    const http = require("http") as typeof import("http");
     const upstream = new URL(upstreamUrl);
     const isTileJson = tilePath.endsWith(".json");
 
@@ -136,7 +137,6 @@ export function registerTileRoutes(app: Express): void {
           // Buffer TileJSON (possibly gzip-encoded) and rewrite tile/grid URLs to absolute.
           // MapLibre GL requires absolute URLs in tiles[] — relative URLs keep source in
           // "loading" state indefinitely. Handle gzip via zlib.gunzip.
-          const zlib = require("zlib") as typeof import("zlib");
           const chunks: Buffer[] = [];
           proxyRes.on("data", (chunk: Buffer) => chunks.push(chunk));
           proxyRes.on("end", () => {

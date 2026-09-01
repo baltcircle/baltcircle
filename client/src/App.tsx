@@ -186,7 +186,6 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
       // поэтому опираться на history.back() нельзя (стек искажён).
       // Читаем точку входа (PM_ORIGIN_KEY): "drawer" → возврат в бургер-меню,
       // "map" (или отсутствует) → на чистую карту. Навигируем явно через wouter.
-      let toMenu = false;
       if (currentPath === "/payment-methods") {
         let origin: string | null = null;
         try {
@@ -195,7 +194,7 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
         } catch {
           /* ignore */
         }
-        toMenu = origin === "drawer";
+        const toMenu = origin === "drawer";
         try {
           if (toMenu) sessionStorage.setItem(DRAWER_OPEN_KEY, "1");
           else sessionStorage.removeItem(DRAWER_OPEN_KEY);

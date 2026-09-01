@@ -106,7 +106,7 @@ export async function sendOtpEmail(email: string, code: string): Promise<EmailSe
     });
   } catch (err: any) {
     log(`[rusender] network error: ${err?.message ?? err}`, "email");
-    throw new Error("Не удалось отправить письмо. Попробуйте позже.");
+    throw new Error("Не удалось отправить письмо. Попробуйте позже.", { cause: err });
   }
 
   if (!resp.ok) {

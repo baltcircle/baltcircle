@@ -200,6 +200,7 @@ export function buildReceipt(input: BuildReceiptInput): TbankReceipt {
   // removed before submission; no other receipt-name restrictions are currently
   // documented in this codebase.
   const name = input.description
+    // eslint-disable-next-line no-control-regex -- deliberately matching control chars to strip them, not a typo
     .replace(/[\u0000-\u001F\u007F]/g, " ")
     .trim()
     .replace(/\s+/g, " ")

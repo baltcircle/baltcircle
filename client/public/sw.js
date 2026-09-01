@@ -1,7 +1,5 @@
 /* TakeRide Service Worker — Web Push + basic install/activate lifecycle. */
 
-const CACHE_VERSION = "takeride-v1";
-
 self.addEventListener("install", () => {
   // Активируемся сразу, без ожидания закрытия старых вкладок.
   self.skipWaiting();
@@ -12,7 +10,7 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("push", (event) => {
-  let payload = {};
+  let payload;
   try {
     payload = event.data ? event.data.json() : {};
   } catch {

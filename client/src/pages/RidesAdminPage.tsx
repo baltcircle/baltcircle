@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Search, AlertTriangle } from "lucide-react";
 import { TablePager, useClientPagination } from "@/components/table-pager";
 import { RideRowItem } from "./rides-admin/RideRow";
-import { cleanErr } from "./rides-admin/error-utils";
+import { cleanErr } from "@/lib/api-error";
 
 const RIDES_KEY = ["/api/admin/rides"];
 
