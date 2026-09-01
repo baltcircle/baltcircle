@@ -275,7 +275,7 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
         {/* Tariff grid */}
         <div className="space-y-2">
           <div className="text-sm font-medium">Тариф</div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {TARIFFS.map((t) => {
               const active = tariff === t.id;
               return (
@@ -289,8 +289,13 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1">
                       Аренда
+                      {t.test && (
+                        <span className="px-1 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[9px] normal-case tracking-normal font-semibold">
+                          Тест
+                        </span>
+                      )}
                     </span>
                     {active && <Check className="w-3.5 h-3.5 text-primary" />}
                   </div>

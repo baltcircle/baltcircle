@@ -2,7 +2,7 @@ import type { AdminRide } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { StopCircle } from "lucide-react";
-import { fmtDate, fmtRub, fmtDuration, fmtTariffHours } from "@/lib/format";
+import { fmtDate, fmtRub, fmtDuration, fmtRideTariff } from "@/lib/format";
 
 export function RideRowItem({ r, onEnd, busy }: { r: AdminRide; onEnd: () => void; busy: boolean }) {
   const active = r.status === "active";
@@ -17,7 +17,7 @@ export function RideRowItem({ r, onEnd, busy }: { r: AdminRide; onEnd: () => voi
         <div className="text-xs text-muted-foreground font-mono">{r.userPhone ?? r.userId.slice(0, 8)}</div>
       </TableCell>
       <TableCell className="font-mono text-sm">{r.bikeId}</TableCell>
-      <TableCell className="text-sm">{fmtTariffHours(r.totalTariffHours)}</TableCell>
+      <TableCell className="text-sm">{fmtRideTariff(r)}</TableCell>
       <TableCell className="text-sm">{fmtDate(r.startedAt)}</TableCell>
       <TableCell className="text-sm">{fmtDuration(elapsedMs)}</TableCell>
       <TableCell className="text-right font-mono text-sm">
