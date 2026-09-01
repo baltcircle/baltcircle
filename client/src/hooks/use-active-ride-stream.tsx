@@ -41,7 +41,7 @@ export function useActiveRideStream(): void {
 
       next.onmessage = (ev) => {
         lastActivityAt = Date.now();
-        let ride: Ride | null = null;
+        let ride: Ride | null;
         try {
           ride = JSON.parse(ev.data) as Ride | null;
         } catch {

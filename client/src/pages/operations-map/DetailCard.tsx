@@ -40,10 +40,10 @@ export function DetailCard({ selection, onClose, bikes, parkings, rides, tickets
 }) {
   if (!selection) return null;
 
-  let title = "";
-  let body: React.ReactNode = null;
-  let href = "";
-  let linkLabel = "";
+  let title: string;
+  let body: React.ReactNode;
+  let href: string;
+  let linkLabel: string;
 
   if (selection.kind === "bike") {
     const b = bikes.find((x) => x.id === selection.id);

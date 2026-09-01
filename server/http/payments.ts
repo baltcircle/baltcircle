@@ -96,6 +96,7 @@ function isUnknownBindingAtBank(resp: Record<string, unknown>): boolean {
 function normalizedBindingIdentifier(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const identifier = value.trim();
+  // eslint-disable-next-line no-control-regex -- deliberately matching control chars to reject them, not a typo
   return identifier && !/[\u0000-\u001F\u007F]/.test(identifier) ? identifier : undefined;
 }
 

@@ -54,7 +54,7 @@ export function useSupportUnread(): UseSupportUnreadResult {
     });
 
     es.onmessage = (evt) => {
-      let msg: SupportMessage | null = null;
+      let msg: SupportMessage | null;
       try {
         msg = JSON.parse(evt.data) as SupportMessage;
       } catch {
