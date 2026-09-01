@@ -44,38 +44,50 @@ beforeEach(() => {
 });
 
 describe("submitRideFeedback", () => {
-  it("accepts reasons from the low tier (rating <= 3)", async () => {
-    mockInsertReturning(feedbackRow({ rating: 2, reasons: ["dirty", "brakes"] }));
-    const r = await storage.submitRideFeedback(10, "u1", { rating: 2, reasons: ["dirty", "brakes"], comment: "" });
+  it("accepts a top-level category plus its sub-reason from the low tier (rating <= 3)", async () => {
+    mockInsertReturning(feedbackRow({ rating: 2, reasons: ["bike", "bike_brakes"] }));
+    const r = await storage.submitRideFeedback(10, "u1", { rating: 2, reasons: ["bike", "bike_brakes"], comment: "" });
     expect("error" in r).toBe(false);
-    expect((r as RideFeedback).reasons).toEqual(["dirty", "brakes"]);
+    expect((r as RideFeedback).reasons).toEqual(["bike", "bike_brakes"]);
+  });
+
+  it("accepts a low-tier top-level category with no sub-reason chosen (parent alone is submittable)", async () => {
+    mockInsertReturning(feedbackRow({ rating: 1, reasons: ["no_parking"] }));
+    const r = await storage.submitRideFeedback(10, "u1", { rating: 1, reasons: ["no_parking"], comment: "" });
+    expect("error" in r).toBe(false);
   });
 
   it("accepts reasons from the mid tier (rating === 4)", async () => {
-    mockInsertReturning(feedbackRow({ rating: 4, reasons: ["price_high"] }));
-    const r = await storage.submitRideFeedback(10, "u1", { rating: 4, reasons: ["price_high"], comment: "" });
+    mockInsertReturning(feedbackRow({ rating: 4, reasons: ["parking_count"] }));
+    const r = await storage.submitRideFeedback(10, "u1", { rating: 4, reasons: ["parking_count"], comment: "" });
     expect("error" in r).toBe(false);
   });
 
   it("accepts reasons from the high tier (rating === 5)", async () => {
-    mockInsertReturning(feedbackRow({ rating: 5, reasons: ["good_price"] }));
-    const r = await storage.submitRideFeedback(10, "u1", { rating: 5, reasons: ["good_price"], comment: "" });
+    mockInsertReturning(feedbackRow({ rating: 5, reasons: ["convenient_app"] }));
+    const r = await storage.submitRideFeedback(10, "u1", { rating: 5, reasons: ["convenient_app"], comment: "" });
     expect("error" in r).toBe(false);
   });
 
   it("rejects a reason id that belongs to a different tier's pool", async () => {
-    // "good_price" is a high-tier id; submitting it with a low rating must fail
-    // rather than silently accepting it (would corrupt future analytics).
+    // "convenient_app" is a high-tier id; submitting it with a low rating must
+    // fail rather than silently accepting it (would corrupt future analytics).
     mockInsertReturning(feedbackRow());
-    const r = await storage.submitRideFeedback(10, "u1", { rating: 1, reasons: ["good_price"], comment: "" });
+    const r = await storage.submitRideFeedback(10, "u1", { rating: 1, reasons: ["convenient_app"], comment: "" });
     expect(r).toEqual({ error: "Некорректная причина отзыва" });
     expect(dbMock.insert).not.toHaveBeenCalled();
   });
 
+  it("rejects an unknown/garbled reason id (e.g. from a stale client build)", async () => {
+    mockInsertReturning(feedbackRow());
+    const r = await storage.submitRideFeedback(10, "u1", { rating: 2, reasons: ["totally_unknown_id"], comment: "" });
+    expect(r).toEqual({ error: "Некорректная причина отзыва" });
+  });
+
   it("de-dupes repeated reason ids before persisting", async () => {
-    const calls = mockInsertReturning(feedbackRow({ rating: 1, reasons: ["dirty"] }));
-    await storage.submitRideFeedback(10, "u1", { rating: 1, reasons: ["dirty", "dirty"], comment: "" });
-    expect((calls.values as any).reasons).toEqual(["dirty"]);
+    const calls = mockInsertReturning(feedbackRow({ rating: 1, reasons: ["bike"] }));
+    await storage.submitRideFeedback(10, "u1", { rating: 1, reasons: ["bike", "bike"], comment: "" });
+    expect((calls.values as any).reasons).toEqual(["bike"]);
   });
 
   it("upserts on rideId conflict instead of duplicating (resubmission for the same ride)", async () => {
