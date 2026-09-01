@@ -1,6 +1,6 @@
 import { wallet, payments, walletTopupOrders } from "@shared/schema";
 import type { Wallet, Payment, WalletTopupOrder } from "@shared/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, ne } from "drizzle-orm";
 import { db, pool } from "../db/bootstrap";
 import type { Constructor } from "./mixin";
 import type { IWalletStorage } from "./interfaces";
@@ -165,6 +165,31 @@ export function WalletMixin<TBase extends Constructor>(Base: TBase) {
       return (await db.select().from(walletTopupOrders)
         .where(eq(walletTopupOrders.orderId, orderId))
         .limit(1))[0] as WalletTopupOrder | undefined;
+    }
+
+    // Atomically claim a top-up order before crediting the wallet or writing a
+    // terminal status (audit HIGH #6 — race condition). Two concurrent T-Bank
+    // notifications for the same order (T-Bank retries webhooks) each load
+    // their own `order` snapshot in handleWalletTopupNotification; without
+    // this, both could pass the caller's `order.status === "paid"` check and
+    // both call topUp(), double-crediting the wallet. This UPDATE ... WHERE is
+    // a single atomic statement the DB serializes per-row, so only ONE
+    // concurrent caller can ever flip status to "processing" and proceed —
+    // the other sees 0 rows affected and must treat it as a no-op.
+    // Claiming from "failed" too (not just "pending") preserves the existing
+    // behaviour where a late CONFIRMED notification can still resolve an
+    // order T-Bank had previously reported as rejected; only "paid" and
+    // "processing" (another claim in flight) are treated as terminal/locked.
+    async claimWalletTopupOrderForProcessing(id: number) {
+      const rows = await db.update(walletTopupOrders)
+        .set({ status: "processing", updatedAt: Date.now() } as any)
+        .where(and(
+          eq(walletTopupOrders.id, id),
+          ne(walletTopupOrders.status, "paid"),
+          ne(walletTopupOrders.status, "processing"),
+        ))
+        .returning();
+      return rows[0] as WalletTopupOrder | undefined;
     }
 
     async updateWalletTopupOrder(id: number, patch: Partial<WalletTopupOrder>) {

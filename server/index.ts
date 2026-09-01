@@ -22,6 +22,59 @@ export { log };
 const app = express();
 const httpServer = createServer(app);
 
+// audit HIGH #10: graceful shutdown. Before this, SIGTERM only cleared a few
+// in-process timers and stopped the OMNI TCP gateway — the HTTP server kept
+// accepting/serving requests and the Postgres pool was never closed, so every
+// deploy (a SIGTERM on each push to main) either hard-dropped in-flight
+// requests/SSE streams once the orchestrator gave up and SIGKILLed the
+// process, or left keep-alive connections/pool clients open with no defined
+// endpoint at all. Callers below register cleanup work here instead of their
+// own scattered process.once("SIGTERM"/"SIGINT") pairs; shutdown() below runs
+// them all, then drains the HTTP server and the DB pool before exiting.
+const shutdownTasks: Array<() => void | Promise<void>> = [];
+let shuttingDown = false;
+
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return; // second SIGTERM/SIGINT while draining — ignore, let the first run finish
+  shuttingDown = true;
+  logger.info({ signal }, "shutdown: received signal, draining gracefully");
+
+  // If graceful drain hangs (stuck query, slow client, buggy cleanup), force
+  // exit rather than rely on the orchestrator's SIGKILL, which forcibly cuts
+  // the DB connection mid-transaction instead of letting the pool close it.
+  const FORCE_EXIT_MS = 10_000;
+  const forceExitTimer = setTimeout(() => {
+    logger.error({ signal }, "shutdown: graceful drain timed out, forcing exit");
+    process.exit(1);
+  }, FORCE_EXIT_MS);
+
+  try {
+    // Stop accepting new connections; node keeps serving already-open
+    // keep-alive/SSE connections until they finish or the client disconnects.
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+
+    const results = await Promise.allSettled(shutdownTasks.map((task) => Promise.resolve().then(task)));
+    for (const result of results) {
+      if (result.status === "rejected") {
+        logger.error({ err: result.reason }, "shutdown: a cleanup task failed");
+      }
+    }
+
+    await pool.end();
+    logger.info({ signal }, "shutdown: complete");
+    process.exitCode = 0;
+  } catch (err) {
+    logger.error({ err, signal }, "shutdown: error during graceful drain");
+    process.exitCode = 1;
+  } finally {
+    clearTimeout(forceExitTimer);
+    process.exit(process.exitCode ?? 0);
+  }
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
+
 // Session-based rider identity. The session id lives in an httpOnly cookie that
 // survives refresh on the same device, so a registered rider stays recognized
 // without any SMS/auth provider. Sessions are persisted in a `session` table in
@@ -196,8 +249,7 @@ app.use((req, res, next) => {
   const CONTACT_REQUEST_PURGE_INTERVAL_MS = 60 * 60 * 1000; // hourly, matches session-store sweep
   const initialPurgeTimer = setTimeout(runContactRequestPurge, 30_000);
   const contactRequestPurgeTimer = setInterval(runContactRequestPurge, CONTACT_REQUEST_PURGE_INTERVAL_MS);
-  process.once("SIGTERM", () => { clearTimeout(initialPurgeTimer); clearInterval(contactRequestPurgeTimer); });
-  process.once("SIGINT", () => { clearTimeout(initialPurgeTimer); clearInterval(contactRequestPurgeTimer); });
+  shutdownTasks.push(() => { clearTimeout(initialPurgeTimer); clearInterval(contactRequestPurgeTimer); });
 
   // Reservations ("бронь") hold a bike out of the rentable pool for up to
   // RESERVATION_TTL_MS (10 min, shared/geo.ts) — a much shorter fuse than the
@@ -215,8 +267,7 @@ app.use((req, res, next) => {
   const RESERVATION_SWEEP_INTERVAL_MS = 60 * 1000;
   const initialReservationSweepTimer = setTimeout(runReservationSweep, 10_000);
   const reservationSweepTimer = setInterval(runReservationSweep, RESERVATION_SWEEP_INTERVAL_MS);
-  process.once("SIGTERM", () => { clearTimeout(initialReservationSweepTimer); clearInterval(reservationSweepTimer); });
-  process.once("SIGINT", () => { clearTimeout(initialReservationSweepTimer); clearInterval(reservationSweepTimer); });
+  shutdownTasks.push(() => { clearTimeout(initialReservationSweepTimer); clearInterval(reservationSweepTimer); });
 
   // Audit (scalability): bike_telemetry (lock heartbeat/GPS check-ins) had no
   // retention policy and grows without bound as the fleet and ping rate grow
@@ -234,8 +285,7 @@ app.use((req, res, next) => {
   const TELEMETRY_PURGE_INTERVAL_MS = 60 * 60 * 1000; // hourly, matches contact-request purge
   const initialTelemetryPurgeTimer = setTimeout(runTelemetryPurge, 45_000);
   const telemetryPurgeTimer = setInterval(runTelemetryPurge, TELEMETRY_PURGE_INTERVAL_MS);
-  process.once("SIGTERM", () => { clearTimeout(initialTelemetryPurgeTimer); clearInterval(telemetryPurgeTimer); });
-  process.once("SIGINT", () => { clearTimeout(initialTelemetryPurgeTimer); clearInterval(telemetryPurgeTimer); });
+  shutdownTasks.push(() => { clearTimeout(initialTelemetryPurgeTimer); clearInterval(telemetryPurgeTimer); });
 
   // The gateway is a standalone TCP listener (not an HTTP route), but it shares
   // this process so the authenticated pilot-control endpoint can address its
@@ -260,12 +310,10 @@ app.use((req, res, next) => {
   });
   await lockGateway.listen();
   setLockGateway(lockGateway);
-  const stopLockGateway = () => {
+  shutdownTasks.push(async () => {
     setLockGateway(null);
-    void lockGateway.close().catch((err) => logger.error({ err }, "failed to stop lock gateway"));
-  };
-  process.once("SIGTERM", stopLockGateway);
-  process.once("SIGINT", stopLockGateway);
+    await lockGateway.close();
+  });
 
   // Статика вложений чата поддержки. Локальный диск MVP; при переезде на
   // Yandex Object Storage — URL-ы абсолютные, блок можно будет убрать.

@@ -312,62 +312,83 @@ export async function handleRidePaymentNotification(
   const success = body.Success === false ? false : undefined;
   const outcome = classifyRidePayment({ status, success });
 
-  if (outcome === "paid") {
-    if (order.rideId != null) {
-      // Extend order (rideId set at RESERVE time, see reserveRidePaymentOrder) —
-      // apply the charge to the already-running ride's paid window instead of
-      // starting a new one. A racing/duplicate notification is a no-op
-      // (extendRideForPaidOrder is guarded by the order.status check above).
-      const result = await extendRideForPaidOrder(order, paymentId);
-      if (result.ok) {
-        sendToUserAsync(order.userId, {
-          title: "Аренда продлена",
-          body: `Велосипед ${order.bikeId} — тариф ${order.tariffId.toUpperCase()}.`,
-          url: "/",
-          tag: `ride-extend:${order.orderId}`,
-          data: { kind: "ride-extend", orderId: order.orderId },
-        });
-      } else {
-        // Money was captured but the extension couldn't be applied (rare race,
-        // e.g. ride ended between charge and webhook) — tell the rider plainly
-        // instead of a false "продлена" so they know to contact support.
-        sendToUserAsync(order.userId, {
-          title: "Оплата прошла, но продлить не удалось",
-          body: "Обратитесь в поддержку — средства списаны, мы разберёмся.",
-          url: "/",
-          tag: `ride-extend:${order.orderId}`,
-          data: { kind: "ride-extend-failed", orderId: order.orderId },
-        });
-      }
-      return;
-    }
-    // Start (or reuse) the ride via the shared guarded helper — a racing or
-    // duplicate notification cannot create a second ride. On a ride-start
-    // failure the helper already marks the order paid with the reason; the
-    // webhook just acks (no client to notify here).
-    await startRideForPaidOrder(order, paymentId);
-    sendToUserAsync(order.userId, {
-      title: "Поездка началась",
-      body: `Велосипед ${order.bikeId} — тариф ${order.tariffId.toUpperCase()}. Счастливого пути!`,
-      url: "/",
-      tag: `ride:${order.orderId}`,
-      data: { kind: "ride-start", orderId: order.orderId },
-    });
-  } else if (outcome === "failed") {
-    await storage.updateRidePaymentOrder(order.id, {
-      status: "failed",
-      paymentId: paymentId || order.paymentId,
-      ...bindingErrorPatch(body),
-    });
-    sendToUserAsync(order.userId, {
-      title: "Оплата отклонена",
-      body: "Не удалось списать средства за поездку. Проверьте карту и попробуйте ещё раз.",
-      url: "/payment-methods",
-      tag: `ride:${order.orderId}`,
-      data: { kind: "ride-payment-failed", orderId: order.orderId },
-    });
+  if (outcome !== "paid" && outcome !== "failed") {
+    return; // intermediate state — leave pending; a later CONFIRMED resolves it
   }
-  // Otherwise an intermediate state — leave pending; a later CONFIRMED resolves it.
+
+  // audit HIGH #6 fix: T-Bank can (and does) retry a webhook delivery, so two
+  // notifications for this same order can arrive concurrently. Each carries
+  // its own stale `order` snapshot (read before either has written anything),
+  // so the `order.status === "paid"` check above cannot stop both from
+  // reaching this point and both starting/extending the ride. Claim the row
+  // atomically first — only one concurrent caller can win it; the other gets
+  // `undefined` back and must no-op.
+  const claimed = await storage.claimRidePaymentOrderForProcessing(order.id);
+  if (!claimed) return; // lost the race to a concurrent/duplicate notification
+
+  try {
+    if (outcome === "paid") {
+      if (claimed.rideId != null) {
+        // Extend order (rideId set at RESERVE time, see reserveRidePaymentOrder) —
+        // apply the charge to the already-running ride's paid window instead of
+        // starting a new one. The claim above guarantees this runs at most once
+        // per order even under concurrent/duplicate notifications.
+        const result = await extendRideForPaidOrder(claimed, paymentId);
+        if (result.ok) {
+          sendToUserAsync(claimed.userId, {
+            title: "Аренда продлена",
+            body: `Велосипед ${claimed.bikeId} — тариф ${claimed.tariffId.toUpperCase()}.`,
+            url: "/",
+            tag: `ride-extend:${claimed.orderId}`,
+            data: { kind: "ride-extend", orderId: claimed.orderId },
+          });
+        } else {
+          // Money was captured but the extension couldn't be applied (rare race,
+          // e.g. ride ended between charge and webhook) — tell the rider plainly
+          // instead of a false "продлена" so they know to contact support.
+          sendToUserAsync(claimed.userId, {
+            title: "Оплата прошла, но продлить не удалось",
+            body: "Обратитесь в поддержку — средства списаны, мы разберёмся.",
+            url: "/",
+            tag: `ride-extend:${claimed.orderId}`,
+            data: { kind: "ride-extend-failed", orderId: claimed.orderId },
+          });
+        }
+        return;
+      }
+      // Start (or reuse) the ride via the shared guarded helper. On a
+      // ride-start failure the helper already marks the order paid with the
+      // reason; the webhook just acks (no client to notify here).
+      await startRideForPaidOrder(claimed, paymentId);
+      sendToUserAsync(claimed.userId, {
+        title: "Поездка началась",
+        body: `Велосипед ${claimed.bikeId} — тариф ${claimed.tariffId.toUpperCase()}. Счастливого пути!`,
+        url: "/",
+        tag: `ride:${claimed.orderId}`,
+        data: { kind: "ride-start", orderId: claimed.orderId },
+      });
+    } else {
+      await storage.updateRidePaymentOrder(claimed.id, {
+        status: "failed",
+        paymentId: paymentId || claimed.paymentId,
+        ...bindingErrorPatch(body),
+      });
+      sendToUserAsync(claimed.userId, {
+        title: "Оплата отклонена",
+        body: "Не удалось списать средства за поездку. Проверьте карту и попробуйте ещё раз.",
+        url: "/payment-methods",
+        tag: `ride:${claimed.orderId}`,
+        data: { kind: "ride-payment-failed", orderId: claimed.orderId },
+      });
+    }
+  } catch (err) {
+    // The side effect (ride start/extend/DB write) failed after we claimed the
+    // row — release the claim back to "pending" so a legitimate retried
+    // notification can still resolve the order instead of being stuck on
+    // "processing" forever.
+    await storage.updateRidePaymentOrder(claimed.id, { status: "pending" }).catch(() => {});
+    throw err;
+  }
 }
 
 // Resolve a wallet top-up order from a notification (audit CRITICAL #1 fix).
@@ -396,37 +417,57 @@ export async function handleWalletTopupNotification(
   // reused as-is rather than duplicated.
   const outcome = classifyRidePayment({ status, success });
 
-  if (outcome === "paid") {
-    await storage.topUp(order.userId, order.amountKopecks);
-    await storage.updateWalletTopupOrder(order.id, {
-      status: "paid",
-      paymentId: paymentId || order.paymentId,
-      lastErrorCode: null,
-      lastErrorMessage: null,
-      lastErrorDetails: null,
-    });
-    sendToUserAsync(order.userId, {
-      title: "Баланс пополнен",
-      body: `Кошелёк пополнен на ${(order.amountKopecks / 100).toFixed(2)} ₽.`,
-      url: "/wallet",
-      tag: `wallet-topup:${order.orderId}`,
-      data: { kind: "wallet-topup-paid", orderId: order.orderId },
-    });
-  } else if (outcome === "failed") {
-    await storage.updateWalletTopupOrder(order.id, {
-      status: "failed",
-      paymentId: paymentId || order.paymentId,
-      ...bindingErrorPatch(body),
-    });
-    sendToUserAsync(order.userId, {
-      title: "Пополнение не прошло",
-      body: "Не удалось пополнить баланс. Проверьте карту и попробуйте ещё раз.",
-      url: "/wallet",
-      tag: `wallet-topup:${order.orderId}`,
-      data: { kind: "wallet-topup-failed", orderId: order.orderId },
-    });
+  if (outcome !== "paid" && outcome !== "failed") {
+    return; // intermediate state — leave pending; a later CONFIRMED resolves it
   }
-  // Otherwise an intermediate state — leave pending; a later CONFIRMED resolves it.
+
+  // audit HIGH #6 fix: T-Bank can (and does) retry a webhook delivery, so two
+  // notifications for this same order can arrive concurrently, each with its
+  // own stale `order` snapshot read before either has written anything — the
+  // `order.status === "paid"` check above cannot stop both from reaching this
+  // point and both calling storage.topUp(), double-crediting the wallet.
+  // Claim the row atomically first; only one concurrent caller wins it.
+  const claimed = await storage.claimWalletTopupOrderForProcessing(order.id);
+  if (!claimed) return; // lost the race to a concurrent/duplicate notification
+
+  try {
+    if (outcome === "paid") {
+      await storage.topUp(claimed.userId, claimed.amountKopecks);
+      await storage.updateWalletTopupOrder(claimed.id, {
+        status: "paid",
+        paymentId: paymentId || claimed.paymentId,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+        lastErrorDetails: null,
+      });
+      sendToUserAsync(claimed.userId, {
+        title: "Баланс пополнен",
+        body: `Кошелёк пополнен на ${(claimed.amountKopecks / 100).toFixed(2)} ₽.`,
+        url: "/wallet",
+        tag: `wallet-topup:${claimed.orderId}`,
+        data: { kind: "wallet-topup-paid", orderId: claimed.orderId },
+      });
+    } else {
+      await storage.updateWalletTopupOrder(claimed.id, {
+        status: "failed",
+        paymentId: paymentId || claimed.paymentId,
+        ...bindingErrorPatch(body),
+      });
+      sendToUserAsync(claimed.userId, {
+        title: "Пополнение не прошло",
+        body: "Не удалось пополнить баланс. Проверьте карту и попробуйте ещё раз.",
+        url: "/wallet",
+        tag: `wallet-topup:${claimed.orderId}`,
+        data: { kind: "wallet-topup-failed", orderId: claimed.orderId },
+      });
+    }
+  } catch (err) {
+    // Crediting/writing failed after we claimed the row — release the claim
+    // back to "pending" so a legitimate retried notification can still
+    // complete the credit instead of being stuck on "processing" forever.
+    await storage.updateWalletTopupOrder(claimed.id, { status: "pending" }).catch(() => {});
+    throw err;
+  }
 }
 
 // Resolve an Init verification-payment binding from a notification. Activates

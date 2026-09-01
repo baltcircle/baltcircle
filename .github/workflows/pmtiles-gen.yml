@@ -18,6 +18,10 @@ on:
 jobs:
   generate:
     runs-on: [self-hosted, baltcircle-prod]
+    # audit HIGH #5 fix: runs unattended on the prod self-hosted runner (both
+    # on manual dispatch and on every push touching this file) with no
+    # approval gate; added the same "production" environment used elsewhere.
+    environment: production
     timeout-minutes: 60
     # `contents: write` is still required to publish the PMTiles GitHub Release
     # (the actual map data). The URL is no longer self-committed to the repo —

@@ -143,6 +143,7 @@ export interface IPaymentMethodStorage {
   }): Promise<PaymentOrder>;
   getRidePaymentOrder(orderId: string): Promise<PaymentOrder | undefined>;
   updateRidePaymentOrder(id: number, patch: Partial<PaymentOrder>): Promise<PaymentOrder | undefined>;
+  claimRidePaymentOrderForProcessing(id: number): Promise<PaymentOrder | undefined>;
   // Idempotency-guarded reservation (audit HIGH #2) — see implementation for
   // the reserve-before-charge rationale.
   reserveRidePaymentOrder(input: {
@@ -277,6 +278,7 @@ export interface IWalletStorage {
   createWalletTopupOrder(input: { orderId: string; userId: string; amountKopecks: number }): Promise<WalletTopupOrder>;
   getWalletTopupOrder(orderId: string): Promise<WalletTopupOrder | undefined>;
   updateWalletTopupOrder(id: number, patch: Partial<WalletTopupOrder>): Promise<WalletTopupOrder | undefined>;
+  claimWalletTopupOrderForProcessing(id: number): Promise<WalletTopupOrder | undefined>;
 }
 
 export interface ITicketStorage {

@@ -13,6 +13,10 @@ jobs:
     runs-on:
       - self-hosted
       - baltcircle-prod
+    # audit HIGH #5 fix: runs unattended on the prod self-hosted runner with
+    # no approval gate; added the same "production" environment used by
+    # deploy.yml / diagnose-ride-track.yml / fetch-logs.yml.
+    environment: production
     steps:
       - name: Print recent card-bind diagnostics
         run: |

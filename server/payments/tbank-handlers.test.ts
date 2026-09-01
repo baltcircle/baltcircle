@@ -19,6 +19,12 @@ const storageMock = vi.hoisted(() => ({
   updatePaymentMethod: vi.fn(),
   findActiveCardDuplicate: vi.fn(),
   claimRefund: vi.fn(),
+  // audit HIGH #6: the ride/wallet handlers now claim the order row
+  // atomically before acting on it. Default to "lost the race" (undefined)
+  // so tests that don't care about this must opt in explicitly; tests that
+  // exercise the paid/failed paths set this to the order being processed.
+  claimRidePaymentOrderForProcessing: vi.fn(),
+  claimWalletTopupOrderForProcessing: vi.fn(),
   // Consulted first in handleTbankNotification's routing (CRITICAL #1's
   // wallet top-up path) — defaults to "no matching top-up order" so the
   // routing tests below fall through to the ride/card-binding paths they
@@ -163,15 +169,30 @@ describe("startRideForPaidOrder", () => {
 
 describe("handleRidePaymentNotification", () => {
   it("starts the ride on a CONFIRMED notification", async () => {
+    const order = makeOrder();
+    storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(order);
     storageMock.getActiveRide.mockResolvedValue(undefined);
     storageMock.startRide.mockResolvedValue({ id: 42 });
+
+    await handleRidePaymentNotification(order, {
+      Status: "CONFIRMED",
+      PaymentId: "pay-1",
+    });
+
+    expect(storageMock.claimRidePaymentOrderForProcessing).toHaveBeenCalledWith(1);
+    expect(storageMock.startRide).toHaveBeenCalledOnce();
+  });
+
+  it("does not start the ride when the claim is lost to a concurrent/duplicate notification (audit HIGH #6)", async () => {
+    storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(undefined);
 
     await handleRidePaymentNotification(makeOrder(), {
       Status: "CONFIRMED",
       PaymentId: "pay-1",
     });
 
-    expect(storageMock.startRide).toHaveBeenCalledOnce();
+    expect(storageMock.startRide).not.toHaveBeenCalled();
+    expect(storageMock.updateRidePaymentOrder).not.toHaveBeenCalled();
   });
 
   it("short-circuits (idempotent) when the order is already paid", async () => {
@@ -185,7 +206,10 @@ describe("handleRidePaymentNotification", () => {
   });
 
   it("marks the order failed on a REJECTED notification and does not start a ride", async () => {
-    await handleRidePaymentNotification(makeOrder(), {
+    const order = makeOrder();
+    storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(order);
+
+    await handleRidePaymentNotification(order, {
       Status: "REJECTED",
       PaymentId: "pay-1",
       ErrorCode: "101",
@@ -221,6 +245,7 @@ describe("handleRidePaymentNotification", () => {
     storageMock.getActiveRide.mockResolvedValue(undefined);
     storageMock.startRide.mockResolvedValue({ id: 42 });
     const order = makeOrder();
+    storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(order);
     await handleRidePaymentNotification(order, { Status: "CONFIRMED", PaymentId: "pay-1" });
     expect(storageMock.startRide).toHaveBeenCalledOnce();
 
@@ -232,20 +257,72 @@ describe("handleRidePaymentNotification", () => {
     });
     expect(storageMock.startRide).not.toHaveBeenCalled();
   });
+
+  it("closes the T-Bank retry race: two concurrent CONFIRMED deliveries for the same order only start one ride (audit HIGH #6)", async () => {
+    const order = makeOrder();
+    let claimedOnce = false;
+    // Simulate the atomic "UPDATE ... WHERE status NOT IN ('paid','processing')"
+    // claim at the storage layer: only the first of two concurrent callers wins.
+    storageMock.claimRidePaymentOrderForProcessing.mockImplementation(async () => {
+      if (claimedOnce) return undefined;
+      claimedOnce = true;
+      return order;
+    });
+    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.startRide.mockResolvedValue({ id: 42 });
+
+    await Promise.all([
+      handleRidePaymentNotification(order, { Status: "CONFIRMED", PaymentId: "pay-1" }),
+      handleRidePaymentNotification(order, { Status: "CONFIRMED", PaymentId: "pay-1" }),
+    ]);
+
+    expect(storageMock.claimRidePaymentOrderForProcessing).toHaveBeenCalledTimes(2);
+    expect(storageMock.startRide).toHaveBeenCalledOnce();
+  });
+
+  it("releases the claim back to pending if starting the ride throws, so a retried notification can still resolve it (audit HIGH #6)", async () => {
+    const order = makeOrder();
+    storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(order);
+    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.startRide.mockRejectedValue(new Error("db unavailable"));
+    storageMock.updateRidePaymentOrder.mockResolvedValue(undefined);
+
+    await expect(
+      handleRidePaymentNotification(order, { Status: "CONFIRMED", PaymentId: "pay-1" }),
+    ).rejects.toThrow("db unavailable");
+
+    expect(storageMock.updateRidePaymentOrder).toHaveBeenCalledWith(1, { status: "pending" });
+  });
 });
 
 describe("handleWalletTopupNotification (audit HIGH #1)", () => {
   it("credits the wallet on a CONFIRMED notification", async () => {
-    await handleWalletTopupNotification(makeWalletOrder(), {
+    const walletOrder = makeWalletOrder();
+    storageMock.claimWalletTopupOrderForProcessing.mockResolvedValue(walletOrder);
+
+    await handleWalletTopupNotification(walletOrder, {
       Status: "CONFIRMED",
       PaymentId: "pay-1",
     });
 
+    expect(storageMock.claimWalletTopupOrderForProcessing).toHaveBeenCalledWith(1);
     expect(storageMock.topUp).toHaveBeenCalledWith("user-1", 50000);
     expect(storageMock.updateWalletTopupOrder).toHaveBeenCalledWith(
       1,
       expect.objectContaining({ status: "paid" }),
     );
+  });
+
+  it("does not credit the wallet when the claim is lost to a concurrent/duplicate notification (audit HIGH #6)", async () => {
+    storageMock.claimWalletTopupOrderForProcessing.mockResolvedValue(undefined);
+
+    await handleWalletTopupNotification(makeWalletOrder(), {
+      Status: "CONFIRMED",
+      PaymentId: "pay-1",
+    });
+
+    expect(storageMock.topUp).not.toHaveBeenCalled();
+    expect(storageMock.updateWalletTopupOrder).not.toHaveBeenCalled();
   });
 
   it("does NOT credit the wallet on a mere AUTHORIZED hold — a hold can be reversed/expire uncaptured", async () => {
@@ -259,7 +336,10 @@ describe("handleWalletTopupNotification (audit HIGH #1)", () => {
   });
 
   it("marks the order failed on a REJECTED notification without crediting the wallet", async () => {
-    await handleWalletTopupNotification(makeWalletOrder(), {
+    const walletOrder = makeWalletOrder();
+    storageMock.claimWalletTopupOrderForProcessing.mockResolvedValue(walletOrder);
+
+    await handleWalletTopupNotification(walletOrder, {
       Status: "REJECTED",
       PaymentId: "pay-1",
       ErrorCode: "101",
@@ -280,11 +360,43 @@ describe("handleWalletTopupNotification (audit HIGH #1)", () => {
 
     expect(storageMock.topUp).not.toHaveBeenCalled();
   });
+
+  it("closes the T-Bank retry race: two concurrent CONFIRMED deliveries for the same order only credit the wallet once (audit HIGH #6)", async () => {
+    const walletOrder = makeWalletOrder();
+    let claimedOnce = false;
+    storageMock.claimWalletTopupOrderForProcessing.mockImplementation(async () => {
+      if (claimedOnce) return undefined;
+      claimedOnce = true;
+      return walletOrder;
+    });
+
+    await Promise.all([
+      handleWalletTopupNotification(walletOrder, { Status: "CONFIRMED", PaymentId: "pay-1" }),
+      handleWalletTopupNotification(walletOrder, { Status: "CONFIRMED", PaymentId: "pay-1" }),
+    ]);
+
+    expect(storageMock.claimWalletTopupOrderForProcessing).toHaveBeenCalledTimes(2);
+    expect(storageMock.topUp).toHaveBeenCalledOnce();
+  });
+
+  it("releases the claim back to pending if crediting the wallet throws, so a retried notification can still resolve it (audit HIGH #6)", async () => {
+    const walletOrder = makeWalletOrder();
+    storageMock.claimWalletTopupOrderForProcessing.mockResolvedValue(walletOrder);
+    storageMock.topUp.mockRejectedValue(new Error("db unavailable"));
+    storageMock.updateWalletTopupOrder.mockResolvedValue(undefined);
+
+    await expect(
+      handleWalletTopupNotification(walletOrder, { Status: "CONFIRMED", PaymentId: "pay-1" }),
+    ).rejects.toThrow("db unavailable");
+
+    expect(storageMock.updateWalletTopupOrder).toHaveBeenCalledWith(1, { status: "pending" });
+  });
 });
 
 describe("handleTbankNotification routing", () => {
   it("routes a notification carrying our ride OrderId to the ride-payment path", async () => {
     storageMock.getRidePaymentOrder.mockResolvedValue(makeOrder());
+    storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(makeOrder());
     storageMock.getActiveRide.mockResolvedValue(undefined);
     storageMock.startRide.mockResolvedValue({ id: 42 });
 
@@ -434,6 +546,7 @@ describe("handleTbankNotification routing", () => {
     // keeps starting the ride as before, and never touches the refund code path
     // (ride payments never call refundVerificationCharge in the first place).
     storageMock.getRidePaymentOrder.mockResolvedValue(makeOrder());
+    storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(makeOrder());
     storageMock.getActiveRide.mockResolvedValue(undefined);
     storageMock.startRide.mockResolvedValue({ id: 42 });
 
