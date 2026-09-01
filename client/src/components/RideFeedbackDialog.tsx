@@ -121,6 +121,29 @@ export function RideFeedbackDialog({ open, onOpenChange, rideId }: Props) {
                 );
               })}
             </div>
+            {FEEDBACK_REASONS[tier].map((opt) => {
+              if (!opt.subReasons || !reasons.includes(opt.id)) return null;
+              return (
+                <div key={opt.id} className="flex flex-wrap justify-center gap-2 pt-1">
+                  {opt.subReasons.map((sub) => {
+                    const subActive = reasons.includes(sub.id);
+                    return (
+                      <button
+                        key={sub.id}
+                        type="button"
+                        onClick={() => toggleReason(sub.id)}
+                        data-testid={`button-reason-${sub.id}`}
+                        className={`rounded-full border px-3 py-1.5 text-xs transition-colors hover-elevate ${
+                          subActive ? "border-primary ring-1 ring-primary bg-primary/5" : "border-card-border"
+                        }`}
+                      >
+                        {sub.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
             <Textarea
               value={comment}
               onChange={(e) => setComment(e.target.value)}

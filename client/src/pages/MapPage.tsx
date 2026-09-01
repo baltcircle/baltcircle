@@ -132,6 +132,9 @@ export function MapPage() {
   // активны независимо друг от друга (хотя на одном замке они взаимоисключаются
   // на сервере — requestEndRide чистит pending-паузу того же замка).
   const [awaitingEndLockClose, setAwaitingEndLockClose] = useState(false);
+  // См. комментарий у endMut.onMutate выше — rideId завершаемой поездки,
+  // нужен эффекту ниже, чтобы открыть диалог оценки после асинхронного завершения.
+  const pendingEndRideId = useRef<number | null>(null);
   const endLockCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearEndLockCloseTimer = () => {
     if (endLockCloseTimer.current) {
@@ -144,6 +147,19 @@ export function MapPage() {
   // ожидание больше не актуально.
   useEffect(() => {
     if (!activeRide) {
+      // Поездка реально засеттлилась пока мы ждали закрытие замка — без этой ветки
+      // диалог оценки никогда не открывался для асинхронного endRide (endMut's
+      // "expiresInMs" ветка возвращается до settlement и никогда не вызывает
+      // setFeedbackRideId сама по себе) — это был баг из-за которого рейтинг
+      // перестал появляться: большинство велосипедов с реальным замком 100% идёт через
+      // эту ветку. Проверяем именно ref, а не awaitingEndLockClose — тот к этому
+      // моменту мог уже сброситься по TTL-таймауту (см. endMut), а ride всё равно
+      // settled чуть позже по SSE/refetch; ref остаётся источником правды до тех
+      // пор, пока сам не будет использован или явно очищен новым endMut.mutate.
+      if (pendingEndRideId.current != null) {
+        setFeedbackRideId(pendingEndRideId.current);
+      }
+      pendingEndRideId.current = null;
       clearEndLockCloseTimer();
       setAwaitingEndLockClose(false);
     }
@@ -157,6 +173,13 @@ export function MapPage() {
     mutationFn: async (rideId: number) => {
       const res = await apiRequest("POST", `/api/rides/${rideId}/end`);
       return res.json() as Promise<EndResponse>;
+    },
+    // Запоминаем, какую поездку завершаем, ДО ответа сервера — когда замок
+    // подтверждает закрытие асинхронно (awaiting_lock_close ветка ниже), activeRide
+    // к тому моменту уже обнулится до null по SSE, и data.id в этом случае недоступен —
+    // без этого ref диалог оценки не знает, для какой поездки его открыть.
+    onMutate: (rideId) => {
+      pendingEndRideId.current = rideId;
     },
     onSuccess: (data) => {
       if ("expiresInMs" in data) {
@@ -188,6 +211,7 @@ export function MapPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
       queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
       toast.toast({ title: "Поездка завершена", description: "Спасибо, что выбрали TakeRide!" });
+      pendingEndRideId.current = null;
       setFeedbackRideId(data.id);
     },
     onError: (err: any) => {
