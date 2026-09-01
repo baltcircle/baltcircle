@@ -32,6 +32,7 @@ const RidesAdminPage = lazy(() => import("@/pages/RidesAdminPage").then((m) => (
 const BikesPage = lazy(() => import("@/pages/BikesPage").then((m) => ({ default: m.BikesPage })));
 const UsersPage = lazy(() => import("@/pages/UsersPage").then((m) => ({ default: m.UsersPage })));
 const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })));
+const FeedbackAdminPage = lazy(() => import("@/pages/FeedbackAdminPage").then((m) => ({ default: m.FeedbackAdminPage })));
 const MaintenancePage = lazy(() => import("@/pages/MaintenancePage").then((m) => ({ default: m.MaintenancePage })));
 const SupportInboxPage = lazy(() => import("@/pages/SupportInboxPage").then((m) => ({ default: m.SupportInboxPage })));
 const AdminSupportChatsPage = lazy(() => import("@/pages/AdminSupportChatsPage").then((m) => ({ default: m.AdminSupportChatsPage })));
@@ -381,6 +382,7 @@ function AppRouter() {
       <Route path="/admin/operations-map"><AdminGuard roles={["operator", "admin"]}><OperationsMapPage /></AdminGuard></Route>
       <Route path="/admin/parkings"><AdminGuard roles={["operator", "admin"]}><ParkingsPage /></AdminGuard></Route>
       <Route path="/admin/analytics"><AdminGuard roles={["operator", "admin"]}><AnalyticsPage /></AdminGuard></Route>
+      <Route path="/admin/reviews"><AdminGuard roles={["operator", "admin"]}><FeedbackAdminPage /></AdminGuard></Route>
       <Route path="/admin/maintenance"><AdminGuard roles={["mechanic", "operator", "admin"]}><MaintenancePage /></AdminGuard></Route>
       <Route path="/admin/support"><AdminGuard roles={["operator", "admin"]}><AdminSupportChatsPage /></AdminGuard></Route>
       <Route path="/admin/support/tickets"><AdminGuard roles={["operator", "admin"]}><SupportInboxPage /></AdminGuard></Route>

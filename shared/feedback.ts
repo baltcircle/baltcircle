@@ -82,3 +82,40 @@ export const FEEDBACK_REASON_IDS: Record<FeedbackTier, readonly string[]> = {
   mid: flattenIds(FEEDBACK_REASONS.mid),
   high: flattenIds(FEEDBACK_REASONS.high),
 };
+
+// id -> { label, parentLabel? } for every id (parent and sub-reason) in a
+// tier's pool. Lets the admin Reviews list turn a submitted reason id back
+// into a human-readable label without re-walking the FEEDBACK_REASONS tree.
+function buildLookup(
+  options: FeedbackReasonOption[],
+  parentLabel?: string,
+): Record<string, { label: string; parentLabel?: string }> {
+  const out: Record<string, { label: string; parentLabel?: string }> = {};
+  for (const o of options) {
+    out[o.id] = parentLabel ? { label: o.label, parentLabel } : { label: o.label };
+    if (o.subReasons) Object.assign(out, buildLookup(o.subReasons, o.label));
+  }
+  return out;
+}
+
+export const FEEDBACK_REASON_LOOKUP: Record<FeedbackTier, Record<string, { label: string; parentLabel?: string }>> = {
+  low: buildLookup(FEEDBACK_REASONS.low),
+  mid: buildLookup(FEEDBACK_REASONS.mid),
+  high: buildLookup(FEEDBACK_REASONS.high),
+};
+
+// Human-readable label for one submitted reason id, e.g. "Велосипед — Тормоза
+// плохо работают" for a sub-reason, or just "Другое" for a flat/parent-only
+// pick. Falls back to the raw id for anything not found in the pool (e.g. a
+// stale id from before a FEEDBACK_REASONS edit) so the admin list never
+// throws on old rows.
+export function formatFeedbackReason(rating: number, id: string): string {
+  const entry = FEEDBACK_REASON_LOOKUP[feedbackTierForRating(rating)][id];
+  if (!entry) return id;
+  return entry.parentLabel ? `${entry.parentLabel} — ${entry.label}` : entry.label;
+}
+
+// All submitted reasons for one feedback row, formatted for display.
+export function formatFeedbackReasons(rating: number, reasons: string[]): string[] {
+  return reasons.map((id) => formatFeedbackReason(rating, id));
+}

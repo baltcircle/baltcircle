@@ -793,6 +793,16 @@ export const rideFeedback = pgTable("ride_feedback", {
 ]);
 export type RideFeedback = typeof rideFeedback.$inferSelect;
 
+// Feedback row enriched with rider identity + bike id for the admin Reviews
+// list, mirroring how AdminRide enriches Ride above. bikeId/userName/userPhone
+// are resolved server-side (bikeId via the ride, name/phone via the feedback's
+// own userId — always the ride owner, see submitRideFeedback).
+export type AdminRideFeedback = RideFeedback & {
+  bikeId: string | null;
+  userName: string | null;
+  userPhone: string | null;
+};
+
 export const createRideFeedbackSchema = z.object({
   rating: z.number().int().min(1).max(5),
   reasons: z.array(z.string().trim().min(1).max(40)).max(15).default([]),

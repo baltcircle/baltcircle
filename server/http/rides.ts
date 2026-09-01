@@ -293,6 +293,14 @@ export function registerRideRoutes(app: Express): void {
     const { limit, offset } = parsePageParams(req);
     res.json(await storage.listAdminRides({ limit, offset }));
   });
+  // Admin Reviews list: every submitted post-ride feedback, newest first,
+  // enriched with rider identity + bike id. Sorting/filtering happen
+  // client-side over this full list, mirroring /api/admin/rides.
+  app.get("/api/admin/feedback", requireRole("operator", "admin"), async (req, res) => {
+    res.setHeader("X-Total-Count", String(await storage.countRideFeedback()));
+    const { limit, offset } = parsePageParams(req);
+    res.json(await storage.listRideFeedback({ limit, offset }));
+  });
   // Manually finish any active ride. Reuses the shared endRide() (which settles
   // cost, frees the bike and charges the wallet) but, unlike the rider endpoint,
   // an operator may end a ride that isn't their own. 404 if not active.
