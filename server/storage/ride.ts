@@ -165,7 +165,11 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
               }
               claimedReservationId = reservationRow.id;
             }
-            if (bike.battery < 18) return { error: "Низкий заряд замка, выберите другой велосипед" };
+            // The old flat "battery < 18% blocks start" rule was removed (2026-09):
+            // the offline-status logic above is now the single source of truth for
+            // battery-based rentability. Any bike whose battery matters is already
+            // "offline" (rejected above) at LOW_BATTERY_AUTO_OFFLINE_THRESHOLD (10%);
+            // anything still "available" is by definition fine to rent.
             // No row to lock here (the rider may have zero rides), so this read
             // alone cannot be made race-proof the same way — idx_rides_active_user
             // is what actually closes this half of the race; a loser lands on the
