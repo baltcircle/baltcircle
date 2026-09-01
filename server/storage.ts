@@ -8,9 +8,11 @@ export { bikeEvents, BIKE_EVENT_CHANNEL } from "./storage/events";
 import {
   rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, pendingEndEvents, LOCK_CLOSED_FOR_END,
   lockAlarmEvents, LOCK_FALL_ALARM, LOCK_MOVEMENT_ALARM,
+  bikeAutoOfflineEvents, BIKE_AUTO_OFFLINE,
 } from "./storage/events";
 import type {
   LockGpsRefreshedPayload, LockClosedForEndPayload, LockFallAlarmPayload, LockMovementAlarmPayload,
+  BikeAutoOfflinePayload,
 } from "./storage/events";
 import { log } from "./logger";
 import { END_SETTLE_RETRY_INTERVAL_MS, END_SETTLE_RETRY_WINDOW_MS, RIDE_END_AWAITING_LOCK_GPS_ERROR } from "@shared/geo";
@@ -121,6 +123,16 @@ lockAlarmEvents.on(LOCK_FALL_ALARM, (payload: LockFallAlarmPayload) => {
 lockAlarmEvents.on(LOCK_MOVEMENT_ALARM, (payload: LockMovementAlarmPayload) => {
   storage.createMovementAlert(payload.bikeId, payload.at)
     .catch((err) => log(`movement-alert create failed: bike=${payload.bikeId} ${(err as Error).message}`));
+});
+
+// Bridge: server/omni/store.ts flips a parked bike's status straight to
+// "offline" (plain SQL, see its file header) once its telemetry battery
+// reading crosses LOW_BATTERY_AUTO_OFFLINE_THRESHOLD while status was still
+// "available", and emits here — mirrors the fall/movement bridges above.
+// Best-effort: must never crash the OMNI TCP process on a transient DB hiccup.
+bikeAutoOfflineEvents.on(BIKE_AUTO_OFFLINE, (payload: BikeAutoOfflinePayload) => {
+  storage.createLowBatteryOfflineAlert(payload.bikeId, payload.battery, payload.at)
+    .catch((err) => log(`low-battery-offline alert create failed: bike=${payload.bikeId} ${(err as Error).message}`));
 });
 
 /**

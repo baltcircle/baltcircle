@@ -30,11 +30,10 @@ export type BikeSaveForm = {
   id: string;
   status: BikeStatus;
   lockImei: string;
-  notes: string;
 };
 
 export const emptyBikeForm: BikeSaveForm = {
-  id: "", status: "available", lockImei: "", notes: "",
+  id: "", status: "available", lockImei: "",
 };
 
 export type LockBatterySnapshot = {
@@ -72,7 +71,6 @@ export function buildBikeSavePayload(
 ) {
   const common = {
     status: form.status,
-    notes: form.notes,
   };
 
   if (editing) {

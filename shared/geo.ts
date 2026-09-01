@@ -166,6 +166,14 @@ export const MAX_PLAUSIBLE_GPS_JUMP_M = 15_000;
 // a low-quality point.
 export const MAX_ACCEPTABLE_HDOP = 10;
 
+// A bike idling in "available" whose lock battery telemetry drops to this
+// level or below is taken out of rotation automatically (server/omni/store.ts)
+// — it must not be handed to a rider who could get stranded mid-ride on a
+// dead lock. The exact same threshold is re-checked at ride end
+// (server/storage/ride.ts) for a bike coming off an active rental, since a
+// mid-ride battery dip is deliberately never allowed to interrupt the ride.
+export const LOW_BATTERY_AUTO_OFFLINE_THRESHOLD = 10;
+
 // How many of a lock's most recent ACCEPTED fixes (valid + within
 // MAX_ACCEPTABLE_HDOP) to combine, via a per-axis median, for the ride-end
 // geofence decision specifically. A single fix — even a good one — can still

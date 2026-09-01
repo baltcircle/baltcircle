@@ -6,7 +6,6 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Field } from "@/components/FormField";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -42,7 +41,6 @@ export function BikeFormDialog({
       id: editing.id,
       status: editing.status as BikeStatus,
       lockImei: editing.lockImei ?? "",
-      notes: editing.notes ?? "",
     } : emptyBikeForm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editing]);
@@ -148,15 +146,6 @@ export function BikeFormDialog({
             currentImei={editing?.lockImei ?? null}
             required={!editing}
           />
-          <Field label="Заметки (необязательно)">
-            <Textarea
-              value={form.notes}
-              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-              rows={2}
-              data-testid="input-bike-notes"
-            />
-          </Field>
-
           {formError && (
             <div className="text-xs text-destructive" data-testid="bike-form-error">{formError}</div>
           )}

@@ -10,7 +10,9 @@
 // INSERTs: reports accumulate in memory and land as one multi-row statement per
 // flush window.
 import type { OmniMessage } from "@shared/omni/protocol";
-import { haversineM, MAX_PLAUSIBLE_GPS_JUMP_M, MAX_ACCEPTABLE_HDOP } from "@shared/geo";
+import {
+  haversineM, MAX_PLAUSIBLE_GPS_JUMP_M, MAX_ACCEPTABLE_HDOP, LOW_BATTERY_AUTO_OFFLINE_THRESHOLD,
+} from "@shared/geo";
 import { pool } from "../db/bootstrap";
 import { logger } from "../logger";
 import { consumePendingPause } from "./pause-registry";
@@ -21,7 +23,10 @@ import {
   pendingEndEvents, LOCK_CLOSED_FOR_END, type LockClosedForEndPayload,
   lockAlarmEvents, LOCK_FALL_ALARM, type LockFallAlarmPayload,
   LOCK_MOVEMENT_ALARM, type LockMovementAlarmPayload,
+  bikeAutoOfflineEvents, BIKE_AUTO_OFFLINE,
+  bikeEvents, BIKE_EVENT_CHANNEL,
 } from "../storage/events";
+
 
 // Keep the public TCP process decoupled from the full Drizzle schema graph: it
 // is started before HTTP routes and should only need the constants it owns.
@@ -489,6 +494,33 @@ export class PgOmniStore implements OmniStore {
        WHERE b.id = v.bike_id AND (b.last_seen IS NULL OR b.last_seen <= v.t)`,
       params,
     );
+
+    // Auto-offline (rental spec addendum, 2026-09): only bikes that actually
+    // reported a battery reading in this flush can have newly crossed the
+    // threshold, so scope the follow-up write to just those ids instead of
+    // re-scanning the whole fleet every flush interval. `status = 'available'`
+    // in the WHERE clause is what keeps this from ever touching a bike
+    // mid-ride — a rented bike's battery dropping to/below the threshold is
+    // handled at ride end instead (server/storage/ride.ts), never here.
+    // Deliberately does NOT call sendUnlockCommand or any lock command: unlike
+    // the operator-initiated moves in server/http/catalog.ts's
+    // MOVEMENT_ALARM_SUPPRESSED_STATUSES (which excludes "offline" precisely
+    // so an automatic low-battery transition never pops the shackle open),
+    // this path never opens the lock.
+    const batteryReportedIds = updates.filter((u) => u.batteryPct != null).map((u) => u.bikeId);
+    if (batteryReportedIds.length === 0) return;
+    const offlined = await pool.query(
+      `UPDATE bikes SET status = 'offline', maintenance_reason = 'auto:low_battery'
+       WHERE id = ANY($1::text[]) AND status = 'available' AND battery <= $2
+       RETURNING id, battery`,
+      [batteryReportedIds, LOW_BATTERY_AUTO_OFFLINE_THRESHOLD],
+    );
+    if (offlined.rows.length === 0) return;
+    bikeEvents.emit(BIKE_EVENT_CHANNEL);
+    const at = Date.now();
+    for (const row of offlined.rows as { id: string; battery: number }[]) {
+      bikeAutoOfflineEvents.emit(BIKE_AUTO_OFFLINE, { bikeId: row.id, battery: row.battery, at });
+    }
   }
 
   /**

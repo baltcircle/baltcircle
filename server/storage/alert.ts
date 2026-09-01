@@ -57,6 +57,22 @@ export function AlertMixin<TBase extends Constructor>(Base: TBase) {
       );
     }
 
+    /**
+     * Best-effort, called after a bike auto-transitions "available"/"rented"
+     * -> "offline" on low battery (bike.ts/ride.ts). Reuses the existing
+     * `low_battery` kind (shared/schema.ts's ALERT_KINDS) — it was reserved
+     * for exactly this "auto-service transition" case and had no producer
+     * yet. Same dedup as fall/movement: a bike stuck offline on a dead
+     * battery keeps re-reporting on every heartbeat and must not spam a
+     * fresh row each time.
+     */
+    async createLowBatteryOfflineAlert(bikeId: string, battery: number, at: number): Promise<Alert | null> {
+      return this.createAlertRow(
+        bikeId, "low_battery", "high",
+        `Велосипед ${bikeId} переведён в статус «оффлайн»: заряд замка ${battery}%`, at,
+      );
+    }
+
     async listAlerts(opts?: { includeAcknowledged?: boolean }): Promise<Alert[]> {
       const rows = opts?.includeAcknowledged
         ? await db.select().from(alerts).orderBy(desc(alerts.createdAt))

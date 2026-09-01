@@ -9,7 +9,7 @@ import { fmtRelative, fmtRub } from "@/lib/format";
 import {
   Map as MapIcon, Users as UsersIcon, Wrench,
   Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity, ChevronRight,
-  LifeBuoy, MessageSquare, AlertOctagon, ShieldAlert,
+  LifeBuoy, MessageSquare, AlertOctagon, ShieldAlert, PowerOff,
 } from "lucide-react";
 import { useSupportUnread } from "@/hooks/use-support-unread";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
@@ -66,6 +66,7 @@ export function AdminPage() {
   });
   const fallAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "fall");
   const movementAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "movement_alarm");
+  const offlineAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "low_battery");
 
   const m = useMemo(() => deriveMetrics({ bikes, users, rides, tickets, mapObjects, parkings }), [
     bikes, users, rides, tickets, mapObjects, parkings,
@@ -343,6 +344,58 @@ export function AdminPage() {
                     disabled={ackAlertMut.isPending}
                     onClick={() => ackAlertMut.mutate(a.id)}
                     data-testid={`ack-movement-alert-${a.id}`}
+                  >
+                    Подтвердить
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* ---------- Auto-offline alerts (low lock battery, manual ack) ---------- */}
+      <div className="grid lg:grid-cols-3 gap-4 mt-4">
+        <Card className="p-5 lg:col-span-3" data-testid="dashboard-offline-alerts">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-display text-lg font-light flex items-center gap-2">
+              <PowerOff className={`w-4 h-4 ${offlineAlerts.length ? "text-slate-500" : "text-muted-foreground"}`} />
+              Ушли в оффлайн (низкий заряд замка)
+            </h2>
+            {offlineAlerts.length > 0 && <Badge variant="destructive">{offlineAlerts.length}</Badge>}
+          </div>
+          {fleetAlertsQ.isLoading ? (
+            <div className="text-sm text-muted-foreground py-4">Загружаем данные…</div>
+          ) : offlineAlerts.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-4" data-testid="dashboard-offline-alerts-empty">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              Велосипедов в автоматическом оффлайне нет.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {offlineAlerts.map((a) => (
+                <div
+                  key={a.id}
+                  className="flex items-center gap-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-3"
+                  data-testid={`dashboard-offline-alert-${a.id}`}
+                >
+                  <span className="flex items-center justify-center w-8 h-8 rounded-full shrink-0 bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                    <PowerOff className="w-4 h-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <Link href="/admin/bikes" className="text-sm font-medium hover:underline">
+                      {a.bikeId}
+                    </Link>
+                    <div className="text-xs text-muted-foreground truncate">
+                      Переведён в оффлайн {fmtRelative(a.createdAt)}
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={ackAlertMut.isPending}
+                    onClick={() => ackAlertMut.mutate(a.id)}
+                    data-testid={`ack-offline-alert-${a.id}`}
                   >
                     Подтвердить
                   </Button>

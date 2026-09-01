@@ -85,3 +85,19 @@ export interface LockMovementAlarmPayload {
   bikeId: string;
   at: number;
 }
+
+// Auto-offline bridge: mirrors the fall/movement alarm bridges above.
+// server/omni/store.ts (Drizzle-free, see its file header) detects a bike
+// idling in "available" whose battery telemetry just crossed the
+// LOW_BATTERY_AUTO_OFFLINE_THRESHOLD and flips bikes.status to "offline"
+// itself (plain SQL, no Drizzle needed for that write) — but only this
+// storage layer can turn it into a persisted `alerts` row (Drizzle) with
+// fleet-dashboard dedup and the ack workflow. Wired in server/storage.ts.
+export const bikeAutoOfflineEvents = new EventEmitter();
+bikeAutoOfflineEvents.setMaxListeners(0);
+export const BIKE_AUTO_OFFLINE = "auto-offline";
+export interface BikeAutoOfflinePayload {
+  bikeId: string;
+  battery: number;
+  at: number;
+}

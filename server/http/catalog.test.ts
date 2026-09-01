@@ -475,7 +475,7 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
     storageMock.getUser.mockResolvedValue(operator);
   });
 
-  it.each(["offline", "maintenance", "archived", "storage"])(
+  it.each(["maintenance", "archived", "storage"])(
     "unlocks the lock (opaque userId 0) when status changes to %s, with no active ride",
     async (status) => {
       storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status } });
@@ -488,6 +488,23 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
 
       expect(res.status).toBe(200);
       expect(sendUnlockCommand).toHaveBeenCalledWith(bike.lockImei, 0);
+    },
+  );
+
+  it(
+    "does not unlock for \"offline\" (rental spec addendum, 2026-09) \u2014 a bike must never " +
+      "be reachable/openable once it drops out of rotation on a dead lock battery",
+    async () => {
+      storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "offline" } });
+      storageMock.getActiveRideForBike.mockResolvedValue(undefined);
+      const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+      setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+
+      const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "offline" });
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(res.status).toBe(200);
+      expect(sendUnlockCommand).not.toHaveBeenCalled();
     },
   );
 

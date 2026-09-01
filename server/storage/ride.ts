@@ -6,6 +6,7 @@ import {
   findNearestParkingWithinRadius, findNearestParkingWithinRadiusFromRealCoords,
   LOCK_GPS_LIVE_MS, RIDE_GPS_TRACKING_INTERVAL_SECONDS, PAUSE_ARM_TTL_MS, END_ARM_TTL_MS,
   RIDE_END_AWAITING_LOCK_GPS_ERROR, MAX_ACCEPTABLE_HDOP, END_GEOFENCE_SMOOTHING_SAMPLES,
+  LOW_BATTERY_AUTO_OFFLINE_THRESHOLD,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
 import { pendingPauseCreditMs } from "@shared/pause";
@@ -130,6 +131,14 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             const bike = (await tx.select().from(bikes).where(eq(bikes.id, bikeId)).for("update").limit(1))[0] as Bike | undefined;
             if (!bike) return { error: "Велосипед не найден" };
             lockImei = bike.lockImei ?? null;
+            // Friendlier, rider-facing wording for "offline" specifically (rental
+            // spec addendum, 2026-09) — most often reached automatically on low
+            // battery, so a raw status string here would be confusing/leaky.
+            // Checked before the generic branch below, which still covers every
+            // other non-rentable status (maintenance/storage/lost/archived/rented).
+            if (bike.status === "offline") {
+              return { error: "Велосипед временно недоступен (низкий заряд замка) — выберите другой велосипед" };
+            }
             if (bike.status !== "available" && bike.status !== "reserved") {
               return { error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` };
             }
@@ -156,7 +165,11 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
               }
               claimedReservationId = reservationRow.id;
             }
-            if (bike.battery < 18) return { error: "Низкий заряд замка, выберите другой велосипед" };
+            // The old flat "battery < 18% blocks start" rule was removed (2026-09):
+            // the offline-status logic above is now the single source of truth for
+            // battery-based rentability. Any bike whose battery matters is already
+            // "offline" (rejected above) at LOW_BATTERY_AUTO_OFFLINE_THRESHOLD (10%);
+            // anything still "available" is by definition fine to rent.
             // No row to lock here (the rider may have zero rides), so this read
             // alone cannot be made race-proof the same way — idx_rides_active_user
             // is what actually closes this half of the race; a loser lands on the
@@ -467,6 +480,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       this: {
         invalidateBikesCache(opts?: { silent?: boolean }): void;
         loadRidePoints(rideId: number, executor: { execute: (query: ReturnType<typeof sql>) => Promise<{ rows: unknown[] }> }): Promise<[number, number, number][]>;
+        createLowBatteryOfflineAlert(bikeId: string, battery: number, at: number): Promise<unknown>;
       },
       rideId: number,
       opts?: { skipGeofence?: boolean },
@@ -485,7 +499,12 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       // explicit annotation forces the clean union we actually rely on.
       const result = await db.transaction(async (
         tx,
-      ): Promise<{ error: string } | { ride: Ride; overageKopecks: number; lockImei: string | null } | undefined> => {
+      ): Promise<
+        | { error: string }
+        | { ride: Ride; overageKopecks: number; lockImei: string | null; wentOffline: false }
+        | { ride: Ride; overageKopecks: number; lockImei: string | null; wentOffline: true; battery: number }
+        | undefined
+      > => {
         // `.for("update")` locks the ride row for the duration of this tx (audit
         // HIGH: double endRide). Without it, two concurrent completions of the
         // same ride (a duplicate client request, a retried webhook) both read
@@ -605,8 +624,23 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         // Assignment is based only on live, active parkings, computed above from
         // the same validated position — merged into one update (previously two
         // separate statements) now that both share a single source of truth.
+        //
+        // Auto-offline (rental spec addendum, 2026-09): the rider's ongoing ride
+        // is never interrupted by a battery dip — see the low-battery check the
+        // OMNI telemetry writer applies while a bike merely sits "available"
+        // (server/omni/store.ts), which is deliberately scoped to skip rented
+        // bikes. This is the ONE place a low-battery bike coming off an active
+        // ride is checked: only now, at the exact "rented" -> "available"
+        // transition, and only using the freshest reading we have (the row
+        // fetched above at the top of this transaction). Landing in "offline"
+        // instead of "available" here must not open the lock — this UPDATE
+        // never issues a lock command either way.
+        const finalBattery = bike?.battery ?? null;
+        const wentOffline = finalBattery != null && finalBattery <= LOW_BATTERY_AUTO_OFFLINE_THRESHOLD;
         await tx.update(bikes).set({
-          status: "available", lat: finalLat, lng: finalLng,
+          status: wentOffline ? "offline" : "available",
+          ...(wentOffline ? { maintenanceReason: "auto:low_battery" } : {}),
+          lat: finalLat, lng: finalLng,
           lastSeen: endedAt, idleHours: 0, parkingId: parkingMatch?.id ?? null,
         } as any).where(eq(bikes.id, r.bikeId));
 
@@ -638,14 +672,23 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           ride: (await tx.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride,
           overageKopecks,
           lockImei: bike?.lockImei ?? null,
+          ...(wentOffline ? { wentOffline: true as const, battery: finalBattery! } : { wentOffline: false as const }),
         };
       });
       if (!result) return undefined;
       if ("error" in result) return result;
-      // Ended ride freed the bike (status "available") → refresh the map list and
-      // push a terminal event so the rider's SSE stream sends null (ride over).
+      // Ended ride freed the bike (status "available", or "offline" on a dead
+      // battery — see wentOffline above) → refresh the map list and push a
+      // terminal event so the rider's SSE stream sends null (ride over).
       this.invalidateBikesCache();
       rideEvents.emit(result.ride.userId, "end" as RideEventReason);
+      // Best-effort, mirrors the OMNI-telemetry auto-offline alert
+      // (server/omni/store.ts) — same dashboard card, same dedup, just a
+      // different trigger point (ride end instead of an idle heartbeat).
+      if (result.wentOffline) {
+        this.createLowBatteryOfflineAlert(result.ride.bikeId, result.battery, Date.now())
+          .catch(() => {});
+      }
       if (result.overageKopecks > 0) {
         sendToUserAsync(result.ride.userId, {
           title: "Оплата поездки",

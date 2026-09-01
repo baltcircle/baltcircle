@@ -46,8 +46,18 @@ import {
 // software has is unlocking the shackle before staff move the bike — that
 // opens it, which disarms the sensor as a side effect. Deliberately excludes
 // "lost": for a lost bike, alarming on movement is exactly the point.
+//
+// Deliberately excludes "offline" too (rental spec addendum, 2026-09): a bike
+// can now reach "offline" automatically on low battery (server/omni/store.ts,
+// server/storage/ride.ts) with the lock never told to open, and this same set
+// also drives the operator-initiated PATCH below — an admin manually flipping
+// a bike to "offline" must get the identical no-unlock behaviour, or the two
+// paths would silently disagree on whether "offline" ever pops the shackle.
+// Staff who genuinely need the physical lock open on an offline bike (e.g. to
+// retrieve/recharge it) still have the explicit /api/admin/locks/:id/unlock
+// control below, unaffected by this set.
 const MOVEMENT_ALARM_SUPPRESSED_STATUSES: ReadonlySet<string> = new Set(
-  ["offline", "maintenance", "archived", "storage"] satisfies BikeStatus[],
+  ["maintenance", "archived", "storage"] satisfies BikeStatus[],
 );
 
 // Fire-and-forget, mirroring the GPS-refresh call beside it: never blocks the

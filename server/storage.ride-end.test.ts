@@ -294,6 +294,39 @@ describe("endRide — bike release and parking assignment", () => {
   });
 });
 
+describe("endRide — auto-offline on low lock battery (rental spec addendum, 2026-09)", () => {
+  it("lands the bike in \"offline\" (not \"available\") when the fresh battery reading is at/under the threshold", async () => {
+    const activeRide = makeRide();
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx, calls } = makeTx([[activeRide], [makeBike({ battery: 8 })], [], [completedRide]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+    const alertSpy = vi.spyOn(storage, "createLowBatteryOfflineAlert").mockResolvedValue(null);
+
+    await storage.endRide(activeRide.id);
+
+    const bikeUpdates = calls.update.filter((c) => c.table === bikes);
+    const statusUpdate = bikeUpdates.find((c) => c.patch && "status" in (c.patch as object));
+    expect((statusUpdate!.patch as any).status).toBe("offline");
+    expect((statusUpdate!.patch as any).maintenanceReason).toBe("auto:low_battery");
+    expect(alertSpy).toHaveBeenCalledWith("BC-01", 8, expect.any(Number));
+  });
+
+  it("still frees the bike to \"available\" when the fresh battery reading is above the threshold", async () => {
+    const activeRide = makeRide();
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx, calls } = makeTx([[activeRide], [makeBike({ battery: 45 })], [], [completedRide]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+    const alertSpy = vi.spyOn(storage, "createLowBatteryOfflineAlert").mockResolvedValue(null);
+
+    await storage.endRide(activeRide.id);
+
+    const bikeUpdates = calls.update.filter((c) => c.table === bikes);
+    const statusUpdate = bikeUpdates.find((c) => c.patch && "status" in (c.patch as object));
+    expect((statusUpdate!.patch as any).status).toBe("available");
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("endRide — side effects only fire on real settlement", () => {
   it("invalidates the bikes cache and emits a rider 'end' event when the ride settles", async () => {
     const activeRide = makeRide();

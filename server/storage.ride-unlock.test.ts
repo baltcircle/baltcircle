@@ -224,3 +224,28 @@ describe("startRide physical unlock gate (audit F-04)", () => {
     expect(result).toHaveProperty("error");
   });
 });
+
+describe("startRide — offline bike rejection (rental spec addendum, 2026-09)", () => {
+  it("rejects a QR-scan start with a friendly message when the bike is offline, without touching the lock", async () => {
+    const bike = makeBike({ status: "offline", lockImei: "868000000000001" });
+    // Rejected on the very first select (bike row) — no further selects
+    // (locks/parkings) are ever reached for an offline bike.
+    const { tx } = makeTx([[bike]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: true });
+
+    expect(result).toEqual({ error: "Велосипед временно недоступен (низкий заряд замка) — выберите другой велосипед" });
+    expect(getLockGatewayMock).not.toHaveBeenCalled();
+  });
+
+  it("allows a start on an \"available\" bike with battery just above the auto-offline threshold (old flat 18% start-gate removed, 2026-09)", async () => {
+    const bike = makeBike({ status: "available", battery: 12, lockImei: null });
+    const { tx } = makeTx([[bike], [], [makeParking()]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: true });
+
+    expect(result).not.toHaveProperty("error");
+  });
+});
