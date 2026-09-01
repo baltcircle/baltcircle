@@ -8,6 +8,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { errorMessage } from "@/lib/error-message";
 import { useToast } from "@/hooks/use-toast";
 import { feedbackTierForRating, FEEDBACK_TIER_TITLES, FEEDBACK_REASONS } from "@shared/feedback";
+import type { FeedbackReasonOption } from "@shared/feedback";
 
 interface Props {
   open: boolean;
@@ -60,8 +61,41 @@ export function RideFeedbackDialog({ open, onOpenChange, rideId }: Props) {
 
   const tier = rating > 0 ? feedbackTierForRating(rating) : null;
 
+  // Each rating tier has its own reason pool (shared/feedback.ts). If the
+  // rider taps a star that flips the tier (e.g. 3★ → 4★) after already
+  // picking reasons from the previous tier's pool, those stale ids stay in
+  // `reasons` — invisible now (the new tier's chip list doesn't render them),
+  // but still submitted, so the server rejects the whole request with
+  // "Некорректная причина отзыва" (submitRideFeedback validates every id
+  // against the *submitted* rating's tier). Clearing on tier change keeps
+  // `reasons` always a subset of what's actually on screen.
+  const handleRatingSelect = (n: number) => {
+    if (rating > 0 && feedbackTierForRating(rating) !== feedbackTierForRating(n)) {
+      setReasons([]);
+    }
+    setRating(n);
+  };
+
   const toggleReason = (id: string) => {
     setReasons((prev) => (prev.includes(id) ? prev.filter((r) => r !== id) : [...prev, id]));
+  };
+
+  // Unchecking a category chip (e.g. "Велосипед") hides its sub-reason panel,
+  // but a plain toggleReason(opt.id) would leave any already-picked
+  // sub-reason ids (e.g. "bike_brakes") sitting in `reasons` — invisible
+  // (their panel is gone) yet still selected, so reopening the category
+  // later shows old picks silently restored, or a later "next" tap that
+  // happens to land on the collapsing panel reads as "my previous pick got
+  // cancelled". Clear the whole sub-tree together with the parent so the
+  // panel's visibility always matches what's actually selected.
+  const toggleParentReason = (opt: FeedbackReasonOption) => {
+    setReasons((prev) => {
+      if (prev.includes(opt.id)) {
+        const subIds = new Set(opt.subReasons?.map((s) => s.id) ?? []);
+        return prev.filter((r) => r !== opt.id && !subIds.has(r));
+      }
+      return [...prev, opt.id];
+    });
   };
 
   const handleOpenChange = (v: boolean) => {
@@ -83,12 +117,12 @@ export function RideFeedbackDialog({ open, onOpenChange, rideId }: Props) {
               <button
                 key={n}
                 type="button"
-                onClick={() => setRating(n)}
+                onClick={() => handleRatingSelect(n)}
                 onMouseEnter={() => setHoverRating(n)}
                 onMouseLeave={() => setHoverRating(0)}
                 data-testid={`button-rating-star-${n}`}
                 aria-label={`Оценка ${n} из 5`}
-                className="p-1"
+                className="p-1 touch-manipulation"
               >
                 <Star
                   className={`w-8 h-8 transition-colors ${
@@ -110,9 +144,9 @@ export function RideFeedbackDialog({ open, onOpenChange, rideId }: Props) {
                   <button
                     key={opt.id}
                     type="button"
-                    onClick={() => toggleReason(opt.id)}
+                    onClick={() => toggleParentReason(opt)}
                     data-testid={`button-reason-${opt.id}`}
-                    className={`rounded-full border px-3 py-1.5 text-sm transition-colors hover-elevate ${
+                    className={`touch-manipulation rounded-full border px-3 py-1.5 text-sm transition-colors hover-elevate ${
                       active ? "border-primary ring-1 ring-primary bg-primary/5" : "border-card-border"
                     }`}
                   >
@@ -133,7 +167,7 @@ export function RideFeedbackDialog({ open, onOpenChange, rideId }: Props) {
                         type="button"
                         onClick={() => toggleReason(sub.id)}
                         data-testid={`button-reason-${sub.id}`}
-                        className={`rounded-full border px-3 py-1.5 text-xs transition-colors hover-elevate ${
+                        className={`touch-manipulation rounded-full border px-3 py-1.5 text-xs transition-colors hover-elevate ${
                           subActive ? "border-primary ring-1 ring-primary bg-primary/5" : "border-card-border"
                         }`}
                       >
