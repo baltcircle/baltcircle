@@ -16,7 +16,10 @@ export function BikeQrDialog({
 
   const download = () => {
     if (!bike) return;
-    const svg = qrToSvg(link, { size: 512 });
+    // Bake the bike code into the downloaded file itself — it may be handed
+    // off to a printer/label service that never sees this dialog's on-screen
+    // text, so the code has to travel inside the SVG.
+    const svg = qrToSvg(link, { size: 512, label: bike.id });
     const blob = new Blob([svg], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -64,7 +67,7 @@ export function BikeQrDialog({
 
         {bike && (
           <div className="flex flex-col items-center gap-4">
-            <BikeQr value={link} size={220} className="rounded-lg border border-card-border p-2 bg-white" testId="bike-qr-image" />
+            <BikeQr value={link} label={bike.id} size={220} className="rounded-lg border border-card-border p-2 bg-white" testId="bike-qr-image" />
             <code className="text-xs break-all text-center text-muted-foreground" data-testid="bike-qr-link">{link}</code>
             <div className="flex flex-wrap items-center justify-center gap-2">
               <Button variant="outline" size="sm" onClick={copy} data-testid="button-copy-qr">
