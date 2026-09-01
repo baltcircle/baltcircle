@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { tariffLabelForHours, tariffLabelForRide, tariffDurationMs, tariffPriceKopecks, TARIFFS } from "./geo";
+import {
+  tariffLabelForHours, tariffLabelForMinutes, tariffLabelForRide,
+  tariffDurationMs, tariffPriceKopecks, TARIFFS,
+} from "./geo";
 
 describe("tariffLabelForHours", () => {
   it("reuses the catalog's own name for an exact tariff-duration match", () => {
@@ -45,18 +48,50 @@ describe("tariffLabelForHours", () => {
     expect(tariffLabelForHours(0)).toBe("0 часов");
   });
 
+  describe("tariffLabelForMinutes", () => {
+    it("reuses the m1 catalog name for the 1-minute singular", () => {
+      expect(tariffLabelForMinutes(1)).toBe("1 минута");
+    });
+
+    it("applies correct Russian pluralization", () => {
+      expect(tariffLabelForMinutes(2)).toBe("2 минуты");
+      expect(tariffLabelForMinutes(4)).toBe("4 минуты");
+      expect(tariffLabelForMinutes(5)).toBe("5 минут");
+      expect(tariffLabelForMinutes(8)).toBe("8 минут");
+      expect(tariffLabelForMinutes(21)).toBe("21 минута");
+    });
+
+    it("applies the 11-14 exception", () => {
+      expect(tariffLabelForMinutes(11)).toBe("11 минут");
+      expect(tariffLabelForMinutes(12)).toBe("12 минут");
+    });
+  });
+
   describe("tariffLabelForRide", () => {
-    it("resolves an m1-only ride to its own name via the ride's tariff id", () => {
-      expect(tariffLabelForRide({ tariff: "m1", totalTariffHours: 0 })).toBe("1 минута");
+    it("resolves an m1-only, never-extended ride to its own name via totalTariffMs", () => {
+      expect(tariffLabelForRide({ tariff: "m1", totalTariffMs: 60_000 })).toBe("1 минута");
     });
 
-    it("still falls back to the legacy label for a genuinely unknown zero-hour tariff", () => {
-      expect(tariffLabelForRide({ tariff: "payg", totalTariffHours: 0 })).toBe("0 часов");
+    // Regression guard for the actual bug report: extending a sub-hour
+    // tariff (durationHours: 0) used to be invisible in the label because
+    // totalTariffHours can't represent it at all — every extension added 0.
+    // totalTariffMs has no such blind spot.
+    it("reflects every extension of a sub-hour tariff, unlike the old hours-only counter", () => {
+      expect(tariffLabelForRide({ tariff: "m1", totalTariffMs: 120_000 })).toBe("2 минуты");
+      expect(tariffLabelForRide({ tariff: "m1", totalTariffMs: 480_000 })).toBe("8 минут");
     });
 
-    it("defers to the normal hours-based label once an hourly tariff contributes", () => {
-      expect(tariffLabelForRide({ tariff: "h1", totalTariffHours: 1 })).toBe("1 час");
-      expect(tariffLabelForRide({ tariff: "m1", totalTariffHours: 1 })).toBe("1 час");
+    it("falls back to the legacy label for a historical row predating totalTariffMs", () => {
+      expect(tariffLabelForRide({ tariff: "m1", totalTariffMs: 0 })).toBe("1 минута");
+    });
+
+    it("still falls back to the generic zero label for a genuinely unknown legacy tariff", () => {
+      expect(tariffLabelForRide({ tariff: "payg", totalTariffMs: 0 })).toBe("0 часов");
+    });
+
+    it("defers to the normal hours-based label once the cumulative total reaches an hour", () => {
+      expect(tariffLabelForRide({ tariff: "h1", totalTariffMs: 60 * 60 * 1000 })).toBe("1 час");
+      expect(tariffLabelForRide({ tariff: "h1", totalTariffMs: 2 * 60 * 60 * 1000 })).toBe("2 часа");
     });
   });
 });

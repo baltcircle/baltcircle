@@ -7,7 +7,7 @@
 // so `tsc` verifies every method is still present with its exact signature.
 
 import type {
-  Bike, Parking, ZoneRow, Ride, AdminRide, Ticket, TicketWithComments,
+  Bike, Parking, ZoneRow, Ride, AdminRide, RideWithFeedback, Ticket, TicketWithComments,
   Payment, Wallet, MapObject, InsertMapObject, User, AdminUser, OtpRequest, UserRole,
   UpdateProfileInput, PaymentMethod, SupportTicket, SupportTicketWithUser,
   SupportTicketStatus, PaymentOrder, AdminCreateBikeInput, AdminUpdateBikeInput,
@@ -271,7 +271,7 @@ export interface IRideStorage {
   extendRide(rideId: number, tariff: string): Promise<Ride | { error: string }>;
   getRide(rideId: number): Promise<Ride | undefined>;
   getActiveRide(userId: string): Promise<Ride | undefined>;
-  listRides(opts?: { userId?: string; limit?: number }): Promise<Ride[]>;
+  listRides(opts?: { userId?: string; limit?: number }): Promise<RideWithFeedback[]>;
   listAdminRides(opts?: { limit?: number; offset?: number }): Promise<AdminRide[]>;
   countRides(): Promise<number>;
 }

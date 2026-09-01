@@ -47,7 +47,7 @@ function makeRide(overrides: Partial<Ride> = {}): Ride {
     track: JSON.stringify([[2, 1, NOW]]), distanceM: 0,
     cost: 35000, tariff: "h1", status: "active", physicallyLockedAt: null,
     paidUntilAt: NOW - HOUR + HOUR, pausedAt: null, totalPausedMs: 0,
-    totalTariffHours: 1,
+    totalTariffHours: 1, totalTariffMs: HOUR,
     ...overrides,
   } as Ride;
 }
@@ -382,8 +382,8 @@ describe("extendRide", () => {
   // ORIGINAL tariff only (paidUntilAt moved, but nothing else did), so an h1
   // ride extended by another h1 showed "1 час / 350₽" in history/dashboard
   // instead of "2 часа / 700₽". extendRide must now accumulate both fields.
-  it("accumulates cost and totalTariffHours on top of the ride's existing values, not just paidUntilAt", async () => {
-    const active = makeRide({ cost: 35000, totalTariffHours: 1, paidUntilAt: NOW + 10 * 60 * 1000 });
+  it("accumulates cost and totalTariffHours/totalTariffMs on top of the ride's existing values, not just paidUntilAt", async () => {
+    const active = makeRide({ cost: 35000, totalTariffHours: 1, totalTariffMs: HOUR, paidUntilAt: NOW + 10 * 60 * 1000 });
     const { tx, calls } = makeTx([[active]]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
 
@@ -393,10 +393,11 @@ describe("extendRide", () => {
     const set = calls.updateSets[0] as any;
     expect(set.cost).toBe(70000); // 350₽ + 350₽ = 700₽, in kopecks
     expect(set.totalTariffHours).toBe(2); // 1h + 1h
+    expect(set.totalTariffMs).toBe(2 * HOUR);
   });
 
   it("accumulates a THIRD hour correctly (h1 -> extend h2 -> 3 hours total)", async () => {
-    const active = makeRide({ cost: 35000, totalTariffHours: 1, paidUntilAt: NOW + 10 * 60 * 1000 });
+    const active = makeRide({ cost: 35000, totalTariffHours: 1, totalTariffMs: HOUR, paidUntilAt: NOW + 10 * 60 * 1000 });
     const { tx, calls } = makeTx([[active]]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
 
@@ -405,6 +406,27 @@ describe("extendRide", () => {
     expect(result).not.toHaveProperty("error");
     const set = calls.updateSets[0] as any;
     expect(set.totalTariffHours).toBe(3); // 1h (original) + 2h (h2 extension)
+    expect(set.totalTariffMs).toBe(3 * HOUR);
+  });
+
+  // Regression guard for the actual bug report: a sub-hour tariff
+  // (durationHours: 0, e.g. "m1") adds 0 to totalTariffHours on every
+  // extension, so the label never reflected them before totalTariffMs
+  // existed. totalTariffMs must accumulate correctly for these too.
+  it("accumulates totalTariffMs for a sub-hour tariff even though totalTariffHours stays 0", async () => {
+    const active = makeRide({
+      tariff: "m1", cost: 1000, totalTariffHours: 0, totalTariffMs: 60_000,
+      paidUntilAt: NOW + 10 * 60 * 1000,
+    });
+    const { tx, calls } = makeTx([[active]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.extendRide(7, "m1");
+
+    expect(result).not.toHaveProperty("error");
+    const set = calls.updateSets[0] as any;
+    expect(set.totalTariffHours).toBe(0);
+    expect(set.totalTariffMs).toBe(120_000); // 1 min + 1 min
   });
 
   it("works while the ride is paused (no pausedAt gating)", async () => {

@@ -677,6 +677,15 @@ export const rides = pgTable("rides", {
   // tariffLabelForHours(). Independent of paidUntilAt, which also absorbs
   // pause-grace credits and must not be used to derive this.
   totalTariffHours: integer("total_tariff_hours").notNull().default(0),
+  // Same cumulative total as totalTariffHours above, but in milliseconds —
+  // needed because sub-hour tariffs (durationHours: 0, e.g. the "m1" test
+  // tariff) can't be represented in the hours counter at all: every
+  // extension of such a tariff added 0, so the ride's displayed tariff label
+  // never reflected extensions (shared/geo.ts's tariffLabelForRide uses this
+  // field, not totalTariffHours, for exactly that reason). 0 for historical
+  // rows created before this column existed — tariffLabelForRide falls back
+  // to the ride's own tariff id in that case, same as it always did.
+  totalTariffMs: bigint("total_tariff_ms", { mode: "number" }).notNull().default(0),
   status: text("status").notNull(),   // active | completed | cancelled
   // Set when the OMNI lock reports a physical close (L1) while this ride was
   // still "active" — i.e. the rider closed the lock without the app calling
@@ -722,6 +731,15 @@ export const rides = pgTable("rides", {
 export type Ride = typeof rides.$inferSelect;
 export const insertRideSchema = createInsertSchema(rides);
 
+// A ride enriched with the rider's post-ride feedback rating (1..5, or null
+// if the rider never submitted feedback / the ride is still active) — for
+// list views (rider history, admin rides table) that show the rating
+// alongside the ride without a separate per-row fetch. Batched from
+// ride_feedback the same way AdminRide batches userName/userPhone below.
+export type RideWithFeedback = Ride & {
+  rating: number | null;
+};
+
 // Track points recorded during a ride, in abstract map space (matching
 // bike_telemetry's x/y). storage.ts queries this table with raw `sql`
 // templates (loadRidePoints) rather than the query builder, but it is
@@ -744,6 +762,7 @@ export type RidePoint = typeof ridePoints.$inferSelect;
 export type AdminRide = Ride & {
   userName: string | null;
   userPhone: string | null;
+  rating: number | null;
 };
 
 /* ------- POST-RIDE FEEDBACK ------- */

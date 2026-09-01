@@ -2,7 +2,7 @@ import type { AdminRide } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { StopCircle } from "lucide-react";
-import { fmtDate, fmtRub, fmtDuration, fmtRideTariff } from "@/lib/format";
+import { fmtDate, fmtRub, fmtDuration, fmtRideTariff, fmtRideRating } from "@/lib/format";
 
 export function RideRowItem({ r, onEnd, busy }: { r: AdminRide; onEnd: () => void; busy: boolean }) {
   const active = r.status === "active";
@@ -23,6 +23,7 @@ export function RideRowItem({ r, onEnd, busy }: { r: AdminRide; onEnd: () => voi
       <TableCell className="text-right font-mono text-sm">
         {fmtRub(r.cost)}
       </TableCell>
+      <TableCell className="text-sm">{fmtRideRating(r.rating)}</TableCell>
       <TableCell className="text-right">
         {active && (
           <Button

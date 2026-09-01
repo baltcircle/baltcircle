@@ -1,6 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Bike, BikeStatus, Parking } from "@shared/schema";
+import { LOW_BATTERY_AUTO_OFFLINE_THRESHOLD } from "@shared/geo";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
@@ -103,6 +104,7 @@ export function BikesTable({
             <TableHead className="w-28">Код</TableHead>
             <TableHead>Статус</TableHead>
             <TableHead>Замок ID</TableHead>
+            <TableHead>Заряд замка</TableHead>
             <TableHead>Парковка</TableHead>
             <TableHead className="text-right">Действия</TableHead>
           </TableRow>
@@ -121,6 +123,9 @@ export function BikesTable({
                 </Badge>
               </TableCell>
               <TableCell className="text-sm text-muted-foreground font-mono">{b.lockImei || "—"}</TableCell>
+              <TableCell className={`text-sm font-mono ${b.battery < LOW_BATTERY_AUTO_OFFLINE_THRESHOLD ? "text-destructive font-medium" : "text-muted-foreground"}`} data-testid={`text-bike-battery-${b.id}`}>
+                {b.battery}%
+              </TableCell>
               <TableCell className="text-sm text-muted-foreground">{parkingName(b.parkingId)}</TableCell>
               <TableCell>
                 <div className="flex items-center justify-end gap-1">
@@ -180,7 +185,7 @@ export function BikesTable({
           ))}
           {bikes.length === 0 && (
             <TableRow>
-              <TableCell colSpan={5} className="text-center text-muted-foreground py-12" data-testid="bikes-empty">
+              <TableCell colSpan={6} className="text-center text-muted-foreground py-12" data-testid="bikes-empty">
                 {search ? "Ничего не найдено" : "Велосипедов пока нет — добавьте первый."}
               </TableCell>
             </TableRow>

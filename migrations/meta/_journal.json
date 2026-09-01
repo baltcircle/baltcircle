@@ -71,6 +71,13 @@
       "when": 1788267699221,
       "tag": "0009_brave_terror",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788278964820,
+      "tag": "0010_lean_ben_parker",
+      "breakpoints": true
     }
   ]
 }
