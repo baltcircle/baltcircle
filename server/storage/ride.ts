@@ -767,7 +767,9 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         // Hourly prepaid model. The tariff was paid at start (r.cost holds the
         // prepaid tariff price, in kopecks). If the rider kept the bike past the
         // paid window (r.paidUntilAt, which pause/extend may have moved), auto-
-        // extend by charging OVERAGE_MINUTE_PRICE per started extra minute.
+        // extend by charging OVERAGE_MINUTE_PRICE per COMPLETED extra minute
+        // (billed only once a full minute of overtime has elapsed, not at
+        // the instant a new overage minute starts — see computeOverage).
         // r.paidUntilAt is nullable only for rides started before this column
         // existed — fall back to the tariff's nominal duration for those.
         //

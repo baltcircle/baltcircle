@@ -7,6 +7,7 @@ import { RideTimer } from "@/components/RideTimer";
 import { LiveOverage } from "@/components/LiveOverage";
 import { ExtendRideDialog } from "@/components/ExtendRideDialog";
 import { fmtDistance } from "@/lib/format";
+import { OVERAGE_MINUTE_PRICE } from "@shared/geo";
 
 interface ActiveRideCardProps {
   ride: Ride;
@@ -58,6 +59,9 @@ export function ActiveRideCard({
         </div>
         <div className="text-right shrink-0">
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Овертайм</div>
+          <div className="text-[9px] text-muted-foreground" data-testid="text-overage-rate">
+            {OVERAGE_MINUTE_PRICE} рублей минута
+          </div>
           <div className="font-display text-base font-light tabular-nums" data-testid="text-ride-overage">
             <LiveOverage ride={ride} />
           </div>
