@@ -141,7 +141,7 @@
     "autoprefixer": "^10.4.20",
     "better-sqlite3": "^11.7.0",
     "drizzle-kit": "^0.31.8",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.1",
     "eslint": "^10.9.1",
     "eslint-config-prettier": "^9.1.2",
     "eslint-plugin-react-hooks": "^7.1.1",
