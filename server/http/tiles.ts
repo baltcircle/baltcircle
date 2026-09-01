@@ -41,6 +41,17 @@ import {
 // ── PMTiles file serving (Range-request aware) ───────────────────────────────
 // Serves a .pmtiles file from the mounted /app/osm volume. PMTiles protocol
 // issues HTTP Range requests, so 206 partial responses are mandatory.
+//
+// audit HIGH #9: in production this handler is now a FALLBACK only. nginx
+// (deploy/nginx/baltcircle.conf, `location ~ ^/(...)\.pmtiles$`) serves
+// /kaliningrad.pmtiles and /addresses.pmtiles directly off the same host path
+// Docker bind-mounts read-only into this container, so the 571 MB base map
+// extract and every Range chunk MapLibre requests while panning/zooming never
+// touch Node at all in prod — nginx's regex location wins over the catch-all
+// proxy_pass before a request ever reaches here. This route stays registered
+// because local/dev/CI (API_ONLY, `npm run dev`) run the app with no nginx in
+// front of it at all, and it also serves as a safety net if the nginx config
+// on a given host is ever out of date.
 function servePmtiles(fileName: string) {
   return (req: Request, res: Response): void => {
     const fs = require("fs") as typeof import("fs");
