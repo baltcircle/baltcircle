@@ -434,4 +434,56 @@ describe("extendRide", () => {
     expect(result).toHaveProperty("error");
     expect(dbMock.transaction).not.toHaveBeenCalled();
   });
+
+  // Bug fix: extending mid-overtime used to anchor the new paidUntilAt on the
+  // stale, already-past paidUntilAt, so a short extension (e.g. the 1-minute
+  // m1 test tariff) left the result still in the past — "в пути" stayed stuck
+  // at 0 even though the rider was correctly charged. Once overtime has
+  // started, the extension must be anchored on `now` so it actually counts
+  // down and overage stops accruing until it runs out.
+  it("anchors the extension on `now` (not the stale paidUntilAt) once the ride is already in overtime", async () => {
+    const overtime = makeRide({ paidUntilAt: NOW - 5 * 60 * 1000 }); // 5 min into overtime
+    const { tx, calls } = makeTx([[overtime]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.extendRide(7, "m1");
+
+    expect(result).not.toHaveProperty("error");
+    const set = calls.updateSets[0] as any;
+    // Must be anchored on NOW + tariff duration, NOT on the stale
+    // paidUntilAt (NOW - 5min) + duration, which would still be in the past.
+    expect(set.paidUntilAt).toBe(NOW + 60_000);
+    expect(set.paidUntilAt).toBeGreaterThan(NOW);
+  });
+
+  // When still WITHIN the paid window (no overtime yet), extension must keep
+  // stacking additively on the existing paidUntilAt, unaffected by the `now`
+  // anchor introduced for the overtime case above (regression guard).
+  it("still stacks additively on the existing paidUntilAt when not yet in overtime", async () => {
+    const active = makeRide({ paidUntilAt: NOW + 10 * 60 * 1000 });
+    const { tx, calls } = makeTx([[active]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.extendRide(7, "h1");
+
+    expect(result).not.toHaveProperty("error");
+    const set = calls.updateSets[0] as any;
+    expect(set.paidUntilAt).toBe(active.paidUntilAt! + HOUR);
+  });
+
+  // Extending mid-pause must fold in the in-progress pause's pending free-
+  // grace credit (same formula resumeRide/endRide use), not just the raw
+  // (stale) DB paidUntilAt.
+  it("folds in the in-progress pause's pending free-grace credit when extending mid-pause", async () => {
+    const paused = makeRide({ paidUntilAt: NOW + 60_000, pausedAt: NOW - 30_000, totalPausedMs: 0 });
+    const { tx, calls } = makeTx([[paused]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.extendRide(7, "h1");
+
+    expect(result).not.toHaveProperty("error");
+    const set = calls.updateSets[0] as any;
+    // 30s paused so far, all within the free-grace budget -> +30s credit.
+    expect(set.paidUntilAt).toBe(paused.paidUntilAt! + 30_000 + HOUR);
+  });
 });

@@ -39,6 +39,8 @@ export function fmtDuration(ms: number) {
   const s = total % 60;
   const h = Math.floor(m / 60);
   if (h > 0) return `${h} ч ${m % 60} мин`;
+  // Меньше минуты — не пишем «0 мин», отрисовываем только секунды.
+  if (m === 0) return `${s} с`;
   return `${m} мин ${String(s).padStart(2, "0")} с`;
 }
 export function fmtRelative(ts: number) {

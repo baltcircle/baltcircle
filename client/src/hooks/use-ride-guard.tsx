@@ -1,55 +1,28 @@
 import { useEffect, useRef } from "react";
-import { useToast } from "@/hooks/use-toast";
-import { TRACK_GAP_MS } from "@/lib/geoSmoothing";
 
 /**
- * Страж активной аренды. Пока идёт поездка:
+ * Страж активной аренды. Пока идёт поездка, держит Screen Wake Lock —
+ * экран не гаснет от бездействия. НЕ спасает, если пользователь сам
+ * жмёт кнопку блокировки или сворачивает приложение — это ограничение
+ * платформы, из браузера не обойти. API есть не везде (старый Safari) —
+ * работаем с graceful fallback.
  *
- *  1) Держит Screen Wake Lock — экран не гаснет от бездействия, что уменьшает
- *     частоту разрывов трека из-за автоблокировки. НЕ спасает, если пользователь
- *     сам жмёт кнопку блокировки или сворачивает приложение — это ограничение
- *     платформы, из браузера не обойти. API есть не везде (старый Safari) —
- *     работаем с graceful fallback.
- *  2) Ловит разрывы трекинга и ненавязчиво сообщает о них тостом, чтобы обрыв
- *     линии на карте не выглядел багом. Два независимых сигнала:
- *       — visibilitychange / pagehide / pageshow: вкладка ушла в фон и вернулась
- *         (браузер приостанавливает watchPosition в фоне);
- *       — временной разрыв между принятыми GPS-точками > TRACK_GAP_MS (потеря
- *         сигнала без ухода в фон).
- *     Оба сигнала предупреждают только о разрыве ТЕЛЕФОННОГО трека. Пока
- *     авторитетным источником считается бортовой трекер замка (см.
- *     use-ride-track-poll → MergedTrack.source === "tracker"), уход телефона
- *     в фон никак не влияет на записанный маршрут — тост в этом случае вводит
- *     в заблуждение и подавляется через `trackedByLock`.
+ * Раньше тут же был тост о разрыве телефонного трекинга (сворачивание
+ * приложения / блокировка экрана). Убран по продуктовому решению:
+ * авторитетный источник трека — бортовой трекер замка, а не GPS телефона
+ * (см. use-ride-track-poll → MergedTrack.source === "tracker"), поэтому уход телефона
+ * в фон никак не влияет на записанный маршрут, и тост только вводил пользователя
+ * в заблуждение (“трекинг приостановлен” при сворачивании приложения, хотя
+ * реальный трек нигде не терялся). Удалён полностью. `trackedByLock` и
+ * `notePoint()` оставлены в сигнатуре как no-op для совместимости с вызовающим кодом
+ * (MapPage), чтобы не трогать лишние места.
  *
  * Рендер трека рвёт линию сам по timestamp'ам точек (см. segmentTrack) — этот
- * хук отвечает только за wake lock и уведомление пользователя.
+ * хук отвечает только за wake lock.
  */
-export function useRideGuard(active: boolean, trackedByLock: boolean = false) {
-  const { toast } = useToast();
+export function useRideGuard(active: boolean, _trackedByLock: boolean = false) {
   // WakeLockSentinel типизирован не во всех окружениях — держим как any.
   const wakeLockRef = useRef<any>(null);
-  const hiddenAtRef = useRef<number | null>(null);
-  const lastPointAtRef = useRef<number | null>(null);
-  const announcedRef = useRef(false);
-  // Читается из замыканий, созданных один раз в эффекте по [active] — обычный
-  // проп протух бы при смене source без переподписки. Ref обновляется на
-  // каждом рендере отдельным эффектом ниже.
-  const trackedByLockRef = useRef(trackedByLock);
-  useEffect(() => { trackedByLockRef.current = trackedByLock; }, [trackedByLock]);
-
-  const announceGap = (ms: number) => {
-    if (trackedByLockRef.current) return; // трек идёт от замка — разрыв на телефоне не в счёт
-    if (announcedRef.current) return; // не дублируем на «двойном» сигнале
-    announcedRef.current = true;
-    // Сбрасываем флаг чуть позже — следующий реальный разрыв снова сообщим.
-    setTimeout(() => { announcedRef.current = false; }, 5_000);
-    const secs = Math.max(1, Math.round(ms / 1000));
-    toast({
-      title: "Трекинг был приостановлен",
-      description: `~${secs} сек не записано — часть маршрута пропущена.`,
-    });
-  };
 
   useEffect(() => {
     if (!active) return;
@@ -76,61 +49,27 @@ export function useRideGuard(active: boolean, trackedByLock: boolean = false) {
       sentinel?.release?.().catch(() => {});
     };
 
-    const markHidden = () => {
-      if (hiddenAtRef.current == null) hiddenAtRef.current = Date.now();
-    };
-
-    const markVisible = () => {
-      // Lock мог быть освобождён системой в фоне — берём заново.
-      void requestWakeLock();
-      const hiddenAt = hiddenAtRef.current;
-      hiddenAtRef.current = null;
-      if (hiddenAt != null) {
-        const away = Date.now() - hiddenAt;
-        // Обнуляем «последнюю точку» — иначе первая точка после возврата
-        // выстрелит вторым тостом через notePoint по тому же разрыву.
-        lastPointAtRef.current = Date.now();
-        if (away > TRACK_GAP_MS) announceGap(away);
-      }
-    };
-
     const onVisibility = () => {
-      if (document.visibilityState === "hidden") markHidden();
-      else markVisible();
+      // Lock мог быть освобождён системой в фоне — при возврате видимости берём заново.
+      if (document.visibilityState === "visible") void requestWakeLock();
     };
+    const onPageShow = () => void requestWakeLock();
 
     void requestWakeLock();
     document.addEventListener("visibilitychange", onVisibility);
-    // iOS Safari не всегда шлёт visibilitychange при блокировке — pagehide/pageshow
+    // iOS Safari не всегда шлёт visibilitychange при блокировке — pageshow
     // как страховка.
-    window.addEventListener("pagehide", markHidden);
-    window.addEventListener("pageshow", markVisible);
+    window.addEventListener("pageshow", onPageShow);
 
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("pagehide", markHidden);
-      window.removeEventListener("pageshow", markVisible);
-      hiddenAtRef.current = null;
-      lastPointAtRef.current = null;
+      window.removeEventListener("pageshow", onPageShow);
       releaseWakeLock();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
-  /** Сообщить о принятой GPS-точке — ловит разрыв по времени без ухода в фон. */
-  const notePoint = () => {
-    const now = Date.now();
-    const last = lastPointAtRef.current;
-    lastPointAtRef.current = now;
-    if (
-      last != null &&
-      now - last > TRACK_GAP_MS &&
-      typeof document !== "undefined" &&
-      document.visibilityState === "visible"
-    ) {
-      announceGap(now - last);
-    }
-  };
+  /** no-op: оставлено для совместимости со вызывающим кодом (MapPage). */
+  const notePoint = () => {};
 
   return { notePoint };
 }

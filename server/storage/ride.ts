@@ -1094,10 +1094,28 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           userId: r.userId, amount: -costKopecks, kind: "ride_charge",
           description: `Продление аренды ${r.bikeId} • ${tariffDef.name}`, createdAt: Date.now(),
         });
-        const basePaidUntilAt = r.paidUntilAt ?? (r.startedAt + tariffDurationMs(r.tariff));
-        // Bug fix: an extension is additional money actually paid on TOP of the
-        // ride's original tariff — cost/totalTariffHours must accumulate, not
-        // stay pinned to the start-time values. r.cost otherwise silently
+        const now = Date.now();
+        // Effective paid-until right now, folding in credit from an
+        // in-progress pause (same formula endRide/resumeRide use) — otherwise
+        // extending mid-pause would silently drop that pending credit.
+        const pauseCreditMs = pendingPauseCreditMs(
+          { startedAt: r.startedAt, paidUntilAt: r.paidUntilAt, pausedAt: r.pausedAt, totalPausedMs: r.totalPausedMs },
+          now,
+        );
+        const effectivePaidUntilAt = (r.paidUntilAt ?? (r.startedAt + tariffDurationMs(r.tariff))) + pauseCreditMs;
+        // Bug fix: if the paid window already lapsed (rider is mid-overtime),
+        // anchoring the extension on the stale past paidUntilAt barely moves
+        // it — e.g. extending a 5-min-old overtime by the 1-minute test tariff
+        // left the new paidUntilAt 4 minutes in the past, so "в пути" stayed
+        // stuck at 0 and the paid extension was invisible to the rider even
+        // though they were correctly charged. Anchor on `now` instead once
+        // overtime has started, so the newly paid time actually counts down
+        // and overage naturally stops accruing until it runs out, then
+        // resumes — "overtime pauses, extension counts down, overtime resumes".
+        const basePaidUntilAt = Math.max(now, effectivePaidUntilAt);
+        // An extension is additional money actually paid on TOP of the ride's
+        // original tariff — cost/totalTariffHours must accumulate, not stay
+        // pinned to the start-time values. r.cost otherwise silently
         // undercounts every extended ride in history AND in analytics'
         // SUM(cost) revenue queries (server/storage/analytics.ts).
         const updated = (await tx.update(rides).set({
