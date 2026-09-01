@@ -1,6 +1,6 @@
 import { paymentMethods, paymentOrders } from "@shared/schema";
 import type { PaymentMethod, PaymentOrder } from "@shared/schema";
-import { eq, desc, sql, and } from "drizzle-orm";
+import { eq, desc, sql, and, ne } from "drizzle-orm";
 import { decryptToken, encryptToken, hashTokenForLookup } from "../crypto/payment-tokens";
 import { db } from "../db/bootstrap";
 import type { Constructor } from "./mixin";
@@ -442,6 +442,31 @@ export function PaymentMethodMixin<TBase extends Constructor>(Base: TBase) {
       return (await db.select().from(paymentOrders)
         .where(eq(paymentOrders.orderId, orderId))
         .limit(1))[0] as PaymentOrder | undefined;
+    }
+
+    // Atomically claim a ride-payment order before starting/extending the ride
+    // or writing a terminal status (audit HIGH #6 — race condition). Mirrors
+    // WalletMixin.claimWalletTopupOrderForProcessing: two concurrent T-Bank
+    // notifications for the same order each load their own `order` snapshot in
+    // handleRidePaymentNotification; without this, both could pass the
+    // caller's `order.status === "paid"` check and both call
+    // startRideForPaidOrder/extendRideForPaidOrder (double ride start / double
+    // extend). This UPDATE ... WHERE is a single atomic statement the DB
+    // serializes per-row, so only ONE concurrent caller can flip status to
+    // "processing" and proceed; the other sees 0 rows affected and must treat
+    // it as a no-op. Claiming from "failed" too preserves the existing
+    // behaviour where a late CONFIRMED notification can still resolve an order
+    // T-Bank had previously reported as rejected.
+    async claimRidePaymentOrderForProcessing(id: number) {
+      const rows = await db.update(paymentOrders)
+        .set({ status: "processing", updatedAt: Date.now() } as any)
+        .where(and(
+          eq(paymentOrders.id, id),
+          ne(paymentOrders.status, "paid"),
+          ne(paymentOrders.status, "processing"),
+        ))
+        .returning();
+      return rows[0] as PaymentOrder | undefined;
     }
 
     async updateRidePaymentOrder(id: number, patch: Partial<PaymentOrder>) {
