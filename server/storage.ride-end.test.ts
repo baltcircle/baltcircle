@@ -40,6 +40,7 @@ import { bikes } from "@shared/schema";
 import { realToMap, RIDE_END_AWAITING_LOCK_GPS_ERROR, LOCK_GPS_LIVE_MS } from "@shared/geo";
 
 const HOUR = 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
 const NOW = new Date("2026-08-11T12:00:00.000Z");
 
 function makeRide(overrides: Partial<Ride> = {}): Ride {
@@ -362,7 +363,10 @@ describe("endRide — side effects only fire on real settlement", () => {
 
 describe("endRide charge confirmation push", () => {
   it("confirms the successful ride-end overage amount to the rider", async () => {
-    const activeRide = makeRide();
+    // h1 tariff pays 1h; ride ran exactly 1h1m -> one COMPLETED overage
+    // minute billed (per-completed-minute model — a few ms over the paid
+    // window with no full minute elapsed yet would charge nothing).
+    const activeRide = makeRide({ startedAt: NOW.getTime() - HOUR - MINUTE });
     const completedRide = makeRide({ endedAt: NOW.getTime(), cost: 70000, status: "completed" });
     // Wallet debit for the overage is now a raw tx.execute(sql`UPDATE ...`)
     // (audit CRITICAL #5 — atomic decrement, no SELECT-then-UPDATE round trip),
@@ -381,7 +385,7 @@ describe("endRide charge confirmation push", () => {
     });
   });
 
-  it("charges one overage minute per started extra minute beyond the paid window", async () => {
+  it("charges one overage minute per completed extra minute beyond the paid window", async () => {
     // h1 tariff pays 1h; ride ran 2h30m total -> 1h30m (90min) over the paid
     // window, all whole minutes so no rounding kicks in.
     const activeRide = makeRide({ startedAt: NOW.getTime() - 2.5 * HOUR });

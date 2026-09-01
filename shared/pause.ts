@@ -85,6 +85,21 @@ export function computeLiveOverage(ride: PausableRide, now: number): OverageResu
 }
 
 /**
+ * Raw elapsed overtime, in ms, since the paid window ended — 0 while still
+ * within the paid window. This is the ticking-timer display value ("сколько
+ * идёт овертайм"), distinct from computeLiveOverage's billed amount: the
+ * timer starts counting the instant usedMs > paidMs, while the CHARGE only
+ * increments once a full minute of that has elapsed (see computeOverage).
+ * Algebraically equals usedMs - paidMs from computeLiveOverage when positive
+ * (now - effectivePaidUntilAt = (now - startedAt) - (effectivePaidUntilAt -
+ * startedAt)), so the timer and the eventual charge never disagree about
+ * when overtime began.
+ */
+export function liveOverageElapsedMs(ride: PausableRide, now: number): number {
+  return Math.max(0, now - effectivePaidUntilAt(ride, now));
+}
+
+/**
  * "В пути" countdown display: remaining paid time, i.e. the exact complement
  * of liveElapsedRidingMs relative to the paid budget — freezes during a
  * within-grace pause and resumes counting down once grace is exhausted,

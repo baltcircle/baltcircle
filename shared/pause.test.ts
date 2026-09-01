@@ -99,11 +99,19 @@ describe("computeLiveOverage", () => {
     expect(computeLiveOverage(r, 30 * MIN).overageKopecks).toBe(0);
   });
 
-  it("считает овертайм после истечения paidUntilAt", () => {
+  it("считает овертайм после истечения paidUntilAt, только за целые завершённые минуты", () => {
     const r = ride({ paidUntilAt: HOUR });
     const { extraMinutes, overageKopecks } = computeLiveOverage(r, HOUR + 90 * 1000); // +1.5 мин
-    expect(extraMinutes).toBe(2); // округление вверх до целой минуты
+    expect(extraMinutes).toBe(1); // округление вниз — только 1 полная завершённая минута
     expect(overageKopecks).toBeGreaterThan(0);
+  });
+
+  it("ничего не считает, пока первая минута овертайма ещё не завершилась", () => {
+    const r = ride({ paidUntilAt: HOUR });
+    expect(computeLiveOverage(r, HOUR + 59 * 1000).overageKopecks).toBe(0); // 59s over
+    const justCompleted = computeLiveOverage(r, HOUR + 60 * 1000); // ровно 60s over
+    expect(justCompleted.extraMinutes).toBe(1);
+    expect(justCompleted.overageKopecks).toBeGreaterThan(0);
   });
 
   it("учитывает незавершённый pending-кредит паузы при живом расчёте", () => {

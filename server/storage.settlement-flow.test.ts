@@ -35,7 +35,7 @@ const NOW = new Date("2026-08-19T12:00:00.000Z");
 
 // h1 tariff: 350 ₽ / 1h paid window. Overage: 12 ₽ per started extra minute.
 const H1_KOPECKS = 35000;
-const OVERAGE_MINUTE_KOPECKS = 1200; // 12 ₽ per started overage minute
+const OVERAGE_MINUTE_KOPECKS = 1200; // 12 ₽ per completed overage minute
 
 function makeBike(overrides: Partial<Bike> = {}): Bike {
   return {
@@ -282,7 +282,7 @@ describe("settlement flow — internal wallet payment with overage", () => {
     expect(started).not.toHaveProperty("error");
     expect(state.wallet!.balance).toBe(100000 - H1_KOPECKS);
 
-    // Ran 2h30m against a 1h paid window -> 90 started overage minutes.
+    // Ran 2h30m against a 1h paid window -> 90 completed overage minutes.
     vi.setSystemTime(new Date(NOW.getTime() + 2.5 * HOUR));
     const ended = await storage.endRide((started as { id: number }).id);
 
@@ -308,7 +308,7 @@ describe("settlement flow — internal wallet payment with overage", () => {
     const started = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1" });
     expect(state.wallet!.balance).toBe(0);
 
-    vi.setSystemTime(new Date(NOW.getTime() + 1.5 * HOUR)); // 30 started overage minutes
+    vi.setSystemTime(new Date(NOW.getTime() + 1.5 * HOUR)); // 30 completed overage minutes
     const ended = await storage.endRide((started as { id: number }).id);
 
     const overage = 30 * OVERAGE_MINUTE_KOPECKS;
@@ -331,7 +331,7 @@ describe("settlement flow — prepaid (T-Bank) start, wallet-side overage at end
     expect(state.wallet).toBeUndefined(); // no wallet row created/touched by the prepaid path
     expect(state.paymentRows).toHaveLength(0); // the T-Bank charge is recorded elsewhere, not by startRide
 
-    vi.setSystemTime(new Date(NOW.getTime() + 1.5 * HOUR)); // 30 started overage minutes
+    vi.setSystemTime(new Date(NOW.getTime() + 1.5 * HOUR)); // 30 completed overage minutes
     const ended = await storage.endRide((started as { id: number }).id);
 
     const overage = 30 * OVERAGE_MINUTE_KOPECKS;

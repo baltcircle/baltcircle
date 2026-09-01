@@ -34,10 +34,12 @@ export interface Tariff {
 // do not use for new billing.
 export const OVERAGE_HOUR_PRICE = 350; // ₽ per started extra hour
 
-// Price of one started extra MINUTE once the paid tariff window elapses.
+// Price of one COMPLETED extra MINUTE once the paid tariff window elapses.
 // This is the live model: as soon as now() > ride.paidUntilAt, billing
-// switches to this per-minute rate for every started extra minute.
-export const OVERAGE_MINUTE_PRICE = 12; // ₽ per started extra minute
+// switches to this per-minute rate, but each minute is only charged once it
+// has fully elapsed (at +60s, +120s, ... of overtime) — never at the instant
+// a new overage minute merely begins.
+export const OVERAGE_MINUTE_PRICE = 12; // ₽ per completed extra minute
 
 // Reservation ("бронь") hold duration: how long a booked bike stays out of
 // the public "available" pool for the booking user before auto-expiring.

@@ -9,13 +9,14 @@ import { OVERAGE_MINUTE_PRICE } from "./geo";
 
 const MINUTE_MS = 60 * 1000;
 
-// Price of one started overage minute, in kopecks.
+// Price of one completed overage minute, in kopecks.
 export function overageMinuteKopecks(): number {
   return Math.round(OVERAGE_MINUTE_PRICE * 100);
 }
 
 export interface OverageResult {
-  // Whole started extra minutes beyond the paid window (0 if within window).
+  // Whole COMPLETED extra minutes beyond the paid window (0 if within window
+  // or if overtime hasn't run for a full minute yet).
   extraMinutes: number;
   // Additional charge for those extra minutes, in kopecks (0 if within window).
   overageKopecks: number;
@@ -23,16 +24,18 @@ export interface OverageResult {
 
 // Compute the auto-extension (overage) for a ride under the per-minute
 // post-paid-window model. The rider prepaid `paidMs` of riding time; if they
-// used more, every STARTED extra minute costs one OVERAGE_MINUTE_PRICE.
+// used more, every COMPLETED extra minute costs one OVERAGE_MINUTE_PRICE —
+// billed only once that minute has actually elapsed (at +60s, +120s, +180s
+// of overtime, ...), never at the moment a new overage minute merely starts.
 //
 //   - paidMs <= 0        -> unknown/legacy tariff: no overage (settle as-is)
 //   - usedMs <= paidMs   -> within the paid window: no overage
-//   - usedMs  > paidMs   -> ceil((usedMs - paidMs) / 1min) started minutes charged
+//   - usedMs  > paidMs   -> floor((usedMs - paidMs) / 1min) completed minutes charged
 export function computeOverage(usedMs: number, paidMs: number): OverageResult {
   if (paidMs <= 0 || usedMs <= paidMs) {
     return { extraMinutes: 0, overageKopecks: 0 };
   }
-  const extraMinutes = Math.ceil((usedMs - paidMs) / MINUTE_MS);
+  const extraMinutes = Math.floor((usedMs - paidMs) / MINUTE_MS);
   return { extraMinutes, overageKopecks: extraMinutes * overageMinuteKopecks() };
 }
 
