@@ -23,6 +23,8 @@ const storageMock = vi.hoisted(() => ({
   insertBikeTelemetry: vi.fn(),
   listAdminRides: vi.fn(),
   countRides: vi.fn(),
+  listRideFeedback: vi.fn(),
+  countRideFeedback: vi.fn(),
   endRide: vi.fn(),
 }));
 const rideEvents = vi.hoisted(() => {
@@ -610,6 +612,21 @@ describe("GET /api/admin/rides", () => {
     expect(res.headers["X-Total-Count"]).toBe("123");
     expect(storageMock.listAdminRides).toHaveBeenCalledWith({ limit: 10, offset: 0 });
     expect(res.body).toEqual([{ id: 1 }]);
+  });
+});
+
+describe("GET /api/admin/feedback", () => {
+  it("sets X-Total-Count and returns the paginated admin feedback list", async () => {
+    const { get } = routeApp();
+    storageMock.countRideFeedback.mockResolvedValue(42);
+    storageMock.listRideFeedback.mockResolvedValue([{ id: 1, rating: 5 }]);
+    const res = response();
+
+    await get.get("/api/admin/feedback")!({ query: { limit: "10", offset: "0" } }, res);
+
+    expect(res.headers["X-Total-Count"]).toBe("42");
+    expect(storageMock.listRideFeedback).toHaveBeenCalledWith({ limit: 10, offset: 0 });
+    expect(res.body).toEqual([{ id: 1, rating: 5 }]);
   });
 });
 

@@ -6,7 +6,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import type { UserRole } from "@shared/schema";
 import {
   Map, QrCode, Route, ShieldCheck, Wrench, BarChart3,
-  Sun, Moon, Bike, ChevronRight, ArrowLeft, User, Users, MapPin, LifeBuoy,
+  Sun, Moon, Bike, ChevronRight, ArrowLeft, User, Users, MapPin, LifeBuoy, Star,
 } from "lucide-react";
 
 interface NavItem {
@@ -39,6 +39,7 @@ const OPS_NAV: NavItem[] = [
   // /admin/operations-map остаётся рабочим для прямых ссылок и закладок.
   { href: "/admin/parkings",    label: "Парковки",     icon: MapPin,      testId: "nav-parkings",    roles: ["operator", "admin"] },
   { href: "/admin/analytics",   label: "Аналитика",    icon: BarChart3,   testId: "nav-analytics",   roles: ["operator", "admin"] },
+  { href: "/admin/reviews",     label: "Отзывы",       icon: Star,        testId: "nav-reviews",     roles: ["operator", "admin"] },
   { href: "/admin/maintenance", label: "Сервис",       icon: Wrench,      testId: "nav-maintenance", roles: ["mechanic", "operator", "admin"] },
   { href: "/admin/support",     label: "Обращения",    icon: LifeBuoy,    testId: "nav-support",     roles: ["operator", "admin"] },
 ];

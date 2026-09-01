@@ -3,6 +3,8 @@ import {
   feedbackTierForRating,
   FEEDBACK_REASONS,
   FEEDBACK_REASON_IDS,
+  formatFeedbackReason,
+  formatFeedbackReasons,
 } from "./feedback";
 
 describe("feedbackTierForRating", () => {
@@ -83,5 +85,37 @@ describe("FEEDBACK_REASON_IDS", () => {
   it("does not leak low-tier ids into the mid/high pools", () => {
     expect(FEEDBACK_REASON_IDS.mid).not.toContain("bike_brakes");
     expect(FEEDBACK_REASON_IDS.high).not.toContain("bike_brakes");
+  });
+});
+
+describe("formatFeedbackReason / formatFeedbackReasons", () => {
+  it("formats a sub-reason with its parent category prefixed", () => {
+    expect(formatFeedbackReason(2, "bike_brakes")).toBe("Велосипед — Тормоза плохо работают");
+  });
+
+  it("formats a parent-only pick without a suffix", () => {
+    expect(formatFeedbackReason(1, "bike")).toBe("Велосипед");
+    expect(formatFeedbackReason(1, "no_parking")).toBe("Парковки нет в удобном месте");
+  });
+
+  it("formats flat mid/high tier ids with no parent prefix", () => {
+    expect(formatFeedbackReason(4, "parking_count")).toBe("Количество парковок");
+    expect(formatFeedbackReason(5, "great_bikes")).toBe("Классные велосипеды");
+  });
+
+  it("falls back to the raw id for an unknown reason (e.g. stale data)", () => {
+    expect(formatFeedbackReason(2, "totally_unknown_id")).toBe("totally_unknown_id");
+  });
+
+  it("formats every reason in a list, preserving order", () => {
+    expect(formatFeedbackReasons(2, ["bike", "bike_brakes", "no_parking"])).toEqual([
+      "Велосипед",
+      "Велосипед — Тормоза плохо работают",
+      "Парковки нет в удобном месте",
+    ]);
+  });
+
+  it("returns an empty array for a feedback with no reasons", () => {
+    expect(formatFeedbackReasons(5, [])).toEqual([]);
   });
 });

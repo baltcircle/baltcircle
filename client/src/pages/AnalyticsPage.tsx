@@ -15,7 +15,7 @@ import {
 } from "recharts";
 import {
   TrendingUp, Bike as BikeIcon, Wrench, MapPin, Users as UsersIcon,
-  Download, AlertTriangle, Activity, Clock, Wallet, RefreshCw,
+  Download, AlertTriangle, Activity, Clock, Wallet, RefreshCw, Star,
 } from "lucide-react";
 
 /* ---------- Period filter ---------- */
@@ -83,6 +83,7 @@ interface AdminAnalytics {
     repeatedProblemBikes: { bike_id: string; tickets: number; open: number }[];
   };
   parkingUsage: { id: string; name: string; capacity: number; occupied: number; rideStarts: number }[];
+  feedbackCounts: { low: number; mid: number; high: number };
 }
 
 export function AnalyticsPage() {
@@ -231,6 +232,35 @@ export function AnalyticsPage() {
                 </ResponsiveContainer>
               </div>
             )}
+          </Card>
+
+          {/* Feedback counts by rating tier */}
+          <Card className="p-5 mb-6" data-testid="analytics-feedback">
+            <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
+              <Star className="w-4 h-4 text-primary" />Отзывы о поездках
+            </h2>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Оценка</TableHead>
+                  <TableHead className="text-right">Количество отзывов</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow data-testid="analytics-feedback-low">
+                  <TableCell>1-3 звезды</TableCell>
+                  <TableCell className="text-right font-mono">{a.feedbackCounts.low}</TableCell>
+                </TableRow>
+                <TableRow data-testid="analytics-feedback-mid">
+                  <TableCell>4 звезды</TableCell>
+                  <TableCell className="text-right font-mono">{a.feedbackCounts.mid}</TableCell>
+                </TableRow>
+                <TableRow data-testid="analytics-feedback-high">
+                  <TableCell>5 звёзд</TableCell>
+                  <TableCell className="text-right font-mono">{a.feedbackCounts.high}</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
           </Card>
 
           {/* Repeated-problem bikes */}
