@@ -27,6 +27,8 @@ interface FakeBikeRow {
   lat?: number;
   lng?: number;
   battery?: number;
+  status?: string;
+  maintenance_reason?: string | null;
 }
 
 const fake = vi.hoisted(() => ({
@@ -82,6 +84,22 @@ vi.mock("../db/bootstrap", () => ({
         }
         return { rows: [] };
       }
+      if (text.startsWith("UPDATE bikes SET status = 'offline'")) {
+        // Auto-offline follow-up write: `WHERE id = ANY($1) AND status =
+        // 'available' AND battery <= $2 RETURNING id, battery`.
+        const [ids, threshold] = params as [string[], number];
+        const rows: { id: string; battery: number }[] = [];
+        for (const id of ids) {
+          const row = fake.bikes.get(id);
+          if (!row) continue;
+          if ((row.status ?? "available") !== "available") continue;
+          if ((row.battery ?? 100) > threshold) continue;
+          row.status = "offline";
+          row.maintenance_reason = "auto:low_battery";
+          rows.push({ id, battery: row.battery ?? 0 });
+        }
+        return { rows };
+      }
       if (text.startsWith("UPDATE bikes")) {
         // applyLiveUpdates batches N rows via `FROM (VALUES ...) AS v(...)`.
         // Params are pushed 5 at a time: bikeId, x, y, batteryPct, t.
@@ -110,6 +128,7 @@ import { PgOmniStore } from "./store";
 import {
   lockAlarmEvents, LOCK_FALL_ALARM, type LockFallAlarmPayload,
   LOCK_MOVEMENT_ALARM, type LockMovementAlarmPayload,
+  bikeAutoOfflineEvents, BIKE_AUTO_OFFLINE, type BikeAutoOfflinePayload,
 } from "../storage/events";
 
 const IMEI = "861234567890123";
@@ -355,5 +374,67 @@ describe("applyLiveUpdates ordering guard (audit F-08)", () => {
     await store.applyLiveUpdates([{ bikeId: "bike-a", x: 20.5, y: 54.7, batteryPct: 90, t: 2000 }]);
 
     expect(fake.bikes.get("bike-a")).toMatchObject({ lng: 20.5, lat: 54.7, battery: 90, last_seen: 2000 });
+  });
+});
+
+
+describe("applyLiveUpdates auto-offline on low lock battery (rental spec addendum, 2026-09)", () => {
+  it("flips an available bike to offline and fires BIKE_AUTO_OFFLINE at the threshold", async () => {
+    fake.bikes.set("bike-b", { last_seen: null, status: "available", battery: 50 });
+    const onOffline = vi.fn<(p: BikeAutoOfflinePayload) => void>();
+    bikeAutoOfflineEvents.on(BIKE_AUTO_OFFLINE, onOffline);
+    try {
+      await store.applyLiveUpdates([{ bikeId: "bike-b", x: null, y: null, batteryPct: 10, t: 5000 }]);
+
+      expect(fake.bikes.get("bike-b")).toMatchObject({ status: "offline", maintenance_reason: "auto:low_battery" });
+      expect(onOffline).toHaveBeenCalledWith(expect.objectContaining({ bikeId: "bike-b", battery: 10 }));
+    } finally {
+      bikeAutoOfflineEvents.off(BIKE_AUTO_OFFLINE, onOffline);
+    }
+  });
+
+  it("leaves a bike above the threshold untouched", async () => {
+    fake.bikes.set("bike-c", { last_seen: null, status: "available", battery: 50 });
+    const onOffline = vi.fn();
+    bikeAutoOfflineEvents.on(BIKE_AUTO_OFFLINE, onOffline);
+    try {
+      await store.applyLiveUpdates([{ bikeId: "bike-c", x: null, y: null, batteryPct: 25, t: 5000 }]);
+
+      expect(fake.bikes.get("bike-c")).toMatchObject({ status: "available" });
+      expect(onOffline).not.toHaveBeenCalled();
+    } finally {
+      bikeAutoOfflineEvents.off(BIKE_AUTO_OFFLINE, onOffline);
+    }
+  });
+
+  it("never touches a bike that is mid-ride (status = rented) even at 0% battery", async () => {
+    fake.bikes.set("bike-d", { last_seen: null, status: "rented", battery: 40 });
+    const onOffline = vi.fn();
+    bikeAutoOfflineEvents.on(BIKE_AUTO_OFFLINE, onOffline);
+    try {
+      await store.applyLiveUpdates([{ bikeId: "bike-d", x: null, y: null, batteryPct: 0, t: 5000 }]);
+
+      expect(fake.bikes.get("bike-d")).toMatchObject({ status: "rented" });
+      expect(onOffline).not.toHaveBeenCalled();
+    } finally {
+      bikeAutoOfflineEvents.off(BIKE_AUTO_OFFLINE, onOffline);
+    }
+  });
+
+  it("does not run the offline check at all when this flush carries no battery reading", async () => {
+    fake.bikes.set("bike-e", { last_seen: null, status: "available", battery: 5 });
+    const onOffline = vi.fn();
+    bikeAutoOfflineEvents.on(BIKE_AUTO_OFFLINE, onOffline);
+    try {
+      // Position-only report (batteryPct omitted) — this bike's stored battery
+      // is already under the threshold, but since it did not report battery in
+      // THIS flush, the scoped follow-up write must not pick it up.
+      await store.applyLiveUpdates([{ bikeId: "bike-e", x: 10, y: 10, batteryPct: null, t: 5000 }]);
+
+      expect(fake.bikes.get("bike-e")).toMatchObject({ status: "available" });
+      expect(onOffline).not.toHaveBeenCalled();
+    } finally {
+      bikeAutoOfflineEvents.off(BIKE_AUTO_OFFLINE, onOffline);
+    }
   });
 });
