@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { storage } from "../storage";
+import { errMessage } from "../error-utils";
 import { z } from "zod";
 import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
 import {
@@ -96,8 +97,9 @@ export function registerAuthRoutes(app: Express): void {
         ...(sent.providerStatus ? { providerStatus: sent.providerStatus } : {}),
         ...(sent.devEcho ? { devCode: result.code } : {}),
       });
-    } catch (err: any) {
-      res.status(502).json({ error: err?.message ?? "Не удалось отправить SMS. Попробуйте позже." });
+    } catch (err) {
+      const message = errMessage(err);
+      res.status(502).json({ error: message ?? "Не удалось отправить SMS. Попробуйте позже." });
     }
   });
 
@@ -165,8 +167,9 @@ export function registerAuthRoutes(app: Express): void {
           providerStatus: live.status ?? row.providerStatus ?? undefined,
           providerError: live.error ?? undefined,
         });
-      } catch (err: any) {
-        providerLookup = { httpStatus: 0, found: false, error: err?.message ?? "lookup failed" };
+      } catch (err) {
+        const message = errMessage(err);
+        providerLookup = { httpStatus: 0, found: false, error: message ?? "lookup failed" };
       }
     }
 
@@ -243,8 +246,9 @@ export function registerAuthRoutes(app: Express): void {
         resendInSec: result.resendInSec,
         ...(devEcho ? { devCode: result.code } : {}),
       });
-    } catch (err: any) {
-      res.status(502).json({ error: err?.message ?? "Не удалось отправить SMS. Попробуйте позже." });
+    } catch (err) {
+      const message = errMessage(err);
+      res.status(502).json({ error: message ?? "Не удалось отправить SMS. Попробуйте позже." });
     }
   });
 
@@ -284,8 +288,9 @@ export function registerAuthRoutes(app: Express): void {
         resendInSec: result.resendInSec,
         ...(devEcho ? { devCode: result.code } : {}),
       });
-    } catch (err: any) {
-      res.status(502).json({ error: err?.message ?? "Не удалось отправить письмо. Попробуйте позже." });
+    } catch (err) {
+      const message = errMessage(err);
+      res.status(502).json({ error: message ?? "Не удалось отправить письмо. Попробуйте позже." });
     }
   });
 

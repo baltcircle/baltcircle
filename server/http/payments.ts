@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { storage } from "../storage";
+import { errMessage } from "../error-utils";
 import { z } from "zod";
 import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
 import {
@@ -438,8 +439,9 @@ export function registerPaymentRoutes(app: Express): void {
       });
       await storage.updatePaymentMethod(method.id, { refundStatus: "none" });
       res.json({ paymentUrl: resp.PaymentURL, method: "addcard" });
-    } catch (err: any) {
-      res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
+    } catch (err) {
+      const message = errMessage(err);
+      res.status(502).json({ error: message ?? "Не удалось привязать карту. Попробуйте позже." });
     }
   });
 
@@ -500,8 +502,9 @@ export function registerPaymentRoutes(app: Express): void {
         });
         await storage.updatePaymentMethod(method.id, { refundStatus: "none" });
         return res.json({ paymentUrl: resp.PaymentURL, method: "addcard", methodId: method.id });
-      } catch (err: any) {
-        return res.status(502).json({ error: err?.message ?? "Не удалось привязать карту. Попробуйте позже." });
+      } catch (err) {
+        const message = errMessage(err);
+        return res.status(502).json({ error: message ?? "Не удалось привязать карту. Попробуйте позже." });
       }
     }
     // Default: 1 ₽ verification payment (RebillId-guaranteed on all terminals).
@@ -558,8 +561,9 @@ export function registerPaymentRoutes(app: Express): void {
         requestKey: typeof resp.RequestKey === "string" ? resp.RequestKey : null,
         qrPayload,
       });
-    } catch (err: any) {
-      res.status(502).json({ error: err?.message ?? "Не удалось привязать счёт СБП. Попробуйте позже." });
+    } catch (err) {
+      const message = errMessage(err);
+      res.status(502).json({ error: message ?? "Не удалось привязать счёт СБП. Попробуйте позже." });
     }
   });
 
@@ -596,8 +600,9 @@ export function registerPaymentRoutes(app: Express): void {
     let resp;
     try {
       resp = await tbankGetAddAccountQrState(cfg, method.requestKey);
-    } catch (err: any) {
-      return res.status(502).json({ error: err?.message ?? "Не удалось проверить статус. Попробуйте позже." });
+    } catch (err) {
+      const message = errMessage(err);
+      return res.status(502).json({ error: message ?? "Не удалось проверить статус. Попробуйте позже." });
     }
 
     if (!resp.Success) {
@@ -743,8 +748,9 @@ export function registerPaymentRoutes(app: Express): void {
         return res.status(500).json({ error: "Не удалось сохранить заказ оплаты. Попробуйте позже." });
       }
       res.json({ orderId, paymentUrl: resp.PaymentURL, amountKopecks, status: "pending" });
-    } catch (err: any) {
-      res.status(502).json({ error: err?.message ?? "Не удалось создать оплату. Попробуйте позже." });
+    } catch (err) {
+      const message = errMessage(err);
+      res.status(502).json({ error: message ?? "Не удалось создать оплату. Попробуйте позже." });
     }
   });
 
@@ -945,8 +951,9 @@ export function registerPaymentRoutes(app: Express): void {
       // Deferred (e.g. 3DS step-up). Leave pending; the webhook resolves it and
       // the client polls the status endpoint below.
       return res.json({ orderId, status: "pending", amountKopecks });
-    } catch (err: any) {
-      return res.status(502).json({ error: err?.message ?? "Не удалось списать оплату. Попробуйте позже." });
+    } catch (err) {
+      const message = errMessage(err);
+      return res.status(502).json({ error: message ?? "Не удалось списать оплату. Попробуйте позже." });
     }
   });
 
@@ -1115,8 +1122,9 @@ export function registerPaymentRoutes(app: Express): void {
       // Deferred (e.g. 3DS step-up). Leave pending; the webhook resolves it and
       // the client polls the status endpoint below.
       return res.json({ orderId, status: "pending", amountKopecks });
-    } catch (err: any) {
-      return res.status(502).json({ error: err?.message ?? "Не удалось списать оплату. Попробуйте позже." });
+    } catch (err) {
+      const message = errMessage(err);
+      return res.status(502).json({ error: message ?? "Не удалось списать оплату. Попробуйте позже." });
     }
   });
 
@@ -1214,8 +1222,9 @@ export function registerPaymentRoutes(app: Express): void {
         return res.status(500).json({ error: "Не удалось сохранить заказ оплаты. Попробуйте позже." });
       }
       res.json({ orderId, paymentUrl: resp.PaymentURL, amountKopecks });
-    } catch (err: any) {
-      res.status(502).json({ error: err?.message ?? "Не удалось создать оплату. Попробуйте позже." });
+    } catch (err) {
+      const message = errMessage(err);
+      res.status(502).json({ error: message ?? "Не удалось создать оплату. Попробуйте позже." });
     }
   });
 
