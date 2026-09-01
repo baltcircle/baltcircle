@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { storage } from "../storage";
 import { z } from "zod";
-import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
+import { TARIFFS, tariffPriceKopecks, tariffDurationMs } from "@shared/geo";
 import {
   insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
   adminSetRoleSchema, adminSetBlockedSchema,
@@ -76,14 +76,17 @@ export function registerWalletRoutes(app: Express): void {
     if ("error" in idem) return res.status(400).json({ error: idem.error });
 
     const schema = z.object({
-      tariff: z.enum(["h1", "h2", "h3"]),
+      tariff: z.enum(["h1", "h2", "h3", "m1"]),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     // Look up authoritative price/duration server-side; never trust client-supplied values
     const tariffDef = TARIFFS.find((t) => t.id === parsed.data.tariff);
     if (!tariffDef) return res.status(400).json({ error: "Unknown tariff" });
-    const durationMs = tariffDef.durationHours * 60 * 60 * 1000;
+    // Use the shared helper (not durationHours directly) so sub-hour tariffs
+    // like the temporary m1 test tariff get their real duration via the
+    // durationMs override instead of computing a 0ms window.
+    const durationMs = tariffDurationMs(tariffDef.id);
     const priceKopecks = tariffPriceKopecks(tariffDef);
     try {
       res.json(await storage.purchaseTariff(riderId(req), parsed.data.tariff, priceKopecks, durationMs, idem.key));

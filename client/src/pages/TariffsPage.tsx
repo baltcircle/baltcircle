@@ -27,7 +27,7 @@ export function TariffsPage() {
       </header>
 
       {/* Tariff plans */}
-      <div className="grid md:grid-cols-3 gap-4 mb-4">
+      <div className="grid md:grid-cols-4 gap-4 mb-4">
         {TARIFFS.map((t) => {
           const isActive = selectedTariff === t.id;
           return (
@@ -38,6 +38,9 @@ export function TariffsPage() {
             >
               {t.popular && (
                 <Badge className="absolute top-4 right-4 bg-accent text-accent-foreground border-0">Популярный</Badge>
+              )}
+              {t.test && (
+                <Badge variant="outline" className="absolute top-4 right-4 border-amber-500/50 text-amber-600 dark:text-amber-400">Тест</Badge>
               )}
               <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Аренда</div>
               <div className="font-display text-2xl font-light mt-1">{t.name}</div>

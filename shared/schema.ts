@@ -1049,7 +1049,7 @@ export type PaymentOrderStatus = "pending" | "paid" | "failed";
 // client-supplied; the amount/price is resolved authoritatively server-side.
 export const rideInitPaymentSchema = z.object({
   bikeId: z.string().trim().min(1, "Укажите велосипед").max(20),
-  tariffId: z.enum(["h1", "h2", "h3"]),
+  tariffId: z.enum(["h1", "h2", "h3", "m1"]),
 });
 export type RideInitPaymentInput = z.infer<typeof rideInitPaymentSchema>;
 
@@ -1059,7 +1059,7 @@ export type RideInitPaymentInput = z.infer<typeof rideInitPaymentSchema>;
 // optional: when omitted the server uses the rider's most recent active card.
 export const rideChargeSavedCardSchema = z.object({
   bikeId: z.string().trim().min(1, "Укажите велосипед").max(20),
-  tariffId: z.enum(["h1", "h2", "h3"]),
+  tariffId: z.enum(["h1", "h2", "h3", "m1"]),
   paymentMethodId: z.number().int().positive().optional(),
 });
 export type RideChargeSavedCardInput = z.infer<typeof rideChargeSavedCardSchema>;
@@ -1069,7 +1069,7 @@ export type RideChargeSavedCardInput = z.infer<typeof rideChargeSavedCardSchema>
 // the server resolves it (and validates ownership) from the rider's active ride,
 // so a tampered bikeId can never redirect the charge to someone else's ride.
 export const rideExtendSavedCardSchema = z.object({
-  tariffId: z.enum(["h1", "h2", "h3"]),
+  tariffId: z.enum(["h1", "h2", "h3", "m1"]),
   paymentMethodId: z.number().int().positive().optional(),
 });
 export type RideExtendSavedCardInput = z.infer<typeof rideExtendSavedCardSchema>;
@@ -1217,7 +1217,7 @@ export type SupportTicketWithUser = SupportTicket & {
 };
 
 /* ------- TYPES for API payloads ------- */
-export type TariffId = "h1" | "h2" | "h3";
+export type TariffId = "h1" | "h2" | "h3" | "m1";
 export interface TariffInfo {
   id: TariffId;
   name: string;

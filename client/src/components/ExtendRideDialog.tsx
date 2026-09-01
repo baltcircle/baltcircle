@@ -26,7 +26,7 @@ export function ExtendRideDialog({ open, onOpenChange, onConfirm, pending }: Pro
           </DialogTitle>
         </DialogHeader>
 
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {TARIFFS.map((t) => {
             const active = tariff === t.id;
             return (
@@ -40,7 +40,14 @@ export function ExtendRideDialog({ open, onOpenChange, onConfirm, pending }: Pro
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] uppercase tracking-widest text-muted-foreground">Ещё</span>
+                  <span className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1">
+                    Ещё
+                    {t.test && (
+                      <span className="px-1 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[9px] normal-case tracking-normal font-semibold">
+                        Тест
+                      </span>
+                    )}
+                  </span>
                   {active && <Check className="w-3.5 h-3.5 text-primary" />}
                 </div>
                 <div className="font-display text-base font-light mt-1 leading-tight">{t.name}</div>

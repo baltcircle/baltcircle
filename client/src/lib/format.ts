@@ -1,4 +1,4 @@
-import { TARIFFS, tariffLabelForHours } from "@shared/geo";
+import { TARIFFS, tariffLabelForHours, tariffLabelForRide } from "@shared/geo";
 import type { UserRole } from "@shared/schema";
 
 // Russian-facing role labels. "rider" is shown as «Клиент» in the UI even
@@ -83,4 +83,12 @@ export function fmtTariff(id: string) {
 // tariff picked at start and silently ignores extensions.
 export function fmtTariffHours(hours: number): string {
   return tariffLabelForHours(hours);
+}
+
+// Like fmtTariffHours, but resolves sub-hour temporary tariffs (currently
+// only the "m1" test tariff) correctly instead of showing the generic
+// zero-hour fallback — see tariffLabelForRide's comment in shared/geo.ts.
+// Prefer this over fmtTariffHours wherever the ride object is available.
+export function fmtRideTariff(ride: { tariff: string; totalTariffHours: number }): string {
+  return tariffLabelForRide(ride);
 }

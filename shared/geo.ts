@@ -9,13 +9,22 @@ export const MAP_W = 1000;
 export const MAP_H = 700;
 
 export interface Tariff {
-  id: "h1" | "h2" | "h3";
+  id: "h1" | "h2" | "h3" | "m1";
   name: string;
   price: number;
   unit: string;
   durationHours: number;
   description: string;
   popular?: boolean;
+  // TEMPORARY (m1 only, remove together with the m1 catalog entry below):
+  // sub-hour override for the real paid-window length. durationHours stays
+  // an integer (0 for m1) because rides.totalTariffHours is a Postgres
+  // INTEGER column — a real schema migration was judged not worth it for a
+  // tariff that will be deleted shortly. tariffDurationMs() prefers this
+  // field when present; every other call site keeps using durationHours.
+  durationMs?: number;
+  // TEMPORARY: drives the "Тест" badge in the UI. Remove with m1.
+  test?: boolean;
 }
 
 // Price of one extra started hour when a rider exceeds their paid tariff
@@ -214,6 +223,21 @@ export const TARIFFS: Tariff[] = [
     durationHours: 3,
     description: "Аренда велосипеда на 3 часа.",
   },
+  // TEMPORARY TEST TARIFF (m1) — remove this entry, the "m1" id from every
+  // z.enum([...]) below/in shared/schema.ts, server/http/{rides,wallet}.ts,
+  // and the "test"/durationMs fields on the Tariff interface above once no
+  // longer needed. durationHours: 0 is intentional (see Tariff.durationMs
+  // comment) — the real 1-minute window comes from durationMs below.
+  {
+    id: "m1",
+    name: "1 минута",
+    price: 10,
+    unit: "₽",
+    durationHours: 0,
+    durationMs: 60_000,
+    description: "Тестовый тариф на 1 минуту. Временный, для проверки оплаты.",
+    test: true,
+  },
 ];
 
 // Duration in ms of the paid window purchased by a given tariff id (also
@@ -222,7 +246,10 @@ export const TARIFFS: Tariff[] = [
 // must treat that as "no fixed paid window", never as a real 0-length ride.
 export function tariffDurationMs(tariffId: string): number {
   const t = TARIFFS.find((x) => x.id === tariffId);
-  return (t?.durationHours ?? 0) * 60 * 60 * 1000;
+  if (!t) return 0;
+  // durationMs (m1 only) overrides the hour-granularity default — see the
+  // Tariff.durationMs field comment.
+  return t.durationMs ?? t.durationHours * 60 * 60 * 1000;
 }
 
 // Display label for a CUMULATIVE purchased duration (rides.totalTariffHours):
@@ -232,7 +259,12 @@ export function tariffDurationMs(tariffId: string): number {
 // falls back to a correctly-pluralized "N час/часа/часов" — Russian's 1/2-4/
 // 5-20 plural-form rule, with the standard 11-14 exception.
 export function tariffLabelForHours(hours: number): string {
-  const exact = TARIFFS.find((t) => t.durationHours === hours);
+  // Sub-hour test tariffs (durationHours: 0, e.g. "m1") are excluded from
+  // this exact-match lookup: 0 already means "unknown/legacy tariff" here
+  // (see the doc comment above), and letting m1 claim it would relabel
+  // genuinely unrelated pre-hourly-model rows. tariffLabelForRide handles
+  // the m1 case separately, from the ride's own tariff id.
+  const exact = TARIFFS.find((t) => t.durationHours === hours && !t.test);
   if (exact) return exact.name;
   const mod10 = hours % 10;
   const mod100 = hours % 100;
@@ -242,6 +274,23 @@ export function tariffLabelForHours(hours: number): string {
   else if (mod10 >= 2 && mod10 <= 4) word = "часа";
   else word = "часов";
   return `${hours} ${word}`;
+}
+
+// Display label for a ride's cumulative tariff, aware of sub-hour tariffs
+// (currently only the temporary "m1" test tariff, durationHours: 0) that
+// can't be represented in totalTariffHours at all. Deliberately does NOT
+// touch tariffLabelForHours above: totalTariffHours === 0 already means
+// "unknown legacy tariff" for real historical rows (e.g. the retired "payg"
+// plan) and tariffLabelForHours(0) === "0 часов" must keep meaning that. So
+// the m1 case is resolved here, one level up, from the ride's own tariff id
+// — only when nothing else (no hour-based extension) has already claimed the
+// cumulative total. Remove together with the m1 catalog entry.
+export function tariffLabelForRide(ride: { tariff: string; totalTariffHours: number }): string {
+  if (ride.totalTariffHours === 0) {
+    const t = TARIFFS.find((x) => x.id === ride.tariff);
+    if (t) return t.name;
+  }
+  return tariffLabelForHours(ride.totalTariffHours);
 }
 
 // Coastal launch towns (west → east along the Baltic shore).

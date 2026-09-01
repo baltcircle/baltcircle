@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import {
   Table, TableHeader, TableBody, TableHead, TableRow, TableCell,
 } from "@/components/ui/table";
-import { fmtRub, fmtDuration, fmtDate, fmtTariffHours } from "@/lib/format";
+import { fmtRub, fmtDuration, fmtDate, fmtRideTariff } from "@/lib/format";
 import { downloadCsv } from "@/lib/csv";
 import { apiRequest } from "@/lib/queryClient";
 import type { AdminRide, User, Bike, Ticket } from "@shared/schema";
@@ -339,7 +339,7 @@ function ExportBar() {
         { header: "Конец", value: (r) => (r.endedAt ? fmtDate(r.endedAt) : "") },
         { header: "Дистанция, м", value: (r) => Math.round(r.distanceM) },
         { header: "Стоимость, ₽", value: (r) => Math.round(r.cost) / 100 },
-        { header: "Тариф", value: (r) => fmtTariffHours(r.totalTariffHours) },
+        { header: "Тариф", value: (r) => fmtRideTariff(r) },
         { header: "Статус", value: (r) => r.status },
       ]);
     });

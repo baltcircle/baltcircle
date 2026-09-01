@@ -135,7 +135,7 @@ export function registerRideRoutes(app: Express): void {
     res.on("error", cleanup);
   });
   app.post("/api/rides/start", async (req, res) => {
-    const schema = z.object({ bikeId: z.string(), tariff: z.enum(["h1", "h2", "h3"]) });
+    const schema = z.object({ bikeId: z.string(), tariff: z.enum(["h1", "h2", "h3", "m1"]) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     // A blocked account may stay logged in but cannot start new rentals.
@@ -182,7 +182,7 @@ export function registerRideRoutes(app: Express): void {
   });
   // Always available, including while paused (product decision).
   app.post("/api/rides/:id/extend", async (req, res) => {
-    const schema = z.object({ tariff: z.enum(["h1", "h2", "h3"]) });
+    const schema = z.object({ tariff: z.enum(["h1", "h2", "h3", "m1"]) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     const ride = await storage.getRide(Number(req.params.id));
