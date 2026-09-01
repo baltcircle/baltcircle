@@ -33,13 +33,34 @@ jobs:
       - baltcircle-prod
     environment: production
     steps:
+      # audit HIGH #3 fix: reject anything that isn't a bare IMEI / small
+      # integer BEFORE it ever reaches a shell or SQL context. Combined with
+      # psql -v below (bind parameters, not string interpolation) this closes
+      # the SQL-injection vector entirely instead of just narrowing it.
+      - name: Validate inputs
+        env:
+          IMEI: ${{ github.event.inputs.imei }}
+          RIDE_LIMIT: ${{ github.event.inputs.ride_limit }}
+        run: |
+          set -e
+          if ! [[ "$IMEI" =~ ^[0-9]{15}$ ]]; then
+            echo "❌ imei must be exactly 15 digits, got: $IMEI"
+            exit 1
+          fi
+          if ! [[ "$RIDE_LIMIT" =~ ^[1-9][0-9]{0,2}$ ]]; then
+            echo "❌ ride_limit must be an integer between 1 and 999, got: $RIDE_LIMIT"
+            exit 1
+          fi
+          echo "IMEI=$IMEI" >> "$GITHUB_ENV"
+          echo "RIDE_LIMIT=$RIDE_LIMIT" >> "$GITHUB_ENV"
+
       - name: Write diagnostic SQL
         run: |
-          cat > "${{ github.workspace }}/diagnose-track.sql" <<SQL
-          SELECT id AS bike_id, lock_imei FROM bikes WHERE lock_imei = '${{ github.event.inputs.imei }}';
+          cat > "${{ github.workspace }}/diagnose-track.sql" <<'SQL'
+          SELECT id AS bike_id, lock_imei FROM bikes WHERE lock_imei = :'imei';
 
           WITH target_bike AS (
-            SELECT id FROM bikes WHERE lock_imei = '${{ github.event.inputs.imei }}'
+            SELECT id FROM bikes WHERE lock_imei = :'imei'
           ),
           recent_rides AS (
             SELECT r.id, r.bike_id, r.started_at, r.ended_at, r.paused_at, r.total_paused_ms,
@@ -47,7 +68,7 @@ jobs:
               FROM rides r, target_bike tb
              WHERE r.bike_id = tb.id
              ORDER BY r.started_at DESC
-             LIMIT ${{ github.event.inputs.ride_limit }}
+             LIMIT :ride_limit
           )
           SELECT rr.id AS ride_id, rr.started_at, rr.ended_at, rr.paused_at, rr.total_paused_ms,
                  rr.phone_points,
@@ -77,4 +98,4 @@ jobs:
             -e DATABASE_URL \
             -v "${{ github.workspace }}/diagnose-track.sql:/diag.sql:ro" \
             postgres:16-alpine \
-            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /diag.sql
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v imei="$IMEI" -v ride_limit="$RIDE_LIMIT" -f /diag.sql

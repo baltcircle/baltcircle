@@ -38,6 +38,10 @@ jobs:
     runs-on:
       - self-hosted
       - baltcircle-prod
+    # audit HIGH #5 fix: runs unattended on the prod self-hosted runner with
+    # no approval gate; added the same "production" environment used by
+    # deploy.yml / diagnose-ride-track.yml / fetch-logs.yml.
+    environment: production
     steps:
       - name: Confirm OMNI_DIAG_IMEI is set inside the running container
         run: |
@@ -56,10 +60,19 @@ jobs:
 
       - name: Tail app container logs for omni-diag frames
         if: always()
+        env:
+          # audit HIGH #5 follow-up: same injection class as fetch-logs.yml —
+          # splicing this raw input into the script text via ${{ }} would let
+          # a crafted since_minutes value break out into arbitrary shell.
+          # Pass via env + validate instead of interpolating into run: text.
+          SINCE_RAW: ${{ inputs.since_minutes }}
         run: |
           set +e
-          SINCE="${{ inputs.since_minutes }}"
-          SINCE="${SINCE:-20}"
+          SINCE="${SINCE_RAW:-20}"
+          if ! [[ "$SINCE" =~ ^[1-9][0-9]{0,3}$ ]]; then
+            echo "❌ since_minutes must be an integer between 1 and 9999, got: $SINCE"
+            exit 1
+          fi
           echo "== docker logs baltcircle-mvp --since ${SINCE}m, filtered to omni-diag =="
           echo "---"
           docker logs baltcircle-mvp --since "${SINCE}m" 2>&1 \

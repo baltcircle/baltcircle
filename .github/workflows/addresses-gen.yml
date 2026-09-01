@@ -23,6 +23,9 @@ permissions:
 jobs:
   addresses:
     runs-on: [self-hosted, baltcircle-prod]
+    # audit HIGH #5 fix: writes to the prod host bind mount unattended, no
+    # approval gate; added the same "production" environment used elsewhere.
+    environment: production
     timeout-minutes: 30
     steps:
       - name: Checkout scripts
