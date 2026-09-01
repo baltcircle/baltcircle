@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Search, Users, Ban, AlertTriangle } from "lucide-react";
 import { TablePager, useClientPagination } from "@/components/table-pager";
 import { UserRowItem } from "./users-admin/UserRow";
-import { cleanErr } from "./users-admin/error-utils";
+import { cleanErr } from "@/lib/api-error";
 
 const USERS_KEY = ["/api/admin/users"];
 

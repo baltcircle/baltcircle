@@ -113,23 +113,10 @@ export function methodError(m: PublicPaymentMethod): string {
   return extras ? `${base} (${extras})` : base;
 }
 
-// apiRequest throws "<status>: <body>" — pull a human message out of the body.
-// The add-card endpoint returns the acquirer's own { error, code, message,
-// details }; surface the message plus a parenthetical code/details so a rider
-// (or support) sees *why* the binding failed instead of a generic rejection.
-export function cleanErr(e: Error): string {
-  const m = e.message.match(/^\d+:\s*([\s\S]*)$/);
-  const body = m ? m[1] : e.message;
-  try {
-    const parsed = JSON.parse(body);
-    if (parsed?.error) {
-      const extra = parsed.code ? `код ${parsed.code}` : "";
-      const detail = parsed.details && parsed.details !== parsed.error ? parsed.details : "";
-      const suffix = [extra, detail].filter(Boolean).join(", ");
-      return suffix ? `${parsed.error} (${suffix})` : parsed.error;
-    }
-  } catch {
-    // body wasn't JSON; fall through
-  }
-  return body;
-}
+// apiRequest throws "<status>: <body>" — the add-card endpoint returns the
+// acquirer's own { error, code, message, details }; cleanErrWithDetails
+// surfaces the message plus a parenthetical code/details so a rider (or
+// support) sees *why* the binding failed instead of a generic rejection.
+// Re-exported as `cleanErr` to keep every existing import in this codebase
+// unchanged (audit MEDIUM #9 dedup — see client/src/lib/api-error.ts).
+export { cleanErrWithDetails as cleanErr } from "@/lib/api-error";
