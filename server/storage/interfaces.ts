@@ -156,8 +156,15 @@ export interface IPaymentMethodStorage {
     paymentMethodId?: number;
     rebillId?: string;
     idempotencyKey: string;
+    rideId?: number;
+    purpose?: "ride_overage";
   }): Promise<{ order: PaymentOrder; created: boolean }>;
   getRidePaymentOrderByIdempotencyKey(userId: string, idempotencyKey: string): Promise<PaymentOrder | undefined>;
+  // Most recent successfully-PAID saved-card/SBP order for a ride (start OR
+  // extend) — tells the caller which payment method actually funded this
+  // ride's tariff, so overage at settlement can be charged the same way.
+  // undefined means the ride was funded from the internal wallet only.
+  getLatestPaidRidePaymentOrder(rideId: number): Promise<PaymentOrder | undefined>;
 }
 
 export interface ISupportStorage {
@@ -230,6 +237,8 @@ export interface IAlertStorage {
   createMovementAlert(bikeId: string, at: number): Promise<Alert | null>;
   /** Best-effort, dedup-on-insert. See server/storage/alert.ts for details. */
   createLowBatteryOfflineAlert(bikeId: string, battery: number, at: number): Promise<Alert | null>;
+  /** Best-effort, plain insert (NO dedup) — see server/storage/alert.ts for details. */
+  createOverageChargeFailedAlert(bikeId: string, rideId: number, userId: string, amountKopecks: number, reason: string, at: number): Promise<Alert | null>;
   listAlerts(opts?: { includeAcknowledged?: boolean }): Promise<Alert[]>;
   acknowledgeAlert(id: number, by: string): Promise<Alert | undefined>;
 }

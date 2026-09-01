@@ -10,6 +10,9 @@ import {
 import type { TbankConfig } from "../tbank";
 import { log } from "../index";
 import { sendToUserAsync } from "../push";
+import { db } from "../db/bootstrap";
+import { payments } from "@shared/schema";
+import { formatKopecksAsRubles } from "@shared/billing";
 
 // Start (or reuse) a prepaid ride for a ride-payment order that has just been
 // PAID, guarding against a double-start. Shared by the synchronous saved-card
@@ -327,6 +330,52 @@ export async function handleRidePaymentNotification(
   if (!claimed) return; // lost the race to a concurrent/duplicate notification
 
   try {
+    // Server-initiated ride-overage charge (see server/storage/ride.ts's
+    // chargeRideOverageAsync) settling asynchronously — e.g. a 3DS step-up
+    // that came back non-terminal at Init+Charge time and only resolves here
+    // on this later webhook. MUST be checked BEFORE the rideId != null branch
+    // below: a ride_overage order also carries a rideId, but must never be
+    // routed into extendRideForPaidOrder (that would double-apply the
+    // tariff/paidUntilAt extension for money that was actually an overage
+    // charge, not a new extend).
+    if (claimed.purpose === "ride_overage") {
+      if (outcome === "paid") {
+        await storage.updateRidePaymentOrder(claimed.id, {
+          status: "paid", paymentId: paymentId || claimed.paymentId,
+          lastErrorCode: null, lastErrorMessage: null, lastErrorDetails: null,
+        });
+        await db.insert(payments).values({
+          userId: claimed.userId, amount: -claimed.amountKopecks, kind: "ride_charge",
+          description: `Овертайм аренды ${claimed.bikeId}`, createdAt: Date.now(),
+        });
+        sendToUserAsync(claimed.userId, {
+          title: "Оплата поездки",
+          body: `Списано ${formatKopecksAsRubles(claimed.amountKopecks)} ₽ за овертайм поездки. Спасибо, что пользуетесь TakeRide!`,
+          url: "/rides",
+          tag: `ride:${claimed.rideId}:overage`,
+          data: { kind: "ride-charge-confirmed", rideId: claimed.rideId },
+        });
+      } else {
+        const patch = bindingErrorPatch(body);
+        await storage.updateRidePaymentOrder(claimed.id, {
+          status: "failed", paymentId: paymentId || claimed.paymentId, ...patch,
+        });
+        if (claimed.rideId != null) {
+          await storage.createOverageChargeFailedAlert(
+            claimed.bikeId, claimed.rideId, claimed.userId, claimed.amountKopecks,
+            patch.lastErrorMessage ?? "платёж отклонён", Date.now(),
+          ).catch(() => {});
+        }
+        sendToUserAsync(claimed.userId, {
+          title: "Недостаточно средств",
+          body: "Недостаточно средств для завершения аренды. Пополните карту или свяжитесь с поддержкой.",
+          url: "/rides",
+          tag: `ride:${claimed.rideId}:overage-failed`,
+          data: { kind: "ride-overage-failed", rideId: claimed.rideId },
+        });
+      }
+      return;
+    }
     if (outcome === "paid") {
       if (claimed.rideId != null) {
         // Extend order (rideId set at RESERVE time, see reserveRidePaymentOrder) —

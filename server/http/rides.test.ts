@@ -26,6 +26,10 @@ const storageMock = vi.hoisted(() => ({
   endRide: vi.fn(),
 }));
 const rideEvents = vi.hoisted(() => {
+  // vi.hoisted() runs before this file's own top-level imports are evaluated,
+  // so a static `import` binding isn't available here yet; require() is the
+  // correct tool for this specific case.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { EventEmitter } = require("node:events") as typeof import("node:events");
   const emitter = new EventEmitter();
   emitter.setMaxListeners(0);

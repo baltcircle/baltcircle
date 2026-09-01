@@ -10,7 +10,7 @@
 // retry window elapses.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const dbMock = vi.hoisted(() => ({ transaction: vi.fn() }));
+const dbMock = vi.hoisted(() => ({ transaction: vi.fn(), select: vi.fn() }));
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 const sendToUserAsyncMock = vi.hoisted(() => vi.fn());
 
@@ -34,6 +34,13 @@ const PAYLOAD = { rideId: 42, userId: "user-1", imei: "861234567890123" };
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
+  // endRide's pre-transaction funding-order lookup (see
+  // chargeRideOverageAsync in server/storage/ride.ts) — default to "none
+  // found" so these retry tests keep exercising the legacy wallet path.
+  dbMock.select.mockImplementation(() => {
+    const chain: any = { from: () => chain, where: () => chain, orderBy: () => chain, limit: () => Promise.resolve([]) };
+    return chain;
+  });
 });
 
 afterEach(() => {

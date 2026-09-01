@@ -1071,6 +1071,19 @@ export function generateSbpRideChargeOrderId(): string {
   return `TRSQ-${ts}-${rand.slice(0, 6)}`;
 }
 
+// Build a compact, collision-resistant OrderId for a server-initiated OVERAGE
+// charge at ride-end (against whichever saved card/SBP method funded the
+// ride's tariff). Same constraints as the other generators. A distinct
+// "TROV" (TakeRide OVerage) prefix lets logs/handlers tell this apart from a
+// rider-initiated start/extend charge at a glance — the card-vs-SBP kind
+// itself is carried by payment_orders.source, not by this prefix.
+export function generateOverageChargeOrderId(): string {
+  const ts = Date.now().toString(36);
+  let rand = "";
+  while (rand.length < 6) rand += randomInt(36).toString(36);
+  return `TROV-${ts}-${rand.slice(0, 6)}`;
+}
+
 // Build a compact, collision-resistant OrderId for an SBP account binding.
 // Same constraints as the card generators — <= 50 chars, ASCII latin/digits/dash
 // only. A distinct "TRSB" (TakeRide Sbp Binding) prefix lets logs/handlers tell

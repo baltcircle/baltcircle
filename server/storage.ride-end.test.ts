@@ -6,8 +6,24 @@ import type { Ride } from "@shared/schema";
 // settlement path, track-source fallback, and the emit/cache-invalidation
 // side effects — all against a mocked tx/pool, no real DB.
 
+// endRide now does a plain (pre-transaction) db.select() to look up the
+// ride's funding payment order (see chargeRideOverageAsync in
+// server/storage/ride.ts). Default to "no funding order found" so all
+// pre-existing tests below keep exercising the legacy wallet-debit overage
+// path unmodified; the dedicated overage-card-charge tests further down
+// override this per-test.
+function emptySelectChain() {
+  const chain: any = {
+    from: () => chain,
+    where: () => chain,
+    orderBy: () => chain,
+    limit: () => Promise.resolve([]),
+  };
+  return chain;
+}
 const dbMock = vi.hoisted(() => ({
   transaction: vi.fn(),
+  select: vi.fn(),
 }));
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 const sendToUserAsyncMock = vi.hoisted(() => vi.fn());
@@ -147,6 +163,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   vi.clearAllMocks();
   poolMock.query.mockResolvedValue({ rows: [] });
+  dbMock.select.mockImplementation(() => emptySelectChain());
 });
 
 afterEach(() => {
@@ -377,6 +394,39 @@ describe("endRide charge confirmation push", () => {
     expect(calls.insert).toHaveLength(1);
     expect((calls.insert[0].values as any).description).toContain("+90 мин");
     expect(calls.execute).toHaveLength(2); // wallet UPSERT + balance decrement
+  });
+
+  // Routing fix: when the ride was funded by a real card/SBP order (not the
+  // wallet), the overage must be charged the SAME way — the legacy wallet
+  // debit is now gated on `!fundingOrder` and must NOT fire in that case,
+  // even though overageKopecks > 0. See chargeRideOverageAsync's own
+  // dedicated test suite (server/storage.ride-overage.test.ts) for the full
+  // card-charge behaviour; this test only pins endRide's routing decision.
+  it("skips the wallet debit entirely when the ride was funded by a card/SBP order (routes to the card-charge path instead)", async () => {
+    const activeRide = makeRide();
+    const completedRide = makeRide({ endedAt: NOW.getTime(), cost: 70000, status: "completed" });
+    const { tx, calls } = makeTx([[activeRide], [makeBike()], [], [completedRide]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+    // First db.select() (pre-transaction) = getLatestPaidRidePaymentOrder ->
+    // a real funding order; every subsequent db.select() (e.g. the card
+    // charge's own getPaymentMethod lookup) falls back to the generic empty
+    // chain configured in beforeEach.
+    dbMock.select.mockImplementationOnce(() => {
+      const chain: any = {
+        from: () => chain, where: () => chain, orderBy: () => chain,
+        limit: () => Promise.resolve([{ id: 900, paymentMethodId: 5, source: "saved_card" }]),
+      };
+      return chain;
+    });
+
+    await storage.endRide(activeRide.id);
+    // Let the fire-and-forget chargeRideOverageAsync's microtask chain settle
+    // (it has no real payment method behind id 5 here, so it fails fast and
+    // safely via its own .catch(() => {})-guarded alert path).
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+
+    expect(calls.execute).toHaveLength(0); // no wallet UPSERT/decrement
+    expect(calls.insert).toHaveLength(0); // no wallet ride_charge ledger row
   });
 });
 

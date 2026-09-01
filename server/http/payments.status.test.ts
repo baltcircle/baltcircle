@@ -34,10 +34,16 @@ vi.mock("../tbank", async () => {
   return { ...actual, getTbankConfig: vi.fn() };
 });
 // tbank-handlers.ts (left unmocked so its real tbankErrorBody runs) pulls in
-// ../push for ride-outcome notifications; ../push itself imports the DB
-// bootstrap module directly (not via ../storage), so it needs its own mock
-// to avoid a real Postgres connection attempt during this unit test.
+// ../push for ride-outcome notifications, AND (since the ride_overage webhook
+// branch was added) now also imports ../db/bootstrap directly for its own
+// payments-ledger insert — both need their own mock to avoid a real Postgres
+// connection attempt during this unit test.
 vi.mock("../push", () => ({ sendToUserAsync: vi.fn() }));
+vi.mock("../db/bootstrap", () => ({
+  db: { insert: vi.fn(() => ({ values: vi.fn().mockResolvedValue(undefined) })) },
+  pool: { query: vi.fn() },
+  bootstrapReady: Promise.resolve(),
+}));
 
 import { registerPaymentRoutes } from "./payments";
 

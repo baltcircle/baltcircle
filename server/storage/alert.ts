@@ -73,6 +73,34 @@ export function AlertMixin<TBase extends Constructor>(Base: TBase) {
       );
     }
 
+    /**
+     * Best-effort, called from endRide's post-commit overage-settlement helper
+     * (server/storage/ride.ts) when the real card/SBP charge for a ride's
+     * overage fails (decline, no usable method, network error). Deliberately
+     * a PLAIN INSERT with no dedup: createAlertRow's bikeId+kind dedup would
+     * wrongly suppress a second, unrelated rider's failed overage charge on
+     * the same bike — every failure is its own actionable, ride-specific
+     * incident for the operator to follow up on.
+     */
+    async createOverageChargeFailedAlert(
+      bikeId: string, rideId: number, userId: string, amountKopecks: number, reason: string, at: number,
+    ): Promise<Alert | null> {
+      const rub = (amountKopecks / 100).toFixed(2);
+      const result = await db.execute(sql`
+        INSERT INTO alerts (bike_id, kind, severity, message, created_at)
+        VALUES (
+          ${bikeId}, 'overage_charge_failed', 'high',
+          ${`Не удалось списать овертайм по поездке #${rideId} (райдер ${userId}): ${rub} ₽. Причина: ${reason}`},
+          ${at}
+        )
+        RETURNING id, bike_id, kind, severity, message, created_at, acknowledged_at, acknowledged_by
+      `);
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      if (!row) return null;
+      bikeEvents.emit(BIKE_EVENT_CHANNEL);
+      return rowToAlert(row);
+    }
+
     async listAlerts(opts?: { includeAcknowledged?: boolean }): Promise<Alert[]> {
       const rows = opts?.includeAcknowledged
         ? await db.select().from(alerts).orderBy(desc(alerts.createdAt))

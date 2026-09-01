@@ -361,7 +361,7 @@ export const alerts = pgTable("alerts", {
   index("idx_alerts_unacked").on(t.createdAt).where(sql`${t.acknowledgedAt} IS NULL`),
 ]);
 export type Alert = typeof alerts.$inferSelect;
-export const ALERT_KINDS = ["movement_alarm", "low_battery", "fall"] as const;
+export const ALERT_KINDS = ["movement_alarm", "low_battery", "fall", "overage_charge_failed"] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
 export type UnassignedLock = typeof unassignedLocks.$inferSelect;
 
@@ -669,6 +669,14 @@ export const rides = pgTable("rides", {
   distanceM: doublePrecision("distance_m").notNull().default(0),
   cost: integer("cost").notNull().default(0),   // stored in kopecks (integer) — never float rubles
   tariff: text("tariff").notNull(),
+  // Cumulative purchased duration in hours: the initial tariff's durationHours
+  // at startRide, incremented by each extendRide's tariff.durationHours. Used
+  // for display (the "2 часа" label after a 1ч+1ч extension) instead of the
+  // raw `tariff` id, which only ever reflects the LAST tariff purchased and
+  // was never meant to represent a cumulative total — see shared/geo.ts's
+  // tariffLabelForHours(). Independent of paidUntilAt, which also absorbs
+  // pause-grace credits and must not be used to derive this.
+  totalTariffHours: integer("total_tariff_hours").notNull().default(0),
   status: text("status").notNull(),   // active | completed | cancelled
   // Set when the OMNI lock reports a physical close (L1) while this ride was
   // still "active" — i.e. the rider closed the lock without the app calling
@@ -1006,6 +1014,14 @@ export const paymentOrders = pgTable("payment_orders", {
   // The RebillId is a recurring token, NOT card data — no PAN/CVC is ever stored.
   paymentMethodId: integer("payment_method_id"),
   rebillId: text("rebill_id"),                    // RebillId used for the saved-card charge
+  // Discriminates a server-initiated charge from the two rider-initiated ones.
+  // NULL (the historical default) keeps the existing convention: rideId ==
+  // null means "ride start", rideId != null means "ride extend" (see
+  // handleRidePaymentNotification/extendRideForPaidOrder). "ride_overage" is
+  // the ONE new case that also carries a rideId but must NEVER be routed into
+  // extendRideForPaidOrder — it settles an already-completed ride's overage,
+  // not a new paid window, and must be checked BEFORE the rideId-null branch.
+  purpose: text("purpose"),
   status: text("status").notNull().default("pending"), // pending | paid | failed
   rideId: integer("ride_id").references(() => rides.id), // set once the paid ride is started
   // Client-supplied idempotency token (audit HIGH #2): a retried /ride/init or

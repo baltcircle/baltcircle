@@ -1,4 +1,4 @@
-import { TARIFFS } from "@shared/geo";
+import { TARIFFS, tariffLabelForHours } from "@shared/geo";
 import type { UserRole } from "@shared/schema";
 
 // Russian-facing role labels. "rider" is shown as «Клиент» in the UI even
@@ -74,4 +74,13 @@ export function fmtTariff(id: string) {
   const t = TARIFFS.find((x) => x.id === id);
   if (t) return t.name;
   return LEGACY_TARIFF_LABELS[id] ?? id;
+}
+
+// Display label for the CUMULATIVE paid duration of a ride (rides.totalTariffHours
+// — initial tariff + every extension), e.g. "2 часа" for an h1 ride extended once
+// by another h1. Use this instead of fmtTariff(ride.tariff) anywhere a ride's
+// TOTAL paid duration is shown — fmtTariff only ever reflects the ORIGINAL
+// tariff picked at start and silently ignores extensions.
+export function fmtTariffHours(hours: number): string {
+  return tariffLabelForHours(hours);
 }
