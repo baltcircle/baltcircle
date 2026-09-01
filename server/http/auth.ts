@@ -39,7 +39,7 @@ import { log } from "./../index";
 import {
   riderId, isStaffSession, canManageRide, actorName, clientIp,
   requireRole, requireAuth, requireRoleWhenConfigured,
-  otpLimiter, paymentLimiter,
+  otpLimiter, otpPhoneLimiter, paymentLimiter,
 } from "./context";
 
 // Audit LOW: regenerate the session ID on every successful login/registration
@@ -67,7 +67,7 @@ export function registerAuthRoutes(app: Express): void {
   // -------------- Rider registration (SMS OTP) --------------
   // Step 1: rider submits name + phone + consent. We generate a code, persist
   // its hash, and dispatch it by SMS. No session is created yet.
-  app.post("/api/auth/otp/start", otpLimiter, async (req, res) => {
+  app.post("/api/auth/otp/start", otpLimiter, otpPhoneLimiter, async (req, res) => {
     const parsed = otpStartSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
@@ -103,7 +103,7 @@ export function registerAuthRoutes(app: Express): void {
 
   // Step 2: rider submits the code. On success we create/activate the rider and
   // bind the session, allowing rental/scan.
-  app.post("/api/auth/otp/verify", otpLimiter, async (req, res) => {
+  app.post("/api/auth/otp/verify", otpLimiter, otpPhoneLimiter, async (req, res) => {
     const parsed = otpVerifySchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
@@ -221,8 +221,9 @@ export function registerAuthRoutes(app: Express): void {
   // four endpoints sent real SMS/email and guessed codes with no rate limit
   // at all — an authenticated rider (or anyone who stole/fixed a session)
   // could hammer them to run up SMS cost or brute-force the change code.
-  // Reuse the same IP-keyed otpLimiter as the registration OTP flow.
-  app.post("/api/users/me/phone/start", otpLimiter, async (req, res) => {
+  // Reuse the same IP-keyed otpLimiter as the registration OTP flow, plus
+  // otpPhoneLimiter (audit MEDIUM #3) so it's also bounded per target phone.
+  app.post("/api/users/me/phone/start", otpLimiter, otpPhoneLimiter, async (req, res) => {
     const id = req.session?.userId;
     if (!id) return res.status(401).json({ error: "Требуется вход" });
     const parsed = phoneChangeStartSchema.safeParse(req.body);
@@ -247,7 +248,7 @@ export function registerAuthRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/users/me/phone/verify", otpLimiter, async (req, res) => {
+  app.post("/api/users/me/phone/verify", otpLimiter, otpPhoneLimiter, async (req, res) => {
     const id = req.session?.userId;
     if (!id) return res.status(401).json({ error: "Требуется вход" });
     const parsed = phoneChangeVerifySchema.safeParse(req.body);

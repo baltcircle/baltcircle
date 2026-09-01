@@ -14,6 +14,27 @@ pg.types.setTypeParser(20, (val) => (val === null ? null : Number(val)));
 const connectionString =
   process.env.DATABASE_URL || "postgresql://postgres@127.0.0.1:5433/baltcircle";
 
+// Audit MEDIUM #1: sslmode=verify-full is documented (.env.example, README)
+// as required for the managed-Postgres connection string, but nothing
+// enforced it at runtime — a typo or a copy-pasted local connection string
+// without the query param would silently connect over an unverified (or
+// even unencrypted) channel in production. Fail fast instead, mirroring the
+// existing SESSION_SECRET production guard in server/index.ts.
+if (process.env.NODE_ENV === "production") {
+  let sslmode: string | null = null;
+  try {
+    sslmode = new URL(connectionString).searchParams.get("sslmode");
+  } catch {
+    // Not a parseable URL at all — treated as missing sslmode below.
+  }
+  if (sslmode !== "verify-full") {
+    logger.fatal(
+      `DATABASE_URL is missing sslmode=verify-full (got: ${sslmode ?? "none"}) in production. Set it explicitly so the TLS certificate of the managed Postgres endpoint is verified. Refusing to start.`,
+    );
+    process.exit(1);
+  }
+}
+
 // A single shared pool for the whole process. max is generous enough for the
 // concurrent ride/payment/session load at 300 bikes but bounded so a burst
 // can't exhaust the managed-Postgres connection limit.

@@ -114,9 +114,12 @@ export function parsePageParams(req: Request): { limit?: number; offset: number 
 // OTP start dispatches a REAL SMS (direct cost) and OTP verify is a code
 // guess — both are prime abuse targets, so they get a tight limit. Payment
 // init endpoints redirect to the acquirer; abuse there spams order creation,
-// so they get a looser limit. The T-Bank notification webhook is intentionally
-// NOT limited: it is server-to-server from the bank and dropping it would lose
-// payment confirmations.
+// so they get a looser limit. The T-Bank notification webhook stays
+// deliberately generous (audit MEDIUM #2): it is server-to-server from the
+// bank and a real notification burst must never be dropped, but an
+// unauthenticated public POST endpoint that does HMAC verification and JSON
+// parsing before any auth check is still a volumetric-DoS target, so it gets
+// a ceiling far above anything real payment traffic could ever produce.
 // Set DISABLE_RATE_LIMIT=1 to bypass IP rate limiting. Used only by smoke tests,
 // which drive many registrations/payments from a single IP and would otherwise
 // trip the production limits. Never set in production.
@@ -128,6 +131,41 @@ export const otpLimiter = rateLimit({
   legacyHeaders: false,
   skip: rateLimitDisabled,
   message: { error: "Слишком много попыток. Попробуйте позже." },
+});
+
+// Audit MEDIUM #3: otpLimiter above keys purely on source IP. The DB-level
+// defenses (60s resend lock + 5-attempts-per-code lockout in
+// server/storage/otp.ts, both keyed on the phone number itself) already stop
+// a distributed attacker from actually guessing a code or spamming SMS to one
+// target number regardless of how many IPs they rotate through — but every
+// one of those rejected requests still pays for a DB transaction with a row
+// lock before being turned down. This second limiter keys on the *phone
+// number in the request body* so a many-IP flood aimed at one number gets
+// turned away at the edge, before it ever reaches the DB. Deliberately
+// looser than the per-phone DB locks (which are the real security boundary)
+// so it only kicks in on genuine abuse, not normal retry UX.
+function otpPhoneKey(req: Request): string {
+  const raw = (req.body as Record<string, unknown> | undefined)?.phone;
+  const digits = typeof raw === "string" ? raw.replace(/\D/g, "") : "";
+  if (digits.length >= 10) return `phone:${digits}`;
+  // /api/users/me/phone/verify only carries { code } — the target phone is
+  // whatever change request is pending for the session, not in the body —
+  // so key on the authenticated rider instead, which is just as precise.
+  const userId = req.session?.userId;
+  if (userId) return `user:${userId}`;
+  // No parseable phone and no session: fall back to IP so malformed requests
+  // don't all pile into one shared "unknown" bucket (which itself would
+  // become a denial-of-service lever against everyone hitting it at once).
+  return `ip:${req.ip}`;
+}
+export const otpPhoneLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 8, // 8 start+verify calls per phone number per window, across all IPs
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: rateLimitDisabled,
+  keyGenerator: otpPhoneKey,
+  message: { error: "Слишком много попыток для этого номера. Попробуйте позже." },
 });
 export const paymentLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
@@ -158,4 +196,19 @@ export const feedbackLimiter = rateLimit({
   legacyHeaders: false,
   skip: rateLimitDisabled,
   message: { error: "Слишком много запросов. Попробуйте позже." },
+});
+// At 300 bikes, a single order produces at most a handful of notifications
+// (AUTHORIZED/CONFIRMED, and REJECTED on failure); even a large fleet running
+// hot would stay two to three orders of magnitude below this ceiling. This
+// exists purely to cap the cost of unauthenticated HMAC+JSON parsing during a
+// volumetric flood, not to throttle T-Bank itself — T-Bank's own notification
+// IP range is fixed and small, so tripping this in production would mean
+// something is already very wrong upstream, not normal traffic.
+export const tbankWebhookLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 600, // 10 req/s sustained per source IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: rateLimitDisabled,
+  message: { error: "Too many requests" },
 });

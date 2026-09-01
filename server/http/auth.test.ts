@@ -55,6 +55,7 @@ vi.mock("./context", () => ({
   requireAuth: vi.fn(),
   requireRoleWhenConfigured: vi.fn(),
   otpLimiter: vi.fn(),
+  otpPhoneLimiter: vi.fn(),
   paymentLimiter: vi.fn(),
 }));
 

@@ -38,7 +38,7 @@ import { logger } from "./../logger";
 import {
   riderId, isStaffSession, canManageRide, actorName, clientIp,
   requireRole, requireAuth, requireRoleWhenConfigured,
-  otpLimiter, paymentLimiter,
+  otpLimiter, paymentLimiter, tbankWebhookLimiter,
 } from "./context";
 
 // A state check is on the synchronous request path when a rider returns to the
@@ -1257,7 +1257,7 @@ export function registerPaymentRoutes(app: Express): void {
   // invalid/missing token is rejected with 403. Handlers are idempotent
   // (order.status === "paid" short-circuits, ride start is guarded), so a retry
   // of an already-processed notification never double-charges or double-starts.
-  app.post("/api/payments/tbank/notification", async (req, res) => {
+  app.post("/api/payments/tbank/notification", tbankWebhookLimiter, async (req, res) => {
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются." });
 

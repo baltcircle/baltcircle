@@ -37,9 +37,20 @@ let warnedInsecureDevKey = false;
 function masterSecret(): string {
   const configured = process.env.PAYMENT_TOKEN_KEY;
   if (configured && configured.trim()) return configured;
-  if (process.env.NODE_ENV === "production") {
+  // Audit MEDIUM #14: this used to fall back to the hardcoded key below
+  // whenever NODE_ENV simply wasn't the literal string "production" — which
+  // silently covers an unset/misconfigured NODE_ENV too. A staging box spun
+  // up ad hoc (outside docker-compose/npm start, both of which already set
+  // NODE_ENV=production explicitly) against a copy of production data, with
+  // NODE_ENV left unset by mistake, would decrypt with a key published in
+  // this public repo. Whitelist the two recognised non-production values
+  // instead of blacklisting one: anything else (including unset) must
+  // configure a real key.
+  const DEV_NODE_ENVS = ["development", "test"];
+  if (!DEV_NODE_ENVS.includes(process.env.NODE_ENV ?? "")) {
     throw new Error(
-      "PAYMENT_TOKEN_KEY is required in production to encrypt stored payment tokens (RebillId/AccountToken).",
+      "PAYMENT_TOKEN_KEY is required to encrypt stored payment tokens (RebillId/AccountToken). " +
+        `Set it explicitly, or set NODE_ENV to one of: ${DEV_NODE_ENVS.join(", ")} for local development.`,
     );
   }
   if (!warnedInsecureDevKey) {
