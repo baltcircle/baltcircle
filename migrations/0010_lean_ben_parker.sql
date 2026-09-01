@@ -1,0 +1,1 @@
+ALTER TABLE "rides" ADD COLUMN "total_tariff_ms" bigint DEFAULT 0 NOT NULL;

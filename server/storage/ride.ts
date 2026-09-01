@@ -1,5 +1,5 @@
-import { bikes, rides, payments, parkings, ridePoints, users, locks, reservations } from "@shared/schema";
-import type { Ride, AdminRide, User, Parking, Bike, Lock, Reservation, PaymentMethod, PaymentOrder } from "@shared/schema";
+import { bikes, rides, payments, parkings, ridePoints, users, locks, reservations, rideFeedback } from "@shared/schema";
+import type { Ride, AdminRide, RideWithFeedback, User, Parking, Bike, Lock, Reservation, PaymentMethod, PaymentOrder } from "@shared/schema";
 import { eq, sql, and, desc, asc, inArray, count } from "drizzle-orm";
 import {
   TARIFFS, tariffPriceKopecks, tariffDurationMs, realToMap,
@@ -408,6 +408,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
               startLat, startLng,
               track: JSON.stringify(track), distanceM: 0, cost: costKopecks, tariff, status: "active",
               totalTariffHours: tariffDef?.durationHours ?? 0,
+              totalTariffMs: tariffDurationMs(tariff),
               paidUntilAt, startParkingId: startParkingMatch.id,
               // The per-bike isTestBike flag was removed — no more designated
               // test units, so this is always false now. Column kept (not
@@ -1114,14 +1115,19 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         // resumes — "overtime pauses, extension counts down, overtime resumes".
         const basePaidUntilAt = Math.max(now, effectivePaidUntilAt);
         // An extension is additional money actually paid on TOP of the ride's
-        // original tariff — cost/totalTariffHours must accumulate, not stay
-        // pinned to the start-time values. r.cost otherwise silently
-        // undercounts every extended ride in history AND in analytics'
-        // SUM(cost) revenue queries (server/storage/analytics.ts).
+        // original tariff — cost/totalTariffHours/totalTariffMs must
+        // accumulate, not stay pinned to the start-time values. r.cost
+        // otherwise silently undercounts every extended ride in history AND
+        // in analytics' SUM(cost) revenue queries (server/storage/analytics.ts).
+        // totalTariffMs accumulates alongside totalTariffHours (not instead
+        // of it) so sub-hour tariffs like "m1" — which add 0 to the hours
+        // counter on every extension — still show up in the ride's tariff
+        // label (shared/geo.ts's tariffLabelForRide reads totalTariffMs).
         const updated = (await tx.update(rides).set({
           paidUntilAt: basePaidUntilAt + tariffDurationMs(tariff),
           cost: r.cost + costKopecks,
           totalTariffHours: r.totalTariffHours + tariffDef.durationHours,
+          totalTariffMs: r.totalTariffMs + tariffDurationMs(tariff),
         } as any).where(eq(rides.id, rideId)).returning())[0] as Ride;
         return updated;
       });
@@ -1151,7 +1157,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
     // active ride's points into ONE `WHERE ride_id IN (...)` query and group
     // them in memory instead, mirroring listAdminRides' existing batched-IN
     // pattern for riders.
-    async listRides(opts?: { userId?: string; limit?: number }) {
+    async listRides(opts?: { userId?: string; limit?: number }): Promise<RideWithFeedback[]> {
       const limit = opts?.limit ?? 50;
       const rows = opts?.userId
         ? ((await db.select().from(rides)
@@ -1159,7 +1165,23 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             .orderBy(desc(rides.startedAt))
             .limit(limit)) as Ride[])
         : ((await db.select().from(rides).orderBy(desc(rides.startedAt)).limit(limit)) as Ride[]);
-      return this.hydrateTracks(rows);
+      const hydrated = await this.hydrateTracks(rows);
+      return this.attachRatings(hydrated);
+    }
+
+    // Batch variant of getRideFeedback: fetches every rating for the given
+    // rides with a single `WHERE ride_id IN (...)` query instead of one
+    // query per row, mirroring listAdminRides' existing batched-IN pattern
+    // for riders. Rides without submitted feedback (most active rides, and
+    // any completed ride the rider skipped feedback for) get `rating: null`.
+    private async attachRatings<T extends Ride>(rows: T[]): Promise<(T & { rating: number | null })[]> {
+      if (rows.length === 0) return [];
+      const rideIds = rows.map((r) => r.id);
+      const feedbackRows = (await db.select({ rideId: rideFeedback.rideId, rating: rideFeedback.rating })
+        .from(rideFeedback)
+        .where(inArray(rideFeedback.rideId, rideIds))) as { rideId: number; rating: number }[];
+      const ratingByRide = new Map(feedbackRows.map((f) => [f.rideId, f.rating]));
+      return rows.map((r) => ({ ...r, rating: ratingByRide.get(r.id) ?? null }));
     }
 
     // Batch variant of hydrateTrack: fetches ride_points for every active ride
@@ -1198,10 +1220,11 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         ? ((await db.select().from(users).where(inArray(users.id, userIds))) as User[])
         : [];
       const byId = new Map(riders.map((u) => [u.id, u]));
-      return rows.map((r) => {
+      const withRiders = rows.map((r) => {
         const u = byId.get(r.userId);
         return { ...r, userName: u?.name ?? null, userPhone: u?.phone ?? null } as AdminRide;
       });
+      return this.attachRatings(withRiders) as Promise<AdminRide[]>;
     }
 
     async countRides() {

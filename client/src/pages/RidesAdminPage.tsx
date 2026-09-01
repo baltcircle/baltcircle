@@ -154,6 +154,7 @@ export function RidesAdminPage() {
                 <TableHead>Начало</TableHead>
                 <TableHead>Длительность</TableHead>
                 <TableHead className="text-right">Стоимость</TableHead>
+                <TableHead>Оценка</TableHead>
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>

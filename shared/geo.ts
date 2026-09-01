@@ -276,21 +276,41 @@ export function tariffLabelForHours(hours: number): string {
   return `${hours} ${word}`;
 }
 
-// Display label for a ride's cumulative tariff, aware of sub-hour tariffs
-// (currently only the temporary "m1" test tariff, durationHours: 0) that
-// can't be represented in totalTariffHours at all. Deliberately does NOT
-// touch tariffLabelForHours above: totalTariffHours === 0 already means
-// "unknown legacy tariff" for real historical rows (e.g. the retired "payg"
-// plan) and tariffLabelForHours(0) === "0 часов" must keep meaning that. So
-// the m1 case is resolved here, one level up, from the ride's own tariff id
-// — only when nothing else (no hour-based extension) has already claimed the
-// cumulative total. Remove together with the m1 catalog entry.
-export function tariffLabelForRide(ride: { tariff: string; totalTariffHours: number }): string {
-  if (ride.totalTariffHours === 0) {
+// Same idea as tariffLabelForHours, but for the sub-hour range — needed
+// because a ride's cumulative tariff can land under an hour (e.g. the "m1"
+// test tariff, extended a few times). "1 минута" for minutes === 1
+// deliberately matches the m1 catalog entry's own name, so a non-extended
+// m1 ride still reads exactly as it always has.
+export function tariffLabelForMinutes(minutes: number): string {
+  const mod10 = minutes % 10;
+  const mod100 = minutes % 100;
+  let word: string;
+  if (mod100 >= 11 && mod100 <= 14) word = "минут";
+  else if (mod10 === 1) word = "минута";
+  else if (mod10 >= 2 && mod10 <= 4) word = "минуты";
+  else word = "минут";
+  return `${minutes} ${word}`;
+}
+
+// Display label for a ride's cumulative tariff (initial tariff + every
+// extension), in milliseconds (rides.totalTariffMs) rather than hours —
+// hours alone can't represent sub-hour tariffs (durationHours: 0, e.g. the
+// "m1" test tariff): every extension of one added 0 to totalTariffHours, so
+// the label never reflected extensions for them. ms has no such blind spot.
+// totalTariffMs === 0 means a historical row from before this column
+// existed (or a genuinely unknown/legacy tariff, e.g. the retired "payg"
+// plan) — resolved from the ride's own tariff id same as before, falling
+// back to "0 часов" when that id isn't in the catalog either.
+export function tariffLabelForRide(ride: { tariff: string; totalTariffMs: number }): string {
+  if (ride.totalTariffMs === 0) {
     const t = TARIFFS.find((x) => x.id === ride.tariff);
     if (t) return t.name;
+    return tariffLabelForHours(0);
   }
-  return tariffLabelForHours(ride.totalTariffHours);
+  if (ride.totalTariffMs < 60 * 60 * 1000) {
+    return tariffLabelForMinutes(Math.round(ride.totalTariffMs / 60_000));
+  }
+  return tariffLabelForHours(Math.round(ride.totalTariffMs / (60 * 60 * 1000)));
 }
 
 // Coastal launch towns (west → east along the Baltic shore).

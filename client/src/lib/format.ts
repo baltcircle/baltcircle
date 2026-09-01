@@ -66,6 +66,14 @@ export function fmtRating(avg: number | null) {
   return avg === null ? "—" : avg.toFixed(1);
 }
 
+// A single ride's 1..5 rider rating (rides_feedback.rating), as opposed to
+// fmtRating's decimal AVERAGE across many rides. `null` covers both an
+// active ride (feedback can't exist yet) and a completed one the rider
+// skipped feedback for — both render the same "no rating" dash.
+export function fmtRideRating(rating: number | null): string {
+  return rating === null ? "—" : `${rating}/5`;
+}
+
 // Legacy tariff ids may still appear on older rides; keep readable fallbacks.
 const LEGACY_TARIFF_LABELS: Record<string, string> = {
   payg: "По минутам",
@@ -87,10 +95,11 @@ export function fmtTariffHours(hours: number): string {
   return tariffLabelForHours(hours);
 }
 
-// Like fmtTariffHours, but resolves sub-hour temporary tariffs (currently
-// only the "m1" test tariff) correctly instead of showing the generic
-// zero-hour fallback — see tariffLabelForRide's comment in shared/geo.ts.
-// Prefer this over fmtTariffHours wherever the ride object is available.
-export function fmtRideTariff(ride: { tariff: string; totalTariffHours: number }): string {
+// Like fmtTariffHours, but resolves sub-hour tariffs and extensions of them
+// (currently only the "m1" test tariff) correctly instead of showing the
+// generic zero-hour fallback — see tariffLabelForRide's comment in
+// shared/geo.ts. Prefer this over fmtTariffHours wherever the ride object
+// is available.
+export function fmtRideTariff(ride: { tariff: string; totalTariffMs: number }): string {
   return tariffLabelForRide(ride);
 }

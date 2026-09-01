@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { OverlayShell } from "@/components/OverlayShell";
-import type { Ride } from "@shared/schema";
+import type { RideWithFeedback } from "@shared/schema";
 import { Card } from "@/components/ui/card";
-import { fmtDate, fmtDistance, fmtDuration, fmtRub, fmtRideTariff } from "@/lib/format";
+import { fmtDate, fmtDistance, fmtDuration, fmtRub, fmtRideTariff, fmtRideRating } from "@/lib/format";
 import { apiRequest } from "@/lib/queryClient";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { Route, Clock, MapPin, Receipt } from "lucide-react";
+import { Route, Clock, MapPin, Receipt, Star } from "lucide-react";
 
 export function RidesPage() {
   // История поездок — приватные данные конкретного пользователя. Гостям её не
@@ -15,7 +15,7 @@ export function RidesPage() {
   const { user, isRegistered, isLoading: isAuthLoading } = useCurrentUser();
   const userId = user?.id;
 
-  const ridesQ = useQuery<Ride[]>({
+  const ridesQ = useQuery<RideWithFeedback[]>({
     queryKey: ["/api/rides", { userId, limit: 40 }],
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/rides?userId=${encodeURIComponent(userId!)}&limit=40`);
@@ -78,11 +78,12 @@ export function RidesPage() {
                   <div className="font-display text-lg font-light" data-testid={`text-ride-bike-${r.id}`}>{r.bikeId}</div>
                   <div className="text-xs text-muted-foreground">{fmtDate(r.startedAt)}</div>
                 </div>
-                <div className="flex-1 grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+                <div className="flex-1 grid grid-cols-2 lg:grid-cols-5 gap-3 text-sm">
                   <Cell icon={<Clock className="w-3.5 h-3.5" />} label="Время" value={r.endedAt ? fmtDuration(r.endedAt - r.startedAt) : "Активна"} />
                   <Cell icon={<MapPin className="w-3.5 h-3.5" />} label="Дистанция" value={fmtDistance(r.distanceM)} />
                   <Cell icon={<Route className="w-3.5 h-3.5" />} label="Тариф" value={fmtRideTariff(r)} />
                   <Cell icon={<Receipt className="w-3.5 h-3.5" />} label="Стоимость" value={fmtRub(r.cost)} />
+                  <Cell icon={<Star className="w-3.5 h-3.5" />} label="Оценка" value={fmtRideRating(r.rating)} />
                 </div>
               </div>
             </Card>
