@@ -13,7 +13,7 @@ function StarRating({ rating }: { rating: number }) {
           className={i < rating ? "w-3.5 h-3.5 fill-amber-400 text-amber-400" : "w-3.5 h-3.5 text-muted-foreground/30"}
         />
       ))}
-      <span className="ml-1 text-sm font-mono">{rating}/5</span>
+      <span className="ml-1 text-sm font-mono">{rating}</span>
     </div>
   );
 }

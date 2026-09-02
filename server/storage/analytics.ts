@@ -165,23 +165,26 @@ export function AnalyticsMixin<TBase extends Constructor>(Base: TBase) {
         }))
         .sort((a, b) => b.rideStarts - a.rideStarts);
 
-      // ---- Feedback counts by rating tier (mirrors shared/feedback.ts's
-      // feedbackTierForRating: low = 1-3★, mid = 4★, high = 5★) for the
-      // Analytics "Отзывы" mini-table. Scoped to feedback submitted within the
-      // period, consistent with every other KPI on this page.
-      const feedbackTierRow = (await pool.query(
+      // ---- Feedback counts by exact rating (1..5★) for the Analytics
+      // "Отзывы" mini-table. Scoped to feedback submitted within the period,
+      // consistent with every other KPI on this page.
+      const feedbackRatingRow = (await pool.query(
         `SELECT
-           COALESCE(SUM(CASE WHEN rating <= 3 THEN 1 ELSE 0 END), 0) AS low,
-           COALESCE(SUM(CASE WHEN rating = 4 THEN 1 ELSE 0 END), 0) AS mid,
-           COALESCE(SUM(CASE WHEN rating = 5 THEN 1 ELSE 0 END), 0) AS high
+           COALESCE(SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END), 0) AS r1,
+           COALESCE(SUM(CASE WHEN rating = 2 THEN 1 ELSE 0 END), 0) AS r2,
+           COALESCE(SUM(CASE WHEN rating = 3 THEN 1 ELSE 0 END), 0) AS r3,
+           COALESCE(SUM(CASE WHEN rating = 4 THEN 1 ELSE 0 END), 0) AS r4,
+           COALESCE(SUM(CASE WHEN rating = 5 THEN 1 ELSE 0 END), 0) AS r5
          FROM ride_feedback
          WHERE created_at >= $1 AND created_at <= $2`,
         [from, to],
-      )).rows[0] as { low: string; mid: string; high: string };
+      )).rows[0] as { r1: string; r2: string; r3: string; r4: string; r5: string };
       const feedbackCounts = {
-        low: Number(feedbackTierRow.low),
-        mid: Number(feedbackTierRow.mid),
-        high: Number(feedbackTierRow.high),
+        r1: Number(feedbackRatingRow.r1),
+        r2: Number(feedbackRatingRow.r2),
+        r3: Number(feedbackRatingRow.r3),
+        r4: Number(feedbackRatingRow.r4),
+        r5: Number(feedbackRatingRow.r5),
       };
 
       return {

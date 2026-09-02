@@ -118,4 +118,10 @@ describe("formatFeedbackReason / formatFeedbackReasons", () => {
   it("returns an empty array for a feedback with no reasons", () => {
     expect(formatFeedbackReasons(5, [])).toEqual([]);
   });
+
+  it("translates legacy pre-redesign reason ids (commit 508a3c6) to Russian instead of falling back to the raw English-looking id", () => {
+    expect(formatFeedbackReason(2, "brakes")).toBe("Плохо работали тормоза");
+    expect(formatFeedbackReason(4, "minor_app_issue")).toBe("Небольшие неудобства в приложении");
+    expect(formatFeedbackReason(5, "comfortable_bike")).toBe("Удобный и исправный велосипед");
+  });
 });

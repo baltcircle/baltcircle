@@ -104,15 +104,46 @@ export const FEEDBACK_REASON_LOOKUP: Record<FeedbackTier, Record<string, { label
   high: buildLookup(FEEDBACK_REASONS.high),
 };
 
+// Ids from the very first feedback pool (commit 508a3c6), before the tiered
+// categories/sub-reasons redesign (35db544) renamed every id (e.g. "brakes"
+// → "bike_brakes"). Feedback rows submitted in that early window still carry
+// the old ids, which no longer exist in FEEDBACK_REASON_LOOKUP — without this
+// map formatFeedbackReason falls through to the raw id, showing English-ish
+// snake_case text in the admin Reviews list instead of a Russian label.
+const LEGACY_REASON_LABELS: Record<string, string> = {
+  dirty: "Велосипед был грязный",
+  brakes: "Плохо работали тормоза",
+  chain: "Слетала или скрипела цепь",
+  handlebar_saddle: "Разболтан руль или седло",
+  wheel_flat: "Спущенное колесо / прокол",
+  lock_issue: "Проблема с замком велосипеда",
+  hard_to_find: "Долго искал велосипед",
+  gps_inaccurate: "Неточный трек поездки",
+  billing_issue: "Некорректно списали деньги",
+  app_bug: "Ошибка в приложении",
+  not_fully_clean: "Велосипед был не совсем чистый",
+  slow_lock: "Долго открывался или закрывался замок",
+  hard_parking: "Сложно найти место для парковки",
+  price_high: "Цена показалась высокой",
+  minor_app_issue: "Небольшие неудобства в приложении",
+  route: "Неудобный маршрут",
+  comfortable_bike: "Удобный и исправный велосипед",
+  easy_app: "Приложением легко пользоваться",
+  fast_start: "Быстрый старт поездки",
+  good_parking: "Удобная парковка рядом",
+  good_price: "Хорошая цена",
+  support: "Отличная поддержка",
+};
+
 // Human-readable label for one submitted reason id, e.g. "Велосипед — Тормоза
 // плохо работают" for a sub-reason, or just "Другое" for a flat/parent-only
-// pick. Falls back to the raw id for anything not found in the pool (e.g. a
-// stale id from before a FEEDBACK_REASONS edit) so the admin list never
-// throws on old rows.
+// pick. Falls back to the legacy pool (see above), then to the raw id for
+// anything not found anywhere (e.g. a genuinely unknown/corrupted id) so the
+// admin list never throws on old rows.
 export function formatFeedbackReason(rating: number, id: string): string {
   const entry = FEEDBACK_REASON_LOOKUP[feedbackTierForRating(rating)][id];
-  if (!entry) return id;
-  return entry.parentLabel ? `${entry.parentLabel} — ${entry.label}` : entry.label;
+  if (entry) return entry.parentLabel ? `${entry.parentLabel} — ${entry.label}` : entry.label;
+  return LEGACY_REASON_LABELS[id] ?? id;
 }
 
 // All submitted reasons for one feedback row, formatted for display.
