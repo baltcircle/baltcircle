@@ -287,14 +287,13 @@ export const bikes = pgTable("bikes", {
 ]);
 
 // Operational statuses. `available`/`rented`/`reserved` drive the rental flow;
-// `maintenance`/`offline`/`storage`/`sleeping`/`lost` take a bike out of
-// rotation; and `archived` hides a retired bike from the public list (soft
-// delete). `sleeping` is set by an operator when the OMNI lock itself has
-// been put into its own low-power sleep mode (via the lock's vendor app) —
-// it behaves identically to `storage`/`offline` (hidden from riders, no
-// auto-unlock) but is tracked separately so staff can tell the two apart.
+// `maintenance`/`offline`/`storage`/`lost` take a bike out of rotation
+// (including when an operator has manually put the OMNI lock itself into
+// its own low-power sleep mode via the lock's vendor app — tracked under
+// `storage`, not a separate status); and `archived` hides a retired bike
+// from the public list (soft delete).
 export const BIKE_STATUSES = [
-  "available", "rented", "reserved", "maintenance", "offline", "storage", "sleeping", "lost", "archived",
+  "available", "rented", "reserved", "maintenance", "offline", "storage", "lost", "archived",
 ] as const;
 export type BikeStatus = (typeof BIKE_STATUSES)[number];
 

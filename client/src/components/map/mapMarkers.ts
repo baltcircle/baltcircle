@@ -12,7 +12,6 @@ export function bikeMarkerColor(status: string, paused = false): string {
     case "reserved":    return MARKER_COLORS.bikeReserved;
     case "offline":     return MARKER_COLORS.bikeOffline;
     case "storage":     return MARKER_COLORS.bikeStorage;
-    case "sleeping":    return MARKER_COLORS.bikeSleeping;
     case "lost":        return MARKER_COLORS.bikeLost;
     default:            return MARKER_COLORS.bikeDefault;
   }

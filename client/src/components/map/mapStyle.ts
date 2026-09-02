@@ -23,7 +23,6 @@ export const MARKER_COLORS = {
   // the rider-facing map (filtered server-side in /api/bikes).
   bikeOffline:    "#64748b",
   bikeStorage:    "#6366f1",
-  bikeSleeping:   "#8b5cf6",
   bikeLost:       "#991b1b",
   bikeDefault:    "#8a8f96",
   parkingActive:  "#1d6f8e",

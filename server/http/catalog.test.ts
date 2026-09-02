@@ -491,7 +491,7 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
     },
   );
 
-  it.each(["storage", "sleeping"])(
+  it.each(["storage"])(
     "does NOT unlock the lock when status changes to %s (bike-status lifecycle fix, 2026-09) " +
       "\u2014 a bike parked/asleep must stay physically locked",
     async (status) => {
