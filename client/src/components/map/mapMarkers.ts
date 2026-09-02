@@ -1,11 +1,19 @@
 import { MARKER_COLORS } from "./mapStyle";
 
-export function bikeMarkerColor(status: string): string {
+// `paused` overrides the status colour to match "Бронь" (reserved) — for the
+// renter's own bike while their ride is on pause, it should read the same as
+// a reservation, not as an active rental (bike-status lifecycle audit).
+export function bikeMarkerColor(status: string, paused = false): string {
+  if (paused) return MARKER_COLORS.bikeReserved;
   switch (status) {
     case "available":   return MARKER_COLORS.bikeAvailable;
     case "rented":      return MARKER_COLORS.bikeRented;
     case "maintenance": return MARKER_COLORS.bikeMaintenance;
     case "reserved":    return MARKER_COLORS.bikeReserved;
+    case "offline":     return MARKER_COLORS.bikeOffline;
+    case "storage":     return MARKER_COLORS.bikeStorage;
+    case "sleeping":    return MARKER_COLORS.bikeSleeping;
+    case "lost":        return MARKER_COLORS.bikeLost;
     default:            return MARKER_COLORS.bikeDefault;
   }
 }

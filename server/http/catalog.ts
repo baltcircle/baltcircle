@@ -56,8 +56,14 @@ import {
 // Staff who genuinely need the physical lock open on an offline bike (e.g. to
 // retrieve/recharge it) still have the explicit /api/admin/locks/:id/unlock
 // control below, unaffected by this set.
+//
+// Also deliberately excludes "storage" and "sleeping" (bike-status lifecycle
+// audit, 2026-09): a bike parked in storage or put to sleep by an operator
+// must stay physically locked — auto-unlocking it here was a bug (a bike on
+// the storage shelf would pop its shackle open on every status write), not a
+// deliberate convenience like the ones below.
 const MOVEMENT_ALARM_SUPPRESSED_STATUSES: ReadonlySet<string> = new Set(
-  ["maintenance", "archived", "storage"] satisfies BikeStatus[],
+  ["maintenance", "archived"] satisfies BikeStatus[],
 );
 
 // Fire-and-forget, mirroring the GPS-refresh call beside it: never blocks the
@@ -91,12 +97,51 @@ async function suppressMovementAlarmOnStatusChange(bike: Bike): Promise<void> {
   }
 }
 
+// Statuses that take a bike out of rotation and must never be visible to an
+// ordinary rider on the public map/list — regardless of who they are — since
+// they carry no rider-facing meaning ("Сервис", "Оффлайн", "На складе", "На
+// скалде", "Утерян"). Staff keep full visibility via /api/admin/bikes.
+const RIDER_HIDDEN_STATUSES: ReadonlySet<string> = new Set(
+  ["maintenance", "offline", "storage", "sleeping", "lost"] satisfies BikeStatus[],
+);
+
+// Filters the full fleet down to what a given (possibly anonymous — riderId()
+// falls back to the shared "demo" account) rider is allowed to see:
+//  - "available" bikes are visible to everyone.
+//  - a bike this rider currently has "rented" or "reserved" stays visible to
+//    THEM (so their own map/QR flow keeps working) but disappears for anyone
+//    else — other riders must not see a bike is in use / who's near it.
+//  - out-of-rotation statuses (maintenance/offline/storage/sleeping/lost) are
+//    hidden from every rider; only staff need to see those on a map.
+//  - "archived" is already excluded by storage.listBikes().
+async function filterBikesForRider(bikes: Bike[], req: Request): Promise<Bike[]> {
+  const uid = riderId(req);
+  const [myRide, myReservation] = await Promise.all([
+    storage.getActiveRide(uid),
+    storage.getActiveReservationForUser(uid),
+  ]);
+  return bikes.filter((b) => {
+    if (b.status === "available") return true;
+    if (b.status === "rented") return myRide?.bikeId === b.id;
+    if (b.status === "reserved") return myReservation?.bikeId === b.id;
+    return !RIDER_HIDDEN_STATUSES.has(b.status);
+  });
+}
+
 export function registerCatalogRoutes(app: Express): void {
   // -------------- Bikes / Parkings / Zones --------------
   // Public read: archived bikes are excluded so they never reach the map or
   // rental selection. (The admin fleet page uses /api/admin/bikes for the full
-  // list including archived.)
-  app.get("/api/bikes", async (_req, res) => res.json(await storage.listBikes()));
+  // list including archived.) Staff sessions (used by the admin dashboard,
+  // maintenance and rides-admin pages, which all reuse this same endpoint)
+  // get the unfiltered fleet; everyone else gets filterBikesForRider() applied
+  // so a rider can never see another rider's rented/reserved bike or any
+  // out-of-rotation bike on the map/QR flow (bike-status lifecycle audit).
+  app.get("/api/bikes", async (req, res) => {
+    const all = await storage.listBikes();
+    if (await isStaffSession(req)) return res.json(all);
+    res.json(await filterBikesForRider(all, req));
+  });
 
   // SSE-стрим флота: сервер шлёт событие "tick" при любом изменении
   // статуса/набора велосипедов. Клиент по этому событию инвалидирует

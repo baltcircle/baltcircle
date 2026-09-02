@@ -70,6 +70,14 @@ export function MapPage() {
     return activeRide;
   }, [activeRide, trackPoll.data]);
 
+  // Пока своя аренда на паузе — её маркер должен красится как «Бронь», а не
+  // как обычная «В аренде» (bike-status lifecycle: пауза — состояние Ride,
+  // не bikes.status, поэтому цвет переопределяется отдельно от статуса).
+  const pausedBikeIds = useMemo<Set<string> | undefined>(
+    () => (activeRide?.pausedAt != null ? new Set([activeRide.bikeId]) : undefined),
+    [activeRide],
+  );
+
   const [selected, setSelected] = useState<string | null>(null);
 
   const bike = useMemo(
@@ -426,6 +434,7 @@ export function MapPage() {
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
           bikes={bikesQ.data ?? []}
+          pausedBikeIds={pausedBikeIds}
           selectedBikeId={selected}
           onSelectBike={onMapBikeClick}
           ride={displayRide}
@@ -544,7 +553,8 @@ export function MapPage() {
       <QrScanModal
         open={scanOpen}
         onOpenChange={setScanOpen}
-        bikes={bikesQ.data ?? []}
+        myActiveRideBikeId={activeRide?.bikeId ?? null}
+        myReservationBikeId={reservation?.bikeId ?? null}
         onBikeSelected={onBikeScanned}
       />
 

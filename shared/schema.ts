@@ -287,10 +287,14 @@ export const bikes = pgTable("bikes", {
 ]);
 
 // Operational statuses. `available`/`rented`/`reserved` drive the rental flow;
-// `maintenance`/`offline`/`storage`/`lost` take a bike out of rotation; and
-// `archived` hides a retired bike from the public list (soft delete).
+// `maintenance`/`offline`/`storage`/`sleeping`/`lost` take a bike out of
+// rotation; and `archived` hides a retired bike from the public list (soft
+// delete). `sleeping` is set by an operator when the OMNI lock itself has
+// been put into its own low-power sleep mode (via the lock's vendor app) —
+// it behaves identically to `storage`/`offline` (hidden from riders, no
+// auto-unlock) but is tracked separately so staff can tell the two apart.
 export const BIKE_STATUSES = [
-  "available", "rented", "reserved", "maintenance", "offline", "storage", "lost", "archived",
+  "available", "rented", "reserved", "maintenance", "offline", "storage", "sleeping", "lost", "archived",
 ] as const;
 export type BikeStatus = (typeof BIKE_STATUSES)[number];
 
@@ -361,7 +365,11 @@ export const alerts = pgTable("alerts", {
   index("idx_alerts_unacked").on(t.createdAt).where(sql`${t.acknowledgedAt} IS NULL`),
 ]);
 export type Alert = typeof alerts.$inferSelect;
-export const ALERT_KINDS = ["movement_alarm", "low_battery", "fall", "overage_charge_failed"] as const;
+// "theft" (bike-status lifecycle spec, 2026-09): fired once when 6 consecutive
+// "illegal movement" alarms with no reset auto-transition a bike to "lost"
+// (server/omni/theft-registry.ts + store.ts) — distinct from the raw
+// per-report "movement_alarm" above, which fires on every single alarm.
+export const ALERT_KINDS = ["movement_alarm", "low_battery", "fall", "overage_charge_failed", "theft"] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
 export type UnassignedLock = typeof unassignedLocks.$inferSelect;
 
