@@ -17,13 +17,13 @@ export function RideRowItem({ r, onEnd, busy }: { r: AdminRide; onEnd: () => voi
         <div className="text-xs text-muted-foreground font-mono">{r.userPhone ?? r.userId.slice(0, 8)}</div>
       </TableCell>
       <TableCell className="font-mono text-sm">{r.bikeId}</TableCell>
-      <TableCell className="text-sm">{fmtRideTariff(r)}</TableCell>
-      <TableCell className="text-sm">{fmtDate(r.startedAt)}</TableCell>
-      <TableCell className="text-sm">{fmtDuration(elapsedMs)}</TableCell>
-      <TableCell className="text-right font-mono text-sm">
+      <TableCell className="text-sm text-center">{fmtRideTariff(r)}</TableCell>
+      <TableCell className="text-sm text-center">{fmtDate(r.startedAt)}</TableCell>
+      <TableCell className="text-sm text-center">{fmtDuration(elapsedMs)}</TableCell>
+      <TableCell className="text-sm text-center">{fmtRideRating(r.rating)}</TableCell>
+      <TableCell className="text-center font-mono text-sm">
         {fmtRub(r.cost)}
       </TableCell>
-      <TableCell className="text-sm">{fmtRideRating(r.rating)}</TableCell>
       <TableCell className="text-right">
         {active && (
           <Button

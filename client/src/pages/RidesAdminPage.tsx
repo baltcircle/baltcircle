@@ -150,11 +150,11 @@ export function RidesAdminPage() {
               <TableRow>
                 <TableHead>Райдер</TableHead>
                 <TableHead>Велосипед</TableHead>
-                <TableHead>Тариф</TableHead>
-                <TableHead>Начало</TableHead>
-                <TableHead>Длительность</TableHead>
-                <TableHead className="text-right">Стоимость</TableHead>
-                <TableHead>Оценка</TableHead>
+                <TableHead className="text-center">Тариф</TableHead>
+                <TableHead className="text-center">Начало</TableHead>
+                <TableHead className="text-center">Длительность</TableHead>
+                <TableHead className="text-center">Оценка</TableHead>
+                <TableHead className="text-center">Стоимость</TableHead>
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>
