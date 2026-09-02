@@ -528,12 +528,42 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
   it("does not unlock for an in-rotation status (available)", async () => {
     storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "available" } });
     const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
-    setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+    setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn(), startParkingGpsTracking: vi.fn() } as any);
 
     const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "available" });
 
     expect(res.status).toBe(200);
     expect(sendUnlockCommand).not.toHaveBeenCalled();
+  });
+
+  it("starts continuous parking GPS tracking (not the bounded refresh burst) when status becomes available", async () => {
+    storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "available" } });
+    const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+    const requestGpsRefresh = vi.fn();
+    const startParkingGpsTracking = vi.fn();
+    setLockGateway({ sendUnlockCommand, requestGpsRefresh, startParkingGpsTracking } as any);
+
+    const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "available" });
+
+    expect(res.status).toBe(200);
+    expect(startParkingGpsTracking).toHaveBeenCalledWith(bike.lockImei, bike.id);
+    expect(requestGpsRefresh).not.toHaveBeenCalled();
+  });
+
+  it("uses the bounded refresh burst (not continuous tracking) when status changes away from available", async () => {
+    storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "maintenance" } });
+    storageMock.getActiveRideForBike.mockResolvedValue(undefined);
+    const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+    const requestGpsRefresh = vi.fn();
+    const startParkingGpsTracking = vi.fn();
+    setLockGateway({ sendUnlockCommand, requestGpsRefresh, startParkingGpsTracking } as any);
+
+    const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "maintenance" });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(res.status).toBe(200);
+    expect(requestGpsRefresh).toHaveBeenCalledWith(bike.lockImei, bike.id);
+    expect(startParkingGpsTracking).not.toHaveBeenCalled();
   });
 
   it("does not unlock for \"lost\" \u2014 alarming on movement is the desired behavior there", async () => {
