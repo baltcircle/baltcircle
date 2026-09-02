@@ -10,7 +10,10 @@
 // tests against a fake store without a live Postgres.
 import { createServer, type Server, type Socket } from "node:net";
 import type { Logger } from "pino";
-import { realToMap, RIDE_GPS_TRACKING_INTERVAL_SECONDS, GPS_REFRESH_BURST_WINDOW_MS } from "@shared/geo";
+import {
+  realToMap, RIDE_GPS_TRACKING_INTERVAL_SECONDS, GPS_REFRESH_BURST_WINDOW_MS,
+  PARKING_GPS_TRACKING_INTERVAL_SECONDS,
+} from "@shared/geo";
 import { registerPendingGpsRefresh, clearPendingGpsRefresh } from "./gps-refresh-registry";
 import {
   OmniFramer, batteryPercent, buildAck, buildServerPacket, decodeMessage,
@@ -250,6 +253,29 @@ export class OmniTcpServer {
     }, GPS_REFRESH_BURST_WINDOW_MS);
     timer.unref?.();
     this.gpsRefreshStopTimers.set(imei, timer);
+  }
+
+  /**
+   * Persistent, low-frequency GPS tracking (D1) while a bike sits in the
+   * "available" status. Unlike requestGpsRefresh, this is NOT a bounded
+   * burst: there is no auto-off timer, so it stays on until something else
+   * takes over the lock's D1 state — a ride starting (server/storage/ride.ts
+   * sends its own D1 unconditionally) or the next admin status-change PATCH
+   * moving the bike out of "available" (which arms requestGpsRefresh's
+   * bounded burst and so switches D1 back off after GPS_REFRESH_BURST_WINDOW_MS).
+   * Fire-and-forget by design, same rationale as requestGpsRefresh: a
+   * disconnected or slow lock must never fail or delay the admin request.
+   */
+  startParkingGpsTracking(imei: string, bikeId: string): void {
+    if (!this.byImei.has(imei)) {
+      this.log.info({ imei, bikeId }, "parking-gps: skipped, lock not connected");
+      return;
+    }
+    this.sendToDevice(imei, "D1", [PARKING_GPS_TRACKING_INTERVAL_SECONDS]);
+    this.log.info(
+      { imei, bikeId, intervalSeconds: PARKING_GPS_TRACKING_INTERVAL_SECONDS },
+      "parking-gps: continuous tracking enabled",
+    );
   }
 
   /**

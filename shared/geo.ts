@@ -86,8 +86,10 @@ export const SSE_STALE_THRESHOLD_MS = 45 * 1000;
 // many ms of ride start, provided the bike is still at the start parking.
 export const CANCEL_REFUND_WINDOW_MS = 5 * 60 * 1000;
 
-// GPS tracking (D1 protocol) only runs on the lock DURING an active ride —
-// it is enabled on ride start and disabled on ride end (battery-safe, see
+// GPS tracking (D1 protocol) runs on the lock DURING an active ride, and also
+// continuously at a slower cadence while the bike sits in the "available"
+// status (see PARKING_GPS_TRACKING_INTERVAL_SECONDS below) — ride tracking is
+// enabled on ride start and disabled on ride end (battery-safe, see
 // omni_lock_diagnostics.md). So a lock's `lastLocationAt` is only fresh
 // (within this window) while a ride is actively in progress; anything older
 // means "no live fix yet" (cold start ~2.5min, dead zone, disconnected lock)
@@ -101,11 +103,23 @@ export const LOCK_GPS_LIVE_MS = 5 * 60 * 1000;
 // omni_lock_diagnostics.md — a good battery/precision tradeoff.
 export const RIDE_GPS_TRACKING_INTERVAL_SECONDS = 10;
 
+// D1 tracking interval (seconds) kept on continuously while a bike is
+// "available" (server/omni/server.ts's startParkingGpsTracking, armed from
+// the admin status-change PATCH in server/http/catalog.ts). Slower than the
+// ride interval on purpose — a parked bike doesn't need sub-minute precision,
+// and this runs indefinitely (no auto-off window) rather than for a bounded
+// burst, so the interval is the main lever on the lock's battery cost while
+// parked. Superseded immediately (no gap) the moment a ride starts or the
+// bike leaves "available" — see sendToDevice's D1 hand-off comment.
+export const PARKING_GPS_TRACKING_INTERVAL_SECONDS = 120;
+
 // A parked lock's idle heartbeat (~every 4min) carries NO gps at all — only
 // battery/signal/lock-state (omni_lock_diagnostics.md, Наблюдение 1). Moving
 // a parked bike therefore never produces a fresh fix on its own; a bike
-// status change (server/omni/server.ts's requestGpsRefresh) opportunistically
-// arms a short D1 burst to try to catch one. Cold GPS fix took ~2.5min in the
+// status change away from "available" (server/omni/server.ts's
+// requestGpsRefresh) opportunistically arms a short D1 burst to try to catch
+// one — a change INTO "available" instead starts the continuous tracking
+// above. Cold GPS fix took ~2.5min in the
 // field (omni_lock_diagnostics.md, Наблюдение 3), so this window must clear
 // that with margin before giving up and switching D1 back off to bound the
 // extra battery/traffic cost.

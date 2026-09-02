@@ -267,14 +267,22 @@ export function registerCatalogRoutes(app: Express): void {
       const status = (result.error ?? "").includes("не найден") ? 404 : 409;
       return res.status(status).json(result);
     }
-    // Opportunistic GPS refresh (fire-and-forget): a parked lock's idle
-    // heartbeat carries no GPS at all, so a status change is the only signal
-    // that the bike may have physically moved since its last known fix. Only
-    // relevant when this PATCH actually changed status — adminUpdateBike
-    // already re-syncs from the lock's LAST fix on every status change, this
-    // just asks the lock for a NEW one in case it moved further since then.
+    // GPS refresh (fire-and-forget): a parked lock's idle heartbeat carries
+    // no GPS at all, so a status change is the only signal that the bike may
+    // have physically moved since its last known fix. Only relevant when
+    // this PATCH actually changed status — adminUpdateBike already re-syncs
+    // from the lock's LAST fix on every status change; this asks the lock
+    // for a NEW one in case it moved further since then. Moving INTO
+    // "available" switches on continuous low-frequency tracking for as long
+    // as the bike stays parked (instead of a bounded refresh burst), so a
+    // bike left in rotation keeps reporting its position instead of only
+    // ever having the one fix from the moment it was set available.
     if (parsed.data.status !== undefined && result.bike.lockImei) {
-      getLockGateway()?.requestGpsRefresh(result.bike.lockImei, result.bike.id);
+      if (result.bike.status === "available") {
+        getLockGateway()?.startParkingGpsTracking(result.bike.lockImei, result.bike.id);
+      } else {
+        getLockGateway()?.requestGpsRefresh(result.bike.lockImei, result.bike.id);
+      }
       // See suppressMovementAlarmOnStatusChange: unlock so staff can move the
       // bike into these out-of-rotation statuses without the lock's own
       // shake-sensor siren going off.
