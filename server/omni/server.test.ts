@@ -642,6 +642,68 @@ describe("syncGpsTrackingForStatus (bike-status lifecycle spec, 2026-09)", () =>
   });
 });
 
+describe("armParkingRecalc (bike-status lifecycle spec, 2026-09)", () => {
+  it("fires onParkingRecalcFix exactly once, on the first accepted position fix after arming", async () => {
+    const onParkingRecalcFix = vi.fn();
+    const { server, store, lock } = await harness({ onParkingRecalcFix });
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    server.armParkingRecalc(IMEI_A, "bike-a");
+    expect(onParkingRecalcFix).not.toHaveBeenCalled();
+
+    device.sendPosition(54.9442, 20.1561);
+    await waitFor(() => onParkingRecalcFix.mock.calls.length === 1);
+    expect(onParkingRecalcFix).toHaveBeenCalledWith("bike-a", expect.any(Number), expect.any(Number));
+
+    // A second fix must NOT fire again — the arm is one-shot.
+    device.sendPosition(54.9443, 20.1562);
+    await waitFor(() => store.rowsFor("D0").length === 2);
+    expect(onParkingRecalcFix).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire for a plausibility-rejected fix — waits for a genuinely accepted one", async () => {
+    const onParkingRecalcFix = vi.fn();
+    const { server, store, lock } = await harness({ onParkingRecalcFix });
+    const device = await lock(IMEI_A);
+
+    server.armParkingRecalc(IMEI_A, "bike-a");
+    store.rejectNextPosition.add(IMEI_A);
+    device.sendPosition(54.9442, 20.1561);
+    await waitFor(() => store.rowsFor("D0").length === 1);
+    expect(onParkingRecalcFix).not.toHaveBeenCalled();
+
+    // The very next fix is accepted and finally consumes the arm.
+    device.sendPosition(54.9443, 20.1562);
+    await waitFor(() => onParkingRecalcFix.mock.calls.length === 1);
+    expect(onParkingRecalcFix).toHaveBeenCalledWith("bike-a", expect.any(Number), expect.any(Number));
+  });
+
+  it("does not fire for a no-fix position report", async () => {
+    const onParkingRecalcFix = vi.fn();
+    const { server, store, lock } = await harness({ onParkingRecalcFix });
+    const device = await lock(IMEI_A);
+
+    server.armParkingRecalc(IMEI_A, "bike-a");
+    device.sendNoFix();
+
+    await waitFor(() => store.rowsFor("D0").length === 1);
+    expect(onParkingRecalcFix).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op when nothing has been armed for that imei", async () => {
+    const onParkingRecalcFix = vi.fn();
+    const { store, lock } = await harness({ onParkingRecalcFix });
+    const device = await lock(IMEI_A);
+
+    device.sendPosition(54.9442, 20.1561);
+    await waitFor(() => store.rowsFor("D0").length === 1);
+
+    expect(onParkingRecalcFix).not.toHaveBeenCalled();
+  });
+});
+
 describe("Phase 2 lock registry projection", () => {
   it("runs a ten-minute stale-presence sweep in the background", async () => {
     const { store } = await harness({ offlineAfterMs: 10 * 60_000, offlineSweepIntervalMs: 5 });

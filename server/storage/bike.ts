@@ -5,8 +5,9 @@ import {
 import type { Bike, Lock, Parking, AdminCreateBikeInput, AdminUpdateBikeInput } from "@shared/schema";
 import { DEFAULT_BIKE_MODEL, bikeIdRegex } from "@shared/schema";
 import { eq, count, inArray, or } from "drizzle-orm";
-import { MAP_W, MAP_H, realToMap } from "@shared/geo";
+import { MAP_W, MAP_H, realToMap, GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS } from "@shared/geo";
 import { db, pool } from "../db/bootstrap";
+import { getLockGateway } from "../omni/gateway";
 import type { Constructor } from "./mixin";
 import type { IBikeStorage, IParkingStorage } from "./interfaces";
 
@@ -262,6 +263,19 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       // where it actually is now.
       if (patch.status === "available" && existing.status !== "available") {
         await this.recalculateBikeParking(syncedPos ? { ...existing, ...syncedPos } : existing);
+        // The parkingId above is only as fresh as resolveLockPositionForBikeStatusChange's
+        // snapshot of locks.last_latitude/lng (bike-status lifecycle spec, 2026-09) —
+        // for a bike coming out of a slower-cadence status than "available" itself
+        // (maintenance/offline/storage/archived, currently 3600s) that snapshot can be
+        // up to an hour stale. bikes.lat/lng self-corrects on the very next ordinary
+        // telemetry report (applyLiveUpdates in server/omni/store.ts), but nothing
+        // re-derives parkingId from it — arm a one-shot recompute for whenever that
+        // report actually lands, at whatever cadence syncGpsTrackingForStatus just set.
+        if (existing.lockImei
+          && GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS[existing.status as keyof typeof GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS]
+            > GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS.available) {
+          getLockGateway()?.armParkingRecalc(existing.lockImei, workingId);
+        }
       } else if (patch.status !== undefined && patch.parkingId === undefined) {
         // Any other status change (maintenance/offline/storage/etc, or
         // resubmitting the same status) with no explicit operator-chosen

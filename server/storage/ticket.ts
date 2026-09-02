@@ -2,6 +2,7 @@ import { tickets, ticketComments, TICKET_CLOSED_STATUSES } from "@shared/schema"
 import type { Ticket, TicketComment, TicketWithComments, CreateTicketInput, UpdateTicketInput } from "@shared/schema";
 import { eq, desc, count } from "drizzle-orm";
 import { db } from "../db/bootstrap";
+import { getLockGateway } from "../omni/gateway";
 import type { Constructor } from "./mixin";
 import type { ITicketStorage, IBikeStorage } from "./interfaces";
 import type { Bike } from "@shared/schema";
@@ -121,7 +122,14 @@ export function TicketMixin<TBase extends Constructor>(Base: TBase) {
           // the pre-update `bike`, or parking would be matched against the
           // bike's stale pre-service position instead of where it actually is.
           const updated = await this.updateBike(bike.id, { status: "available" });
-          if (updated) await this.recalculateBikeParking(updated);
+          if (updated) {
+            await this.recalculateBikeParking(updated);
+            // bike.status === "maintenance" was just checked above, i.e. the position
+            // this recalc used can be up to that status's 3600s tracking interval
+            // stale (bike-status lifecycle spec, 2026-09) — arm a one-shot follow-up
+            // recompute for whenever the bike's next real GPS fix lands.
+            if (bike.lockImei) getLockGateway()?.armParkingRecalc(bike.lockImei, bike.id);
+          }
           await this.addEvent(id, actor, `Велосипед ${bike.id} возвращён в доступные`, "event");
         }
       }

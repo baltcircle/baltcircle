@@ -26,6 +26,14 @@ export interface OmniServerOptions {
   logger: Logger;
   port: number;
   host?: string;
+  /**
+   * Best-effort, fired at most once per armParkingRecalc() call when the
+   * requested fix lands. Deliberately NOT part of OmniStore: recomputing
+   * parkingId needs the full Drizzle storage layer (parkings lookup +
+   * updateBike), which OmniStore stays decoupled from so this server can
+   * still be driven end-to-end in tests without a live Postgres.
+   */
+  onParkingRecalcFix?: (bikeId: string, lat: number, lng: number) => void;
   /** Hard cap on concurrent sockets; excess connections are closed at accept. */
   maxConnections?: number;
   /** Close a socket that has sent nothing for this long (~3 missed H0s). */
@@ -89,7 +97,7 @@ export class OmniTcpServer {
   private readonly server: Server;
   private readonly log: Logger;
   private readonly writer: TelemetryWriter;
-  private readonly opts: Required<Omit<OmniServerOptions, "store" | "logger" | "writer" | "host">>
+  private readonly opts: Required<Omit<OmniServerOptions, "store" | "logger" | "writer" | "host" | "onParkingRecalcFix">>
     & { host: string };
 
   /** Live sockets keyed by IMEI. At most one connection per device. */
@@ -100,6 +108,20 @@ export class OmniTcpServer {
   /** Fixed-window new-connection counters, keyed by normalised source IP. */
   private readonly connectionAttempts = new Map<string, { count: number; windowStart: number }>();
   private readonly lastStatusWrite = new Map<string, number>();
+  /**
+   * One-shot, keyed by imei -> bikeId (bike-status lifecycle spec, 2026-09).
+   * Set by armParkingRecalc() right after a status change synced parkingId
+   * from a possibly-stale last-known position; consumed by the first
+   * subsequent ACCEPTED position fix in record(), which fires
+   * onParkingRecalcFix so that bike's parkingId gets a second, accurate
+   * pass once real GPS data actually arrives. No TTL: unlike the removed
+   * requestGpsRefresh burst this never changes D1 cadence, so there is
+   * nothing to time out — it just rides whatever interval
+   * syncGpsTrackingForStatus already set for the bike's new status. A lock
+   * that never reports again simply leaves one harmless entry behind (at
+   * most one per imei — a later arm overwrites, never accumulates).
+   */
+  private readonly pendingParkingRecalc = new Map<string, string>();
   /**
    * Keyed by IMEI, not by a user/timestamp tuple: `imeiCommandInFlight`
    * below already guarantees at most one outstanding unlock per lock, so the
@@ -215,6 +237,19 @@ export class OmniTcpServer {
     const sent = this.sendToDevice(imei, "D1", [intervalSeconds]);
     this.log.info({ imei, bikeId, status, intervalSeconds, sent }, "gps-sync: tracking interval updated");
     return sent;
+  }
+
+  /**
+   * Arm a one-shot recompute of `bikeId`'s parkingId from the NEXT accepted
+   * GPS fix reported by `imei` (bike-status lifecycle spec, 2026-09). Does
+   * NOT touch D1 cadence — syncGpsTrackingForStatus already set the correct
+   * interval for the bike's new status; this only decides what happens once
+   * that already-scheduled fix lands. See record()'s consumption of
+   * pendingParkingRecalc and the onParkingRecalcFix option.
+   */
+  armParkingRecalc(imei: string, bikeId: string): void {
+    this.pendingParkingRecalc.set(imei, bikeId);
+    this.log.info({ imei, bikeId }, "parking-recalc: armed for next fix");
   }
 
   /**
@@ -495,6 +530,19 @@ export class OmniTcpServer {
     if (message.type === "position" && !positionAccepted && built.live) {
       delete built.live.x;
       delete built.live.y;
+    }
+
+    // One-shot post-status-change parking recompute (bike-status lifecycle
+    // spec, 2026-09): only a report that actually plotted (survived the same
+    // accept/reject gate as the live-map update above) counts as "the next
+    // fix" — a no-fix or rejected report must not consume the arm any more
+    // than it should move bikes.lat/lng.
+    if (message.type === "position" && built.live?.x != null && built.live?.y != null) {
+      const pendingBikeId = this.pendingParkingRecalc.get(imei);
+      if (pendingBikeId) {
+        this.pendingParkingRecalc.delete(imei);
+        this.options.onParkingRecalcFix?.(pendingBikeId, built.live.y, built.live.x);
+      }
     }
 
     // Positionless status chatter is throttled per bike so a misbehaving device
