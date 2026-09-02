@@ -611,6 +611,37 @@ describe("acknowledgements", () => {
   });
 });
 
+describe("syncGpsTrackingForStatus (bike-status lifecycle spec, 2026-09)", () => {
+  it.each([
+    ["available", 120],
+    ["rented", 10],
+    ["reserved", 10],
+    ["maintenance", 3600],
+    ["offline", 3600],
+    ["storage", 3600],
+    ["archived", 3600],
+    ["lost", 3],
+  ] as const)("sends D1 with the %s interval (%dsec) to a connected lock", async (status, intervalSeconds) => {
+    const { server, store, lock } = await harness();
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    const sent = server.syncGpsTrackingForStatus(IMEI_A, "bike-a", status);
+
+    expect(sent).toBe(true);
+    expect(await device.nextCommand()).toEqual({ cmd: "D1", params: [String(intervalSeconds)] });
+  });
+
+  it("returns false and sends nothing when the lock is not connected", async () => {
+    const { server } = await harness();
+
+    const sent = server.syncGpsTrackingForStatus(UNKNOWN_IMEI, "bike-x", "available");
+
+    expect(sent).toBe(false);
+  });
+});
+
 describe("Phase 2 lock registry projection", () => {
   it("runs a ten-minute stale-presence sweep in the background", async () => {
     const { store } = await harness({ offlineAfterMs: 10 * 60_000, offlineSweepIntervalMs: 5 });

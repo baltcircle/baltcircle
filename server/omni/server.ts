@@ -10,11 +10,8 @@
 // tests against a fake store without a live Postgres.
 import { createServer, type Server, type Socket } from "node:net";
 import type { Logger } from "pino";
-import {
-  realToMap, RIDE_GPS_TRACKING_INTERVAL_SECONDS, GPS_REFRESH_BURST_WINDOW_MS,
-  PARKING_GPS_TRACKING_INTERVAL_SECONDS,
-} from "@shared/geo";
-import { registerPendingGpsRefresh, clearPendingGpsRefresh } from "./gps-refresh-registry";
+import { realToMap, GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS } from "@shared/geo";
+import type { BikeStatus } from "@shared/schema";
 import {
   OmniFramer, batteryPercent, buildAck, buildServerPacket, decodeMessage,
   parseDeviceFrame, type OmniMessage,
@@ -132,8 +129,6 @@ export class OmniTcpServer {
    */
   private readonly imeiCommandInFlight = new Set<string>();
   private offlineSweepTimer: NodeJS.Timeout | null = null;
-  /** Auto-stop timers for an armed GPS-refresh burst (requestGpsRefresh), keyed by IMEI. */
-  private readonly gpsRefreshStopTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(private readonly options: OmniServerOptions) {
     this.log = options.logger.child({ module: "omni-tcp" });
@@ -197,85 +192,29 @@ export class OmniTcpServer {
    * false when the device has no live socket.
    */
   sendToDevice(imei: string, cmd: string, params: (string | number)[] = []): boolean {
-    // Any D1 send — a ride starting/ending (server/storage/ride.ts), the
-    // onboarding diagnostic probe, or a fresh requestGpsRefresh burst — takes
-    // over this lock's tracking state. A stale auto-stop timer left running
-    // from an earlier GPS-refresh burst must not later switch tracking off
-    // out from under whoever just issued this command (most importantly: an
-    // active ride's own continuous tracking).
-    if (cmd === "D1") this.cancelGpsRefreshAutoStop(imei);
     const conn = this.byImei.get(imei);
     if (!conn) return false;
     return conn.send(buildServerPacket({ imei, cmd, params }));
   }
 
-  private cancelGpsRefreshAutoStop(imei: string): void {
-    const timer = this.gpsRefreshStopTimers.get(imei);
-    if (!timer) return;
-    clearTimeout(timer);
-    this.gpsRefreshStopTimers.delete(imei);
-    clearPendingGpsRefresh(imei);
-  }
-
-  private stopGpsRefreshBurstEarly(imei: string): void {
-    const timer = this.gpsRefreshStopTimers.get(imei);
-    if (!timer) return; // no refresh burst in flight (e.g. this fix came from an active ride's own tracking)
-    clearTimeout(timer);
-    this.gpsRefreshStopTimers.delete(imei);
-    this.sendToDevice(imei, "D1", [0]);
-    this.log.info({ imei }, "gps-refresh: fix landed, stopping burst early");
-  }
-
   /**
-   * Opportunistically refresh a parked bike's position: a lock's idle
-   * heartbeat carries no GPS at all (omni_lock_diagnostics.md), so a bike
-   * that was physically moved without a ride starting never gets a fresh fix
-   * on its own. Called from the admin status-change PATCH (server/http/
-   * catalog.ts) on every status transition. Fire-and-forget by design: a
-   * disconnected or slow-to-fix lock must never fail or delay that request.
+   * Sync D1 GPS-tracking interval to the bike's current status
+   * (bike-status lifecycle spec, 2026-09 — see shared/geo.ts's
+   * GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS). Every status maps to a
+   * persistent, non-zero interval, so tracking is always on — there is no
+   * bounded burst or auto-off any more. Called from every status-changing
+   * path: the admin PATCH (server/http/catalog.ts), ride start/end
+   * (server/storage/ride.ts), reservation create/claim/expiry
+   * (server/storage/reservation.ts), archive, and the auto-lost/
+   * auto-offline transitions (server/storage.ts). Fire-and-forget by
+   * design: a disconnected or slow lock must never fail or delay the
+   * caller.
    */
-  requestGpsRefresh(imei: string, bikeId: string): void {
-    if (!this.byImei.has(imei)) {
-      this.log.info({ imei, bikeId }, "gps-refresh: skipped, lock not connected");
-      return;
-    }
-    // sendToDevice("D1", ...) clears any *stale* GPS-refresh bookkeeping for
-    // this IMEI as a side effect (see its comment) — register the new
-    // expectation AFTER sending, or this call would immediately erase itself.
-    this.sendToDevice(imei, "D1", [RIDE_GPS_TRACKING_INTERVAL_SECONDS]);
-    registerPendingGpsRefresh(imei, bikeId, GPS_REFRESH_BURST_WINDOW_MS);
-    this.log.info({ imei, bikeId, windowMs: GPS_REFRESH_BURST_WINDOW_MS }, "gps-refresh: armed");
-    const timer = setTimeout(() => {
-      this.gpsRefreshStopTimers.delete(imei);
-      clearPendingGpsRefresh(imei);
-      this.sendToDevice(imei, "D1", [0]);
-      this.log.info({ imei, bikeId }, "gps-refresh: window expired without a landed fix");
-    }, GPS_REFRESH_BURST_WINDOW_MS);
-    timer.unref?.();
-    this.gpsRefreshStopTimers.set(imei, timer);
-  }
-
-  /**
-   * Persistent, low-frequency GPS tracking (D1) while a bike sits in the
-   * "available" status. Unlike requestGpsRefresh, this is NOT a bounded
-   * burst: there is no auto-off timer, so it stays on until something else
-   * takes over the lock's D1 state — a ride starting (server/storage/ride.ts
-   * sends its own D1 unconditionally) or the next admin status-change PATCH
-   * moving the bike out of "available" (which arms requestGpsRefresh's
-   * bounded burst and so switches D1 back off after GPS_REFRESH_BURST_WINDOW_MS).
-   * Fire-and-forget by design, same rationale as requestGpsRefresh: a
-   * disconnected or slow lock must never fail or delay the admin request.
-   */
-  startParkingGpsTracking(imei: string, bikeId: string): void {
-    if (!this.byImei.has(imei)) {
-      this.log.info({ imei, bikeId }, "parking-gps: skipped, lock not connected");
-      return;
-    }
-    this.sendToDevice(imei, "D1", [PARKING_GPS_TRACKING_INTERVAL_SECONDS]);
-    this.log.info(
-      { imei, bikeId, intervalSeconds: PARKING_GPS_TRACKING_INTERVAL_SECONDS },
-      "parking-gps: continuous tracking enabled",
-    );
+  syncGpsTrackingForStatus(imei: string, bikeId: string, status: BikeStatus): boolean {
+    const intervalSeconds = GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS[status];
+    const sent = this.sendToDevice(imei, "D1", [intervalSeconds]);
+    this.log.info({ imei, bikeId, status, intervalSeconds, sent }, "gps-sync: tracking interval updated");
+    return sent;
   }
 
   /**
@@ -509,10 +448,6 @@ export class OmniTcpServer {
 
     this.byImei.delete(conn.imei);
     const imei = conn.imei;
-    // A GPS-refresh burst armed for this lock can never land a fix once the
-    // socket is gone — drop the bookkeeping now instead of leaving a dangling
-    // timer/registry entry to expire naturally in up to GPS_REFRESH_BURST_WINDOW_MS.
-    this.cancelGpsRefreshAutoStop(imei);
     const pendingUnlock = this.pendingUnlocks.get(imei);
     if (pendingUnlock) {
       clearTimeout(pendingUnlock.timer);
@@ -546,13 +481,6 @@ export class OmniTcpServer {
       }
     }
     if (message.type === "unlockResult") this.resolveUnlock(imei, message);
-    // A valid fix landing while a GPS-refresh burst is armed for this lock
-    // means requestGpsRefresh() got what it asked for — switch tracking back
-    // off immediately rather than waiting out the rest of the window. Guarded
-    // by gpsRefreshStopTimers, not just "message is a valid position": a fix
-    // arriving from an active ride's own D1 tracking must never be turned off
-    // here (that timer only exists while a refresh burst, not a ride, owns D1).
-    if (message.type === "position" && message.valid) this.stopGpsRefreshBurstEarly(imei);
     if (!bikeId) return;
 
     const built = buildTelemetry(bikeId, imei, message, receivedAt);

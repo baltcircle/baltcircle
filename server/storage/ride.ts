@@ -4,7 +4,7 @@ import { eq, sql, and, desc, asc, inArray, count } from "drizzle-orm";
 import {
   TARIFFS, tariffPriceKopecks, tariffDurationMs, realToMap,
   findNearestParkingWithinRadius, findNearestParkingWithinRadiusFromRealCoords,
-  LOCK_GPS_LIVE_MS, RIDE_GPS_TRACKING_INTERVAL_SECONDS, PAUSE_ARM_TTL_MS, END_ARM_TTL_MS,
+  LOCK_GPS_LIVE_MS, PAUSE_ARM_TTL_MS, END_ARM_TTL_MS,
   RIDE_END_AWAITING_LOCK_GPS_ERROR, MAX_ACCEPTABLE_HDOP, END_GEOFENCE_SMOOTHING_SAMPLES,
   LOW_BATTERY_AUTO_OFFLINE_THRESHOLD,
 } from "@shared/geo";
@@ -490,7 +490,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           // sources (phone GPS / periodic telemetry) even without live D0 frames.
           try {
             const gateway = getLockGateway();
-            const sent = gateway?.sendToDevice(lockImei, "D1", [RIDE_GPS_TRACKING_INTERVAL_SECONDS]);
+            const sent = gateway?.syncGpsTrackingForStatus(lockImei, bikeId, "rented");
             if (!sent) log(`startRide: failed to enable GPS tracking imei=${lockImei} ride=${result.id}`);
           } catch (err) {
             log(`startRide: error enabling GPS tracking imei=${lockImei} ride=${result.id}: ${(err as Error).message}`);
@@ -902,15 +902,17 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           });
         }
       }
-      // Best-effort: disable D1 GPS tracking now that the ride is over (saves
-      // lock battery between rentals). Not billing/safety-critical, log-only.
+      // Best-effort: settle D1 GPS tracking to the post-ride status's cadence
+      // (bike-status lifecycle spec, 2026-09). Not billing/safety-critical, log-only.
       if (result.lockImei) {
         try {
           const gateway = getLockGateway();
-          const sent = gateway?.sendToDevice(result.lockImei, "D1", [0]);
-          if (!sent) log(`endRide: failed to disable GPS tracking imei=${result.lockImei} ride=${result.ride.id}`);
+          const sent = gateway?.syncGpsTrackingForStatus(
+            result.lockImei, result.ride.bikeId, result.wentOffline ? "offline" : "available",
+          );
+          if (!sent) log(`endRide: failed to sync GPS tracking imei=${result.lockImei} ride=${result.ride.id}`);
         } catch (err) {
-          log(`endRide: error disabling GPS tracking imei=${result.lockImei} ride=${result.ride.id}: ${(err as Error).message}`);
+          log(`endRide: error syncing GPS tracking imei=${result.lockImei} ride=${result.ride.id}: ${(err as Error).message}`);
         }
       }
       return result.ride;

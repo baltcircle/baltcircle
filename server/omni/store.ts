@@ -17,12 +17,11 @@ import { pool } from "../db/bootstrap";
 import { logger } from "../logger";
 import { consumePendingPause } from "./pause-registry";
 import { consumePendingEnd } from "./pending-end-registry";
-import { consumePendingGpsRefresh } from "./gps-refresh-registry";
 import {
   recordMovementAlarm, resetMovementAlarmStreak, MOVEMENT_ALARM_THEFT_THRESHOLD,
 } from "./theft-registry";
 import {
-  rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, type LockGpsRefreshedPayload,
+  rideEvents,
   pendingEndEvents, LOCK_CLOSED_FOR_END, type LockClosedForEndPayload,
   lockAlarmEvents, LOCK_FALL_ALARM, type LockFallAlarmPayload,
   LOCK_MOVEMENT_ALARM, type LockMovementAlarmPayload,
@@ -249,24 +248,9 @@ export class PgOmniStore implements OmniStore {
             await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
             return false;
           }
-          const result = await pool.query(`UPDATE locks SET ${base}, last_latitude = $3,
+          await pool.query(`UPDATE locks SET ${base}, last_latitude = $3,
             last_longitude = $4, last_location_at = $2 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
             [imei, at, message.fix.lat, message.fix.lng]);
-          // Opportunistic GPS-refresh (see gps-refresh-registry.ts): a status
-          // change on a parked bike arms a short D1 burst because idle
-          // heartbeats carry no position at all. Consume the expectation only
-          // on a fix that actually landed (rowCount guards against an
-          // out-of-order report NEWEST_REPORT_GUARD just rejected —
-          // propagating a stale fix to bikes.lat/lng would be worse than
-          // waiting for the burst window to catch a genuinely newer one).
-          // Emitted so bikes.lat/lng (owned by the storage layer, not this
-          // Drizzle-free module) can pick it up via lockGpsEvents.
-          const armed = (result.rowCount ?? 0) > 0 ? consumePendingGpsRefresh(imei) : null;
-          if (armed) {
-            lockGpsEvents.emit(LOCK_GPS_REFRESHED, {
-              imei, bikeId: armed.bikeId, lat: message.fix.lat, lng: message.fix.lng,
-            } satisfies LockGpsRefreshedPayload);
-          }
         } else {
           await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
         }
@@ -304,7 +288,7 @@ export class PgOmniStore implements OmniStore {
             if (lost.rows.length > 0) {
               resetMovementAlarmStreak(imei);
               bikeEvents.emit(BIKE_EVENT_CHANNEL);
-              bikeTheftEvents.emit(BIKE_AUTO_LOST, { bikeId: rows[0].bike_id, at } satisfies BikeAutoLostPayload);
+              bikeTheftEvents.emit(BIKE_AUTO_LOST, { bikeId: rows[0].bike_id, imei, at } satisfies BikeAutoLostPayload);
             }
           }
         }
@@ -545,14 +529,14 @@ export class PgOmniStore implements OmniStore {
     const offlined = await pool.query(
       `UPDATE bikes SET status = 'offline', maintenance_reason = 'auto:low_battery'
        WHERE id = ANY($1::text[]) AND status = 'available' AND battery <= $2
-       RETURNING id, battery`,
+       RETURNING id, battery, lock_imei`,
       [batteryReportedIds, LOW_BATTERY_AUTO_OFFLINE_THRESHOLD],
     );
     if (offlined.rows.length === 0) return;
     bikeEvents.emit(BIKE_EVENT_CHANNEL);
     const at = Date.now();
-    for (const row of offlined.rows as { id: string; battery: number }[]) {
-      bikeAutoOfflineEvents.emit(BIKE_AUTO_OFFLINE, { bikeId: row.id, battery: row.battery, at });
+    for (const row of offlined.rows as { id: string; battery: number; lock_imei: string | null }[]) {
+      bikeAutoOfflineEvents.emit(BIKE_AUTO_OFFLINE, { bikeId: row.id, battery: row.battery, imei: row.lock_imei, at });
     }
   }
 

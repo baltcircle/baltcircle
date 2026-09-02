@@ -4,6 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { RESERVATION_TTL_MS } from "@shared/geo";
 import { db } from "../db/bootstrap";
 import { log } from "../logger";
+import { getLockGateway } from "../omni/gateway";
 import type { Constructor } from "./mixin";
 import type { IReservationStorage } from "./interfaces";
 
@@ -13,6 +14,7 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
       this: { invalidateBikesCache(opts?: { silent?: boolean }): void; isUniqueViolation(err: unknown): boolean },
       { bikeId, userId }: { bikeId: string; userId: string },
     ): Promise<{ reservation: Reservation } | { error: string }> {
+      let lockImei: string | null = null;
       try {
         const result = await db.transaction(async (tx) => {
           // Row-lock the bike so a concurrent reservation/ride-start for the
@@ -23,6 +25,7 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
           if (bike.status !== "available") {
             return { error: `Велосипед сейчас «${bike.status}» — забронировать нельзя` };
           }
+          lockImei = bike.lockImei;
 
           // Product rule (explicit user decision): ONE active reservation at a
           // time, across any bike. Read-then-check inside the tx is enough to
@@ -54,7 +57,12 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
           await tx.update(bikes).set({ status: "reserved", updatedAt: now } as any).where(eq(bikes.id, bikeId));
           return { reservation: row };
         });
-        if (!("error" in result)) this.invalidateBikesCache();
+        if (!("error" in result)) {
+          this.invalidateBikesCache();
+          // GPS-interval sync (bike-status lifecycle spec, 2026-09): "reserved"
+          // tracks at ride-grade precision. Fire-and-forget, outside the tx.
+          if (lockImei) getLockGateway()?.syncGpsTrackingForStatus(lockImei, bikeId, "reserved");
+        }
         return result;
       } catch (err) {
         // idx_reservations_active_bike / idx_reservations_active_user
@@ -84,6 +92,8 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
       id: number,
       userId: string,
     ): Promise<{ ok: true } | { error: string }> {
+      let freedLockImei: string | null | undefined;
+      let freedBikeId: string | undefined;
       const result = await db.transaction(async (tx) => {
         const row = (await tx.select().from(reservations).where(eq(reservations.id, id)).for("update").limit(1))[0] as Reservation | undefined;
         if (!row) return { error: "Бронь не найдена" };
@@ -94,11 +104,23 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
         // "reserved" for THIS reservation's bike — a claimed reservation
         // (bike now "rented") must never be touched by a cancel that raced
         // in after the ride already started.
-        await tx.update(bikes).set({ status: "available", updatedAt: Date.now() } as any)
-          .where(sql`${bikes.id} = ${row.bikeId} AND ${bikes.status} = 'reserved'`);
+        const freed = await tx.update(bikes).set({ status: "available", updatedAt: Date.now() } as any)
+          .where(sql`${bikes.id} = ${row.bikeId} AND ${bikes.status} = 'reserved'`)
+          .returning({ lockImei: bikes.lockImei });
+        if (freed.length > 0) {
+          freedLockImei = freed[0].lockImei;
+          freedBikeId = row.bikeId;
+        }
         return { ok: true as const };
       });
-      if (!("error" in result)) this.invalidateBikesCache();
+      if (!("error" in result)) {
+        this.invalidateBikesCache();
+        // GPS-interval sync (bike-status lifecycle spec, 2026-09): back to
+        // "available" cadence. Fire-and-forget, outside the tx.
+        if (freedLockImei && freedBikeId) {
+          getLockGateway()?.syncGpsTrackingForStatus(freedLockImei, freedBikeId, "available");
+        }
+      }
       return result;
     }
 
@@ -109,6 +131,7 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
       // still stuck "reserved" (or vice versa).
       const now = Date.now();
       let expiredCount = 0;
+      const freedLocks: { bikeId: string; lockImei: string | null }[] = [];
       try {
         await db.transaction(async (tx) => {
           const overdue = await tx.execute(
@@ -119,9 +142,12 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
           const ids = rows.map((r) => r.id);
           await tx.execute(sql`UPDATE reservations SET status = 'expired' WHERE id = ANY(${ids})`);
           for (const r of rows) {
-            await tx.execute(
-              sql`UPDATE bikes SET status = 'available', updated_at = ${now} WHERE id = ${r.bike_id} AND status = 'reserved'`,
+            const freed = await tx.execute(
+              sql`UPDATE bikes SET status = 'available', updated_at = ${now} WHERE id = ${r.bike_id} AND status = 'reserved' RETURNING lock_imei`,
             );
+            if (freed.rows.length > 0) {
+              freedLocks.push({ bikeId: r.bike_id, lockImei: (freed.rows[0] as { lock_imei: string | null }).lock_imei });
+            }
           }
           expiredCount = rows.length;
         });
@@ -131,6 +157,11 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
       }
       if (expiredCount > 0) {
         (this as unknown as { invalidateBikesCache(opts?: { silent?: boolean }): void }).invalidateBikesCache({ silent: true });
+        // GPS-interval sync (bike-status lifecycle spec, 2026-09): back to
+        // "available" cadence for every bike this sweep freed.
+        for (const { bikeId, lockImei } of freedLocks) {
+          if (lockImei) getLockGateway()?.syncGpsTrackingForStatus(lockImei, bikeId, "available");
+        }
       }
       return expiredCount;
     }

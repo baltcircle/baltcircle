@@ -481,7 +481,7 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
       storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status } });
       storageMock.getActiveRideForBike.mockResolvedValue(undefined);
       const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
-      setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+      setLockGateway({ sendUnlockCommand, syncGpsTrackingForStatus: vi.fn() } as any);
 
       const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status });
       await new Promise((r) => setTimeout(r, 0)); // let the fire-and-forget promise settle
@@ -498,7 +498,7 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
       storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status } });
       storageMock.getActiveRideForBike.mockResolvedValue(undefined);
       const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
-      setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+      setLockGateway({ sendUnlockCommand, syncGpsTrackingForStatus: vi.fn() } as any);
 
       const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status });
       await new Promise((r) => setTimeout(r, 0));
@@ -515,7 +515,7 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
       storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "offline" } });
       storageMock.getActiveRideForBike.mockResolvedValue(undefined);
       const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
-      setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+      setLockGateway({ sendUnlockCommand, syncGpsTrackingForStatus: vi.fn() } as any);
 
       const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "offline" });
       await new Promise((r) => setTimeout(r, 0));
@@ -528,7 +528,7 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
   it("does not unlock for an in-rotation status (available)", async () => {
     storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "available" } });
     const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
-    setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn(), startParkingGpsTracking: vi.fn() } as any);
+    setLockGateway({ sendUnlockCommand, syncGpsTrackingForStatus: vi.fn() } as any);
 
     const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "available" });
 
@@ -536,40 +536,27 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
     expect(sendUnlockCommand).not.toHaveBeenCalled();
   });
 
-  it("starts continuous parking GPS tracking (not the bounded refresh burst) when status becomes available", async () => {
-    storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "available" } });
-    const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
-    const requestGpsRefresh = vi.fn();
-    const startParkingGpsTracking = vi.fn();
-    setLockGateway({ sendUnlockCommand, requestGpsRefresh, startParkingGpsTracking } as any);
+  it.each(["available", "maintenance", "offline", "storage", "archived", "lost"] as const)(
+    "syncs the D1 GPS-tracking interval to the new status (%s) on every status-change PATCH",
+    async (status) => {
+      storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status } });
+      storageMock.getActiveRideForBike.mockResolvedValue(undefined);
+      const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+      const syncGpsTrackingForStatus = vi.fn();
+      setLockGateway({ sendUnlockCommand, syncGpsTrackingForStatus } as any);
 
-    const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "available" });
+      const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status });
+      await new Promise((r) => setTimeout(r, 0));
 
-    expect(res.status).toBe(200);
-    expect(startParkingGpsTracking).toHaveBeenCalledWith(bike.lockImei, bike.id);
-    expect(requestGpsRefresh).not.toHaveBeenCalled();
-  });
-
-  it("uses the bounded refresh burst (not continuous tracking) when status changes away from available", async () => {
-    storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "maintenance" } });
-    storageMock.getActiveRideForBike.mockResolvedValue(undefined);
-    const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
-    const requestGpsRefresh = vi.fn();
-    const startParkingGpsTracking = vi.fn();
-    setLockGateway({ sendUnlockCommand, requestGpsRefresh, startParkingGpsTracking } as any);
-
-    const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "maintenance" });
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(res.status).toBe(200);
-    expect(requestGpsRefresh).toHaveBeenCalledWith(bike.lockImei, bike.id);
-    expect(startParkingGpsTracking).not.toHaveBeenCalled();
-  });
+      expect(res.status).toBe(200);
+      expect(syncGpsTrackingForStatus).toHaveBeenCalledWith(bike.lockImei, bike.id, status);
+    },
+  );
 
   it("does not unlock for \"lost\" \u2014 alarming on movement is the desired behavior there", async () => {
     storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "lost" } });
     const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
-    setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+    setLockGateway({ sendUnlockCommand, syncGpsTrackingForStatus: vi.fn() } as any);
 
     const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "lost" });
 
@@ -581,7 +568,7 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
     storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "maintenance" } });
     storageMock.getActiveRideForBike.mockResolvedValue({ id: 9, bikeId: bike.id, userId: "rider-1", status: "active" });
     const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
-    setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+    setLockGateway({ sendUnlockCommand, syncGpsTrackingForStatus: vi.fn() } as any);
 
     const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "maintenance" });
     await new Promise((r) => setTimeout(r, 0));
@@ -594,7 +581,7 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
     storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "archived" } });
     storageMock.getActiveRideForBike.mockResolvedValue(undefined);
     const sendUnlockCommand = vi.fn().mockRejectedValue(new Error("lock is not connected"));
-    setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+    setLockGateway({ sendUnlockCommand, syncGpsTrackingForStatus: vi.fn() } as any);
 
     const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "archived" });
     await new Promise((r) => setTimeout(r, 0));
@@ -606,7 +593,7 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
   it("skips entirely when the bike has no fitted lock", async () => {
     storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, lockImei: null, status: "archived" } });
     const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
-    setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+    setLockGateway({ sendUnlockCommand, syncGpsTrackingForStatus: vi.fn() } as any);
 
     const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "archived" });
 

@@ -8,12 +8,14 @@ import type { Bike, Reservation } from "@shared/schema";
 
 const dbMock = vi.hoisted(() => ({ select: vi.fn(), transaction: vi.fn() }));
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
+const getLockGatewayMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./db/bootstrap", () => ({
   db: dbMock,
   pool: poolMock,
   bootstrapReady: Promise.resolve(),
 }));
+vi.mock("./omni/gateway", () => ({ getLockGateway: getLockGatewayMock }));
 
 import { storage } from "./storage";
 
@@ -42,7 +44,7 @@ function makeReservation(overrides: Partial<Reservation> = {}): Reservation {
 // Same generic tx builder as storage.ride-unlock.test.ts: `selectQueue` feeds
 // consecutive `tx.select()...` chains in call order; `executeResponses` feeds
 // consecutive `tx.execute(sql...)` calls in call order (defaults to empty rows).
-function makeTx(selectQueue: unknown[][], executeResponses: unknown[] = []) {
+function makeTx(selectQueue: unknown[][], executeResponses: unknown[] = [], updateReturning: unknown[] = []) {
   const calls = { execute: [] as string[], updateSets: [] as any[], insertValues: [] as any[] };
   let execIdx = 0;
   const tx: any = {
@@ -61,7 +63,13 @@ function makeTx(selectQueue: unknown[][], executeResponses: unknown[] = []) {
     update: vi.fn(() => ({
       set: (values: any) => {
         calls.updateSets.push(values);
-        return { where: () => Promise.resolve() };
+        return {
+          where: () => {
+            const result: any = Promise.resolve();
+            result.returning = () => Promise.resolve(updateReturning);
+            return result;
+          },
+        };
       },
     })),
     insert: vi.fn(() => ({
@@ -88,6 +96,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   vi.clearAllMocks();
   poolMock.query.mockResolvedValue({ rows: [] });
+  getLockGatewayMock.mockReturnValue(null);
 });
 
 describe("storage.createReservation", () => {
@@ -102,6 +111,30 @@ describe("storage.createReservation", () => {
     expect(result).not.toHaveProperty("error");
     expect(calls.insertValues[0]).toMatchObject({ bikeId: "BC-01", userId: "user-1", status: "active" });
     expect(calls.updateSets.some((v) => v.status === "reserved")).toBe(true);
+  });
+
+  it("syncs D1 GPS tracking to the reserved (10s) interval on success (bike-status lifecycle spec, 2026-09)", async () => {
+    const bike = makeBike({ status: "available", lockImei: "861234567890123" });
+    const { tx } = makeTx([[bike], []], [{ rows: [] }]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    const syncGpsTrackingForStatus = vi.fn();
+    getLockGatewayMock.mockReturnValue({ syncGpsTrackingForStatus });
+
+    await storage.createReservation({ bikeId: "BC-01", userId: "user-1" });
+
+    expect(syncGpsTrackingForStatus).toHaveBeenCalledWith("861234567890123", "BC-01", "reserved");
+  });
+
+  it("skips the GPS sync when the bike has no fitted lock", async () => {
+    const bike = makeBike({ status: "available", lockImei: null });
+    const { tx } = makeTx([[bike], []], [{ rows: [] }]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    const syncGpsTrackingForStatus = vi.fn();
+    getLockGatewayMock.mockReturnValue({ syncGpsTrackingForStatus });
+
+    await storage.createReservation({ bikeId: "BC-01", userId: "user-1" });
+
+    expect(syncGpsTrackingForStatus).not.toHaveBeenCalled();
   });
 
   it("rejects when the bike is not available", async () => {
@@ -157,6 +190,30 @@ describe("storage.cancelReservation", () => {
     expect(calls.updateSets.some((v) => v.status === "available")).toBe(true);
   });
 
+  it("syncs D1 GPS tracking to the available (120s) interval when the bike was freed (bike-status lifecycle spec, 2026-09)", async () => {
+    const row = makeReservation();
+    const { tx } = makeTx([[row]], [], [{ lockImei: "861234567890123" }]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    const syncGpsTrackingForStatus = vi.fn();
+    getLockGatewayMock.mockReturnValue({ syncGpsTrackingForStatus });
+
+    await storage.cancelReservation(1, "user-1");
+
+    expect(syncGpsTrackingForStatus).toHaveBeenCalledWith("861234567890123", row.bikeId, "available");
+  });
+
+  it("skips the GPS sync when the bike was NOT freed (already claimed by a ride)", async () => {
+    const row = makeReservation();
+    const { tx } = makeTx([[row]], [], [] /* UPDATE ... WHERE status='reserved' matched nothing */);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    const syncGpsTrackingForStatus = vi.fn();
+    getLockGatewayMock.mockReturnValue({ syncGpsTrackingForStatus });
+
+    await storage.cancelReservation(1, "user-1");
+
+    expect(syncGpsTrackingForStatus).not.toHaveBeenCalled();
+  });
+
   it("rejects cancelling someone else's reservation", async () => {
     const row = makeReservation({ userId: "user-2" });
     const { tx } = makeTx([[row]]);
@@ -202,6 +259,23 @@ describe("storage.expireOverdueReservations", () => {
     expect(count).toBe(2);
     expect(calls.execute.some((q) => q.includes("UPDATE reservations SET status = 'expired'"))).toBe(true);
     expect(calls.execute.filter((q) => q.includes("UPDATE bikes SET status = 'available'")).length).toBe(2);
+  });
+
+  it("syncs D1 GPS tracking to the available (120s) interval for every freed bike (bike-status lifecycle spec, 2026-09)", async () => {
+    const { tx } = makeTx([], [
+      { rows: [{ id: 1, bike_id: "BC-01" }, { id: 2, bike_id: "BC-02" }] }, // overdue SELECT
+      { rows: [] }, // UPDATE reservations
+      { rows: [{ lock_imei: "861234567890123" }] }, // UPDATE bikes for BC-01
+      { rows: [] }, // UPDATE bikes for BC-02 — didn't match (already claimed), no lock_imei row
+    ]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    const syncGpsTrackingForStatus = vi.fn();
+    getLockGatewayMock.mockReturnValue({ syncGpsTrackingForStatus });
+
+    await storage.expireOverdueReservations();
+
+    expect(syncGpsTrackingForStatus).toHaveBeenCalledTimes(1);
+    expect(syncGpsTrackingForStatus).toHaveBeenCalledWith("861234567890123", "BC-01", "available");
   });
 
   it("is a no-op when nothing is overdue", async () => {

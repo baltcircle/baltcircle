@@ -27,6 +27,7 @@ const dbMock = vi.hoisted(() => ({
 }));
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 const sendToUserAsyncMock = vi.hoisted(() => vi.fn());
+const getLockGatewayMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./db/bootstrap", () => ({
   db: dbMock,
@@ -34,6 +35,7 @@ vi.mock("./db/bootstrap", () => ({
   bootstrapReady: Promise.resolve(),
 }));
 vi.mock("./push", () => ({ sendToUserAsync: sendToUserAsyncMock }));
+vi.mock("./omni/gateway", () => ({ getLockGateway: getLockGatewayMock }));
 
 import { storage, rideEvents } from "./storage";
 import { bikes } from "@shared/schema";
@@ -165,6 +167,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   poolMock.query.mockResolvedValue({ rows: [] });
   dbMock.select.mockImplementation(() => emptySelectChain());
+  getLockGatewayMock.mockReturnValue(null);
 });
 
 afterEach(() => {
@@ -342,6 +345,52 @@ describe("endRide — auto-offline on low lock battery (rental spec addendum, 20
     const statusUpdate = bikeUpdates.find((c) => c.patch && "status" in (c.patch as object));
     expect((statusUpdate!.patch as any).status).toBe("available");
     expect(alertSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("endRide — D1 GPS tracking sync on settlement (bike-status lifecycle spec, 2026-09)", () => {
+  it("syncs the available (120s) interval when the bike is freed with a healthy battery", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI, battery: 90 });
+    const freshLock = makeLock();
+    const parking = makeParkingForRealPoint(LOCK_REAL_LAT, LOCK_REAL_LNG);
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx } = makeTx([[activeRide], [bike], [parking], [freshLock], [completedRide]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+    const syncGpsTrackingForStatus = vi.fn().mockReturnValue(true);
+    getLockGatewayMock.mockReturnValue({ syncGpsTrackingForStatus });
+
+    await storage.endRide(activeRide.id);
+
+    expect(syncGpsTrackingForStatus).toHaveBeenCalledWith(IMEI, "BC-01", "available");
+  });
+
+  it("syncs the offline (3600s) interval when the bike auto-offlines on low battery", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI, battery: 8 });
+    const freshLock = makeLock();
+    const parking = makeParkingForRealPoint(LOCK_REAL_LAT, LOCK_REAL_LNG);
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx } = makeTx([[activeRide], [bike], [parking], [freshLock], [completedRide]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+    vi.spyOn(storage, "createLowBatteryOfflineAlert").mockResolvedValue(null);
+    const syncGpsTrackingForStatus = vi.fn().mockReturnValue(true);
+    getLockGatewayMock.mockReturnValue({ syncGpsTrackingForStatus });
+
+    await storage.endRide(activeRide.id);
+
+    expect(syncGpsTrackingForStatus).toHaveBeenCalledWith(IMEI, "BC-01", "offline");
+  });
+
+  it("skips the sync entirely for a lockless (legacy) bike", async () => {
+    const activeRide = makeRide();
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx } = makeTx([[activeRide], [makeBike()], [], [completedRide]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await storage.endRide(activeRide.id);
+
+    expect(getLockGatewayMock).not.toHaveBeenCalled();
   });
 });
 

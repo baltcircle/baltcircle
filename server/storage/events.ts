@@ -23,25 +23,7 @@ export const bikeEvents = new EventEmitter();
 bikeEvents.setMaxListeners(0);
 export const BIKE_EVENT_CHANNEL = "fleet";
 
-// GPS-refresh bridge: the OMNI TCP process (server/omni/server.ts) arms a
-// short D1 burst when a bike's status changes while parked (idle heartbeats
-// carry no GPS, see shared/geo.ts's GPS_REFRESH_BURST_WINDOW_MS) and emits
-// this once persistLockReport's "position" case lands a valid fix while that
-// burst is still armed. Wired in server/storage.ts, not server/omni/store.ts,
-// because only the storage layer has the Drizzle-backed bikes/parkings
-// tables that store.ts intentionally stays decoupled from.
-export const lockGpsEvents = new EventEmitter();
-lockGpsEvents.setMaxListeners(0);
-export const LOCK_GPS_REFRESHED = "refreshed";
-export interface LockGpsRefreshedPayload {
-  imei: string;
-  bikeId: string;
-  /** WGS84 decimal degrees, straight from the device's GpsFix. */
-  lat: number;
-  lng: number;
-}
-
-// Pending-end bridge: mirrors the GPS-refresh bridge above. A rider's
+// Pending-end bridge: a rider's
 // "завершить" request arms a short expectation (server/omni/pending-end-registry.ts)
 // instead of settling immediately, because ending must wait for the OMNI
 // lock's own physical-closure report. Once that report lands,
@@ -49,7 +31,7 @@ export interface LockGpsRefreshedPayload {
 // emits this so the full transactional settlement (storage.endRide, which
 // this Drizzle-free module intentionally cannot call directly — see
 // server/omni/store.ts's file header) runs on the storage layer. Wired in
-// server/storage.ts, alongside the LOCK_GPS_REFRESHED listener.
+// server/storage.ts.
 export const pendingEndEvents = new EventEmitter();
 pendingEndEvents.setMaxListeners(0);
 export const LOCK_CLOSED_FOR_END = "closed-for-end";
@@ -99,6 +81,8 @@ export const BIKE_AUTO_OFFLINE = "auto-offline";
 export interface BikeAutoOfflinePayload {
   bikeId: string;
   battery: number;
+  /** For the GPS-interval sync (bike-status lifecycle spec, 2026-09) — null if the bike has no lock bound. */
+  imei: string | null;
   at: number;
 }
 
@@ -115,5 +99,7 @@ bikeTheftEvents.setMaxListeners(0);
 export const BIKE_AUTO_LOST = "auto-lost";
 export interface BikeAutoLostPayload {
   bikeId: string;
+  /** For the GPS-interval sync (bike-status lifecycle spec, 2026-09). */
+  imei: string;
   at: number;
 }

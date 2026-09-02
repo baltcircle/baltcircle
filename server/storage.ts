@@ -6,17 +6,18 @@ export { db, pool, bootstrapReady };
 // Re-exported for external callers (SSE fan-out, admin bike-list broadcast).
 export { bikeEvents, BIKE_EVENT_CHANNEL } from "./storage/events";
 import {
-  rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, pendingEndEvents, LOCK_CLOSED_FOR_END,
+  rideEvents, pendingEndEvents, LOCK_CLOSED_FOR_END,
   lockAlarmEvents, LOCK_FALL_ALARM, LOCK_MOVEMENT_ALARM,
   bikeTheftEvents, BIKE_AUTO_LOST, type BikeAutoLostPayload,
   bikeAutoOfflineEvents, BIKE_AUTO_OFFLINE,
 } from "./storage/events";
 import type {
-  LockGpsRefreshedPayload, LockClosedForEndPayload, LockFallAlarmPayload, LockMovementAlarmPayload,
+  LockClosedForEndPayload, LockFallAlarmPayload, LockMovementAlarmPayload,
   BikeAutoOfflinePayload,
 } from "./storage/events";
 import { log } from "./logger";
 import { END_SETTLE_RETRY_INTERVAL_MS, END_SETTLE_RETRY_WINDOW_MS, RIDE_END_AWAITING_LOCK_GPS_ERROR } from "@shared/geo";
+import { getLockGateway } from "./omni/gateway";
 export { rideEvents };
 import type { RideEventReason } from "./storage/events";
 export type { RideEventReason };
@@ -77,16 +78,6 @@ export class DatabaseStorage
 
 export const storage = new DatabaseStorage();
 
-// Bridge: server/omni/store.ts (kept dependency-free of Drizzle/storage, see
-// its file header) emits here once an opportunistic GPS-refresh burst
-// (server/omni/server.ts's requestGpsRefresh) catches a fix; only this
-// storage layer can turn that into a bikes.lat/lng update + parking
-// recalculation. Best-effort: a failure here must not crash the OMNI TCP
-// process or the admin request that originally armed the burst.
-lockGpsEvents.on(LOCK_GPS_REFRESHED, (payload: LockGpsRefreshedPayload) => {
-  storage.applyGpsRefresh(payload).catch((err) => log(`gps-refresh apply failed: ${(err as Error).message}`));
-});
-
 // Bridge: server/omni/store.ts consumes a rider's armed "завершить" request
 // once the OMNI lock reports a physical closure and emits here — only this
 // storage layer can run the full transactional settlement (billing, bike
@@ -134,6 +125,10 @@ lockAlarmEvents.on(LOCK_MOVEMENT_ALARM, (payload: LockMovementAlarmPayload) => {
 bikeTheftEvents.on(BIKE_AUTO_LOST, (payload: BikeAutoLostPayload) => {
   storage.createTheftAlert(payload.bikeId, payload.at)
     .catch((err) => log(`theft-alert create failed: bike=${payload.bikeId} ${(err as Error).message}`));
+  // GPS-interval sync (bike-status lifecycle spec, 2026-09): "lost" tracks
+  // at the fastest cadence to maximise recovery odds. Best-effort, never
+  // blocks the OMNI TCP process on a disconnected/slow lock.
+  getLockGateway()?.syncGpsTrackingForStatus(payload.imei, payload.bikeId, "lost");
 });
 
 // Bridge: server/omni/store.ts flips a parked bike's status straight to
@@ -144,6 +139,10 @@ bikeTheftEvents.on(BIKE_AUTO_LOST, (payload: BikeAutoLostPayload) => {
 bikeAutoOfflineEvents.on(BIKE_AUTO_OFFLINE, (payload: BikeAutoOfflinePayload) => {
   storage.createLowBatteryOfflineAlert(payload.bikeId, payload.battery, payload.at)
     .catch((err) => log(`low-battery-offline alert create failed: bike=${payload.bikeId} ${(err as Error).message}`));
+  // GPS-interval sync (bike-status lifecycle spec, 2026-09): "offline"
+  // settles to the hourly out-of-rotation cadence. Best-effort, never
+  // blocks the OMNI TCP process on a disconnected/slow lock.
+  if (payload.imei) getLockGateway()?.syncGpsTrackingForStatus(payload.imei, payload.bikeId, "offline");
 });
 
 /**
