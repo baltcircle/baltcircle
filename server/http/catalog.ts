@@ -57,11 +57,11 @@ import {
 // retrieve/recharge it) still have the explicit /api/admin/locks/:id/unlock
 // control below, unaffected by this set.
 //
-// Also deliberately excludes "storage" and "sleeping" (bike-status lifecycle
-// audit, 2026-09): a bike parked in storage or put to sleep by an operator
-// must stay physically locked — auto-unlocking it here was a bug (a bike on
-// the storage shelf would pop its shackle open on every status write), not a
-// deliberate convenience like the ones below.
+// Also deliberately excludes "storage" (bike-status lifecycle audit,
+// 2026-09): a bike parked in storage — including one an operator has put to
+// sleep via the OMNI lock's vendor app — must stay physically locked; auto-
+// unlocking it here was a bug (it would pop its shackle open on every status
+// write), not a deliberate convenience like the ones below.
 const MOVEMENT_ALARM_SUPPRESSED_STATUSES: ReadonlySet<string> = new Set(
   ["maintenance", "archived"] satisfies BikeStatus[],
 );
@@ -99,10 +99,10 @@ async function suppressMovementAlarmOnStatusChange(bike: Bike): Promise<void> {
 
 // Statuses that take a bike out of rotation and must never be visible to an
 // ordinary rider on the public map/list — regardless of who they are — since
-// they carry no rider-facing meaning ("Сервис", "Оффлайн", "На складе", "На
-// скалде", "Утерян"). Staff keep full visibility via /api/admin/bikes.
+// they carry no rider-facing meaning ("Сервис", "Оффлайн", "На складе",
+// "Утерян"). Staff keep full visibility via /api/admin/bikes.
 const RIDER_HIDDEN_STATUSES: ReadonlySet<string> = new Set(
-  ["maintenance", "offline", "storage", "sleeping", "lost"] satisfies BikeStatus[],
+  ["maintenance", "offline", "storage", "lost"] satisfies BikeStatus[],
 );
 
 // Filters the full fleet down to what a given (possibly anonymous — riderId()
@@ -111,7 +111,7 @@ const RIDER_HIDDEN_STATUSES: ReadonlySet<string> = new Set(
 //  - a bike this rider currently has "rented" or "reserved" stays visible to
 //    THEM (so their own map/QR flow keeps working) but disappears for anyone
 //    else — other riders must not see a bike is in use / who's near it.
-//  - out-of-rotation statuses (maintenance/offline/storage/sleeping/lost) are
+//  - out-of-rotation statuses (maintenance/offline/storage/lost) are
 //    hidden from every rider; only staff need to see those on a map.
 //  - "archived" is already excluded by storage.listBikes().
 async function filterBikesForRider(bikes: Bike[], req: Request): Promise<Bike[]> {

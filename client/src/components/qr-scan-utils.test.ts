@@ -82,7 +82,7 @@ describe("classifyBikeForScan", () => {
   });
 
   it("reports a generic \u00ab\u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d\u00bb for every other out-of-rotation status", () => {
-    for (const status of ["maintenance", "offline", "storage", "sleeping", "lost", "archived"] as const) {
+    for (const status of ["maintenance", "offline", "storage", "lost", "archived"] as const) {
       const bike = makeBike({ id: "BC-01", status });
       expect(classifyBikeForScan(bike, {})).toEqual({
         error: "\u0412\u0435\u043b\u043e\u0441\u0438\u043f\u0435\u0434 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d",

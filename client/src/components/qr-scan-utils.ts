@@ -77,7 +77,7 @@ function scanMessageForStatus(status: Bike["status"]): string | null {
     case "reserved":
       return "Велосипед забронирован";
     default:
-      // maintenance / offline / storage / sleeping / lost / archived
+      // maintenance / offline / storage / lost / archived
       return "Велосипед недоступен";
   }
 }
@@ -92,7 +92,7 @@ function scanMessageForStatus(status: Bike["status"]): string | null {
  *    renting/holding it (so their own QR flow — e.g. re-confirming a
  *    reservation to start the ride — keeps working); anyone else gets the
  *    exact spec'd message.
- *  - every other status (maintenance/offline/storage/sleeping/lost/archived)
+ *  - every other status (maintenance/offline/storage/lost/archived)
  *    is never resolvable and always returns "Велосипед недоступен".
  */
 export function classifyBikeForScan(
