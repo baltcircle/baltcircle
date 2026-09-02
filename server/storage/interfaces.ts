@@ -203,15 +203,6 @@ export interface IBikeStorage {
   // Registry locks that have not yet been fitted to a bike.
   listUnassignedLocks(): Promise<{ imei: string; lastSeen: number | null }[]>;
   /**
-   * Apply a fix caught by an opportunistic GPS-refresh burst (armed on a bike
-   * status change, see server/omni/server.ts's requestGpsRefresh) to the
-   * bike's stored position and recalculate its parking. Silently a no-op if
-   * the bike no longer exists, is mid-ride/archived (position is owned by the
-   * ride, or the bike is soft-deleted), or its lock has since been swapped to
-   * a different bike — all signs the fix is now stale/misattributed.
-   */
-  applyGpsRefresh(payload: { bikeId: string; imei: string; lat: number; lng: number }): Promise<void>;
-  /**
    * Deletes raw lock heartbeat/telemetry rows older than the retention
    * window. Independent of ride_points (permanent per-ride track history) —
    * bike_telemetry is high-volume check-in noise with no ride linkage.

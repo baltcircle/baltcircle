@@ -161,7 +161,7 @@ describe("startRide physical unlock gate (audit F-04)", () => {
     const { tx } = makeTx([[bike], [], [], [makeParking()]]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
     sendUnlockCommandMock.mockResolvedValue({ success: true });
-    getLockGatewayMock.mockReturnValue({ sendUnlockCommand: sendUnlockCommandMock });
+    getLockGatewayMock.mockReturnValue({ sendUnlockCommand: sendUnlockCommandMock, syncGpsTrackingForStatus: vi.fn().mockReturnValue(true) });
 
     const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: true });
 
@@ -171,6 +171,19 @@ describe("startRide physical unlock gate (audit F-04)", () => {
     // serial id must be sent instead, never the raw userId.
     expect(sendUnlockCommandMock).toHaveBeenCalledWith("868000000000001", 7);
     expect(result).not.toHaveProperty("error");
+  });
+
+  it("syncs D1 GPS tracking to the rented (10s) interval once the ride starts (bike-status lifecycle spec, 2026-09)", async () => {
+    const bike = makeBike({ lockImei: "868000000000001" });
+    const { tx } = makeTx([[bike], [], [], [makeParking()]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    sendUnlockCommandMock.mockResolvedValue({ success: true });
+    const syncGpsTrackingForStatus = vi.fn().mockReturnValue(true);
+    getLockGatewayMock.mockReturnValue({ sendUnlockCommand: sendUnlockCommandMock, syncGpsTrackingForStatus });
+
+    await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: true });
+
+    expect(syncGpsTrackingForStatus).toHaveBeenCalledWith("868000000000001", "BC-01", "rented");
   });
 
   it("rolls back and refunds the internal wallet debit when the lock is not connected", async () => {
@@ -202,7 +215,7 @@ describe("startRide physical unlock gate (audit F-04)", () => {
     const { tx, calls } = makeTx([[bike], [], [], [makeParking()], [activeRideForRollback]]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
     sendUnlockCommandMock.mockResolvedValue({ success: false });
-    getLockGatewayMock.mockReturnValue({ sendUnlockCommand: sendUnlockCommandMock });
+    getLockGatewayMock.mockReturnValue({ sendUnlockCommand: sendUnlockCommandMock, syncGpsTrackingForStatus: vi.fn().mockReturnValue(true) });
 
     const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: true });
 
@@ -217,7 +230,7 @@ describe("startRide physical unlock gate (audit F-04)", () => {
     const { tx } = makeTx([[bike], [], [], [makeParking()], [activeRideForRollback]]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
     sendUnlockCommandMock.mockRejectedValue(new Error("unlock command timed out"));
-    getLockGatewayMock.mockReturnValue({ sendUnlockCommand: sendUnlockCommandMock });
+    getLockGatewayMock.mockReturnValue({ sendUnlockCommand: sendUnlockCommandMock, syncGpsTrackingForStatus: vi.fn().mockReturnValue(true) });
 
     const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: false });
 
