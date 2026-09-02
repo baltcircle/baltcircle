@@ -40,6 +40,11 @@ describe("FeedbackRowItem", () => {
     expect(rowSource).toContain("formatFeedbackReasons(f.rating, f.reasons)");
     expect(rowSource).toContain("from \"@shared/feedback\"");
   });
+
+  it("shows only the rating digit, without a /5 suffix", () => {
+    expect(rowSource).not.toContain("/5");
+    expect(rowSource).toContain("{rating}</span>");
+  });
 });
 
 describe("Reviews route registration", () => {

@@ -83,7 +83,7 @@ interface AdminAnalytics {
     repeatedProblemBikes: { bike_id: string; tickets: number; open: number }[];
   };
   parkingUsage: { id: string; name: string; capacity: number; occupied: number; rideStarts: number }[];
-  feedbackCounts: { low: number; mid: number; high: number };
+  feedbackCounts: { r1: number; r2: number; r3: number; r4: number; r5: number };
 }
 
 export function AnalyticsPage() {
@@ -247,17 +247,25 @@ export function AnalyticsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                <TableRow data-testid="analytics-feedback-low">
-                  <TableCell>1-3 звезды</TableCell>
-                  <TableCell className="text-right font-mono">{a.feedbackCounts.low}</TableCell>
+                <TableRow data-testid="analytics-feedback-1">
+                  <TableCell>1 звезда</TableCell>
+                  <TableCell className="text-right font-mono">{a.feedbackCounts.r1}</TableCell>
                 </TableRow>
-                <TableRow data-testid="analytics-feedback-mid">
+                <TableRow data-testid="analytics-feedback-2">
+                  <TableCell>2 звезды</TableCell>
+                  <TableCell className="text-right font-mono">{a.feedbackCounts.r2}</TableCell>
+                </TableRow>
+                <TableRow data-testid="analytics-feedback-3">
+                  <TableCell>3 звезды</TableCell>
+                  <TableCell className="text-right font-mono">{a.feedbackCounts.r3}</TableCell>
+                </TableRow>
+                <TableRow data-testid="analytics-feedback-4">
                   <TableCell>4 звезды</TableCell>
-                  <TableCell className="text-right font-mono">{a.feedbackCounts.mid}</TableCell>
+                  <TableCell className="text-right font-mono">{a.feedbackCounts.r4}</TableCell>
                 </TableRow>
-                <TableRow data-testid="analytics-feedback-high">
+                <TableRow data-testid="analytics-feedback-5">
                   <TableCell>5 звёзд</TableCell>
-                  <TableCell className="text-right font-mono">{a.feedbackCounts.high}</TableCell>
+                  <TableCell className="text-right font-mono">{a.feedbackCounts.r5}</TableCell>
                 </TableRow>
               </TableBody>
             </Table>
