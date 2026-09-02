@@ -19,11 +19,15 @@ import { consumePendingPause } from "./pause-registry";
 import { consumePendingEnd } from "./pending-end-registry";
 import { consumePendingGpsRefresh } from "./gps-refresh-registry";
 import {
+  recordMovementAlarm, resetMovementAlarmStreak, MOVEMENT_ALARM_THEFT_THRESHOLD,
+} from "./theft-registry";
+import {
   rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, type LockGpsRefreshedPayload,
   pendingEndEvents, LOCK_CLOSED_FOR_END, type LockClosedForEndPayload,
   lockAlarmEvents, LOCK_FALL_ALARM, type LockFallAlarmPayload,
   LOCK_MOVEMENT_ALARM, type LockMovementAlarmPayload,
   bikeAutoOfflineEvents, BIKE_AUTO_OFFLINE,
+  bikeTheftEvents, BIKE_AUTO_LOST, type BikeAutoLostPayload,
   bikeEvents, BIKE_EVENT_CHANNEL,
 } from "../storage/events";
 
@@ -176,6 +180,14 @@ export class PgOmniStore implements OmniStore {
     const base = `status = CASE WHEN status = 'decommissioned' THEN status ELSE 'active' END,
       last_seen_at = $2, updated_at = $2`;
     const voltage = (cv: number) => cv / 100;
+    // Theft-detection streak (see theft-registry.ts header): any report that
+    // is NOT itself a code=1 ("illegal movement") alarm means this lock did
+    // not re-report movement this time — whatever triggered the streak has
+    // stopped, so reset it. The "alarm" branch below re-increments instead
+    // when it IS code=1.
+    if (!(message.type === "alarm" && message.code === 1)) {
+      resetMovementAlarmStreak(imei);
+    }
     switch (message.type) {
       case "checkin":
         await pool.query(`UPDATE locks SET ${base}, last_battery_voltage = $3 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
@@ -274,6 +286,27 @@ export class PgOmniStore implements OmniStore {
         } else if (alarmType === "illegal_movement" && rows[0]?.bike_id) {
           const payload: LockMovementAlarmPayload = { imei, bikeId: rows[0].bike_id, at };
           lockAlarmEvents.emit(LOCK_MOVEMENT_ALARM, payload);
+
+          // Auto-"lost" (theft): 6 consecutive code=1 reports with no reset
+          // in between (bike-status lifecycle spec, 2026-09) — promote the
+          // per-alarm alert above into an actual status transition. Guarded
+          // to never re-fire on a bike already "lost"/"archived" (idempotent
+          // if the streak somehow keeps climbing past the threshold, and
+          // never resurrects/relabels a bike an operator has archived).
+          const streak = recordMovementAlarm(imei);
+          if (streak >= MOVEMENT_ALARM_THEFT_THRESHOLD) {
+            const lost = await pool.query<{ id: string }>(
+              `UPDATE bikes SET status = 'lost'
+               WHERE id = $1 AND status NOT IN ('lost', 'archived')
+               RETURNING id`,
+              [rows[0].bike_id],
+            );
+            if (lost.rows.length > 0) {
+              resetMovementAlarmStreak(imei);
+              bikeEvents.emit(BIKE_EVENT_CHANNEL);
+              bikeTheftEvents.emit(BIKE_AUTO_LOST, { bikeId: rows[0].bike_id, at } satisfies BikeAutoLostPayload);
+            }
+          }
         }
         return true;
       }

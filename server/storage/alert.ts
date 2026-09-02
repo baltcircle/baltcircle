@@ -58,6 +58,21 @@ export function AlertMixin<TBase extends Constructor>(Base: TBase) {
     }
 
     /**
+     * Best-effort, called after 6 consecutive OMNI illegal-movement alarms
+     * with no reset auto-transition a bike to "lost" (server/omni/store.ts +
+     * theft-registry.ts, bike-status lifecycle spec). Distinct `kind` from
+     * createMovementAlert above ("theft" vs "movement_alarm") — the
+     * dashboard's redesigned "Кража велосипеда" card reads only this kind,
+     * so a single early alarm never shows up there, only a confirmed streak.
+     */
+    async createTheftAlert(bikeId: string, at: number): Promise<Alert | null> {
+      return this.createAlertRow(
+        bikeId, "theft", "critical",
+        "Велосипед перемещается без авторизации — возможна кража", at,
+      );
+    }
+
+    /**
      * Best-effort, called after a bike auto-transitions "available"/"rented"
      * -> "offline" on low battery (bike.ts/ride.ts). Reuses the existing
      * `low_battery` kind (shared/schema.ts's ALERT_KINDS) — it was reserved

@@ -8,6 +8,7 @@ export { bikeEvents, BIKE_EVENT_CHANNEL } from "./storage/events";
 import {
   rideEvents, lockGpsEvents, LOCK_GPS_REFRESHED, pendingEndEvents, LOCK_CLOSED_FOR_END,
   lockAlarmEvents, LOCK_FALL_ALARM, LOCK_MOVEMENT_ALARM,
+  bikeTheftEvents, BIKE_AUTO_LOST, type BikeAutoLostPayload,
   bikeAutoOfflineEvents, BIKE_AUTO_OFFLINE,
 } from "./storage/events";
 import type {
@@ -123,6 +124,16 @@ lockAlarmEvents.on(LOCK_FALL_ALARM, (payload: LockFallAlarmPayload) => {
 lockAlarmEvents.on(LOCK_MOVEMENT_ALARM, (payload: LockMovementAlarmPayload) => {
   storage.createMovementAlert(payload.bikeId, payload.at)
     .catch((err) => log(`movement-alert create failed: bike=${payload.bikeId} ${(err as Error).message}`));
+});
+
+// Bridge: server/omni/store.ts flips a bike straight to "lost" once 6
+// consecutive illegal-movement alarms land with no reset in between (see
+// server/omni/theft-registry.ts), and emits here — mirrors the fall/movement
+// bridges above. Best-effort: must never crash the OMNI TCP process on a
+// transient DB hiccup.
+bikeTheftEvents.on(BIKE_AUTO_LOST, (payload: BikeAutoLostPayload) => {
+  storage.createTheftAlert(payload.bikeId, payload.at)
+    .catch((err) => log(`theft-alert create failed: bike=${payload.bikeId} ${(err as Error).message}`));
 });
 
 // Bridge: server/omni/store.ts flips a parked bike's status straight to
