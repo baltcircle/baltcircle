@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Bike } from "@shared/schema";
-import { extractBikeCode, normalizeCode, resolveScannedCode } from "./qr-scan-utils";
+import { extractBikeCode, normalizeCode, classifyBikeForScan } from "./qr-scan-utils";
 
 function makeBike(overrides: Partial<Bike> = {}): Bike {
   return {
@@ -51,22 +51,42 @@ describe("normalizeCode", () => {
   });
 });
 
-describe("resolveScannedCode", () => {
-  it("resolves a normal BC code to the matching available bike", () => {
-    const bikes = [makeBike({ id: "BC-01" }), makeBike({ id: "BC-02" })];
-    const result = resolveScannedCode("BC-02", bikes);
-    expect(result).toEqual({ bike: bikes[1] });
+describe("classifyBikeForScan", () => {
+  it("resolves an available bike regardless of ownership", () => {
+    const bike = makeBike({ id: "BC-01", status: "available" });
+    expect(classifyBikeForScan(bike, {})).toEqual({ bike });
   });
 
-  it("reports not-available when the matched bike isn't available, without silently falling through", () => {
-    const bikes = [makeBike({ id: "BC-01", status: "rented" })];
-    const result = resolveScannedCode("BC-01", bikes);
-    expect(result).toEqual({ error: "not-available" });
+  it("lets the scanning rider's own rented bike through", () => {
+    const bike = makeBike({ id: "BC-01", status: "rented" });
+    const result = classifyBikeForScan(bike, { myActiveRideBikeId: "BC-01" });
+    expect(result).toEqual({ bike });
   });
 
-  it("reports not-found for unrecognized raw text", () => {
-    const bikes = [makeBike({ id: "BC-01" })];
-    const result = resolveScannedCode("garbage-text", bikes);
-    expect(result).toEqual({ error: "not-found" });
+  it("reports \u00ab\u0432 \u0430\u0440\u0435\u043d\u0434\u0435\u00bb for a bike rented by someone else", () => {
+    const bike = makeBike({ id: "BC-01", status: "rented" });
+    const result = classifyBikeForScan(bike, { myActiveRideBikeId: "BC-02" });
+    expect(result).toEqual({ error: "\u0412\u0435\u043b\u043e\u0441\u0438\u043f\u0435\u0434 \u043d\u0430\u0445\u043e\u0434\u0438\u0442\u044c\u0441\u044f \u0432 \u0430\u0440\u0435\u043d\u0434\u0435" });
+  });
+
+  it("lets the scanning rider's own reservation through", () => {
+    const bike = makeBike({ id: "BC-01", status: "reserved" });
+    const result = classifyBikeForScan(bike, { myReservationBikeId: "BC-01" });
+    expect(result).toEqual({ bike });
+  });
+
+  it("reports \u00ab\u0437\u0430\u0431\u0440\u043e\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u00bb for a bike reserved by someone else", () => {
+    const bike = makeBike({ id: "BC-01", status: "reserved" });
+    const result = classifyBikeForScan(bike, { myReservationBikeId: "BC-02" });
+    expect(result).toEqual({ error: "\u0412\u0435\u043b\u043e\u0441\u0438\u043f\u0435\u0434 \u0437\u0430\u0431\u0440\u043e\u043d\u0438\u0440\u043e\u0432\u0430\u043d" });
+  });
+
+  it("reports a generic \u00ab\u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d\u00bb for every other out-of-rotation status", () => {
+    for (const status of ["maintenance", "offline", "storage", "sleeping", "lost", "archived"] as const) {
+      const bike = makeBike({ id: "BC-01", status });
+      expect(classifyBikeForScan(bike, {})).toEqual({
+        error: "\u0412\u0435\u043b\u043e\u0441\u0438\u043f\u0435\u0434 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d",
+      });
+    }
   });
 });
