@@ -1,0 +1,70 @@
+name: Emergency Add SSH Key
+
+# One-off / reusable break-glass tool: appends an SSH public key to a user's
+# authorized_keys directly on the prod host via the self-hosted runner,
+# bypassing Yandex Cloud instance metadata (useful if the guest agent isn't
+# applying metadata ssh-keys live, or after losing key-based access).
+#
+# Manual trigger only, gated by the same "production" Environment approval
+# used by deploy.yml / configure-takeride-domain.yml — nothing runs against
+# the prod host without an explicit human approval.
+
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        description: "OS username on the VM (e.g. yc-user)"
+        required: true
+        default: "yc-user"
+      public_key:
+        description: "Full public key line, e.g. ssh-ed25519 AAAA... comment"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  add-key:
+    name: Append public key to authorized_keys
+    runs-on:
+      - self-hosted
+      - baltcircle-prod
+    environment: production
+    steps:
+      - name: Append key (idempotent)
+        env:
+          TARGET_USER: ${{ github.event.inputs.username }}
+          PUBKEY: ${{ github.event.inputs.public_key }}
+        run: |
+          set -euo pipefail
+
+          USER_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
+          if [ -z "$USER_HOME" ]; then
+            echo "::error::User '$TARGET_USER' not found on this host" >&2
+            exit 1
+          fi
+
+          run_as_owner_or_sudo() {
+            "$@" 2>/dev/null || sudo -n "$@"
+          }
+
+          run_as_owner_or_sudo mkdir -p "$USER_HOME/.ssh"
+          run_as_owner_or_sudo touch "$USER_HOME/.ssh/authorized_keys"
+
+          if grep -qxF "$PUBKEY" "$USER_HOME/.ssh/authorized_keys" 2>/dev/null; then
+            echo "Key already present in $USER_HOME/.ssh/authorized_keys — no changes."
+          else
+            if ! echo "$PUBKEY" >> "$USER_HOME/.ssh/authorized_keys" 2>/dev/null; then
+              echo "$PUBKEY" | sudo -n tee -a "$USER_HOME/.ssh/authorized_keys" >/dev/null
+            fi
+            echo "Key appended to $USER_HOME/.ssh/authorized_keys."
+          fi
+
+          run_as_owner_or_sudo chmod 700 "$USER_HOME/.ssh"
+          run_as_owner_or_sudo chmod 600 "$USER_HOME/.ssh/authorized_keys"
+          chown -R "$TARGET_USER":"$TARGET_USER" "$USER_HOME/.ssh" 2>/dev/null \
+            || sudo -n chown -R "$TARGET_USER":"$TARGET_USER" "$USER_HOME/.ssh" \
+            || echo "::warning::Could not chown $USER_HOME/.ssh (may already be correct)"
+
+          echo "--- Current $USER_HOME/.ssh/authorized_keys (fingerprints) ---"
+          ssh-keygen -lf "$USER_HOME/.ssh/authorized_keys" || cat "$USER_HOME/.ssh/authorized_keys"
