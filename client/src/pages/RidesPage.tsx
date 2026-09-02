@@ -82,8 +82,8 @@ export function RidesPage() {
                   <Cell icon={<Clock className="w-3.5 h-3.5" />} label="Время" value={r.endedAt ? fmtDuration(r.endedAt - r.startedAt) : "Активна"} />
                   <Cell icon={<MapPin className="w-3.5 h-3.5" />} label="Дистанция" value={fmtDistance(r.distanceM)} />
                   <Cell icon={<Route className="w-3.5 h-3.5" />} label="Тариф" value={fmtRideTariff(r)} />
-                  <Cell icon={<Receipt className="w-3.5 h-3.5" />} label="Стоимость" value={fmtRub(r.cost)} />
                   <Cell icon={<Star className="w-3.5 h-3.5" />} label="Оценка" value={fmtRideRating(r.rating)} />
+                  <Cell icon={<Receipt className="w-3.5 h-3.5" />} label="Стоимость" value={fmtRub(r.cost)} />
                 </div>
               </div>
             </Card>
@@ -96,8 +96,8 @@ export function RidesPage() {
 
 function Cell({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div>
-      <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1">{icon}{label}</div>
+    <div className="flex flex-col items-center text-center">
+      <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center justify-center gap-1">{icon}{label}</div>
       <div className="font-display font-light mt-0.5">{value}</div>
     </div>
   );
