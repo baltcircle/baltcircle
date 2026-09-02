@@ -12,6 +12,7 @@ vi.mock("./db/bootstrap", () => ({
 vi.mock("./push", () => ({ sendToUserAsync: vi.fn() }));
 
 import { storage } from "./storage";
+import { setLockGateway } from "./omni/gateway";
 
 const NOW = new Date("2026-08-11T12:00:00.000Z");
 
@@ -68,7 +69,10 @@ beforeEach(() => {
   dbMock.select.mockImplementation(() => selectFrom([]));
 });
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  setLockGateway(null);
+});
 
 describe("automatic parking assignment on availability transitions", () => {
   it("sets the nearest eligible parking after a ride ends", async () => {
@@ -191,5 +195,92 @@ describe("automatic parking assignment on availability transitions", () => {
     // No parkings/bikes select should happen — recalculateBikeParking must be skipped.
     expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ parkingId: "P-operator-choice" }));
     expect(setSpy).not.toHaveBeenCalledWith(expect.objectContaining({ parkingId: "P-new" }));
+  });
+});
+
+describe("one-shot parking recalc arming on the into-available transition (bike-status lifecycle spec, 2026-09)", () => {
+  it("arms a recalc when a locked bike enters available from a slower-cadence status (maintenance, 3600s > 120s)", async () => {
+    const bike = bikeRow({ status: "maintenance", lockImei: "IMEI-1" });
+    const updated = bikeRow({ status: "available", lockImei: "IMEI-1", parkingId: "P-new" });
+    // getBike(existing) -> resolveLockPositionForBikeStatusChange's locks
+    // lookup (no last-known fix) -> listParkings() -> getBike() inside
+    // updateBike's parkingId patch -> final getBike(workingId).
+    const selectResults: unknown[][] = [[bike], [], [parkingRow()], [], [updated]];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: () => chain, where: () => Promise.resolve() };
+      return chain;
+    });
+    const armParkingRecalc = vi.fn();
+    setLockGateway({ armParkingRecalc } as any);
+
+    await storage.adminUpdateBike("BC-01", { status: "available" });
+
+    expect(armParkingRecalc).toHaveBeenCalledWith("IMEI-1", "BC-01");
+  });
+
+  it("does not arm a recalc entering available from an already-fast-cadence status (reserved, 10s)", async () => {
+    const bike = bikeRow({ status: "reserved", lockImei: "IMEI-1" });
+    const updated = bikeRow({ status: "available", lockImei: "IMEI-1", parkingId: "P-new" });
+    const selectResults: unknown[][] = [[bike], [], [parkingRow()], [], [updated]];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: () => chain, where: () => Promise.resolve() };
+      return chain;
+    });
+    const armParkingRecalc = vi.fn();
+    setLockGateway({ armParkingRecalc } as any);
+
+    await storage.adminUpdateBike("BC-01", { status: "available" });
+
+    expect(armParkingRecalc).not.toHaveBeenCalled();
+  });
+
+  it("does not arm a recalc when the bike has no lock attached", async () => {
+    const bike = bikeRow({ status: "maintenance", lockImei: null });
+    const updated = bikeRow({ status: "available", lockImei: null, parkingId: "P-new" });
+    // No lockImei -> resolveLockPositionForBikeStatusChange skips its select entirely.
+    const selectResults: unknown[][] = [[bike], [parkingRow()], [], [updated]];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: () => chain, where: () => Promise.resolve() };
+      return chain;
+    });
+    const armParkingRecalc = vi.fn();
+    setLockGateway({ armParkingRecalc } as any);
+
+    await storage.adminUpdateBike("BC-01", { status: "available" });
+
+    expect(armParkingRecalc).not.toHaveBeenCalled();
+  });
+
+  it("does not arm a recalc on a non-available status change", async () => {
+    const bike = bikeRow({ status: "available", lockImei: "IMEI-1" });
+    const updated = bikeRow({ status: "offline", lockImei: "IMEI-1", parkingId: "P-new" });
+    const selectResults: unknown[][] = [[bike], [], [parkingRow()], [], [updated]];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: () => chain, where: () => Promise.resolve() };
+      return chain;
+    });
+    const armParkingRecalc = vi.fn();
+    setLockGateway({ armParkingRecalc } as any);
+
+    await storage.adminUpdateBike("BC-01", { status: "offline" });
+
+    expect(armParkingRecalc).not.toHaveBeenCalled();
+  });
+
+  it("is a safe no-op when no gateway is registered (e.g. in tests or before the TCP server starts)", async () => {
+    const bike = bikeRow({ status: "maintenance", lockImei: "IMEI-1" });
+    const updated = bikeRow({ status: "available", lockImei: "IMEI-1", parkingId: "P-new" });
+    const selectResults: unknown[][] = [[bike], [], [parkingRow()], [], [updated]];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: () => chain, where: () => Promise.resolve() };
+      return chain;
+    });
+
+    await expect(storage.adminUpdateBike("BC-01", { status: "available" })).resolves.not.toThrow();
   });
 });

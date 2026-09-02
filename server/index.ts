@@ -307,6 +307,15 @@ app.use((req, res, next) => {
       flushIntervalMs: gatewayInt("OMNI_FLUSH_INTERVAL_MS", 2_000),
       maxBatchRows: gatewayInt("OMNI_MAX_BATCH_ROWS", 500),
     },
+    // bike-status lifecycle spec, 2026-09: second, accurate parkingId pass
+    // once the fix armParkingRecalc() is waiting for actually lands. Runs
+    // outside any request/response cycle, so failures are logged and
+    // swallowed rather than surfaced to a caller that no longer exists.
+    onParkingRecalcFix: (bikeId, lat, lng) => {
+      storage.recalculateBikeParking({ id: bikeId, lat, lng }).catch((err) => {
+        logger.error({ err, bikeId }, "post-status-change parking recalc failed");
+      });
+    },
   });
   await lockGateway.listen();
   setLockGateway(lockGateway);

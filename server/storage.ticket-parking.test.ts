@@ -12,6 +12,7 @@ vi.mock("./db/bootstrap", () => ({
 vi.mock("./push", () => ({ sendToUserAsync: vi.fn() }));
 
 import { storage } from "./storage";
+import { setLockGateway } from "./omni/gateway";
 
 const NOW = new Date("2026-08-22T10:00:00.000Z");
 
@@ -111,6 +112,123 @@ describe("closing a ticket with returnBikeToAvailable recalculates parking from 
     await storage.updateTicket(1, { status: "closed", returnBikeToAvailable: true }, "operator");
 
     expect(recalcSpy).not.toHaveBeenCalled();
+
+    updateBikeSpy.mockRestore();
+    recalcSpy.mockRestore();
+  });
+});
+
+describe("arming a one-shot parking recalc when returnBikeToAvailable closes a maintenance ticket (bike-status lifecycle spec, 2026-09)", () => {
+  afterEach(() => setLockGateway(null));
+
+  it("arms the hook with the bike's imei/id once updateBike confirms the transition", async () => {
+    const staleBike = bikeRow({ lockImei: "IMEI-1" });
+    const freshBike = bikeRow({ lat: 999, lng: 888, lockImei: "IMEI-1" });
+    const selectResults: unknown[][] = [
+      [ticketRow({ status: "new" })],
+      [staleBike],
+      [ticketRow({ status: "closed" })],
+      [],
+    ];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: () => chain, where: () => Promise.resolve() };
+      return chain;
+    });
+    dbMock.insert.mockImplementation(() => ({ values: () => Promise.resolve() }));
+
+    const updateBikeSpy = vi.spyOn(storage, "updateBike").mockResolvedValue(freshBike);
+    const recalcSpy = vi.spyOn(storage, "recalculateBikeParking").mockResolvedValue(undefined);
+    const armParkingRecalc = vi.fn();
+    setLockGateway({ armParkingRecalc } as any);
+
+    await storage.updateTicket(1, { status: "closed", returnBikeToAvailable: true }, "operator");
+
+    expect(armParkingRecalc).toHaveBeenCalledWith("IMEI-1", "BC-01");
+
+    updateBikeSpy.mockRestore();
+    recalcSpy.mockRestore();
+  });
+
+  it("does not arm the hook when the bike has no lock attached", async () => {
+    const staleBike = bikeRow({ lockImei: null });
+    const freshBike = bikeRow({ lat: 999, lng: 888, lockImei: null });
+    const selectResults: unknown[][] = [
+      [ticketRow({ status: "new" })],
+      [staleBike],
+      [ticketRow({ status: "closed" })],
+      [],
+    ];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: () => chain, where: () => Promise.resolve() };
+      return chain;
+    });
+    dbMock.insert.mockImplementation(() => ({ values: () => Promise.resolve() }));
+
+    const updateBikeSpy = vi.spyOn(storage, "updateBike").mockResolvedValue(freshBike);
+    const recalcSpy = vi.spyOn(storage, "recalculateBikeParking").mockResolvedValue(undefined);
+    const armParkingRecalc = vi.fn();
+    setLockGateway({ armParkingRecalc } as any);
+
+    await storage.updateTicket(1, { status: "closed", returnBikeToAvailable: true }, "operator");
+
+    expect(armParkingRecalc).not.toHaveBeenCalled();
+
+    updateBikeSpy.mockRestore();
+    recalcSpy.mockRestore();
+  });
+
+  it("does not arm the hook when updateBike returns undefined (bike deleted mid-flight)", async () => {
+    const staleBike = bikeRow({ lockImei: "IMEI-1" });
+    const selectResults: unknown[][] = [
+      [ticketRow({ status: "new" })],
+      [staleBike],
+      [ticketRow({ status: "closed" })],
+      [],
+    ];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: () => chain, where: () => Promise.resolve() };
+      return chain;
+    });
+    dbMock.insert.mockImplementation(() => ({ values: () => Promise.resolve() }));
+
+    const updateBikeSpy = vi.spyOn(storage, "updateBike").mockResolvedValue(undefined);
+    const recalcSpy = vi.spyOn(storage, "recalculateBikeParking").mockResolvedValue(undefined);
+    const armParkingRecalc = vi.fn();
+    setLockGateway({ armParkingRecalc } as any);
+
+    await storage.updateTicket(1, { status: "closed", returnBikeToAvailable: true }, "operator");
+
+    expect(armParkingRecalc).not.toHaveBeenCalled();
+
+    updateBikeSpy.mockRestore();
+    recalcSpy.mockRestore();
+  });
+
+  it("is a safe no-op when no gateway is registered", async () => {
+    const staleBike = bikeRow({ lockImei: "IMEI-1" });
+    const freshBike = bikeRow({ lat: 999, lng: 888, lockImei: "IMEI-1" });
+    const selectResults: unknown[][] = [
+      [ticketRow({ status: "new" })],
+      [staleBike],
+      [ticketRow({ status: "closed" })],
+      [],
+    ];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: () => chain, where: () => Promise.resolve() };
+      return chain;
+    });
+    dbMock.insert.mockImplementation(() => ({ values: () => Promise.resolve() }));
+
+    const updateBikeSpy = vi.spyOn(storage, "updateBike").mockResolvedValue(freshBike);
+    const recalcSpy = vi.spyOn(storage, "recalculateBikeParking").mockResolvedValue(undefined);
+
+    await expect(
+      storage.updateTicket(1, { status: "closed", returnBikeToAvailable: true }, "operator"),
+    ).resolves.not.toThrow();
 
     updateBikeSpy.mockRestore();
     recalcSpy.mockRestore();
