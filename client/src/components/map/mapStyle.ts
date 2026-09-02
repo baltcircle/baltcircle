@@ -18,6 +18,13 @@ export const MARKER_COLORS = {
   bikeRented:     "#1d6f8e",
   bikeMaintenance:"#d64545",
   bikeReserved:   "#e0972a",
+  // Out-of-rotation statuses: distinct hues so staff can tell them apart at a
+  // glance on the admin map (bike-status lifecycle audit). These never reach
+  // the rider-facing map (filtered server-side in /api/bikes).
+  bikeOffline:    "#64748b",
+  bikeStorage:    "#6366f1",
+  bikeSleeping:   "#8b5cf6",
+  bikeLost:       "#991b1b",
   bikeDefault:    "#8a8f96",
   parkingActive:  "#1d6f8e",
   parkingInactive:"#8a8f96",

@@ -295,8 +295,15 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             if (bike.status === "offline") {
               return { error: "Велосипед временно недоступен (низкий заряд замка) — выберите другой велосипед" };
             }
+            // Aligned to the same rider-facing wording used by the QR-scan flow
+            // (bike-status lifecycle spec) so a rider sees a consistent message
+            // whether they hit this from a scan or from picking a bike in the list:
+            // "rented" gets its own phrase, everything else non-rentable is generic.
+            if (bike.status === "rented") {
+              return { error: "Велосипед находиться в аренде" };
+            }
             if (bike.status !== "available" && bike.status !== "reserved") {
-              return { error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` };
+              return { error: "Велосипед недоступен" };
             }
             // A "reserved" bike is held for ONE specific rider (createReservation) —
             // only that reservation's owner may start it here; anyone else must
@@ -317,7 +324,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
                 return { error: "Велосипед забронирован — подождите или выберите другой велосипед" };
               }
               if (reservationRow.userId !== userId) {
-                return { error: "Велосипед забронирован другим пользователем" };
+                return { error: "Велосипед забронирован" };
               }
               claimedReservationId = reservationRow.id;
             }

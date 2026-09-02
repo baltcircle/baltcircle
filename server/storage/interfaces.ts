@@ -235,6 +235,7 @@ export interface IAlertStorage {
   createFallAlert(bikeId: string, at: number): Promise<Alert | null>;
   /** Best-effort, dedup-on-insert. See server/storage/alert.ts for details. */
   createMovementAlert(bikeId: string, at: number): Promise<Alert | null>;
+  createTheftAlert(bikeId: string, at: number): Promise<Alert | null>;
   /** Best-effort, dedup-on-insert. See server/storage/alert.ts for details. */
   createLowBatteryOfflineAlert(bikeId: string, battery: number, at: number): Promise<Alert | null>;
   /** Best-effort, plain insert (NO dedup) — see server/storage/alert.ts for details. */

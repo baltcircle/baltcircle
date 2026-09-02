@@ -101,3 +101,19 @@ export interface BikeAutoOfflinePayload {
   battery: number;
   at: number;
 }
+
+// Auto-"lost" (theft) bridge: mirrors the auto-offline bridge above.
+// server/omni/store.ts (Drizzle-free, see its file header) counts consecutive
+// OMNI alarm code=1 ("illegal movement") reports per lock via
+// server/omni/theft-registry.ts; once the streak reaches
+// MOVEMENT_ALARM_THEFT_THRESHOLD it flips bikes.status to "lost" itself
+// (plain SQL) — but only this storage layer can turn it into a persisted
+// `alerts` row (Drizzle) for the dashboard's "Кража велосипеда" card. Wired
+// in server/storage.ts, alongside the other bridges.
+export const bikeTheftEvents = new EventEmitter();
+bikeTheftEvents.setMaxListeners(0);
+export const BIKE_AUTO_LOST = "auto-lost";
+export interface BikeAutoLostPayload {
+  bikeId: string;
+  at: number;
+}

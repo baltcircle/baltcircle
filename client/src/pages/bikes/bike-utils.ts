@@ -11,6 +11,7 @@ export const STATUS_LABEL: Record<BikeStatus, string> = {
   maintenance: "Сервис",
   offline: "Оффлайн",
   storage: "На складе",
+  sleeping: "На скалде",
   lost: "Утерян",
   archived: "Архив",
 };
@@ -22,6 +23,7 @@ export const STATUS_TONE: Record<BikeStatus, string> = {
   maintenance: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
   offline: "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200",
   storage: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200",
+  sleeping: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200",
   lost: "bg-rose-200 text-rose-900 dark:bg-rose-950 dark:text-rose-200",
   archived: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
 };

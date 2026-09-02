@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Link } from "wouter";
 import type { Bike, User, Ride, Ticket, MapObject, Parking, SupportTicketWithUser, Alert } from "@shared/schema";
 import { Card } from "@/components/ui/card";
@@ -12,6 +12,7 @@ import {
   LifeBuoy, MessageSquare, AlertOctagon, ShieldAlert, PowerOff,
 } from "lucide-react";
 import { useSupportUnread } from "@/hooks/use-support-unread";
+import { playSupportChime, primeAudio } from "@/lib/support-notify";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { OperationsMapPage } from "./OperationsMapPage";
 import { deriveMetrics, deriveAlerts, fmtNow } from "./admin/metrics";
@@ -65,8 +66,37 @@ export function AdminPage() {
     onError: (e: any) => toast.toast({ title: "Не удалось подтвердить алерт", description: String(e?.message ?? e), variant: "destructive" }),
   });
   const fallAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "fall");
-  const movementAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "movement_alarm");
+  // "Кража велосипеда" (bike-status lifecycle spec) — redesign of the old raw
+  // per-report movement-alarm card: only the confirmed "theft" kind (fired once
+  // when 6 consecutive illegal-movement alarms auto-transition the bike to
+  // "lost", see server/omni/theft-registry.ts), not every single alarm blip.
+  const theftAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "theft");
   const offlineAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "low_battery");
+
+  // Звуковое уведомление при новой краже (тот же паттерн, что и useSupportUnread).
+  useEffect(() => {
+    const wake = () => primeAudio();
+    window.addEventListener("pointerdown", wake, { once: true });
+    window.addEventListener("keydown", wake, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", wake);
+      window.removeEventListener("keydown", wake);
+    };
+  }, []);
+  const seenTheftIdsRef = useRef<Set<number> | null>(null);
+  useEffect(() => {
+    if (!fleetAlertsQ.data) return;
+    const ids = new Set(theftAlerts.map((a) => a.id));
+    // Первый успешный ответ только зачитывает базу — без звука на уже
+    // существующие записи; только каждая следующая новая id звенит.
+    if (seenTheftIdsRef.current === null) {
+      seenTheftIdsRef.current = ids;
+      return;
+    }
+    const hasNew = Array.from(ids).some((id) => !seenTheftIdsRef.current!.has(id));
+    seenTheftIdsRef.current = ids;
+    if (hasNew) playSupportChime();
+  }, [fleetAlertsQ.data, theftAlerts]);
 
   const m = useMemo(() => deriveMetrics({ bikes, users, rides, tickets, mapObjects, parkings }), [
     bikes, users, rides, tickets, mapObjects, parkings,
@@ -302,32 +332,32 @@ export function AdminPage() {
         </Card>
       </div>
 
-      {/* ---------- Movement-alarm alerts (OMNI lock alarm code 1, manual ack) ---------- */}
+      {/* ---------- Кража велосипеда (auto-"lost" после 6 подряд alarm code=1, со звуком, manual ack) ---------- */}
       <div className="grid lg:grid-cols-3 gap-4 mt-4">
-        <Card className="p-5 lg:col-span-3" data-testid="dashboard-movement-alerts">
+        <Card className="p-5 lg:col-span-3" data-testid="dashboard-theft-alerts">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-lg font-light flex items-center gap-2">
-              <ShieldAlert className={`w-4 h-4 ${movementAlerts.length ? "text-amber-500" : "text-muted-foreground"}`} />
-              Несанкционированное перемещение
+              <ShieldAlert className={`w-4 h-4 ${theftAlerts.length ? "text-rose-600" : "text-muted-foreground"}`} />
+              Кража велосипеда
             </h2>
-            {movementAlerts.length > 0 && <Badge variant="destructive">{movementAlerts.length}</Badge>}
+            {theftAlerts.length > 0 && <Badge variant="destructive">{theftAlerts.length}</Badge>}
           </div>
           {fleetAlertsQ.isLoading ? (
             <div className="text-sm text-muted-foreground py-4">Загружаем данные…</div>
-          ) : movementAlerts.length === 0 ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground py-4" data-testid="dashboard-movement-alerts-empty">
+          ) : theftAlerts.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-4" data-testid="dashboard-theft-alerts-empty">
               <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              Сигналов несанкционированного перемещения нет.
+              Велосипедов со статусом «утерян» нет.
             </div>
           ) : (
             <div className="space-y-2">
-              {movementAlerts.map((a) => (
+              {theftAlerts.map((a) => (
                 <div
                   key={a.id}
-                  className="flex items-center gap-3 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 p-3"
-                  data-testid={`dashboard-movement-alert-${a.id}`}
+                  className="flex items-center gap-3 rounded-lg border border-rose-300 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 p-3"
+                  data-testid={`dashboard-theft-alert-${a.id}`}
                 >
-                  <span className="flex items-center justify-center w-8 h-8 rounded-full shrink-0 bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                  <span className="flex items-center justify-center w-8 h-8 rounded-full shrink-0 bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">
                     <ShieldAlert className="w-4 h-4" />
                   </span>
                   <div className="min-w-0 flex-1">
@@ -335,7 +365,7 @@ export function AdminPage() {
                       {a.bikeId}
                     </Link>
                     <div className="text-xs text-muted-foreground truncate">
-                      Несанкционированное движение {fmtRelative(a.createdAt)}
+                      Статус «утерян» {fmtRelative(a.createdAt)}
                     </div>
                   </div>
                   <Button
@@ -343,7 +373,7 @@ export function AdminPage() {
                     variant="outline"
                     disabled={ackAlertMut.isPending}
                     onClick={() => ackAlertMut.mutate(a.id)}
-                    data-testid={`ack-movement-alert-${a.id}`}
+                    data-testid={`ack-theft-alert-${a.id}`}
                   >
                     Подтвердить
                   </Button>

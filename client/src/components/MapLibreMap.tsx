@@ -36,6 +36,8 @@ interface MapLibreMapProps {
   tickets?: Ticket[];
   /** Bike ids with an unacknowledged "fall" alert — drawn as a distinct red "!" marker (admin operations map). */
   fallenBikeIds?: Set<string>;
+  /** Bike ids whose active ride is currently paused — coloured like "Бронь" instead of their normal status colour (bike-status lifecycle audit). */
+  pausedBikeIds?: Set<string>;
   /** Per-layer visibility. Omitted layers render as before (visible). */
   layers?: MapLayers;
   selectedBikeId?: string | null;
@@ -82,7 +84,7 @@ interface MapLibreMapProps {
 // ── COMPONENT ─────────────────────────────────────────────────────────────────
 export function MapLibreMap({
   parkings = [], mapObjects = [], ride = null,
-  bikes = [], activeRides = [], tickets = [], fallenBikeIds, layers = {},
+  bikes = [], activeRides = [], tickets = [], fallenBikeIds, pausedBikeIds, layers = {},
   selectedBikeId, onSelectBike, onSelectParking, onSelectRide, onSelectTicket,
   interactive = true, onMapClick, onCenterGetter, followUser, onUserLocation,
   editorDraft = null,
@@ -375,8 +377,9 @@ export function MapLibreMap({
       for (const b of bikes) {
         const isSel = b.id === selectedBikeId;
         const isFallen = fallenBikeIds?.has(b.id) ?? false;
+        const isPaused = pausedBikeIds?.has(b.id) ?? false;
         const [lat, lng] = mapToReal(b.lng, b.lat);
-        const el = dotMarkerEl(bikeMarkerColor(b.status), { ring: isSel, size: isSel ? 20 : 16, clickable: interactive && !!onSelectBikeRef.current, fallen: isFallen });
+        const el = dotMarkerEl(bikeMarkerColor(b.status, isPaused), { ring: isSel, size: isSel ? 20 : 16, clickable: interactive && !!onSelectBikeRef.current, fallen: isFallen });
         // Тултип на маркере без заряда замка — клиенту эта информация не нужна.
         // dotMarkerEl overrides title/text when fallen=true, so set the base
         // tooltip first only for the non-fallen case to avoid clobbering it.
@@ -408,7 +411,7 @@ export function MapLibreMap({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, bikes, parkings, activeRides, tickets, selectedBikeId, interactive, fallenBikeIds,
+  }, [ready, bikes, parkings, activeRides, tickets, selectedBikeId, interactive, fallenBikeIds, pausedBikeIds,
       show.parkings, show.bikes, show.rides, show.tickets]);
 
   // ── GeoJSON overlays: operator objects (routes/zones) ───────────────────────

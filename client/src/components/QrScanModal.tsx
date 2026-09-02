@@ -6,13 +6,17 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { QrCode, Loader2 } from "lucide-react";
-import { resolveScannedCode } from "./qr-scan-utils";
+import { apiRequest } from "@/lib/queryClient";
+import { extractBikeCode, classifyBikeForScan } from "./qr-scan-utils";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // Bikes used to resolve a scanned/typed code.
-  bikes: Bike[];
+  // This rider's own in-progress rental/reservation, if any — lets a scan of
+  // THEIR OWN rented/reserved bike still resolve, while anyone else scanning
+  // it gets the spec'd "занят" message (bike-status lifecycle audit).
+  myActiveRideBikeId?: string | null;
+  myReservationBikeId?: string | null;
   // Called once a bike has been scanned / chosen, to continue into rental.
   onBikeSelected: (bike: Bike) => void;
 }
@@ -52,7 +56,9 @@ function CameraPermissionHelp() {
   );
 }
 
-export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props) {
+export function QrScanModal({
+  open, onOpenChange, myActiveRideBikeId, myReservationBikeId, onBikeSelected,
+}: Props) {
   // Manual entry only ever needs the digits — the "BC-" prefix is fixed and
   // shown as a non-editable adornment (same pattern as the +7 phone prefix in
   // RegistrationModal), so a rider can't mistype or omit it.
@@ -83,18 +89,31 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
     }
   }, []);
 
-  // Accepts raw scanned/typed text as-is — resolveScannedCode matches the
-  // normal "BC-XXX" bike code (camera decode, manual entry, or embedded in
-  // a URL) against bikes[].id.
+  // Extracts a "BC-XXX" code locally (camera decode, manual entry, or a URL)
+  // then resolves it against the server's unfiltered /api/bikes/:id — NOT
+  // the rider-filtered /api/bikes list — so a scan can always tell a real
+  // out-of-rotation/other-rider bike apart from a nonexistent code, and
+  // return the exact spec'd per-status message either way.
   const resolveCode = useCallback(
-    (raw: string): boolean => {
-      const result = resolveScannedCode(raw, bikes);
+    async (raw: string): Promise<boolean> => {
+      const code = extractBikeCode(raw);
+      if (!code) {
+        setError("Велосипед с таким кодом не найден");
+        return false;
+      }
+      let bike: Bike;
+      try {
+        const res = await apiRequest("GET", `/api/bikes/${code}`);
+        bike = await res.json();
+      } catch {
+        setError("Велосипед с таким кодом не найден");
+        return false;
+      }
+      const result = classifyBikeForScan(bike, {
+        myActiveRideBikeId, myReservationBikeId,
+      });
       if ("error" in result) {
-        setError(
-          result.error === "not-available"
-            ? "Этот велосипед сейчас недоступен"
-            : "Велосипед с таким кодом не найден",
-        );
+        setError(result.error);
         return false;
       }
       stopCamera();
@@ -102,7 +121,7 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
       onBikeSelected(result.bike);
       return true;
     },
-    [bikes, onBikeSelected, onOpenChange, stopCamera],
+    [myActiveRideBikeId, myReservationBikeId, onBikeSelected, onOpenChange, stopCamera],
   );
 
   // Wait until the video element is actually decoding frames. The blank/white
@@ -211,10 +230,10 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
       controlsRef.current = await reader.decodeFromVideoElement(video, (result) => {
         if (!result || handledRef.current) return;
         handledRef.current = true;
-        if (!resolveCode(result.getText())) {
+        void resolveCode(result.getText()).then((ok) => {
           // Allow another attempt if this code wasn't usable.
-          handledRef.current = false;
-        }
+          if (!ok) handledRef.current = false;
+        });
       });
     } catch (err) {
       stopCamera();
@@ -250,7 +269,7 @@ export function QrScanModal({ open, onOpenChange, bikes, onBikeSelected }: Props
       setError("Введите код велосипеда");
       return;
     }
-    resolveCode(`BC-${raw}`);
+    void resolveCode(`BC-${raw}`);
   };
 
   return (

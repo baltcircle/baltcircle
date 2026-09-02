@@ -475,7 +475,7 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
     storageMock.getUser.mockResolvedValue(operator);
   });
 
-  it.each(["maintenance", "archived", "storage"])(
+  it.each(["maintenance", "archived"])(
     "unlocks the lock (opaque userId 0) when status changes to %s, with no active ride",
     async (status) => {
       storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status } });
@@ -488,6 +488,23 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
 
       expect(res.status).toBe(200);
       expect(sendUnlockCommand).toHaveBeenCalledWith(bike.lockImei, 0);
+    },
+  );
+
+  it.each(["storage", "sleeping"])(
+    "does NOT unlock the lock when status changes to %s (bike-status lifecycle fix, 2026-09) " +
+      "\u2014 a bike parked/asleep must stay physically locked",
+    async (status) => {
+      storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status } });
+      storageMock.getActiveRideForBike.mockResolvedValue(undefined);
+      const sendUnlockCommand = vi.fn().mockResolvedValue({ success: true });
+      setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
+
+      const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status });
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(res.status).toBe(200);
+      expect(sendUnlockCommand).not.toHaveBeenCalled();
     },
   );
 
@@ -544,12 +561,12 @@ describe("PATCH /api/admin/bikes/:id \u2014 movement-alarm suppression on status
   });
 
   it("does not fail the request when the lock is offline / unlock rejects", async () => {
-    storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "storage" } });
+    storageMock.adminUpdateBike.mockResolvedValue({ bike: { ...bike, status: "archived" } });
     storageMock.getActiveRideForBike.mockResolvedValue(undefined);
     const sendUnlockCommand = vi.fn().mockRejectedValue(new Error("lock is not connected"));
     setLockGateway({ sendUnlockCommand, requestGpsRefresh: vi.fn() } as any);
 
-    const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "storage" });
+    const res = await lockRequest(`/api/admin/bikes/${bike.id}`, "PATCH", { status: "archived" });
     await new Promise((r) => setTimeout(r, 0));
 
     expect(res.status).toBe(200);

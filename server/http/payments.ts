@@ -412,8 +412,14 @@ export function registerPaymentRoutes(app: Express): void {
 
     const bike = await storage.getBike(parsed.data.bikeId);
     if (!bike) return res.status(404).json({ error: "Велосипед не найден" });
+    // Aligned to the same rider-facing wording used by the QR-scan flow and
+    // ride.ts's rental-start check (bike-status lifecycle spec): "rented" gets
+    // its own phrase, every other non-rentable status is generic (no raw status leak).
+    if (bike.status === "rented") {
+      return res.status(409).json({ error: "Велосипед находиться в аренде" });
+    }
     if (bike.status !== "available" && bike.status !== "reserved") {
-      return res.status(409).json({ error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` });
+      return res.status(409).json({ error: "Велосипед недоступен" });
     }
     if (await storage.getActiveRide(userId)) {
       return res.status(409).json({ error: "У вас уже есть активная поездка" });
@@ -542,8 +548,14 @@ export function registerPaymentRoutes(app: Express): void {
 
     const bike = await storage.getBike(parsed.data.bikeId);
     if (!bike) return res.status(404).json({ error: "Велосипед не найден" });
+    // Aligned to the same rider-facing wording used by the QR-scan flow and
+    // ride.ts's rental-start check (bike-status lifecycle spec): "rented" gets
+    // its own phrase, every other non-rentable status is generic (no raw status leak).
+    if (bike.status === "rented") {
+      return res.status(409).json({ error: "Велосипед находиться в аренде" });
+    }
     if (bike.status !== "available" && bike.status !== "reserved") {
-      return res.status(409).json({ error: `Велосипед сейчас «${bike.status}» — недоступен для аренды` });
+      return res.status(409).json({ error: "Велосипед недоступен" });
     }
     if (await storage.getActiveRide(userId)) {
       return res.status(409).json({ error: "У вас уже есть активная поездка" });

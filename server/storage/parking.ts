@@ -21,7 +21,11 @@ export function ParkingMixin<TBase extends Constructor>(Base: TBase) {
       // Арендованный/архивный велосипед стойку не занимает. Перекрывает
       // статичное поле occupied из БД — оно больше не ведётся вручную.
       const bikeRows = await this.listBikes({ includeArchived: false });
-      const AT_STATION = new Set(["available", "reserved", "maintenance", "offline", "storage"]);
+      // "sleeping" (bike-status lifecycle spec, 2026-09): an operator-put-to-sleep
+      // lock still sits physically in its home slot, exactly like "storage"/"offline"
+      // — it just doesn't report GPS while asleep, so it must still count as occupying
+      // the station rather than silently freeing up a slot nobody can actually use.
+      const AT_STATION = new Set(["available", "reserved", "maintenance", "offline", "storage", "sleeping"]);
       const counts = new Map<string, number>();
       for (const b of bikeRows as Bike[]) {
         if (!b.parkingId) continue;

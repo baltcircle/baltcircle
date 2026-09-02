@@ -56,24 +56,52 @@ export function normalizeCode(raw: string): string {
   return `BC-${digits}`;
 }
 
+// Ownership context needed to tell "this is MY rented/reserved bike, let me
+// through" apart from "someone else's" — resolved by the caller (MapPage)
+// from /api/rides/active + the reservation-banner query, both already scoped
+// to the current session by the server.
+export interface ScanOwnership {
+  myActiveRideBikeId?: string | null;
+  myReservationBikeId?: string | null;
+}
+
+// Per-status rider-facing message, exactly matching the bike-status lifecycle
+// spec: rented/paused → "в аренде"; reserved (by someone else) →
+// "забронирован"; every other out-of-rotation status → generic "недоступен".
+function scanMessageForStatus(status: Bike["status"]): string | null {
+  switch (status) {
+    case "available":
+      return null; // rentable, no error
+    case "rented":
+      return "Велосипед находиться в аренде";
+    case "reserved":
+      return "Велосипед забронирован";
+    default:
+      // maintenance / offline / storage / sleeping / lost / archived
+      return "Велосипед недоступен";
+  }
+}
+
 /**
- * Resolves any raw scanned/typed QR text to a bike via the normal "BC-XXX"
- * bike-code pattern (camera decode, manual entry, or embedded in a URL) —
- * matched against `bikes[].id`. The manufacturer-printed lock QR fallback
- * (bikes[].externalQrCode) has been removed along with that field.
- * Returns the matched bike, or an error message key describing why nothing
- * matched (bike not found vs. found but not currently rentable).
+ * Classifies an already-fetched bike (via GET /api/bikes/:id — NOT the
+ * (rider-filtered) list endpoint, so a hidden/out-of-rotation bike's real
+ * status is still known) against the scanning rider's own ownership, per the
+ * bike-status lifecycle spec:
+ *  - "available" always resolves.
+ *  - "rented"/"reserved" resolve when the scanning rider is the one currently
+ *    renting/holding it (so their own QR flow — e.g. re-confirming a
+ *    reservation to start the ride — keeps working); anyone else gets the
+ *    exact spec'd message.
+ *  - every other status (maintenance/offline/storage/sleeping/lost/archived)
+ *    is never resolvable and always returns "Велосипед недоступен".
  */
-export function resolveScannedCode(
-  raw: string,
-  bikes: Bike[],
-): { bike: Bike } | { error: "not-found" | "not-available" } {
-  const trimmed = raw.trim();
-  const bikeCode = extractBikeCode(trimmed);
-
-  const match = bikeCode ? bikes.find((b) => b.id.toUpperCase() === bikeCode) : undefined;
-
-  if (!match) return { error: "not-found" };
-  if (match.status !== "available") return { error: "not-available" };
-  return { bike: match };
+export function classifyBikeForScan(
+  bike: Bike,
+  ownership: ScanOwnership,
+): { bike: Bike } | { error: string } {
+  if (bike.status === "rented" && bike.id === ownership.myActiveRideBikeId) return { bike };
+  if (bike.status === "reserved" && bike.id === ownership.myReservationBikeId) return { bike };
+  const message = scanMessageForStatus(bike.status);
+  if (message) return { error: message };
+  return { bike };
 }
