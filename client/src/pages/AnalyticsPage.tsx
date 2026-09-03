@@ -242,30 +242,30 @@ export function AnalyticsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Оценка</TableHead>
-                  <TableHead className="text-right">Количество отзывов</TableHead>
+                  <TableHead className="text-center">Оценка</TableHead>
+                  <TableHead className="text-center">Количество отзывов</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 <TableRow data-testid="analytics-feedback-1">
-                  <TableCell>1 звезда</TableCell>
-                  <TableCell className="text-right font-mono">{a.feedbackCounts.r1}</TableCell>
+                  <TableCell className="text-center">1 звезда</TableCell>
+                  <TableCell className="text-center font-mono">{a.feedbackCounts.r1}</TableCell>
                 </TableRow>
                 <TableRow data-testid="analytics-feedback-2">
-                  <TableCell>2 звезды</TableCell>
-                  <TableCell className="text-right font-mono">{a.feedbackCounts.r2}</TableCell>
+                  <TableCell className="text-center">2 звезды</TableCell>
+                  <TableCell className="text-center font-mono">{a.feedbackCounts.r2}</TableCell>
                 </TableRow>
                 <TableRow data-testid="analytics-feedback-3">
-                  <TableCell>3 звезды</TableCell>
-                  <TableCell className="text-right font-mono">{a.feedbackCounts.r3}</TableCell>
+                  <TableCell className="text-center">3 звезды</TableCell>
+                  <TableCell className="text-center font-mono">{a.feedbackCounts.r3}</TableCell>
                 </TableRow>
                 <TableRow data-testid="analytics-feedback-4">
-                  <TableCell>4 звезды</TableCell>
-                  <TableCell className="text-right font-mono">{a.feedbackCounts.r4}</TableCell>
+                  <TableCell className="text-center">4 звезды</TableCell>
+                  <TableCell className="text-center font-mono">{a.feedbackCounts.r4}</TableCell>
                 </TableRow>
                 <TableRow data-testid="analytics-feedback-5">
-                  <TableCell>5 звёзд</TableCell>
-                  <TableCell className="text-right font-mono">{a.feedbackCounts.r5}</TableCell>
+                  <TableCell className="text-center">5 звёзд</TableCell>
+                  <TableCell className="text-center font-mono">{a.feedbackCounts.r5}</TableCell>
                 </TableRow>
               </TableBody>
             </Table>
@@ -282,17 +282,17 @@ export function AnalyticsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Велосипед</TableHead>
-                    <TableHead className="text-right">Заявок всего</TableHead>
-                    <TableHead className="text-right">Открытых</TableHead>
+                    <TableHead className="text-center">Велосипед</TableHead>
+                    <TableHead className="text-center">Заявок всего</TableHead>
+                    <TableHead className="text-center">Открытых</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {a.service.repeatedProblemBikes.map((b) => (
                     <TableRow key={b.bike_id} data-testid={`analytics-repeated-bike-${b.bike_id}`}>
-                      <TableCell className="font-mono">{b.bike_id}</TableCell>
-                      <TableCell className="text-right font-mono">{b.tickets}</TableCell>
-                      <TableCell className="text-right font-mono">{b.open}</TableCell>
+                      <TableCell className="font-mono text-center">{b.bike_id}</TableCell>
+                      <TableCell className="text-center font-mono">{b.tickets}</TableCell>
+                      <TableCell className="text-center font-mono">{b.open}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -315,17 +315,17 @@ export function AnalyticsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Парковка</TableHead>
-                    <TableHead className="text-right">Стартов рядом</TableHead>
-                    <TableHead className="text-right">Занято / вместимость</TableHead>
+                    <TableHead className="text-center">Парковка</TableHead>
+                    <TableHead className="text-center">Стартов рядом</TableHead>
+                    <TableHead className="text-center">Занято / вместимость</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {a.parkingUsage.slice(0, 15).map((p) => (
                     <TableRow key={p.id} data-testid={`analytics-parking-${p.id}`}>
-                      <TableCell>{p.name}</TableCell>
-                      <TableCell className="text-right font-mono">{p.rideStarts}</TableCell>
-                      <TableCell className="text-right font-mono">{p.occupied} / {p.capacity}</TableCell>
+                      <TableCell className="text-center">{p.name}</TableCell>
+                      <TableCell className="text-center font-mono">{p.rideStarts}</TableCell>
+                      <TableCell className="text-center font-mono">{p.occupied} / {p.capacity}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

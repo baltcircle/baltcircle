@@ -96,8 +96,8 @@ export function ParkingsTable({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-24">Код</TableHead>
-            <TableHead>Название</TableHead>
+            <TableHead className="w-24 text-center">Код</TableHead>
+            <TableHead className="text-center">Название</TableHead>
             <TableHead className="text-right">Занято / Вмест.</TableHead>
             <TableHead className="text-right">Действия</TableHead>
           </TableRow>
@@ -121,13 +121,13 @@ export function ParkingsTable({
                     data-testid={`row-admin-parking-${p.id}`}
                     className={`hover-elevate${isArchived ? " opacity-60" : ""}`}
                   >
-                    <TableCell className="font-mono text-sm">
+                    <TableCell className="font-mono text-sm text-center">
                       <span className="inline-flex items-center gap-2">
                         <MapPin className="w-3.5 h-3.5 text-muted-foreground" />{p.id}
                       </span>
                     </TableCell>
-                    <TableCell className="text-sm">
-                      <div className="flex items-center gap-2">
+                    <TableCell className="text-sm text-center">
+                      <div className="flex items-center justify-center gap-2">
                         {p.name}
                         {isArchived && (
                           <Badge className="bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 border-0">

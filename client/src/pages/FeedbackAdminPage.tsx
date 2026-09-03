@@ -106,12 +106,12 @@ export function FeedbackAdminPage() {
           <Table data-testid="feedback-table">
             <TableHeader>
               <TableRow>
-                <TableHead>Райдер</TableHead>
-                <TableHead>Велосипед</TableHead>
-                <SortableHead label="Звёзды" active={sortKey === "rating"} dir={sortDir} onClick={() => toggleSort("rating")} testId="sort-feedback-rating" />
-                <SortableHead label="Пункты" active={sortKey === "category"} dir={sortDir} onClick={() => toggleSort("category")} testId="sort-feedback-category" />
-                <TableHead>Комментарий</TableHead>
-                <SortableHead label="Дата" active={sortKey === "date"} dir={sortDir} onClick={() => toggleSort("date")} testId="sort-feedback-date" />
+                <TableHead className="text-center">Райдер</TableHead>
+                <TableHead className="text-center">Велосипед</TableHead>
+                <SortableHead label="Оценка" active={sortKey === "rating"} dir={sortDir} onClick={() => toggleSort("rating")} testId="sort-feedback-rating" className="justify-center" />
+                <SortableHead label="Пункты" active={sortKey === "category"} dir={sortDir} onClick={() => toggleSort("category")} testId="sort-feedback-category" className="justify-center" />
+                <TableHead className="text-center">Комментарий</TableHead>
+                <SortableHead label="Дата" active={sortKey === "date"} dir={sortDir} onClick={() => toggleSort("date")} testId="sort-feedback-date" className="justify-center" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -125,15 +125,15 @@ export function FeedbackAdminPage() {
   );
 }
 
-function SortableHead({ label, active, dir, onClick, testId }: {
-  label: string; active: boolean; dir: SortDir; onClick: () => void; testId: string;
+function SortableHead({ label, active, dir, onClick, testId, className }: {
+  label: string; active: boolean; dir: SortDir; onClick: () => void; testId: string; className?: string;
 }) {
   return (
     <TableHead>
       <button
         type="button"
         onClick={onClick}
-        className="flex items-center gap-1 hover:text-foreground transition-colors"
+        className={`flex items-center gap-1 hover:text-foreground transition-colors ${className ?? ""}`}
         data-testid={testId}
       >
         {label}

@@ -148,8 +148,8 @@ export function RidesAdminPage() {
           <Table data-testid="rides-table">
             <TableHeader>
               <TableRow>
-                <TableHead>Райдер</TableHead>
-                <TableHead>Велосипед</TableHead>
+                <TableHead className="text-center">Райдер</TableHead>
+                <TableHead className="text-center">Велосипед</TableHead>
                 <TableHead className="text-center">Тариф</TableHead>
                 <TableHead className="text-center">Начало</TableHead>
                 <TableHead className="text-center">Длительность</TableHead>
