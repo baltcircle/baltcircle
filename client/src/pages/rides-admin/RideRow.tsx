@@ -12,11 +12,11 @@ export function RideRowItem({ r, onEnd, busy }: { r: AdminRide; onEnd: () => voi
 
   return (
     <TableRow data-testid={`ride-row-${r.id}`} className={active ? "" : "opacity-90"}>
-      <TableCell>
+      <TableCell className="text-center">
         <div className="font-medium">{r.userName ?? "—"}</div>
         <div className="text-xs text-muted-foreground font-mono">{r.userPhone ?? r.userId.slice(0, 8)}</div>
       </TableCell>
-      <TableCell className="font-mono text-sm">{r.bikeId}</TableCell>
+      <TableCell className="font-mono text-sm text-center">{r.bikeId}</TableCell>
       <TableCell className="text-sm text-center">{fmtRideTariff(r)}</TableCell>
       <TableCell className="text-sm text-center">{fmtDate(r.startedAt)}</TableCell>
       <TableCell className="text-sm text-center">{fmtDuration(elapsedMs)}</TableCell>

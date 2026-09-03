@@ -14,7 +14,7 @@ const formSource = readFileSync(resolve(process.cwd(), "client/src/pages/bikes/B
 
 describe("bound lock IMEI column", () => {
   it("renders the bound lock IMEI and shows a dash when no IMEI is bound", () => {
-    expect(tableSource).toContain('<TableHead>Замок ID</TableHead>');
+    expect(tableSource).toContain('<TableHead className="text-center">Замок ID</TableHead>');
     expect(tableSource).toContain('{b.lockImei || "—"}');
     expect(tableSource).not.toContain('{b.lockId || "—"}');
   });

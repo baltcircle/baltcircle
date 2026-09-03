@@ -42,55 +42,58 @@ export function UserRowItem({ u, isSelf, actorRole, onRole, onBlockToggle, onDel
   // Match the server rule: only an admin may grant admin or touch an admin's
   // role. An admin can't demote themselves (would lock out the panel).
   const isAdminActor = actorRole === "admin";
-  const roleSelectDisabled =
-    busy ||
-    (!isAdminActor && role === "admin") ||
-    (isSelf && role === "admin");
+  // Server rejects role changes on ANY admin target unconditionally (even
+  // admin-on-admin) — no !isAdminActor escape hatch here, or the button stays
+  // clickable for a second admin while silently failing server-side.
+  const roleSelectDisabled = busy || role === "admin";
   const roleOptions: UserRole[] = isAdminActor
     ? ["rider", "mechanic", "operator", "admin"]
     : ["rider", "mechanic", "operator"];
-  // Operators can't block admins; nobody can block themselves.
-  const blockDisabled = busy || isSelf || (role === "admin" && !isAdminActor);
+  // Same rule as role changes: blocking an admin is unconditionally rejected
+  // server-side regardless of actor role, so it must be disabled the same way.
+  const blockDisabled = busy || isSelf || role === "admin";
   // Deletion is admin-only and irreversible: never offer it for the acting
   // admin's own row or for another admin (matches the server-side guard).
   const deleteDisabled = busy || isSelf || role === "admin";
 
   return (
     <TableRow data-testid={`user-row-${u.id}`} className={blocked ? "opacity-60" : ""}>
-      <TableCell>
+      <TableCell className="text-center">
         <div className="font-medium">{u.name}</div>
         <div className="text-xs text-muted-foreground font-mono">{u.id.slice(0, 8)}</div>
       </TableCell>
-      <TableCell>
+      <TableCell className="text-center">
         <div className="font-mono text-sm">{u.phone}</div>
         <div className="text-xs text-muted-foreground">{u.email ?? "—"}</div>
       </TableCell>
-      <TableCell>
+      <TableCell className="text-center">
         {/* Role select doubles as the role indicator (colored border/text via
             ROLE_TONE) — no separate badge needed alongside it. */}
-        <Select
-          value={role}
-          onValueChange={(v) => onRole(v as UserRole)}
-          disabled={roleSelectDisabled}
-        >
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <SelectTrigger className={`h-8 w-[140px] ${ROLE_TONE[role]}`} data-testid={`select-role-${u.id}`}>
-                <SelectValue />
-              </SelectTrigger>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs">{ROLE_HINT[role]}</TooltipContent>
-          </Tooltip>
-          <SelectContent>
-            {roleOptions.map((r) => (
-              <SelectItem key={r} value={r} data-testid={`select-role-${u.id}-option-${r}`} title={ROLE_HINT[r]}>
-                {ROLE_LABEL[r]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex justify-center">
+          <Select
+            value={role}
+            onValueChange={(v) => onRole(v as UserRole)}
+            disabled={roleSelectDisabled}
+          >
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SelectTrigger className={`h-8 w-[140px] ${ROLE_TONE[role]}`} data-testid={`select-role-${u.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">{ROLE_HINT[role]}</TooltipContent>
+            </Tooltip>
+            <SelectContent>
+              {roleOptions.map((r) => (
+                <SelectItem key={r} value={r} data-testid={`select-role-${u.id}-option-${r}`} title={ROLE_HINT[r]}>
+                  {ROLE_LABEL[r]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </TableCell>
-      <TableCell>
+      <TableCell className="text-center">
         {u.consentAcceptedAt ? (
           <div className="text-sm inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
             <ShieldCheck className="w-3.5 h-3.5" />
@@ -103,22 +106,22 @@ export function UserRowItem({ u, isSelf, actorRole, onRole, onBlockToggle, onDel
           <div className="text-xs text-muted-foreground">{u.consentVersion}</div>
         )}
       </TableCell>
-      <TableCell className="text-sm">{fmtDateOnly(u.createdAt)}</TableCell>
-      <TableCell className="text-sm">
+      <TableCell className="text-sm text-center">{fmtDateOnly(u.createdAt)}</TableCell>
+      <TableCell className="text-sm text-center">
         <span className="inline-flex items-center gap-1.5 text-muted-foreground" data-testid={`ride-count-${u.id}`}>
           <Bike className="w-3.5 h-3.5" />{u.rideCount}
         </span>
       </TableCell>
-      <TableCell className="text-sm">
+      <TableCell className="text-sm text-center">
         <span className="inline-flex items-center gap-1.5 text-muted-foreground" data-testid={`avg-rating-${u.id}`}>
           <Star className="w-3.5 h-3.5" />{fmtRating(u.avgRating)}
         </span>
       </TableCell>
-      <TableCell>
+      <TableCell className="text-center">
         {/* Status badge + block/delete toggles compacted into one column —
             icon-only buttons (matching the bikes table pattern) instead of
             full-width text buttons for each action. */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center justify-center gap-1">
           {blocked ? (
             <Badge variant="outline" className="text-destructive border-destructive/40" data-testid={`status-${u.id}`}>
               Блок

@@ -69,9 +69,10 @@ export function fmtRating(avg: number | null) {
 // A single ride's 1..5 rider rating (rides_feedback.rating), as opposed to
 // fmtRating's decimal AVERAGE across many rides. `null` covers both an
 // active ride (feedback can't exist yet) and a completed one the rider
-// skipped feedback for — both render the same "no rating" dash.
+// skipped feedback for — both render the same "no rating" dash. Shown as a
+// bare digit (no "/5" suffix) per the ratings-column convention.
 export function fmtRideRating(rating: number | null): string {
-  return rating === null ? "—" : `${rating}/5`;
+  return rating === null ? "—" : `${rating}`;
 }
 
 // Legacy tariff ids may still appear on older rides; keep readable fallbacks.

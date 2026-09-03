@@ -114,32 +114,32 @@ export function BikesTable({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-28">Код</TableHead>
-            <TableHead>Статус</TableHead>
-            <TableHead>Замок ID</TableHead>
-            <TableHead>Заряд замка</TableHead>
-            <TableHead>Парковка</TableHead>
+            <TableHead className="w-28 text-center">Код</TableHead>
+            <TableHead className="text-center">Статус</TableHead>
+            <TableHead className="text-center">Замок ID</TableHead>
+            <TableHead className="text-center">Заряд замка</TableHead>
+            <TableHead className="text-center">Парковка</TableHead>
             <TableHead className="text-right">Действия</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {pageItems.map((b) => (
             <TableRow key={b.id} data-testid={`row-admin-bike-${b.id}`} className="hover-elevate">
-              <TableCell className="font-mono text-sm">
+              <TableCell className="font-mono text-sm text-center">
                 <span className="inline-flex items-center gap-2">
                   <BikeIcon className="w-3.5 h-3.5 text-muted-foreground" />{b.id}
                 </span>
               </TableCell>
-              <TableCell>
+              <TableCell className="text-center">
                 <Badge className={`${STATUS_TONE[b.status as BikeStatus] ?? STATUS_TONE.offline} border-0`}>
                   {STATUS_LABEL[b.status as BikeStatus] ?? b.status}
                 </Badge>
               </TableCell>
-              <TableCell className="text-sm text-muted-foreground font-mono">{b.lockImei || "—"}</TableCell>
-              <TableCell className={`text-sm font-mono ${b.battery < LOW_BATTERY_AUTO_OFFLINE_THRESHOLD ? "text-destructive font-medium" : "text-muted-foreground"}`} data-testid={`text-bike-battery-${b.id}`}>
+              <TableCell className="text-sm text-center text-muted-foreground font-mono">{b.lockImei || "—"}</TableCell>
+              <TableCell className={`text-sm text-center font-mono ${b.battery < LOW_BATTERY_AUTO_OFFLINE_THRESHOLD ? "text-destructive font-medium" : "text-muted-foreground"}`} data-testid={`text-bike-battery-${b.id}`}>
                 {b.battery}%
               </TableCell>
-              <TableCell className="text-sm text-muted-foreground">{parkingName(b.parkingId)}</TableCell>
+              <TableCell className="text-sm text-center text-muted-foreground">{parkingName(b.parkingId)}</TableCell>
               <TableCell>
                 <div className="flex items-center justify-end gap-1">
                   <Button variant="ghost" size="icon" onClick={() => onQr(b)} title="QR-код" data-testid={`button-qr-${b.id}`}>

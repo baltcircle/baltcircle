@@ -133,14 +133,14 @@ export function UsersPage() {
           <Table data-testid="users-table">
             <TableHeader>
               <TableRow>
-                <TableHead>Пользователь</TableHead>
-                <TableHead>Контакты</TableHead>
-                <TableHead>Роль</TableHead>
-                <TableHead>Согласие</TableHead>
-                <TableHead>Регистрация</TableHead>
-                <TableHead>Поездки</TableHead>
-                <TableHead>Ср. оценка</TableHead>
-                <TableHead>Статус</TableHead>
+                <TableHead className="text-center">Пользователь</TableHead>
+                <TableHead className="text-center">Контакты</TableHead>
+                <TableHead className="text-center">Роль</TableHead>
+                <TableHead className="text-center">Согласие</TableHead>
+                <TableHead className="text-center">Регистрация</TableHead>
+                <TableHead className="text-center">Поездки</TableHead>
+                <TableHead className="text-center">Ср. оценка</TableHead>
+                <TableHead className="text-center">Статус</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
