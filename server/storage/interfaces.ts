@@ -213,6 +213,8 @@ export interface IBikeStorage {
   >;
   // Registry locks that have not yet been fitted to a bike.
   listUnassignedLocks(): Promise<{ imei: string; lastSeen: number | null }[]>;
+  // Locks seen dialling into the OMNI gateway but not yet registered at all.
+  listDiscoveredLocks(): Promise<{ imei: string; firstSeen: number; lastSeen: number }[]>;
   /**
    * Deletes raw lock heartbeat/telemetry rows older than the retention
    * window. Independent of ride_points (permanent per-ride track history) —

@@ -3,6 +3,7 @@ import { fmtRelative } from "@/lib/format";
 
 export const ADMIN_BIKES_KEY = ["/api/admin/bikes"] as const;
 export const UNASSIGNED_LOCKS_KEY = ["/api/admin/locks/unassigned"] as const;
+export const DISCOVERED_LOCKS_KEY = ["/api/admin/locks/discovered"] as const;
 
 export const STATUS_LABEL: Record<BikeStatus, string> = {
   available: "Доступен",
@@ -90,6 +91,9 @@ export function buildBikeSavePayload(
 
 /** A non-decommissioned registry lock that is not fitted to a bike. */
 export type UnassignedLock = { imei: string; lastSeen: number | null };
+
+/** A lock seen dialling into the OMNI gateway but not yet registered at all. */
+export type DiscoveredLock = { imei: string; firstSeen: number; lastSeen: number };
 
 export type LockPickerOption = {
   /** The exact 15-digit IMEI submitted when an operator selects this option. */
