@@ -14,6 +14,7 @@ import { logger, log } from "./logger";
 import { OmniTcpServer } from "./omni/server";
 import { PgOmniStore } from "./omni/store";
 import { setLockGateway } from "./omni/gateway";
+import { csrfSynchronisedProtection, generateToken } from "./csrf";
 
 // Re-exported so existing `import { log } from "../index"` call sites keep
 // working now that the implementation lives in server/logger.ts (audit L6).
@@ -134,6 +135,9 @@ declare module "express-session" {
     // trusting a client-supplied phone. Short-lived — checked against
     // `expiresAt` on every use, not just the session's own cookie lifetime.
     pendingPhone?: { phone: string; expiresAt: number };
+    // Note: `csrfToken` (used by server/csrf.ts, issued via GET /api/csrf-token)
+    // is declared by csrf-sync's own express-session module augmentation —
+    // not redeclared here to avoid a conflicting-type error.
   }
 }
 
@@ -153,6 +157,17 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+// CSRF protection (audit HIGH — CodeQL #70, js/missing-token-validation).
+// Registered once session + body parsing are in place; everything registered
+// after this point (including registerRoutes below) is protected on
+// mutating methods. The token-issuing route is intentionally registered
+// first and is itself a GET, so it is never blocked by the protection it
+// bootstraps (GET/HEAD/OPTIONS are ignored by default).
+app.get("/api/csrf-token", (req, res) => {
+  res.json({ csrfToken: generateToken(req) });
+});
+app.use(csrfSynchronisedProtection);
 
 // Keys whose values must never reach the logs — PII (phone/email), auth secrets
 // (OTP/codes/tokens/passwords) and payment data (PANs). Matched case-insensitively
