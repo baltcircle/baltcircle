@@ -311,6 +311,14 @@ export function registerCatalogRoutes(app: Express): void {
     }
     const result = await storage.createLock(parsed.data);
     if ("error" in result) return res.status(result.error.includes("IMEI") ? 409 : 404).json(result);
+    // Mirror of the decommission-path revokeImei() calls below: this IMEI may
+    // already be negative-cached as "unknown" in the running gateway from an
+    // earlier, pre-registration dial-in (that rejection is exactly what put
+    // it in the discovered-locks list in the first place) — without busting
+    // that cache entry here, the device's reconnect attempts keep getting
+    // rejected against the stale verdict for up to IMEI_NEGATIVE_TTL_MS after
+    // this registration, so no telemetry (including GPS) reaches the server.
+    getLockGateway()?.admitImei(result.lock.imei);
     res.status(201).json(result.lock);
   });
   // Pilot-only operational control. The TCP process keeps the live socket
