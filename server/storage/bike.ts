@@ -312,6 +312,27 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       return { bike: (await this.getBike(id))! };
     }
 
+    // Undo archiveBike. Restores straight to "offline" rather than
+    // "available": a bike may have sat archived for a long time (dead lock
+    // battery, moved/lost location, needs a physical check), so it must not
+    // re-enter the public rentable pool unattended — mirrors how a bike
+    // freshly registered or coming out of "maintenance"/"storage" always
+    // needs an explicit operator step (edit form) to flip it to "available".
+    async restoreBike(
+      this: {
+        getBike(id: string): Promise<Bike | undefined>;
+        invalidateBikesCache(opts?: { silent?: boolean }): void;
+      },
+      id: string,
+    ) {
+      const existing = await this.getBike(id);
+      if (!existing) return { error: "Велосипед не найден" };
+      if (existing.status !== "archived") return { error: "Велосипед не в архиве" };
+      await db.update(bikes).set({ status: "offline" } as any).where(eq(bikes.id, id));
+      this.invalidateBikesCache();
+      return { bike: (await this.getBike(id))! };
+    }
+
     // Hard delete: only allowed when the bike has no ride/ticket/payment-order
     // history. Otherwise we refuse and archive instead, so analytics records
     // never dangle. Audit "missing FK constraints" fix: rides.bike_id,
