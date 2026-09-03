@@ -36,11 +36,21 @@ export interface IUserStorage {
 }
 
 export interface IOtpStorage {
-  startOtp(input: { name: string; phone: string }): Promise<
+  startOtp(input: { phone: string }): Promise<
     | { ok: true; phone: string; code: string; resendInSec: number }
     | { error: string; retryAfterSec?: number }
   >;
-  verifyOtp(input: { phone: string; code: string; consentIp?: string }): Promise<{ user: User } | { error: string }>;
+  // Existing phone: logs the rider in. New phone: does NOT create an account
+  // yet (no name/email/consent collected) — returns the normalized phone so
+  // the caller can bind it to the session pending registration completion.
+  verifyOtp(input: { phone: string; code: string }): Promise<
+    | { status: "login"; user: User }
+    | { status: "register"; phone: string }
+    | { error: string }
+  >;
+  completeRegistration(input: { phone: string; name: string; email: string; consentIp?: string }): Promise<
+    { user: User } | { error: string }
+  >;
   // OTP delivery diagnostics (provider id/status persisted per phone)
   recordOtpSend(input: {
     phone: string;

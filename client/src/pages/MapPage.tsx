@@ -7,7 +7,7 @@ import type { Tariff } from "@shared/geo";
 import { PAYMENT_METHODS_KEY } from "@/lib/payment";
 import { MapLibreMap } from "@/components/MapLibreMap";
 import { RentalStartModal } from "@/components/RentalStartModal";
-import { RegistrationModal } from "@/components/RegistrationModal";
+import { AuthModal } from "@/components/AuthModal";
 import { QrScanModal } from "@/components/QrScanModal";
 import { DrawerMenu } from "@/components/DrawerMenu";
 import { useCurrentUser } from "@/hooks/use-current-user";
@@ -527,7 +527,7 @@ export function MapPage() {
       {/* Drawer menu */}
       <DrawerMenu open={drawerOpen} onClose={() => setDrawerOpen(false)} mountedOpen={drawerMountedOpen.current} instantTick={drawerInstantTick} />
 
-      <RegistrationModal
+      <AuthModal
         open={regOpen}
         onOpenChange={(open) => {
           setRegOpen(open);

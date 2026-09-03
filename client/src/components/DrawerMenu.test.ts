@@ -6,11 +6,11 @@ const source = readFileSync(resolve(process.cwd(), "client/src/components/Drawer
 
 describe("DrawerMenu guest login entry point", () => {
   it("shows the guest card as a login action that opens the existing registration modal", () => {
-    expect(source).toContain('import { RegistrationModal } from "@/components/RegistrationModal";');
+    expect(source).toContain('import { AuthModal } from "@/components/AuthModal";');
     expect(source).toContain("const [registrationOpen, setRegistrationOpen] = useState(false);");
     expect(source).toContain('data-testid="button-drawer-guest-login"');
     expect(source).toContain('onClick={() => setRegistrationOpen(true)}');
-    expect(source).toContain('<RegistrationModal open={registrationOpen} onOpenChange={setRegistrationOpen} />');
+    expect(source).toContain('<AuthModal open={registrationOpen} onOpenChange={setRegistrationOpen} />');
     expect(source).toContain('{isRegistered ? user?.name ?? "Гость" : "Войти"}');
   });
 

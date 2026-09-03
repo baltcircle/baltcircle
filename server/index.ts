@@ -128,6 +128,12 @@ declare module "express-session" {
     // OAuth CSRF state — per provider we remember the `state` value we sent to
     // the authorize endpoint, verified in the callback before exchanging code.
     oauthState?: { yandex?: string; vk?: string; vkCodeVerifier?: string };
+    // Set right after a successful OTP verify for a phone with no account yet
+    // (see POST /api/auth/otp/verify). Proves phone ownership so
+    // POST /api/auth/register-complete can create the account without
+    // trusting a client-supplied phone. Short-lived — checked against
+    // `expiresAt` on every use, not just the session's own cookie lifetime.
+    pendingPhone?: { phone: string; expiresAt: number };
   }
 }
 

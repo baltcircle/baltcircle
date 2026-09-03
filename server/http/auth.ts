@@ -4,7 +4,7 @@ import { errMessage } from "../error-utils";
 import { z } from "zod";
 import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
 import {
-  insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
+  insertMapObjectSchema, otpStartSchema, otpVerifySchema, registerCompleteSchema, updateProfileSchema,
   adminSetRoleSchema, adminSetBlockedSchema,
   phoneChangeStartSchema, phoneChangeVerifySchema,
   emailChangeStartSchema, emailChangeVerifySchema,
@@ -64,17 +64,24 @@ function regenerateSessionAndSetUser(req: Request, userId: string, onDone: (err:
   });
 }
 
+// Proof-of-phone-ownership window: how long after a successful OTP verify
+// for a brand-new phone the rider has to submit name/email/consent before
+// having to verify the code again. Long enough to fill in two fields, short
+// enough that an abandoned tab can't be used to register much later.
+const PENDING_REGISTRATION_TTL_MS = 15 * 60 * 1000;
+
 export function registerAuthRoutes(app: Express): void {
-  // -------------- Rider registration (SMS OTP) --------------
-  // Step 1: rider submits name + phone + consent. We generate a code, persist
-  // its hash, and dispatch it by SMS. No session is created yet.
+  // -------------- Rider auth (SMS OTP) --------------
+  // Step 1: rider submits a phone number — we don't yet know whether this is
+  // a login or a registration. Generate a code, persist its hash, dispatch by
+  // SMS. No session is created yet.
   app.post("/api/auth/otp/start", otpLimiter, otpPhoneLimiter, async (req, res) => {
     const parsed = otpStartSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
       return res.status(400).json({ error: msg });
     }
-    const result = await storage.startOtp({ name: parsed.data.name, phone: parsed.data.phone });
+    const result = await storage.startOtp({ phone: parsed.data.phone });
     if ("error" in result) {
       const status = result.retryAfterSec ? 429 : 400;
       return res.status(status).json(result);
@@ -103,20 +110,58 @@ export function registerAuthRoutes(app: Express): void {
     }
   });
 
-  // Step 2: rider submits the code. On success we create/activate the rider and
-  // bind the session, allowing rental/scan.
+  // Step 2: rider submits the code. An existing phone logs the rider in
+  // (session bound now). A brand-new phone is only proven to be owned by the
+  // caller — no account exists yet, so we stash it in the session and tell
+  // the client to move to the registration-completion step.
   app.post("/api/auth/otp/verify", otpLimiter, otpPhoneLimiter, async (req, res) => {
     const parsed = otpVerifySchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
       return res.status(400).json({ error: msg });
     }
-    const result = await storage.verifyOtp({
-      phone: parsed.data.phone,
-      code: parsed.data.code,
+    const result = await storage.verifyOtp({ phone: parsed.data.phone, code: parsed.data.code });
+    if ("error" in result) return res.status(400).json(result);
+
+    if (result.status === "register") {
+      req.session.pendingPhone = { phone: result.phone, expiresAt: Date.now() + PENDING_REGISTRATION_TTL_MS };
+      return req.session.save((err) => {
+        if (err) return res.status(500).json({ error: "Не удалось продолжить регистрацию. Повторите позже" });
+        res.status(200).json({ status: "register" as const });
+      });
+    }
+
+    // Audit LOW: regenerate the session (not just set userId) to prevent
+    // session fixation — see regenerateSessionAndSetUser above.
+    regenerateSessionAndSetUser(req, result.user.id, (err) => {
+      if (err) return res.status(500).json({ error: "Не удалось войти. Повторите позже" });
+      res.status(200).json({ status: "login" as const, user: result.user });
+    });
+  });
+
+  // Step 3 (new accounts only): rider submits name + email + consent. The
+  // phone comes from the session's pendingPhone (bound in /otp/verify above),
+  // never from the request body — a caller cannot claim an arbitrary phone
+  // without having actually verified its OTP first.
+  app.post("/api/auth/register-complete", otpLimiter, async (req, res) => {
+    const pending = req.session.pendingPhone;
+    if (!pending || Date.now() > pending.expiresAt) {
+      return res.status(401).json({ error: "Подтвердите номер телефона заново — срок действия истёк" });
+    }
+    const parsed = registerCompleteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Проверьте введённые данные";
+      return res.status(400).json({ error: msg });
+    }
+    const result = await storage.completeRegistration({
+      phone: pending.phone,
+      name: parsed.data.name,
+      email: parsed.data.email,
       consentIp: clientIp(req),
     });
     if ("error" in result) return res.status(400).json(result);
+
+    delete req.session.pendingPhone;
     // Audit LOW: regenerate the session (not just set userId) to prevent
     // session fixation — see regenerateSessionAndSetUser above.
     regenerateSessionAndSetUser(req, result.user.id, (err) => {

@@ -81,7 +81,6 @@ export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 // a rider asks for a code and consumed once verification succeeds.
 export const otpRequests = pgTable("otp_requests", {
   phone: text("phone").primaryKey(),         // normalized +7… form
-  name: text("name").notNull(),              // carried through to user creation
   codeHash: text("code_hash").notNull(),     // HMAC-SHA256 of the OTP, never plaintext
   expiresAt: bigint("expires_at", { mode: "number" }).notNull(),// unix ms — code invalid after this
   attempts: integer("attempts").notNull().default(0),     // wrong-code tries used
@@ -99,20 +98,15 @@ export const otpRequests = pgTable("otp_requests", {
 });
 export type OtpRequest = typeof otpRequests.$inferSelect;
 
-// Step 1: request a code. Consent must be accepted before any SMS is sent.
+// Step 1: request a code to a phone. Works for both login (existing account)
+// and registration (new account) — the caller doesn't know which yet; the
+// server decides based on whether the phone is already registered and tells
+// the client via /verify's `status` field.
 export const otpStartSchema = z.object({
-  name: z
-    .string({ required_error: "Введите имя" })
-    .trim()
-    .min(2, "Имя должно содержать минимум 2 символа")
-    .max(80, "Имя слишком длинное"),
   phone: z
     .string({ required_error: "Введите номер телефона" })
     .trim()
     .min(1, "Введите номер телефона"),
-  consent: z.literal(true, {
-    errorMap: () => ({ message: "Необходимо согласие на обработку персональных данных" }),
-  }),
 });
 export type OtpStartInput = z.infer<typeof otpStartSchema>;
 
@@ -125,6 +119,29 @@ export const otpVerifySchema = z.object({
     .regex(/^\d{6}$/, "Код состоит из 6 цифр"),
 });
 export type OtpVerifyInput = z.infer<typeof otpVerifySchema>;
+
+// Step 3 (new accounts only): after the phone's OTP has been verified (proven
+// by the server-side `pendingPhone` session, not by anything the client
+// submits here — see /api/auth/register-complete), collect the remaining
+// profile fields and consent to finish creating the account.
+export const registerCompleteSchema = z.object({
+  name: z
+    .string({ required_error: "Введите имя" })
+    .trim()
+    .min(2, "Имя должно содержать минимум 2 символа")
+    .max(80, "Имя слишком длинное"),
+  email: z
+    .string({ required_error: "Введите email" })
+    .trim()
+    .toLowerCase()
+    .min(1, "Введите email")
+    .email("Введите корректный email")
+    .max(120, "Слишком длинный email"),
+  consent: z.literal(true, {
+    errorMap: () => ({ message: "Необходимо согласие на обработку персональных данных" }),
+  }),
+});
+export type RegisterCompleteInput = z.infer<typeof registerCompleteSchema>;
 
 /* ------- PHONE CHANGE (SMS OTP for an existing account) ------- */
 // A logged-in rider changing their phone. Verification mirrors registration

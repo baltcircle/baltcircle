@@ -7,7 +7,7 @@ import { OTP_CODE_LENGTH, sanitizeOtpInput, isCompleteOtp } from "./otp";
 // Root cause: the backend issues a 6-digit, zero-padded OTP (see
 // server/storage.ts `generateOtp` — randomInt(0, 1_000_000).padStart(6, "0"),
 // and the `/^\d{6}$/` schemas in shared/schema.ts), but the confirm button in
-// RegistrationModal / PhoneChangeModal / EmailChangeModal disabled itself with
+// AuthModal / PhoneChangeModal / EmailChangeModal disabled itself with
 // `code.trim().length !== 4` — a stale check left over from an earlier 4-digit
 // OTP format. A correctly typed OR pasted/autofilled 6-digit code could never
 // satisfy `length !== 4`, so the button stayed permanently disabled.

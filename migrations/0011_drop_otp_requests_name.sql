@@ -1,0 +1,1 @@
+ALTER TABLE "otp_requests" DROP COLUMN "name";

@@ -61,7 +61,7 @@ export function QrScanModal({
 }: Props) {
   // Manual entry only ever needs the digits — the "BC-" prefix is fixed and
   // shown as a non-editable adornment (same pattern as the +7 phone prefix in
-  // RegistrationModal), so a rider can't mistype or omit it.
+  // AuthModal), so a rider can't mistype or omit it.
   const [digits, setDigits] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
