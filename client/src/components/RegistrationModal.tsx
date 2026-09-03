@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, errorMessage, queryClient } from "@/lib/queryClient";
 import { CURRENT_USER_KEY } from "@/hooks/use-current-user";
@@ -53,9 +54,32 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
   const [resendIn, setResendIn] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Reset everything whenever the modal opens.
+  // Ссылки на пользовательское соглашение/политику ведут на /safety внутри
+  // того же SPA (см. onClick у <Link> ниже): мы закрываем диалог, чтобы не
+  // перекрывать оверлей /safety своим затемнением (оба элемента — fixed z-50,
+  // порталы рендерятся позже в DOM и оказались бы поверх), а этот флаг
+  // запоминает, что нужно переоткрыть форму, когда пользователь вернётся
+  // назад — с сохранёнными именем/телефоном, а не заново.
+  const returningFromLegalRef = useRef(false);
+
+  useEffect(() => {
+    function handlePopState() {
+      if (returningFromLegalRef.current && window.location.pathname !== "/safety") {
+        onOpenChange(true);
+      }
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [onOpenChange]);
+
+  // Reset everything whenever the modal opens — кроме возврата с чтения
+  // юридических документов (см. returningFromLegalRef выше).
   useEffect(() => {
     if (open) {
+      if (returningFromLegalRef.current) {
+        returningFromLegalRef.current = false;
+        return;
+      }
       setStep("contact");
       setName("");
       setPhoneDigits("");
@@ -227,36 +251,52 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
                 data-testid="checkbox-personal-data-consent"
               />
               <Label htmlFor="consent" className="text-xs font-normal leading-snug text-muted-foreground">
+                {/* Раньше ссылки имели атрибут blank-target и открывали /safety в новой
+                   вкладке/окне без записи в history — стрелочка «Назад» там
+                   ничего не могла (history.length === 1), и выйти из окна было
+                   нельзя. Теперь Link из wouter переходит внутри того же SPA (без
+                   перезагрузки): MapPage остаётся смонтирован, а оверлей /safety
+                   выезжает поверх карты. Диалог на момент перехода закрываем —
+                   иначе его затемнение (тоже fixed z-50) окажется поверх страницы
+                   /safety, а «Назад» там теперь работает обычным history.back() и
+                   возвращает сюда с сохранёнными именем/телефоном
+                   (returningFromLegalRef выше). */}
                 Я принимаю{" "}
-                <a
+                <Link
                   href="/safety#legal-terms"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  onClick={() => {
+                    returningFromLegalRef.current = true;
+                    onOpenChange(false);
+                  }}
                   className="underline hover:text-foreground"
                   data-testid="link-terms"
                 >
                   Пользовательское соглашение
-                </a>{" "}
+                </Link>{" "}
                 и даю согласие на обработку персональных данных в соответствии с{" "}
-                <a
+                <Link
                   href="/safety#legal-privacy"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  onClick={() => {
+                    returningFromLegalRef.current = true;
+                    onOpenChange(false);
+                  }}
                   className="underline hover:text-foreground"
                   data-testid="link-privacy"
                 >
                   Политикой конфиденциальности
-                </a>{" "}
+                </Link>{" "}
                 и{" "}
-                <a
+                <Link
                   href="/safety#legal-consent"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  onClick={() => {
+                    returningFromLegalRef.current = true;
+                    onOpenChange(false);
+                  }}
                   className="underline hover:text-foreground"
                   data-testid="link-consent"
                 >
                   Согласием на обработку данных
-                </a>
+                </Link>
                 .
               </Label>
             </div>
