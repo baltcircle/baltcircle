@@ -47,6 +47,21 @@ function isLegalPath(pathname: string): boolean {
   return pathname === "/legal" || pathname.startsWith("/legal/");
 }
 
+// Автозаполнение браузера/менеджера паролей обычно подставляет номер
+// целиком, вместе с кодом страны (7 или 8) — а у нас он уже зафиксирован
+// отдельным префиксом "+7" в UI. Без нормализации простое отсечение до
+// 10 цифр обрезало бы последнюю цифру вместо ведущей "7"/"8", давая неверный
+// номер. Если после очистки от нецифр получилось ровно 11 цифр и начинается с
+// "7" или "8" (либо "+79114765700", либо "89114765700") — это весь российский
+// номер целиком вместе с кодом страны — отбрасываем ведущую цифру.
+function normalizePhoneDigits(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 11 && (digits[0] === "7" || digits[0] === "8")) {
+    return digits.slice(1);
+  }
+  return digits.slice(0, 10);
+}
+
 // Client-side mirror of the server validation so riders get instant feedback.
 // The server re-validates and is the source of truth.
 function validateContact(name: string, phone: string): string | null {
@@ -260,7 +275,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="dialog-registration">
+      <DialogContent data-testid="dialog-registration" className="rounded-2xl sm:rounded-2xl">
         <DialogHeader>
           <DialogTitle className="font-display font-light flex items-center gap-2">
             {step === "contact" ? <UserPlus className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
@@ -295,10 +310,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
                   type="tel"
                   inputMode="numeric"
                   value={phoneDigits}
-                  onChange={(e) => {
-                    const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
-                    setPhoneDigits(digits);
-                  }}
+                  onChange={(e) => setPhoneDigits(normalizePhoneDigits(e.target.value))}
                   placeholder="900 000-00-00"
                   autoComplete="tel-national"
                   data-testid="input-registration-phone"
