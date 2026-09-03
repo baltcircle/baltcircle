@@ -42,4 +42,12 @@ describe("RegistrationModal agreement acceptance", () => {
     expect(source).toContain("addEventListener(\"popstate\", tryRestore)");
     expect(source).toContain("onOpenChange(true)");
   });
+
+  it("closes the modal before navigating so /legal is not hidden behind it", () => {
+    // Hosts that stay mounted across overlay-route changes (e.g. MapPage,
+    // which is never unmounted to keep the map alive) would otherwise leave
+    // the Dialog open while /legal renders, so the legal page would appear
+    // stuck behind/under the still-open registration dialog.
+    expect(source).toMatch(/function saveFormBeforeLegalNav\(\)[\s\S]*?onOpenChange\(false\);\n {2}\}/);
+  });
 });
