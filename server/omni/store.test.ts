@@ -424,7 +424,7 @@ describe("persistLockReport theft (auto-lost) streak", () => {
     expect(fake.bikes.get("bike-a")?.status).toBe("lost");
   });
 
-  it("ignores heartbeat and position reports for the streak — D1/H0 run permanently and interleave with alarms as routine telemetry", async () => {
+  it("ignores heartbeat, position, and checkin reports for the streak — D1/H0/Q0 run permanently and interleave with alarms as routine telemetry", async () => {
     fake.locks.set(IMEI, { last_seen_at: null, bike_id: "bike-a" });
     fake.bikes.set("bike-a", { last_seen: null, status: "rented" });
     const lostEvents: BikeAutoLostPayload[] = [];
@@ -435,6 +435,7 @@ describe("persistLockReport theft (auto-lost) streak", () => {
     await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 2000);
     await store.persistLockReport(IMEI, { type: "position", cmd: "D1", tracking: true, valid: false, fix: null }, 2500);
     await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 3000);
+    await store.persistLockReport(IMEI, { type: "checkin", voltageCv: 400 }, 3250);
     await store.persistLockReport(IMEI, { type: "heartbeat", locked: true, voltageCv: 400, signal: 20 }, 3500);
     await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 4000);
     await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 5000);
@@ -444,16 +445,16 @@ describe("persistLockReport theft (auto-lost) streak", () => {
     expect(lostEvents).toEqual([{ bikeId: "bike-a", imei: IMEI, at: 6000 }]);
   });
 
-  it("still resets the streak on a report that is neither an alarm nor heartbeat/position (e.g. checkin)", async () => {
+  it("still resets the streak on a report that is neither an alarm nor background telemetry (e.g. status)", async () => {
     fake.locks.set(IMEI, { last_seen_at: null, bike_id: "bike-a" });
     fake.bikes.set("bike-a", { last_seen: null, status: "rented" });
 
     await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 1000);
     await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 2000);
     await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 3000);
-    // A checkin in between breaks the streak — the next 3 alarms alone are
-    // not enough to reach the threshold of 6.
-    await store.persistLockReport(IMEI, { type: "checkin", voltageCv: 400 }, 3500);
+    // A solicited status response in between breaks the streak — the next 3
+    // alarms alone are not enough to reach the threshold of 6.
+    await store.persistLockReport(IMEI, { type: "status", voltageCv: 400, signal: 20, satellites: 5, locked: true }, 3500);
     await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 4000);
     await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 5000);
     await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 6000);
