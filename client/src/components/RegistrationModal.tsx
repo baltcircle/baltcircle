@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, errorMessage, queryClient } from "@/lib/queryClient";
 import { CURRENT_USER_KEY } from "@/hooks/use-current-user";
-import { getLegalDoc } from "@/lib/legal";
 import type { User } from "@shared/schema";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -24,6 +24,28 @@ interface Props {
 }
 
 type StartResponse = { phone: string; resendInSec: number; devCode?: string; providerStatus?: string };
+
+// Ссылки на пользовательское соглашение/политику/согласие ведут на /legal —
+// готовую страницу «Правовые документы» (OverlayShell: правильный заголовок,
+// стрелочка «Назад» и свайп-назад уже работают корректно, т.к. страница —
+// часть того же OverlayRouter, что и /rent/(safety/... — переход между ними
+// не анимируется и не роняет z-50 оверлеи друг на друга).
+//
+// Проблема в другом: RegistrationModal рендерится ВНУТРИ overlay-страниц
+// (напр. RentPage на /rent), которые сами размонтируются, когда активным
+// становится другой overlay-маршрут (/legal) — вместе с ними размонтируется
+// и сама форма со своим состоянием (имя/телефон, open). Обычный useRef тут
+// не помогает: при возврате назад RentPage монтируется ЗАНОВО, и рефы жизни
+// предыдущего инстанса уже не существует. Поэтому состояние "нужно
+// переоткрыть форму + что там было введено" хранится в sessionStorage —
+// он переживает размонтирование/монтирование компонента.
+const REG_REOPEN_KEY = "bc.reg.reopen";
+const REG_NAME_KEY = "bc.reg.name";
+const REG_PHONE_KEY = "bc.reg.phone";
+
+function isLegalPath(pathname: string): boolean {
+  return pathname === "/legal" || pathname.startsWith("/legal/");
+}
 
 // Client-side mirror of the server validation so riders get instant feedback.
 // The server re-validates and is the source of truth.
@@ -54,18 +76,56 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
   const [resendIn, setResendIn] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Ссылки на пользовательское соглашение/политику/согласие открывают текст
-  // документа во вложенном Dialog поверх формы вместо перехода на /safety.
-  // RegistrationModal рендерится внутри разных overlay-страниц (напр.
-  // RentPage на /rent), которые сами размонтируются при переходе на
-  // другой оверлей (напр. /safety) — тогда бы унесло саму форму вместе с
-  // введёнными именем/телефоном, а возврат вел бы на карту/главный экран,
-  // а не к форме регистрации. Никакой навигации — никаких проблем с history/back.
-  const [legalDocSlug, setLegalDocSlug] = useState<"terms" | "privacy" | "consent" | null>(null);
+  // См. REG_REOPEN_KEY выше: если true, следующий эффект "reset on open" должен
+  // пропустить очистку ровно один раз — мы только что восстановили имя/телефон
+  // из sessionStorage, а не начинаем регистрацию заново.
+  const skipNextResetRef = useRef(false);
 
-  // Reset everything whenever the modal opens.
+  // Восстанавливает форму после чтения юридического документа на /legal.
+  // Запускается дважды: синхронно при монтировании (ловит случай, когда
+  // хост-страница типа RentPage размонтировалась и монтируется заново после
+  // возврата) и на popstate (ловит случай, когда хост-страница типа MapPage
+  // никогда не размонтируется, и монтирование не повторится).
+  useEffect(() => {
+    function tryRestore() {
+      let shouldReopen = false;
+      try {
+        shouldReopen = sessionStorage.getItem(REG_REOPEN_KEY) === "1";
+      } catch {
+        /* ignore */
+      }
+      // Флаг мог остаться от брошенного раньше захода (пользователь ушёл
+      // с /legal куда-то ещё, а не назад в форму) — не реагируем, пока мы всё
+      // ещё на /legal, иначе модалка регистрации откроется поверх самой /legal.
+      if (!shouldReopen || isLegalPath(window.location.pathname)) return;
+      try {
+        const savedName = sessionStorage.getItem(REG_NAME_KEY) ?? "";
+        const savedPhone = sessionStorage.getItem(REG_PHONE_KEY) ?? "";
+        sessionStorage.removeItem(REG_REOPEN_KEY);
+        sessionStorage.removeItem(REG_NAME_KEY);
+        sessionStorage.removeItem(REG_PHONE_KEY);
+        skipNextResetRef.current = true;
+        setName(savedName);
+        setPhoneDigits(savedPhone);
+      } catch {
+        /* ignore */
+      }
+      onOpenChange(true);
+    }
+    tryRestore();
+    window.addEventListener("popstate", tryRestore);
+    return () => window.removeEventListener("popstate", tryRestore);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Reset everything whenever the modal opens — кроме возврата с чтения
+  // юридического документа (см. skipNextResetRef выше).
   useEffect(() => {
     if (open) {
+      if (skipNextResetRef.current) {
+        skipNextResetRef.current = false;
+        return;
+      }
       setStep("contact");
       setName("");
       setPhoneDigits("");
@@ -75,7 +135,6 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
       setVerifiedPhone("");
       setProviderStatus(null);
       setResendIn(0);
-      setLegalDocSlug(null);
     }
   }, [open]);
 
@@ -180,6 +239,21 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
     startMut.mutate();
   }
 
+  // Сохраняет введённые имя/телефон и флаг "нужно переоткрыть" перед
+  // уходом на /legal, чтобы вернуться к форме с теми же данными после
+  // возврата (см. эффект-восстановление выше). Не блокирует навигацию
+  // — wouter Link сам выполнит переход после этого обработчика.
+  function saveFormBeforeLegalNav() {
+    try {
+      sessionStorage.setItem(REG_REOPEN_KEY, "1");
+      sessionStorage.setItem(REG_NAME_KEY, name);
+      sessionStorage.setItem(REG_PHONE_KEY, phoneDigits);
+    } catch {
+      /* квота sessionStorage или приватный режим — переход всё равно сработает,
+         просто без авто-возврата к форме. */
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="dialog-registration">
@@ -238,42 +312,33 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
                 data-testid="checkbox-personal-data-consent"
               />
               <Label htmlFor="consent" className="text-xs font-normal leading-snug text-muted-foreground">
-                {/* Раньше ссылки вели на /safety (новой вкладкой, потом — тем же SPA-
-                   переходом). Оба варианта размонтировали форму регистрации: при
-                   возврате назад пользователь попадал на карту/главный экран, а не
-                   обратно в форму — RegistrationModal рендерится внутри overlay-
-                   страниц (напр. RentPage на /rent), которые сами размонтируются
-                   при переходе на другой оверлей. Поэтому текст документа теперь
-                   открывается во вложенном Dialog поверх формы: никакой навигации,
-                   никакой истории браузера — форма и её данные (имя/телефон)
-                   никуда не уходят. */}
                 Я принимаю{" "}
-                <button
-                  type="button"
-                  onClick={() => setLegalDocSlug("terms")}
+                <Link
+                  href="/legal#terms"
+                  onClick={saveFormBeforeLegalNav}
                   className="underline hover:text-foreground"
                   data-testid="link-terms"
                 >
                   Пользовательское соглашение
-                </button>{" "}
+                </Link>{" "}
                 и даю согласие на обработку персональных данных в соответствии с{" "}
-                <button
-                  type="button"
-                  onClick={() => setLegalDocSlug("privacy")}
+                <Link
+                  href="/legal#privacy"
+                  onClick={saveFormBeforeLegalNav}
                   className="underline hover:text-foreground"
                   data-testid="link-privacy"
                 >
                   Политикой конфиденциальности
-                </button>{" "}
+                </Link>{" "}
                 и{" "}
-                <button
-                  type="button"
-                  onClick={() => setLegalDocSlug("consent")}
+                <Link
+                  href="/legal#consent"
+                  onClick={saveFormBeforeLegalNav}
                   className="underline hover:text-foreground"
                   data-testid="link-consent"
                 >
                   Согласием на обработку данных
-                </button>
+                </Link>
                 .
               </Label>
             </div>
@@ -380,56 +445,6 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
           </form>
         )}
       </DialogContent>
-
-      <Dialog open={legalDocSlug !== null} onOpenChange={(v) => !v && setLegalDocSlug(null)}>
-        <DialogContent
-          className="max-h-[85vh] overflow-y-auto"
-          data-testid="dialog-legal-doc"
-        >
-          {legalDocSlug && (() => {
-            const doc = getLegalDoc(legalDocSlug);
-            if (!doc) return null;
-            return (
-              <>
-                <DialogHeader>
-                  <DialogTitle className="font-display font-light">{doc.title}</DialogTitle>
-                  <DialogDescription>{doc.description}</DialogDescription>
-                </DialogHeader>
-                <div className="space-y-5 text-sm">
-                  {doc.sections.map((section, index) => (
-                    <section key={index}>
-                      {section.heading && (
-                        <h4 className="font-display text-base font-light mb-1.5">{section.heading}</h4>
-                      )}
-                      {section.paragraphs?.map((paragraph, paragraphIndex) => (
-                        <p key={paragraphIndex} className="text-muted-foreground leading-relaxed">
-                          {paragraph}
-                        </p>
-                      ))}
-                      {section.bullets && (
-                        <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-                          {section.bullets.map((bullet, bulletIndex) => (
-                            <li key={bulletIndex}>{bullet}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </section>
-                  ))}
-                </div>
-                <DialogFooter>
-                  <Button
-                    type="button"
-                    onClick={() => setLegalDocSlug(null)}
-                    data-testid="button-legal-doc-close"
-                  >
-                    <ArrowLeft className="w-4 h-4 mr-1" /> Назад к форме
-                  </Button>
-                </DialogFooter>
-              </>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
     </Dialog>
   );
 }
