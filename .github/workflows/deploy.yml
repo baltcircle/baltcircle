@@ -96,6 +96,25 @@ jobs:
           sudo systemctl enable docker
           sudo systemctl enable nginx
 
+      # Support-chat attachment uploads are bind-mounted from the host
+      # (/home/yc-user/uploads -> /app/uploads, see docker-compose.yml) into a
+      # container that runs as the unprivileged `node` user (uid 1000, gid
+      # 1000 in node:20-bookworm-slim). A bind mount replaces the directory
+      # entry entirely, including ownership, so the `chown node:node
+      # /app/uploads` baked into the image at build time (Dockerfile) has no
+      # effect once this host path is mounted over it. If the host directory
+      # doesn't exist yet, Docker auto-creates it as root:root (0755), which
+      # the `node` user cannot write into -> uploads fail with EACCES (this
+      # is what broke support-chat photo attachments in production). Idempotent
+      # (safe on every deploy): only touches ownership/mode, never deletes data.
+      - name: Ensure host uploads directory is writable by the app container
+        run: |
+          set -e
+          HOST_UPLOADS_DIR="/home/yc-user/uploads"
+          sudo mkdir -p "$HOST_UPLOADS_DIR/support"
+          sudo chown -R 1000:1000 "$HOST_UPLOADS_DIR"
+          sudo chmod -R u+rwX "$HOST_UPLOADS_DIR"
+
       # One-shot data migration: legacy SQLite (data.db in the old Docker volume)
       # -> managed PostgreSQL. Runs only if the legacy volume still holds a
       # data.db AND the migration has not been marked done. The migrate script is
