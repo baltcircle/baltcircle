@@ -11,9 +11,15 @@
 // unreachable. Both codes now feed the same counter. code=6 ("fall
 // cleared") is intentionally inert for this streak — it neither increments
 // nor resets it (see server/omni/store.ts's persistLockReport for the reset
-// guard). The streak resets whenever ANY OTHER report for the same IMEI
-// arrives — i.e. neither code=1, code=2, nor code=6 — meaning the lock has
-// stopped re-reporting movement/fall, so whatever triggered it has stopped.
+// guard). heartbeat (H0) and position (D1) reports are ALSO excluded from
+// the reset (2026-09 amendment) — D1 tracks on its own status-driven
+// cadence permanently, regardless of alarm state, so it and H0 interleave
+// with alarm reports as routine background telemetry rather than evidence
+// the movement/fall condition has stopped; treating them as resets made
+// 6-in-a-row effectively unreachable in real operation. The streak resets
+// on any OTHER report for the same IMEI (checkin, status, unlockResult,
+// lockReport, firmware, iccid, mac, or an unrecognized alarm code) — those
+// are rarer and still read as genuine evidence the condition has stopped.
 //
 // Deliberately dependency-free (no Drizzle/storage imports) — mirrors
 // pause-registry.ts/pending-end-registry.ts so it can be required from
@@ -30,7 +36,7 @@ export function recordMovementAlarm(imei: string): number {
   return next;
 }
 
-/** Reset the streak — call for any report on this IMEI that is not itself a code=1/code=2 alarm (code=6 excluded — see header). */
+/** Reset the streak — call for any report on this IMEI that is neither a code=1/2/6 alarm nor heartbeat/position background telemetry (see header). */
 export function resetMovementAlarmStreak(imei: string): void {
   if (streaks.has(imei)) streaks.delete(imei);
 }
