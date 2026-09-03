@@ -188,6 +188,21 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       await this.syncLockRegistryBinding(lockImei, id);
       await this.forgetUnassignedLock(lockImei);
       this.invalidateBikesCache();
+      // GPS-interval sync (fire-and-forget, mirrors adminUpdateBike's PATCH
+      // path): a freshly created bike must start tracking immediately, at
+      // whatever cadence its initial status implies — otherwise the lock
+      // only ever sends heartbeat/checkin (battery, lock state) and never a
+      // position report, since D1 is what turns GPS reporting on at all.
+      getLockGateway()?.syncGpsTrackingForStatus(lockImei, id, input.status);
+      // No lock has ever reported a fix as this bike yet, so lat/lng is still
+      // the map-center/parking-picker placeholder set above, not a real
+      // position. Arm a one-shot recompute for whenever the first real fix
+      // lands (same mechanism adminUpdateBike uses when a PATCH transitions
+      // a bike into "available") so parkingId self-corrects instead of
+      // staying whatever the operator picked (or left empty) at creation.
+      if (input.status === "available") {
+        getLockGateway()?.armParkingRecalc(lockImei, id);
+      }
       return { bike: (await this.getBike(id))! };
     }
 
