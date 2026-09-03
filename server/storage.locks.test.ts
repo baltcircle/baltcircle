@@ -48,6 +48,14 @@ vi.mock("./db/bootstrap", () => ({
   bootstrapReady: Promise.resolve(),
 }));
 
+const gatewayMock = vi.hoisted(() => ({
+  syncGpsTrackingForStatus: vi.fn(),
+  armParkingRecalc: vi.fn(),
+}));
+vi.mock("./omni/gateway", () => ({
+  getLockGateway: () => gatewayMock,
+}));
+
 import { storage } from "./storage";
 
 function bikeRow(overrides: Partial<Bike> = {}): Bike {
@@ -110,6 +118,8 @@ beforeEach(() => {
     };
   });
   poolMock.query.mockResolvedValue({ rows: [] });
+  gatewayMock.syncGpsTrackingForStatus.mockClear();
+  gatewayMock.armParkingRecalc.mockClear();
 });
 
 const createInput = {
@@ -184,6 +194,28 @@ describe("createBike lock binding", () => {
     writeError = Object.assign(new Error("connection terminated"), { code: "57P01" });
 
     await expect(storage.createBike(createInput)).rejects.toThrow("connection terminated");
+  });
+
+  // Regression: a brand-new bike's lock previously only ever sent
+  // heartbeat/checkin (battery, lock state) because nothing told it to start
+  // GPS reporting at all — D1 was only ever synced on a later PATCH, never at
+  // creation — so the bike had a charge but never appeared on the map.
+  it("starts GPS tracking and arms a parking recompute for a new available bike", async () => {
+    selectResults = [[], [bikeRow()]];
+
+    await storage.createBike(createInput);
+
+    expect(gatewayMock.syncGpsTrackingForStatus).toHaveBeenCalledWith(IMEI, "BC-01", "available");
+    expect(gatewayMock.armParkingRecalc).toHaveBeenCalledWith(IMEI, "BC-01");
+  });
+
+  it("does not arm a parking recompute when created directly into a non-available status", async () => {
+    selectResults = [[], [bikeRow({ status: "maintenance" })]];
+
+    await storage.createBike({ ...createInput, status: "maintenance" as const });
+
+    expect(gatewayMock.syncGpsTrackingForStatus).toHaveBeenCalledWith(IMEI, "BC-01", "maintenance");
+    expect(gatewayMock.armParkingRecalc).not.toHaveBeenCalled();
   });
 });
 
