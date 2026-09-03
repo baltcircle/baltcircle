@@ -193,23 +193,29 @@ export class PgOmniStore implements OmniStore {
     // "alarm" branch below re-increments instead when it IS code=1 or
     // code=2.
     //
-    // heartbeat (H0) and position (D1) reports are ALSO excluded from the
-    // reset here (2026-09 amendment): D1 GPS tracking runs permanently on
-    // its own status-driven cadence (GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS,
-    // shared/geo.ts) independent of whether an alarm is active, and the lock
-    // keeps sending H0 on its own timer too. Both interleave with alarm
-    // reports as a matter of course, not as a signal that the movement/fall
-    // condition has stopped — counting them as resets made 6-in-a-row
-    // effectively unreachable in real operation (2026-09-03: operator
-    // reported 9 real alarms firing without the bike ever reaching "lost";
-    // GPS/heartbeat interleaving with alarms is the most plausible
-    // explanation given the always-on D1 cadence). Any OTHER report type (checkin,
-    // status, unlockResult, lockReport, firmware, iccid, mac, an
-    // unrecognized alarm code, ...) is rarer and still treated as genuine
+    // heartbeat (H0), position (D1), AND checkin (Q0) are ALSO excluded
+    // from the reset here (2026-09 amendment): D1 GPS tracking runs
+    // permanently on its own status-driven cadence
+    // (GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS, shared/geo.ts) independent
+    // of whether an alarm is active, H0 keeps sending on its own timer
+    // (protocol default ~4 min), and Q0 is the same kind of periodic
+    // keep-alive (protocol §1.3.1 gives no fixed interval, but it is
+    // structurally the same background-telemetry category as H0 —
+    // carries only battery voltage, no lock/alarm state). All three
+    // interleave with alarm reports as a matter of course, not as a
+    // signal that the movement/fall condition has stopped — counting them
+    // as resets made 6-in-a-row effectively unreachable in real operation
+    // (2026-09-03: operator reported 9 real alarms firing without the bike
+    // ever reaching "lost"; background telemetry interleaving with alarms
+    // is the most plausible explanation given D1/H0/Q0's always-on
+    // cadence). Any OTHER report type (status, unlockResult, lockReport,
+    // firmware, iccid, mac, an unrecognized alarm code, ...) is
+    // genuinely event-driven/rare (solicited response, server-issued
+    // unlock, ride-end, connect-time metadata) and still treated as
     // evidence the movement/fall condition has stopped, so it still resets.
     const isNeutralAlarm = message.type === "alarm"
       && (message.code === 1 || message.code === 2 || message.code === 6);
-    const isBackgroundTelemetry = message.type === "heartbeat" || message.type === "position";
+    const isBackgroundTelemetry = message.type === "heartbeat" || message.type === "position" || message.type === "checkin";
     if (!isNeutralAlarm && !isBackgroundTelemetry) {
       resetMovementAlarmStreak(imei);
     }
