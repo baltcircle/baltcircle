@@ -133,7 +133,7 @@ function SortableHead({ label, active, dir, onClick, testId, className }: {
       <button
         type="button"
         onClick={onClick}
-        className={`flex items-center gap-1 hover:text-foreground transition-colors ${className ?? ""}`}
+        className={`flex w-full items-center gap-1 hover:text-foreground transition-colors ${className ?? ""}`}
         data-testid={testId}
       >
         {label}
