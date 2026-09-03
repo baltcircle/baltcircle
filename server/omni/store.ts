@@ -180,11 +180,19 @@ export class PgOmniStore implements OmniStore {
       last_seen_at = $2, updated_at = $2`;
     const voltage = (cv: number) => cv / 100;
     // Theft-detection streak (see theft-registry.ts header): any report that
-    // is NOT itself a code=1 ("illegal movement") alarm means this lock did
-    // not re-report movement this time — whatever triggered the streak has
-    // stopped, so reset it. The "alarm" branch below re-increments instead
-    // when it IS code=1.
-    if (!(message.type === "alarm" && message.code === 1)) {
+    // is NOT itself a code=1 ("illegal movement") or code=2 ("fall") alarm
+    // means this lock did not re-report movement/fall this time — whatever
+    // triggered the streak has stopped, so reset it. Both codes count
+    // toward the SAME streak because in practice a moving/stolen bike's
+    // lock alternates between code=1 and code=2 report-to-report instead
+    // of repeating one consistently, which used to reset the counter every
+    // other report and made the 6-in-a-row threshold effectively
+    // unreachable. code=6 ("fall_cleared") is deliberately excluded from
+    // both the increment AND the reset here — it neither advances nor
+    // breaks the streak, it is simply not evidence either way. The
+    // "alarm" branch below re-increments instead when it IS code=1 or
+    // code=2.
+    if (!(message.type === "alarm" && (message.code === 1 || message.code === 2 || message.code === 6))) {
       resetMovementAlarmStreak(imei);
     }
     switch (message.type) {
@@ -264,31 +272,36 @@ export class PgOmniStore implements OmniStore {
         // Fall/illegal-movement alarms feed the fleet-dashboard alert (see
         // storage/events.ts header) — best-effort, never blocks telemetry
         // ingestion. Skipped when the lock isn't currently assigned to a bike.
-        if (alarmType === "fall" && rows[0]?.bike_id) {
-          const payload: LockFallAlarmPayload = { imei, bikeId: rows[0].bike_id, at };
+        const bikeId = rows[0]?.bike_id ?? null;
+        if (alarmType === "fall" && bikeId) {
+          const payload: LockFallAlarmPayload = { imei, bikeId, at };
           lockAlarmEvents.emit(LOCK_FALL_ALARM, payload);
-        } else if (alarmType === "illegal_movement" && rows[0]?.bike_id) {
-          const payload: LockMovementAlarmPayload = { imei, bikeId: rows[0].bike_id, at };
+        } else if (alarmType === "illegal_movement" && bikeId) {
+          const payload: LockMovementAlarmPayload = { imei, bikeId, at };
           lockAlarmEvents.emit(LOCK_MOVEMENT_ALARM, payload);
+        }
 
-          // Auto-"lost" (theft): 6 consecutive code=1 reports with no reset
-          // in between (bike-status lifecycle spec, 2026-09) — promote the
-          // per-alarm alert above into an actual status transition. Guarded
-          // to never re-fire on a bike already "lost"/"archived" (idempotent
-          // if the streak somehow keeps climbing past the threshold, and
-          // never resurrects/relabels a bike an operator has archived).
+        // Auto-"lost" (theft): 6 consecutive movement-or-fall alarms (code=1
+        // OR code=2) with no reset in between (bike-status lifecycle spec,
+        // 2026-09, amended) — promote the per-alarm alerts above into an
+        // actual status transition. Both alarm types share one streak (see
+        // the reset-guard comment above for why). Guarded to never re-fire
+        // on a bike already "lost"/"archived" (idempotent if the streak
+        // somehow keeps climbing past the threshold, and never
+        // resurrects/relabels a bike an operator has archived).
+        if ((alarmType === "illegal_movement" || alarmType === "fall") && bikeId) {
           const streak = recordMovementAlarm(imei);
           if (streak >= MOVEMENT_ALARM_THEFT_THRESHOLD) {
             const lost = await pool.query<{ id: string }>(
               `UPDATE bikes SET status = 'lost'
                WHERE id = $1 AND status NOT IN ('lost', 'archived')
                RETURNING id`,
-              [rows[0].bike_id],
+              [bikeId],
             );
             if (lost.rows.length > 0) {
               resetMovementAlarmStreak(imei);
               bikeEvents.emit(BIKE_EVENT_CHANNEL);
-              bikeTheftEvents.emit(BIKE_AUTO_LOST, { bikeId: rows[0].bike_id, imei, at } satisfies BikeAutoLostPayload);
+              bikeTheftEvents.emit(BIKE_AUTO_LOST, { bikeId, imei, at } satisfies BikeAutoLostPayload);
             }
           }
         }

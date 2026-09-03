@@ -100,6 +100,15 @@ vi.mock("../db/bootstrap", () => ({
         }
         return { rows };
       }
+      if (text.startsWith("UPDATE bikes SET status = 'lost'")) {
+        // Theft auto-transition: `WHERE id = $1 AND status NOT IN ('lost',
+        // 'archived') RETURNING id`.
+        const [id] = params as [string];
+        const row = fake.bikes.get(id);
+        if (!row || row.status === "lost" || row.status === "archived") return { rows: [] };
+        row.status = "lost";
+        return { rows: [{ id }] };
+      }
       if (text.startsWith("UPDATE bikes")) {
         // applyLiveUpdates batches N rows via `FROM (VALUES ...) AS v(...)`.
         // Params are pushed 5 at a time: bikeId, x, y, batteryPct, t.
@@ -125,10 +134,12 @@ vi.mock("../db/bootstrap", () => ({
 }));
 
 import { PgOmniStore } from "./store";
+import { resetMovementAlarmStreak } from "./theft-registry";
 import {
   lockAlarmEvents, LOCK_FALL_ALARM, type LockFallAlarmPayload,
   LOCK_MOVEMENT_ALARM, type LockMovementAlarmPayload,
   bikeAutoOfflineEvents, BIKE_AUTO_OFFLINE, type BikeAutoOfflinePayload,
+  bikeTheftEvents, BIKE_AUTO_LOST, type BikeAutoLostPayload,
 } from "../storage/events";
 
 const IMEI = "861234567890123";
@@ -136,6 +147,11 @@ const store = new PgOmniStore();
 
 beforeEach(() => {
   fake.reset();
+  // The movement/fall theft streak (theft-registry.ts) is a module-level
+  // singleton keyed by IMEI, not part of the `fake` DB — reset it too so
+  // tests earlier in this file (which also send code=1/2 alarms for IMEI)
+  // never leak a partial streak into a later test.
+  resetMovementAlarmStreak(IMEI);
 });
 
 describe("persistLockReport ordering guard (audit F-08)", () => {
@@ -356,6 +372,88 @@ describe("persistLockReport movement-alarm event bridge", () => {
     await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 1000);
 
     expect(received).toEqual([]);
+  });
+});
+
+describe("persistLockReport theft (auto-lost) streak", () => {
+  afterEach(() => {
+    bikeTheftEvents.removeAllListeners(BIKE_AUTO_LOST);
+    resetMovementAlarmStreak(IMEI);
+  });
+
+  it("transitions the bike to 'lost' after 6 alarms alternating illegal-movement (code=1) and fall (code=2)", async () => {
+    fake.locks.set(IMEI, { last_seen_at: null, bike_id: "bike-a" });
+    fake.bikes.set("bike-a", { last_seen: null, status: "rented" });
+    const lostEvents: BikeAutoLostPayload[] = [];
+    bikeTheftEvents.on(BIKE_AUTO_LOST, (payload: BikeAutoLostPayload) => lostEvents.push(payload));
+
+    const codes: Array<1 | 2> = [1, 2, 1, 2, 1, 2];
+    for (let i = 0; i < codes.length; i++) {
+      await store.persistLockReport(IMEI, { type: "alarm", code: codes[i] }, 1000 + i * 1000);
+    }
+
+    expect(fake.bikes.get("bike-a")?.status).toBe("lost");
+    expect(lostEvents).toEqual([{ bikeId: "bike-a", imei: IMEI, at: 6000 }]);
+  });
+
+  it("does not transition before 6 combined movement/fall alarms are reached", async () => {
+    fake.locks.set(IMEI, { last_seen_at: null, bike_id: "bike-a" });
+    fake.bikes.set("bike-a", { last_seen: null, status: "rented" });
+
+    for (let i = 0; i < 5; i++) {
+      await store.persistLockReport(IMEI, { type: "alarm", code: i % 2 === 0 ? 1 : 2 }, 1000 + i * 1000);
+    }
+
+    expect(fake.bikes.get("bike-a")?.status).toBe("rented");
+  });
+
+  it("ignores fall_cleared (code=6) reports for the streak — they neither count nor reset it", async () => {
+    fake.locks.set(IMEI, { last_seen_at: null, bike_id: "bike-a" });
+    fake.bikes.set("bike-a", { last_seen: null, status: "rented" });
+
+    // 5 movement/fall alarms, then a fall_cleared, then the 6th movement/fall
+    // alarm — the fall_cleared must not have reset the streak in between.
+    await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 1000);
+    await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 2000);
+    await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 3000);
+    await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 4000);
+    await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 5000);
+    await store.persistLockReport(IMEI, { type: "alarm", code: 6 }, 5500);
+    await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 6000);
+
+    expect(fake.bikes.get("bike-a")?.status).toBe("lost");
+  });
+
+  it("resets the streak on any report that is not a code=1/2/6 alarm", async () => {
+    fake.locks.set(IMEI, { last_seen_at: null, bike_id: "bike-a" });
+    fake.bikes.set("bike-a", { last_seen: null, status: "rented" });
+
+    await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 1000);
+    await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 2000);
+    await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 3000);
+    // A heartbeat in between breaks the streak — the next 3 alarms alone are
+    // not enough to reach the threshold of 6.
+    await store.persistLockReport(IMEI, { type: "heartbeat", locked: true, voltageCv: 400, signal: 20 }, 3500);
+    await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 4000);
+    await store.persistLockReport(IMEI, { type: "alarm", code: 1 }, 5000);
+    await store.persistLockReport(IMEI, { type: "alarm", code: 2 }, 6000);
+
+    expect(fake.bikes.get("bike-a")?.status).toBe("rented");
+  });
+
+  it("never re-transitions a bike an operator has already archived", async () => {
+    fake.locks.set(IMEI, { last_seen_at: null, bike_id: "bike-a" });
+    fake.bikes.set("bike-a", { last_seen: null, status: "archived" });
+    const lostEvents: BikeAutoLostPayload[] = [];
+    bikeTheftEvents.on(BIKE_AUTO_LOST, (payload: BikeAutoLostPayload) => lostEvents.push(payload));
+
+    const codes: Array<1 | 2> = [1, 2, 1, 2, 1, 2];
+    for (let i = 0; i < codes.length; i++) {
+      await store.persistLockReport(IMEI, { type: "alarm", code: codes[i] }, 1000 + i * 1000);
+    }
+
+    expect(fake.bikes.get("bike-a")?.status).toBe("archived");
+    expect(lostEvents).toEqual([]);
   });
 });
 
