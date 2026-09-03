@@ -48,14 +48,13 @@ async function main() {
 
   // ---- 3. Seed a pending OTP row directly ----
   await pool.query(
-    `INSERT INTO otp_requests (phone, name, code_hash, expires_at, attempts, last_sent_at, consumed)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [PHONE, "Legacy Rider", "deadbeef", Date.now() + 300000, 0, Date.now(), false],
+    `INSERT INTO otp_requests (phone, code_hash, expires_at, attempts, last_sent_at, consumed)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [PHONE, "deadbeef", Date.now() + 300000, 0, Date.now(), false],
   );
 
   const seeded = await storage.getLastOtpSend(PHONE);
   assert(!!seeded, "pending OTP row is readable");
-  assert(seeded!.name === "Legacy Rider", "row keeps its original name");
   assert(seeded!.provider == null, "row has a null provider before any send is recorded");
 
   // ---- 4. recordOtpSend persists provider diagnostics ----

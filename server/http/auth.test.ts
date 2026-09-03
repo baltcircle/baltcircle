@@ -10,6 +10,7 @@ const storageMock = vi.hoisted(() => ({
   updateProfile: vi.fn(),
   startOtp: vi.fn(),
   verifyOtp: vi.fn(),
+  completeRegistration: vi.fn(),
   recordOtpSend: vi.fn(),
   getLastOtpSend: vi.fn(),
   updateOtpProviderStatus: vi.fn(),
@@ -127,20 +128,7 @@ describe("POST /api/auth/otp/start", () => {
     const res = response();
 
     await post.get("/api/auth/otp/start")!(
-      request({ body: { name: "A", phone: "+79991234567", consent: true } }),
-      res,
-    );
-
-    expect(res.code).toBe(400);
-    expect(storageMock.startOtp).not.toHaveBeenCalled();
-  });
-
-  it("rejects when consent is not accepted", async () => {
-    const { post } = routeApp();
-    const res = response();
-
-    await post.get("/api/auth/otp/start")!(
-      request({ body: { name: "Иван Иванов", phone: "+79991234567", consent: false } }),
+      request({ body: { phone: "" } }),
       res,
     );
 
@@ -155,10 +143,11 @@ describe("POST /api/auth/otp/start", () => {
     const res = response();
 
     await post.get("/api/auth/otp/start")!(
-      request({ body: { name: "Иван Иванов", phone: "+79991234567", consent: true } }),
+      request({ body: { phone: "+79991234567" } }),
       res,
     );
 
+    expect(storageMock.startOtp).toHaveBeenCalledWith({ phone: "+79991234567" });
     expect(storageMock.recordOtpSend).toHaveBeenCalledWith(
       expect.objectContaining({ phone: "+79991234567", provider: "sigmasms" }),
     );
@@ -173,7 +162,7 @@ describe("POST /api/auth/otp/start", () => {
     const res = response();
 
     await post.get("/api/auth/otp/start")!(
-      request({ body: { name: "Иван Иванов", phone: "+79991234567", consent: true } }),
+      request({ body: { phone: "+79991234567" } }),
       res,
     );
 
@@ -186,7 +175,7 @@ describe("POST /api/auth/otp/start", () => {
     const res = response();
 
     await post.get("/api/auth/otp/start")!(
-      request({ body: { name: "Иван Иванов", phone: "+79991234567", consent: true } }),
+      request({ body: { phone: "+79991234567" } }),
       res,
     );
 
@@ -201,7 +190,7 @@ describe("POST /api/auth/otp/start", () => {
     const res = response();
 
     await post.get("/api/auth/otp/start")!(
-      request({ body: { name: "Иван Иванов", phone: "+79991234567", consent: true } }),
+      request({ body: { phone: "+79991234567" } }),
       res,
     );
 
@@ -223,8 +212,8 @@ describe("POST /api/auth/otp/verify", () => {
     expect(storageMock.verifyOtp).not.toHaveBeenCalled();
   });
 
-  it("creates a session on a correct code and returns the user", async () => {
-    storageMock.verifyOtp.mockResolvedValue({ user: { id: "user-1", name: "Иван", phone: "+79991234567", role: "rider" } });
+  it("creates a session and returns the user when the phone already has an account (login)", async () => {
+    storageMock.verifyOtp.mockResolvedValue({ status: "login", user: { id: "user-1", name: "Иван", phone: "+79991234567", role: "rider" } });
     const { post } = routeApp();
     const res = response();
     const req = request({ body: { phone: "+79991234567", code: "123456" } });
@@ -232,12 +221,12 @@ describe("POST /api/auth/otp/verify", () => {
     await post.get("/api/auth/otp/verify")!(req, res);
 
     expect(req.session.userId).toBe("user-1");
-    expect(res.code).toBe(201);
-    expect(res.body).toMatchObject({ id: "user-1" });
+    expect(res.code).toBe(200);
+    expect(res.body).toMatchObject({ status: "login", user: { id: "user-1" } });
   });
 
   it("regenerates the session id on login (audit LOW: session fixation)", async () => {
-    storageMock.verifyOtp.mockResolvedValue({ user: { id: "user-1", name: "Иван", phone: "+79991234567", role: "rider" } });
+    storageMock.verifyOtp.mockResolvedValue({ status: "login", user: { id: "user-1", name: "Иван", phone: "+79991234567", role: "rider" } });
     const { post } = routeApp();
     const res = response();
     // Simulate an attacker-fixed pre-auth session carrying unrelated data —
@@ -250,7 +239,7 @@ describe("POST /api/auth/otp/verify", () => {
     expect(regenerateSpy).toHaveBeenCalledTimes(1);
     expect(req.session.attackerPlanted).toBeUndefined();
     expect(req.session.userId).toBe("user-1");
-    expect(res.code).toBe(201);
+    expect(res.code).toBe(200);
   });
 
   it("does not create a session on a wrong code", async () => {
@@ -263,6 +252,100 @@ describe("POST /api/auth/otp/verify", () => {
 
     expect(req.session.userId).toBeUndefined();
     expect(res.code).toBe(400);
+  });
+
+  it("does not create an account for a brand-new phone — stashes it in the session pending registration", async () => {
+    storageMock.verifyOtp.mockResolvedValue({ status: "register", phone: "+79991234567" });
+    const { post } = routeApp();
+    const res = response();
+    const req = request({ body: { phone: "+79991234567", code: "123456" } });
+
+    await post.get("/api/auth/otp/verify")!(req, res);
+
+    expect(req.session.userId).toBeUndefined();
+    expect(req.session.pendingPhone).toMatchObject({ phone: "+79991234567" });
+    expect(res.code).toBe(200);
+    expect(res.body).toMatchObject({ status: "register" });
+  });
+});
+
+describe("POST /api/auth/register-complete", () => {
+  it("rejects when there is no pending phone in the session", async () => {
+    const { post } = routeApp();
+    const res = response();
+
+    await post.get("/api/auth/register-complete")!(
+      request({ body: { name: "Иван Иванов", email: "ivan@example.com", consent: true } }),
+      res,
+    );
+
+    expect(res.code).toBe(401);
+    expect(storageMock.completeRegistration).not.toHaveBeenCalled();
+  });
+
+  it("rejects an expired pending phone", async () => {
+    const { post } = routeApp();
+    const res = response();
+    const req = request({
+      body: { name: "Иван Иванов", email: "ivan@example.com", consent: true },
+      session: { pendingPhone: { phone: "+79991234567", expiresAt: Date.now() - 1000 } },
+    });
+
+    await post.get("/api/auth/register-complete")!(req, res);
+
+    expect(res.code).toBe(401);
+    expect(storageMock.completeRegistration).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid input (missing email) before touching storage", async () => {
+    const { post } = routeApp();
+    const res = response();
+    const req = request({
+      body: { name: "Иван Иванов", consent: true },
+      session: { pendingPhone: { phone: "+79991234567", expiresAt: Date.now() + 60_000 } },
+    });
+
+    await post.get("/api/auth/register-complete")!(req, res);
+
+    expect(res.code).toBe(400);
+    expect(storageMock.completeRegistration).not.toHaveBeenCalled();
+  });
+
+  it("creates the account using the SESSION's pending phone, not any phone in the body", async () => {
+    storageMock.completeRegistration.mockResolvedValue({
+      user: { id: "user-2", name: "Иван Иванов", phone: "+79991234567", email: "ivan@example.com", role: "rider" },
+    });
+    const { post } = routeApp();
+    const res = response();
+    const req = request({
+      body: { name: "Иван Иванов", email: "ivan@example.com", consent: true, phone: "+70000000000" },
+      session: { pendingPhone: { phone: "+79991234567", expiresAt: Date.now() + 60_000 } },
+    });
+
+    await post.get("/api/auth/register-complete")!(req, res);
+
+    expect(storageMock.completeRegistration).toHaveBeenCalledWith(
+      expect.objectContaining({ phone: "+79991234567", name: "Иван Иванов", email: "ivan@example.com" }),
+    );
+    expect(req.session.userId).toBe("user-2");
+    expect(req.session.pendingPhone).toBeUndefined();
+    expect(res.code).toBe(201);
+    expect(res.body).toMatchObject({ id: "user-2" });
+  });
+
+  it("does not create a session when storage returns an error", async () => {
+    storageMock.completeRegistration.mockResolvedValue({ error: "Введите корректный email" });
+    const { post } = routeApp();
+    const res = response();
+    const req = request({
+      body: { name: "Иван Иванов", email: "not-an-email", consent: true },
+      session: { pendingPhone: { phone: "+79991234567", expiresAt: Date.now() + 60_000 } },
+    });
+
+    await post.get("/api/auth/register-complete")!(req, res);
+
+    expect(res.code).toBe(400);
+    expect(req.session.userId).toBeUndefined();
   });
 });
 

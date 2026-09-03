@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { RegistrationModal } from "@/components/RegistrationModal";
+import { AuthModal } from "@/components/AuthModal";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
 import { QrCode, Camera, MapPin, Clock, Sparkles } from "lucide-react";
@@ -87,7 +87,7 @@ export function RentPage() {
 
   return (
     <>
-    <RegistrationModal
+    <AuthModal
       open={regOpen}
       onOpenChange={setRegOpen}
       onRegistered={() => startScan(true)}

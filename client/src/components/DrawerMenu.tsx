@@ -1,6 +1,6 @@
 import { LifeBuoy, Wallet, Route, ShieldCheck, Shield, ChevronRight, Bike } from "lucide-react";
 import { Logo } from "@/components/Logo";
-import { RegistrationModal } from "@/components/RegistrationModal";
+import { AuthModal } from "@/components/AuthModal";
 import { Link } from "wouter";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useQuery } from "@tanstack/react-query";
@@ -200,7 +200,7 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
           )}
         </nav>
       </div>
-      <RegistrationModal open={registrationOpen} onOpenChange={setRegistrationOpen} />
+      <AuthModal open={registrationOpen} onOpenChange={setRegistrationOpen} />
     </>
   );
 }

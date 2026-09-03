@@ -49,11 +49,9 @@ function safeEqualHex(a: string, b: string): boolean {
 
 export function OtpMixin<TBase extends Constructor>(Base: TBase) {
   return class extends Base implements IOtpStorage {
-    async startOtp({ name, phone }: { name: string; phone: string }) {
-      const cleanName = name.trim();
+    async startOtp({ phone }: { phone: string }) {
       const cleanPhone = normalizePhone(phone);
       const digits = cleanPhone.replace(/\D/g, "");
-      if (cleanName.length < 2) return { error: "Имя должно содержать минимум 2 символа" };
       if (digits.length < 10) return { error: "Введите корректный номер телефона" };
 
       const now = Date.now();
@@ -76,21 +74,24 @@ export function OtpMixin<TBase extends Constructor>(Base: TBase) {
       const expiresAt = now + OTP_TTL_MS;
 
       await db.insert(otpRequests)
-        .values({ phone: cleanPhone, name: cleanName, codeHash, expiresAt, attempts: 0, lastSentAt: now, consumed: false })
+        .values({ phone: cleanPhone, codeHash, expiresAt, attempts: 0, lastSentAt: now, consumed: false })
         .onConflictDoUpdate({
           target: otpRequests.phone,
-          set: { name: cleanName, codeHash, expiresAt, attempts: 0, lastSentAt: now, consumed: false },
+          set: { codeHash, expiresAt, attempts: 0, lastSentAt: now, consumed: false },
         });
 
       return { ok: true as const, phone: cleanPhone, code, resendInSec: OTP_RESEND_LOCK_MS / 1000 };
     }
 
-    // Step 2: verify a submitted code. On success the rider is created (or reused
-    // if the phone already registered) and the request row is consumed.
+    // Step 2: verify a submitted code. An existing phone logs the rider in
+    // (no account mutation — consent/name are only ever set at registration
+    // or via their own dedicated update flows). A brand-new phone does NOT
+    // create an account yet: registration still needs name/email/consent,
+    // collected by the caller via completeRegistration() below.
     async verifyOtp(
       this: IUserStorage & { isUniqueViolation(err: unknown): boolean },
-      { phone, code, consentIp }: { phone: string; code: string; consentIp?: string },
-    ): Promise<{ user: User } | { error: string }> {
+      { phone, code }: { phone: string; code: string },
+    ): Promise<{ status: "login"; user: User } | { status: "register"; phone: string } | { error: string }> {
       const cleanPhone = normalizePhone(phone);
 
       // Audit: read → consume → update/create ran as separate statements with no
@@ -136,47 +137,21 @@ export function OtpMixin<TBase extends Constructor>(Base: TBase) {
             // Correct code — consume the request so it can't be reused.
             await tx.update(otpRequests).set({ consumed: true }).where(eq(otpRequests.phone, cleanPhone));
 
-            // Consent was accepted at OTP start (the API requires consent: true
-            // before a code is sent), so record the consent metadata on verify
-            // when the rider row is created/refreshed. The verified phone IS the
-            // proof of consent.
-            const now = Date.now();
-            const role: UserRole = isAdminPhone(cleanPhone) ? "admin" : "rider";
-
-            // Reuse an existing rider for this phone (keeps rides/wallet) or
-            // create one. Read happens inside the same locked transaction, so no
-            // concurrent verify for this phone can interleave here anymore.
+            // Read happens inside the same locked transaction, so no concurrent
+            // verify for this phone can interleave here anymore.
             const existing = (await tx.select().from(users).where(eq(users.phone, cleanPhone)).limit(1))[0] as
               | User
               | undefined;
-            if (existing) {
-              const set: Partial<User> = {
-                updatedAt: now,
-                consentAcceptedAt: now,
-                consentVersion: CONSENT_VERSION,
-                consentIp: consentIp ?? existing.consentIp ?? null,
-                // Keep an already-elevated role (e.g. operator) but ensure admin
-                // phones are promoted. Never silently demote a stored operator/admin.
-                role: role === "admin" ? "admin" : (existing.role as UserRole),
-              };
-              if (existing.name !== req.name) set.name = req.name;
-              await tx.update(users).set(set as any).where(eq(users.id, existing.id));
-              return { kind: "userId" as const, userId: existing.id };
+            if (!existing) return { kind: "newPhone" as const };
+
+            // Login: promote an admin phone if needed, but never touch
+            // name/email/consent here — those only change via their own
+            // dedicated flows (profile PATCH, phone/email change, registration).
+            const now = Date.now();
+            if (isAdminPhone(cleanPhone) && existing.role !== "admin") {
+              await tx.update(users).set({ role: "admin", updatedAt: now } as any).where(eq(users.id, existing.id));
             }
-            const newId = randomUUID();
-            await tx.insert(users).values({
-              id: newId,
-              name: req.name,
-              phone: cleanPhone,
-              email: null,
-              role,
-              consentAcceptedAt: now,
-              consentVersion: CONSENT_VERSION,
-              consentIp: consentIp ?? null,
-              createdAt: now,
-              updatedAt: now,
-            } as any);
-            return { kind: "userId" as const, userId: newId };
+            return { kind: "userId" as const, userId: existing.id };
           });
         } catch (err) {
           // Belt-and-suspenders: the DB-level partial unique index on active
@@ -189,8 +164,57 @@ export function OtpMixin<TBase extends Constructor>(Base: TBase) {
       })();
 
       if (outcome.kind === "error") return { error: outcome.error };
-      if (outcome.kind === "raced") return { user: (await this.getUserByPhone(cleanPhone))! };
-      return { user: (await this.getUser(outcome.userId))! };
+      if (outcome.kind === "newPhone") return { status: "register" as const, phone: cleanPhone };
+      if (outcome.kind === "raced") return { status: "login" as const, user: (await this.getUserByPhone(cleanPhone))! };
+      return { status: "login" as const, user: (await this.getUser(outcome.userId))! };
+    }
+
+    // Step 3 (new accounts only): create the account once name/email/consent
+    // have been collected. `phone` here MUST come from the server-side
+    // session's `pendingPhone` (set by the route handler right after a
+    // successful verifyOtp "register" result) — never from client input —
+    // so a caller can't fabricate having verified an arbitrary number.
+    async completeRegistration(
+      this: IUserStorage & { isUniqueViolation(err: unknown): boolean },
+      { phone, name, email, consentIp }: { phone: string; name: string; email: string; consentIp?: string },
+    ): Promise<{ user: User } | { error: string }> {
+      const cleanPhone = normalizePhone(phone);
+      const cleanName = name.trim();
+      const cleanEmail = email.trim().toLowerCase();
+      if (cleanName.length < 2) return { error: "Имя должно содержать минимум 2 символа" };
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return { error: "Введите корректный email" };
+
+      const now = Date.now();
+      const role: UserRole = isAdminPhone(cleanPhone) ? "admin" : "rider";
+      try {
+        // Someone may have completed registration for this phone already (e.g.
+        // a duplicate tab submitting twice) — treat that as success instead of
+        // a confusing duplicate-key error.
+        const existing = (await db.select().from(users).where(eq(users.phone, cleanPhone)).limit(1))[0] as
+          | User
+          | undefined;
+        if (existing) return { user: existing };
+
+        const newId = randomUUID();
+        await db.insert(users).values({
+          id: newId,
+          name: cleanName,
+          phone: cleanPhone,
+          email: cleanEmail,
+          role,
+          consentAcceptedAt: now,
+          consentVersion: CONSENT_VERSION,
+          consentIp: consentIp ?? null,
+          createdAt: now,
+          updatedAt: now,
+        } as any);
+        return { user: (await this.getUser(newId))! };
+      } catch (err) {
+        // Belt-and-suspenders: DB-level partial unique index on active phones
+        // (bootstrap.ts) — fall back to the row the winner just created.
+        if (this.isUniqueViolation(err)) return { user: (await this.getUserByPhone(cleanPhone))! };
+        throw err;
+      }
     }
 
     // ---------- OTP delivery diagnostics ----------

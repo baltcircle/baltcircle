@@ -13,17 +13,31 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH } from "@/lib/otp";
-import { UserPlus, ShieldCheck, ArrowLeft } from "lucide-react";
+import { Phone, ShieldCheck, UserPlus, ArrowLeft } from "lucide-react";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // Called after a successful verification so the caller can resume whatever
-  // action the rider was attempting (e.g. open the rental modal).
+  // Called after a successful login OR registration so the caller can resume
+  // whatever action the rider was attempting (e.g. open the rental modal).
   onRegistered?: (user: User) => void;
 }
 
 type StartResponse = { phone: string; resendInSec: number; devCode?: string; providerStatus?: string };
+type VerifyResponse = { status: "login"; user: User } | { status: "register" };
+
+// Единое окно входа/регистрации: рider вводит только номер телефона. Сервер
+// сам решает, логин это или регистрация (см. POST /api/auth/otp/verify) —
+// поэтому здесь нет отдельных "вкладок" вход/регистрация, как на обычных
+// формах: переключение происходит автоматически по результату проверки кода.
+//
+// Шаги:
+//   "phone"   — ввод номера телефона, всегда первый экран.
+//   "code"    — ввод кода из SMS. Приходит независимо от того, зарегистрирован
+//               номер или нет.
+//   "profile" — только для новых номеров: имя, почта, согласие. Показывается
+//               после успешной проверки кода, если сервер вернул status:
+//               "register" — то есть номер подтверждён, но аккаунта ещё нет.
 
 // Ссылки на пользовательское соглашение/политику/согласие ведут на /legal —
 // готовую страницу «Правовые документы» (OverlayShell: правильный заголовок,
@@ -31,17 +45,19 @@ type StartResponse = { phone: string; resendInSec: number; devCode?: string; pro
 // часть того же OverlayRouter, что и /rent/(safety/... — переход между ними
 // не анимируется и не роняет z-50 оверлеи друг на друга).
 //
-// Проблема в другом: RegistrationModal рендерится ВНУТРИ overlay-страниц
-// (напр. RentPage на /rent), которые сами размонтируются, когда активным
-// становится другой overlay-маршрут (/legal) — вместе с ними размонтируется
-// и сама форма со своим состоянием (имя/телефон, open). Обычный useRef тут
-// не помогает: при возврате назад RentPage монтируется ЗАНОВО, и рефы жизни
-// предыдущего инстанса уже не существует. Поэтому состояние "нужно
-// переоткрыть форму + что там было введено" хранится в sessionStorage —
-// он переживает размонтирование/монтирование компонента.
-const REG_REOPEN_KEY = "bc.reg.reopen";
-const REG_NAME_KEY = "bc.reg.name";
-const REG_PHONE_KEY = "bc.reg.phone";
+// Проблема в другом: AuthModal рендерится ВНУТРИ overlay-страниц (напр.
+// RentPage на /rent), которые сами размонтируются, когда активным становится
+// другой overlay-маршрут (/legal) — вместе с ними размонтируется и сама форма
+// со своим состоянием (имя/почта, open). Обычный useRef тут не помогает: при
+// возврате назад RentPage монтируется ЗАНОВО, и рефы жизни предыдущего
+// инстанса уже не существует. Поэтому состояние "нужно переоткрыть форму +
+// что там было введено" хранится в sessionStorage — он переживает
+// размонтирование/монтирование компонента.
+const AUTH_REOPEN_KEY = "bc.auth.reopen";
+const AUTH_STEP_KEY = "bc.auth.step";
+const AUTH_NAME_KEY = "bc.auth.name";
+const AUTH_EMAIL_KEY = "bc.auth.email";
+const AUTH_PHONE_KEY = "bc.auth.phone";
 
 function isLegalPath(pathname: string): boolean {
   return pathname === "/legal" || pathname.startsWith("/legal/");
@@ -62,24 +78,30 @@ function normalizePhoneDigits(raw: string): string {
   return digits.slice(0, 10);
 }
 
-// Client-side mirror of the server validation so riders get instant feedback.
-// The server re-validates and is the source of truth.
-function validateContact(name: string, phone: string): string | null {
-  if (name.trim().length < 2) return "Введите имя (минимум 2 символа)";
+// Client-side mirrors of the server validation so riders get instant
+// feedback. The server re-validates and is the source of truth.
+function validatePhone(phone: string): string | null {
   const digits = phone.replace(/\D/g, "");
   if (digits.length < 10) return "Введите корректный номер телефона";
   return null;
 }
 
-export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
+function validateProfile(name: string, email: string): string | null {
+  if (name.trim().length < 2) return "Введите имя (минимум 2 символа)";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return "Введите корректный email";
+  return null;
+}
+
+export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
   const toast = useToast();
-  const [step, setStep] = useState<"contact" | "code">("contact");
-  const [name, setName] = useState("");
+  const [step, setStep] = useState<"phone" | "code" | "profile">("phone");
   // Phone digits only (without +7 prefix — we prepend it on submit)
   const [phoneDigits, setPhoneDigits] = useState("");
   const phone = phoneDigits ? "+7" + phoneDigits : "";
-  const [consent, setConsent] = useState(false);
   const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [consent, setConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Normalized phone returned by the server's start step — used verbatim for
@@ -91,9 +113,9 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
   const [resendIn, setResendIn] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // См. REG_REOPEN_KEY выше: если true, следующий эффект "reset on open" должен
-  // пропустить очистку ровно один раз — мы только что восстановили имя/телефон
-  // из sessionStorage, а не начинаем регистрацию заново.
+  // См. AUTH_REOPEN_KEY выше: если true, следующий эффект "reset on open"
+  // должен пропустить очистку ровно один раз — мы только что восстановили
+  // состояние из sessionStorage, а не начинаем заново.
   const skipNextResetRef = useRef(false);
 
   // Восстанавливает форму после чтения юридического документа на /legal.
@@ -101,26 +123,37 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
   // хост-страница типа RentPage размонтировалась и монтируется заново после
   // возврата) и на popstate (ловит случай, когда хост-страница типа MapPage
   // никогда не размонтируется, и монтирование не повторится).
+  //
+  // Восстановление ограничено шагом "profile" — это единственный шаг, где
+  // есть ссылки на /legal (согласие на обработку данных при завершении
+  // регистрации). Код подтверждения телефона на "code" не переживает
+  // возврат: заново прошедший через /legal рider просто вводит код ещё раз.
   useEffect(() => {
     function tryRestore() {
       let shouldReopen = false;
       try {
-        shouldReopen = sessionStorage.getItem(REG_REOPEN_KEY) === "1";
+        shouldReopen = sessionStorage.getItem(AUTH_REOPEN_KEY) === "1";
       } catch {
         /* ignore */
       }
       // Флаг мог остаться от брошенного раньше захода (пользователь ушёл
       // с /legal куда-то ещё, а не назад в форму) — не реагируем, пока мы всё
-      // ещё на /legal, иначе модалка регистрации откроется поверх самой /legal.
+      // ещё на /legal, иначе модалка откроется поверх самой /legal.
       if (!shouldReopen || isLegalPath(window.location.pathname)) return;
       try {
-        const savedName = sessionStorage.getItem(REG_NAME_KEY) ?? "";
-        const savedPhone = sessionStorage.getItem(REG_PHONE_KEY) ?? "";
-        sessionStorage.removeItem(REG_REOPEN_KEY);
-        sessionStorage.removeItem(REG_NAME_KEY);
-        sessionStorage.removeItem(REG_PHONE_KEY);
+        const savedStep = sessionStorage.getItem(AUTH_STEP_KEY);
+        const savedName = sessionStorage.getItem(AUTH_NAME_KEY) ?? "";
+        const savedEmail = sessionStorage.getItem(AUTH_EMAIL_KEY) ?? "";
+        const savedPhone = sessionStorage.getItem(AUTH_PHONE_KEY) ?? "";
+        sessionStorage.removeItem(AUTH_REOPEN_KEY);
+        sessionStorage.removeItem(AUTH_STEP_KEY);
+        sessionStorage.removeItem(AUTH_NAME_KEY);
+        sessionStorage.removeItem(AUTH_EMAIL_KEY);
+        sessionStorage.removeItem(AUTH_PHONE_KEY);
         skipNextResetRef.current = true;
+        setStep(savedStep === "profile" ? "profile" : "phone");
         setName(savedName);
+        setEmail(savedEmail);
         setPhoneDigits(savedPhone);
       } catch {
         /* ignore */
@@ -141,11 +174,12 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
         skipNextResetRef.current = false;
         return;
       }
-      setStep("contact");
-      setName("");
+      setStep("phone");
       setPhoneDigits("");
-      setConsent(false);
       setCode("");
+      setName("");
+      setEmail("");
+      setConsent(false);
       setError(null);
       setVerifiedPhone("");
       setProviderStatus(null);
@@ -174,11 +208,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
 
   const startMut = useMutation<StartResponse, Error, void>({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/auth/otp/start", {
-        name: name.trim(),
-        phone: phone.trim(),
-        consent,
-      });
+      const res = await apiRequest("POST", "/api/auth/otp/start", { phone: phone.trim() });
       return res.json();
     },
     onSuccess: (data) => {
@@ -209,7 +239,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
     },
   });
 
-  const verifyMut = useMutation<User, Error, void>({
+  const verifyMut = useMutation<VerifyResponse, Error, void>({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/auth/otp/verify", {
         phone: verifiedPhone,
@@ -217,26 +247,56 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
       });
       return res.json();
     },
-    onSuccess: (user) => {
-      queryClient.setQueryData(CURRENT_USER_KEY, user);
+    onSuccess: (data) => {
+      if (data.status === "register") {
+        // Phone confirmed, but no account yet — one more step to collect
+        // name/email/consent before the rider gets in.
+        setStep("profile");
+        setError(null);
+        return;
+      }
+      queryClient.setQueryData(CURRENT_USER_KEY, data.user);
       queryClient.invalidateQueries({ queryKey: CURRENT_USER_KEY });
       toast.toast({
-        title: "Номер подтверждён",
-        description: `Добро пожаловать, ${user.name}!`,
+        title: "Вход выполнен",
+        description: `С возвращением, ${data.user.name}!`,
       });
       onOpenChange(false);
-      onRegistered?.(user);
+      onRegistered?.(data.user);
     },
     onError: (err) => {
       setError(errorMessage(err, "Не удалось подтвердить код"));
     },
   });
 
-  function submitContact(e: React.FormEvent) {
+  const registerCompleteMut = useMutation<User, Error, void>({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/auth/register-complete", {
+        name: name.trim(),
+        email: email.trim(),
+        consent,
+      });
+      return res.json();
+    },
+    onSuccess: (user) => {
+      queryClient.setQueryData(CURRENT_USER_KEY, user);
+      queryClient.invalidateQueries({ queryKey: CURRENT_USER_KEY });
+      toast.toast({
+        title: "Регистрация завершена",
+        description: `Добро пожаловать, ${user.name}!`,
+      });
+      onOpenChange(false);
+      onRegistered?.(user);
+    },
+    onError: (err) => {
+      setError(errorMessage(err, "Не удалось завершить регистрацию"));
+    },
+  });
+
+  function submitPhone(e: React.FormEvent) {
     e.preventDefault();
-    const v = validateContact(name, phone);
+    const v = validatePhone(phone);
     if (v) return setError(v);
-    if (!consent) return setError("Необходимо принять Пользовательское соглашение и дать согласие на обработку персональных данных");
     setError(null);
     startMut.mutate();
   }
@@ -248,13 +308,22 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
     verifyMut.mutate();
   }
 
+  function submitProfile(e: React.FormEvent) {
+    e.preventDefault();
+    const v = validateProfile(name, email);
+    if (v) return setError(v);
+    if (!consent) return setError("Необходимо принять Пользовательское соглашение и дать согласие на обработку персональных данных");
+    setError(null);
+    registerCompleteMut.mutate();
+  }
+
   function resend() {
     if (resendIn > 0 || startMut.isPending) return;
     setError(null);
     startMut.mutate();
   }
 
-  // Сохраняет введённые имя/телефон и флаг "нужно переоткрыть" перед
+  // Сохраняет введённые имя/почту/шаг и флаг "нужно переоткрыть" перед
   // уходом на /legal, чтобы вернуться к форме с теми же данными после
   // возврата (см. эффект-восстановление выше). Закрывает саму модалку:
   // хосты, которые не размонтируются при смене overlay-маршрута (напр.
@@ -263,9 +332,11 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
   // навигацию — wouter Link сам выполнит переход после этого обработчика.
   function saveFormBeforeLegalNav() {
     try {
-      sessionStorage.setItem(REG_REOPEN_KEY, "1");
-      sessionStorage.setItem(REG_NAME_KEY, name);
-      sessionStorage.setItem(REG_PHONE_KEY, phoneDigits);
+      sessionStorage.setItem(AUTH_REOPEN_KEY, "1");
+      sessionStorage.setItem(AUTH_STEP_KEY, "profile");
+      sessionStorage.setItem(AUTH_NAME_KEY, name);
+      sessionStorage.setItem(AUTH_EMAIL_KEY, email);
+      sessionStorage.setItem(AUTH_PHONE_KEY, phoneDigits);
     } catch {
       /* квота sessionStorage или приватный режим — переход всё равно сработает,
          просто без авто-возврата к форме. */
@@ -273,50 +344,179 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
     onOpenChange(false);
   }
 
+  const title = step === "phone" ? "Вход" : step === "code" ? "Подтверждение номера" : "Регистрация";
+  const icon = step === "phone" ? <Phone className="w-5 h-5" /> : step === "code" ? <ShieldCheck className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />;
+  const description =
+    step === "phone"
+      ? "Укажите номер телефона. Мы отправим SMS с кодом подтверждения."
+      : step === "code"
+        ? `Введите код из SMS, отправленного на ${verifiedPhone}.`
+        : "Номер подтверждён. Укажите имя и почту, чтобы завершить регистрацию.";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="dialog-registration" className="rounded-2xl sm:rounded-2xl">
+      <DialogContent data-testid="dialog-auth" className="rounded-2xl sm:rounded-2xl">
         <DialogHeader>
           <DialogTitle className="font-display font-light flex items-center gap-2">
-            {step === "contact" ? <UserPlus className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
-            {step === "contact" ? "Регистрация" : "Подтверждение номера"}
+            {icon}
+            {title}
           </DialogTitle>
-          <DialogDescription>
-            {step === "contact"
-              ? "Укажите имя и номер телефона. Мы отправим SMS с кодом подтверждения."
-              : `Введите код из SMS, отправленного на ${verifiedPhone}.`}
-          </DialogDescription>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
-        {step === "contact" ? (
-          <form onSubmit={submitContact} className="space-y-4">
+        {step === "phone" && (
+          <form onSubmit={submitPhone} className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="registration-name">Имя</Label>
-              <Input
-                id="registration-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Ваше имя"
-                autoComplete="name"
-                data-testid="input-registration-name"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="registration-phone">Номер телефона</Label>
+              <Label htmlFor="auth-phone">Номер телефона</Label>
               <div className="flex items-center border rounded-md overflow-hidden focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-0">
                 <span className="px-3 py-2 bg-muted text-muted-foreground text-sm select-none border-r">+7</span>
                 <input
-                  id="registration-phone"
+                  id="auth-phone"
                   type="tel"
                   inputMode="numeric"
                   value={phoneDigits}
                   onChange={(e) => setPhoneDigits(normalizePhoneDigits(e.target.value))}
                   placeholder="900 000-00-00"
                   autoComplete="tel-national"
-                  data-testid="input-registration-phone"
+                  autoFocus
+                  data-testid="input-auth-phone"
                   className="flex-1 px-3 py-2 text-sm bg-background outline-none"
                 />
               </div>
+            </div>
+
+            {error && (
+              <p className="text-sm text-destructive" data-testid="text-auth-error">
+                {error}
+              </p>
+            )}
+
+            {resendIn > 0 && (
+              <p className="text-xs text-muted-foreground" data-testid="text-resend-cooldown">
+                Повторная отправка будет доступна через{" "}
+                <span className="tabular-nums font-medium">{resendIn}</span> с
+              </p>
+            )}
+
+            <DialogFooter className="flex-col gap-2 sm:flex-col">
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={startMut.isPending || resendIn > 0}
+                data-testid="button-send-otp"
+              >
+                {startMut.isPending ? "Отправка…" : resendIn > 0 ? `Подождите ${resendIn} с` : "Получить код"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={() => onOpenChange(false)}
+                data-testid="button-auth-close"
+              >
+                Закрыть
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+
+        {step === "code" && (
+          <form onSubmit={submitCode} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="auth-code">Код из SMS</Label>
+              <Input
+                id="auth-code"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={OTP_CODE_LENGTH}
+                value={code}
+                onChange={(e) => setCode(sanitizeOtpInput(e.target.value))}
+                placeholder="123456"
+                autoFocus
+                className="font-mono tracking-[0.5em] text-center text-lg"
+                data-testid="input-auth-code"
+              />
+            </div>
+
+            {providerStatus && (
+              <p className="text-xs text-muted-foreground" data-testid="text-sms-status">
+                SMS отправлено, статус: {providerStatus}
+              </p>
+            )}
+
+            <div className="text-xs text-muted-foreground">
+              {resendIn > 0 ? (
+                <span data-testid="text-resend-timer">
+                  Повторная отправка через {resendIn} с
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={resend}
+                  disabled={startMut.isPending}
+                  className="underline hover:text-foreground disabled:opacity-50"
+                  data-testid="button-resend-otp"
+                >
+                  {startMut.isPending ? "Отправка…" : "Отправить код повторно"}
+                </button>
+              )}
+            </div>
+
+            {error && (
+              <p className="text-sm text-destructive" data-testid="text-auth-error">
+                {error}
+              </p>
+            )}
+
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setStep("phone");
+                  setError(null);
+                }}
+                data-testid="button-auth-back"
+              >
+                <ArrowLeft className="w-4 h-4 mr-1" /> Назад
+              </Button>
+              <Button
+                type="submit"
+                disabled={verifyMut.isPending || !isCompleteOtp(code)}
+                data-testid="button-verify-otp"
+              >
+                {verifyMut.isPending ? "Проверка…" : "Подтвердить"}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+
+        {step === "profile" && (
+          <form onSubmit={submitProfile} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="auth-name">Имя</Label>
+              <Input
+                id="auth-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ваше имя"
+                autoComplete="name"
+                autoFocus
+                data-testid="input-auth-name"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="auth-email">Почта</Label>
+              <Input
+                id="auth-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                autoComplete="email"
+                data-testid="input-auth-email"
+              />
             </div>
 
             <div className="flex items-start gap-2.5">
@@ -360,102 +560,19 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
             </div>
 
             {error && (
-              <p className="text-sm text-destructive" data-testid="text-registration-error">
-                {error}
-              </p>
-            )}
-
-            {resendIn > 0 && (
-              <p className="text-xs text-muted-foreground" data-testid="text-resend-cooldown">
-                Повторная отправка будет доступна через{" "}
-                <span className="tabular-nums font-medium">{resendIn}</span> с
-              </p>
-            )}
-
-            <DialogFooter className="gap-2 sm:gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => onOpenChange(false)}
-                data-testid="button-registration-close"
-              >
-                Закрыть
-              </Button>
-              <Button
-                type="submit"
-                disabled={startMut.isPending || !consent || resendIn > 0}
-                data-testid="button-send-otp"
-              >
-                {startMut.isPending ? "Отправка…" : resendIn > 0 ? `Подождите ${resendIn} с` : "Получить код"}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : (
-          <form onSubmit={submitCode} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="registration-code">Код из SMS</Label>
-              <Input
-                id="registration-code"
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={OTP_CODE_LENGTH}
-                value={code}
-                onChange={(e) => setCode(sanitizeOtpInput(e.target.value))}
-                placeholder="123456"
-                className="font-mono tracking-[0.5em] text-center text-lg"
-                data-testid="input-registration-code"
-              />
-            </div>
-
-            {providerStatus && (
-              <p className="text-xs text-muted-foreground" data-testid="text-sms-status">
-                SMS отправлено, статус: {providerStatus}
-              </p>
-            )}
-
-            <div className="text-xs text-muted-foreground">
-              {resendIn > 0 ? (
-                <span data-testid="text-resend-timer">
-                  Повторная отправка через {resendIn} с
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={resend}
-                  disabled={startMut.isPending}
-                  className="underline hover:text-foreground disabled:opacity-50"
-                  data-testid="button-resend-otp"
-                >
-                  {startMut.isPending ? "Отправка…" : "Отправить код повторно"}
-                </button>
-              )}
-            </div>
-
-            {error && (
-              <p className="text-sm text-destructive" data-testid="text-registration-error">
+              <p className="text-sm text-destructive" data-testid="text-auth-error">
                 {error}
               </p>
             )}
 
             <DialogFooter className="gap-2 sm:gap-2">
               <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setStep("contact");
-                  setError(null);
-                }}
-                data-testid="button-registration-back"
-              >
-                <ArrowLeft className="w-4 h-4 mr-1" /> Назад
-              </Button>
-              <Button
                 type="submit"
-                disabled={verifyMut.isPending || !isCompleteOtp(code)}
-                data-testid="button-verify-otp"
+                className="w-full"
+                disabled={registerCompleteMut.isPending || !consent}
+                data-testid="button-complete-registration"
               >
-                {verifyMut.isPending ? "Проверка…" : "Подтвердить"}
+                {registerCompleteMut.isPending ? "Регистрация…" : "Завершить регистрацию"}
               </Button>
             </DialogFooter>
           </form>
