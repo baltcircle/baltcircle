@@ -192,6 +192,7 @@ export interface IBikeStorage {
   createBike(input: AdminCreateBikeInput): Promise<{ bike: Bike } | { error: string }>;
   adminUpdateBike(id: string, patch: AdminUpdateBikeInput): Promise<{ bike: Bike } | { error: string }>;
   archiveBike(id: string): Promise<{ bike: Bike } | { error: string }>;
+  restoreBike(id: string): Promise<{ bike: Bike } | { error: string }>;
   deleteBike(id: string): Promise<{ ok: true } | { error: string; archived?: Bike }>;
   purgeArchivedTestBike(id: string): Promise<
     | { ok: true; deleted: Record<

@@ -16,7 +16,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  Pencil, QrCode, Archive, Trash2, Bike as BikeIcon, Wrench, FlaskConical,
+  Pencil, QrCode, Archive, Trash2, Bike as BikeIcon, Wrench, FlaskConical, RotateCcw,
 } from "lucide-react";
 import { Link } from "wouter";
 import { TablePager, useClientPagination } from "@/components/table-pager";
@@ -48,6 +48,19 @@ export function BikesTable({
       queryClient.invalidateQueries({ queryKey: ADMIN_BIKES_KEY });
       queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
       toast.toast({ title: "Велосипед в архиве", description: bike.id });
+    },
+    onError: (err: any) => toast.toast({ title: "Не удалось", description: err?.message?.replace(/^\d+:\s*/, ""), variant: "destructive" }),
+  });
+
+  const restoreMut = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/admin/bikes/${encodeURIComponent(id)}/restore`);
+      return res.json() as Promise<Bike>;
+    },
+    onSuccess: (bike) => {
+      queryClient.invalidateQueries({ queryKey: ADMIN_BIKES_KEY });
+      queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
+      toast.toast({ title: "Велосипед восстановлен", description: bike.id });
     },
     onError: (err: any) => toast.toast({ title: "Не удалось", description: err?.message?.replace(/^\d+:\s*/, ""), variant: "destructive" }),
   });
@@ -151,6 +164,17 @@ export function BikesTable({
                       data-testid={`button-archive-${b.id}`}
                     >
                       <Archive className="w-4 h-4" />
+                    </Button>
+                  )}
+                  {canWrite && b.status === "archived" && (
+                    <Button
+                      variant="ghost" size="icon"
+                      onClick={() => restoreMut.mutate(b.id)}
+                      disabled={restoreMut.isPending}
+                      title="Восстановить из архива"
+                      data-testid={`button-restore-${b.id}`}
+                    >
+                      <RotateCcw className="w-4 h-4" />
                     </Button>
                   )}
                   {canWrite && (

@@ -397,6 +397,21 @@ export function registerCatalogRoutes(app: Express): void {
     }
     res.json(result.bike);
   });
+  app.post("/api/admin/bikes/:id/restore", requireRole("operator", "admin"), async (req, res) => {
+    const result = await storage.restoreBike(String(req.params.id));
+    if ("error" in result) {
+      const status = (result.error ?? "").includes("не найден") ? 404 : 400;
+      return res.status(status).json(result);
+    }
+    // GPS-interval sync (fire-and-forget, mirrors the archive route above):
+    // "offline" settles to its own out-of-rotation cadence. "offline" is
+    // deliberately excluded from MOVEMENT_ALARM_SUPPRESSED_STATUSES (see the
+    // comment above that set), so no unlock call is fired here.
+    if (result.bike.lockImei) {
+      getLockGateway()?.syncGpsTrackingForStatus(result.bike.lockImei, result.bike.id, "offline");
+    }
+    res.json(result.bike);
+  });
   app.delete("/api/admin/bikes/:id", requireRole("operator", "admin"), async (req, res) => {
     const result = await storage.deleteBike(String(req.params.id));
     if ("error" in result) {

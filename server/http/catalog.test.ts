@@ -20,6 +20,7 @@ const storageMock = vi.hoisted(() => ({
   decommissionLock: vi.fn(),
   getActiveRideForBike: vi.fn(),
   purgeArchivedTestBike: vi.fn(),
+  restoreBike: vi.fn(),
   adminUpdateBike: vi.fn(),
   listAlerts: vi.fn(),
   acknowledgeAlert: vi.fn(),
@@ -458,6 +459,73 @@ describe("POST /api/admin/bikes/:id/purge", () => {
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: "Велосипед не найден" });
+  });
+});
+
+describe("POST /api/admin/bikes/:id/restore", () => {
+  const operator = { id: "operator-4", role: "operator" };
+  const restoredBike = {
+    id: "bike-1", model: "Cruiser", battery: 80, lat: 100, lng: 100,
+    lastSeen: 0, idleHours: 0, flagged: false, parkingId: null,
+    lockImei: "862596083776074", lockOnline: true, lockLastSeen: 0,
+    notes: null, maintenanceReason: null, seed: false, status: "offline",
+  };
+
+  beforeEach(() => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+  });
+
+  it("requires a session", async () => {
+    sessionUserId = null;
+
+    const res = await lockRequest("/api/admin/bikes/bike-1/restore", "POST");
+
+    expect(res.status).toBe(401);
+    expect(storageMock.restoreBike).not.toHaveBeenCalled();
+  });
+
+  it("restores an archived bike to offline and syncs the GPS interval", async () => {
+    storageMock.restoreBike.mockResolvedValue({ bike: restoredBike });
+    const syncGpsTrackingForStatus = vi.fn();
+    setLockGateway({ sendUnlockCommand: vi.fn(), syncGpsTrackingForStatus } as any);
+
+    const res = await lockRequest("/api/admin/bikes/bike-1/restore", "POST");
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(restoredBike);
+    expect(storageMock.restoreBike).toHaveBeenCalledWith("bike-1");
+    expect(syncGpsTrackingForStatus).toHaveBeenCalledWith(restoredBike.lockImei, restoredBike.id, "offline");
+  });
+
+  it("maps \"not archived\" guard rejection to 400", async () => {
+    storageMock.restoreBike.mockResolvedValue({ error: "Велосипед не в архиве" });
+
+    const res = await lockRequest("/api/admin/bikes/bike-1/restore", "POST");
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "Велосипед не в архиве" });
+  });
+
+  it("404s when the bike does not exist", async () => {
+    storageMock.restoreBike.mockResolvedValue({ error: "Велосипед не найден" });
+
+    const res = await lockRequest("/api/admin/bikes/ghost/restore", "POST");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Велосипед не найден" });
+  });
+
+  it("skips the GPS sync when the bike has no fitted lock", async () => {
+    storageMock.restoreBike.mockResolvedValue({ bike: { ...restoredBike, lockImei: null } });
+    const syncGpsTrackingForStatus = vi.fn();
+    setLockGateway({ sendUnlockCommand: vi.fn(), syncGpsTrackingForStatus } as any);
+
+    const res = await lockRequest("/api/admin/bikes/bike-1/restore", "POST");
+
+    expect(res.status).toBe(200);
+    expect(syncGpsTrackingForStatus).not.toHaveBeenCalled();
   });
 });
 
