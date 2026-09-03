@@ -241,8 +241,11 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
 
   // Сохраняет введённые имя/телефон и флаг "нужно переоткрыть" перед
   // уходом на /legal, чтобы вернуться к форме с теми же данными после
-  // возврата (см. эффект-восстановление выше). Не блокирует навигацию
-  // — wouter Link сам выполнит переход после этого обработчика.
+  // возврата (см. эффект-восстановление выше). Закрывает саму модалку:
+  // хосты, которые не размонтируются при смене overlay-маршрута (напр.
+  // MapPage), иначе оставили бы Dialog открытым — он висел бы над/под
+  // страницей /legal вместо того, чтобы уступить ей место. Не блокирует
+  // навигацию — wouter Link сам выполнит переход после этого обработчика.
   function saveFormBeforeLegalNav() {
     try {
       sessionStorage.setItem(REG_REOPEN_KEY, "1");
@@ -252,6 +255,7 @@ export function RegistrationModal({ open, onOpenChange, onRegistered }: Props) {
       /* квота sessionStorage или приватный режим — переход всё равно сработает,
          просто без авто-возврата к форме. */
     }
+    onOpenChange(false);
   }
 
   return (
