@@ -95,7 +95,7 @@
     "express": "^5.0.1",
     "express-rate-limit": "^7.5.1",
     "express-session": "^1.18.1",
-    "framer-motion": "^11.13.1",
+    "framer-motion": "^13.1.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.453.0",
     "maplibre-gl": "^4.7.1",
