@@ -3,7 +3,7 @@ import {
   reservations, alerts, bikeTelemetry, rideFeedback, ridePoints, ticketComments,
 } from "@shared/schema";
 import type { Bike, Lock, Parking, AdminCreateBikeInput, AdminUpdateBikeInput } from "@shared/schema";
-import { DEFAULT_BIKE_MODEL, bikeIdRegex } from "@shared/schema";
+import { DEFAULT_BIKE_MODEL, bikeIdRegex, UNASSIGNED_LOCK_TTL_MS } from "@shared/schema";
 import { eq, count, inArray, or } from "drizzle-orm";
 import { MAP_W, MAP_H, realToMap, GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS } from "@shared/geo";
 import { db, pool } from "../db/bootstrap";
@@ -93,6 +93,26 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
             AND NOT EXISTS (SELECT 1 FROM bikes b WHERE b.lock_imei = l.imei)
           ORDER BY l.last_seen_at DESC NULLS LAST, l.created_at DESC`,
       )).rows as { imei: string; lastSeen: number | null }[];
+    }
+
+    // A lock that has dialled into the OMNI gateway at least once but has no
+    // `locks` registry row yet (resolveAuth's fail-closed rejection records the
+    // sighting via recordUnassignedLock — see server/omni/server.ts). This is
+    // how an operator learns a brand-new lock's IMEI without reading it off the
+    // device, so they can register it (POST /api/admin/locks) right after
+    // powering it on / inserting its SIM. Excludes IMEIs that already got a
+    // registry row through some other path (e.g. manual entry while this row
+    // was still buffered) and anything older than the discovery TTL, in case
+    // the write-side prune hasn't run yet.
+    async listDiscoveredLocks(): Promise<{ imei: string; firstSeen: number; lastSeen: number }[]> {
+      return (await pool.query(
+        `SELECT u.imei, u.first_seen AS "firstSeen", u.last_seen AS "lastSeen"
+           FROM unassigned_locks u
+          WHERE u.last_seen >= $1
+            AND NOT EXISTS (SELECT 1 FROM locks l WHERE l.imei = u.imei)
+          ORDER BY u.last_seen DESC`,
+        [Date.now() - UNASSIGNED_LOCK_TTL_MS],
+      )).rows as { imei: string; firstSeen: number; lastSeen: number }[];
     }
 
     // The lock is now in the registry, so its discovery row is noise. Best-effort:

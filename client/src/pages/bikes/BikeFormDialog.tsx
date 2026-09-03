@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { Bike, BikeStatus } from "@shared/schema";
 import { BIKE_STATUSES } from "@shared/schema";
@@ -15,9 +15,9 @@ import {
 } from "@/components/ui/select";
 import { LockPicker } from "./LockPicker";
 import {
-  ADMIN_BIKES_KEY, UNASSIGNED_LOCKS_KEY, STATUS_LABEL,
+  ADMIN_BIKES_KEY, UNASSIGNED_LOCKS_KEY, DISCOVERED_LOCKS_KEY, STATUS_LABEL,
   emptyBikeForm, buildBikeSavePayload, liveLockBatteryDisplay,
-  type BikeSaveForm, type UnassignedLock,
+  type BikeSaveForm, type UnassignedLock, type DiscoveredLock,
 } from "./bike-utils";
 
 export function BikeFormDialog({
@@ -54,6 +54,51 @@ export function BikeFormDialog({
     refetchInterval: open ? 10_000 : false,
     staleTime: 0,
   });
+  const discoveredQ = useQuery<DiscoveredLock[]>({
+    queryKey: DISCOVERED_LOCKS_KEY,
+    enabled: open && canWrite,
+    refetchInterval: open ? 10_000 : false,
+    staleTime: 0,
+  });
+
+  // Track which IMEI is mid-registration so its button can show a spinner
+  // without disabling the whole form, and so the freshly-registered lock can
+  // be auto-selected once it lands in the unassigned list.
+  const [registeringImei, setRegisteringImei] = useState<string | null>(null);
+  const pendingAutoSelect = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pendingAutoSelect.current) return;
+    const imei = pendingAutoSelect.current;
+    if ((locksQ.data ?? []).some((l) => l.imei === imei)) {
+      setForm((f) => ({ ...f, lockImei: imei }));
+      pendingAutoSelect.current = null;
+    }
+  }, [locksQ.data]);
+
+  const registerMut = useMutation({
+    mutationFn: async (imei: string) => {
+      const res = await apiRequest("POST", "/api/admin/locks", { imei });
+      return res.json();
+    },
+    onSuccess: (_data, imei) => {
+      pendingAutoSelect.current = imei;
+      toast.toast({ title: "Замок зарегистрирован", description: imei });
+    },
+    onError: (err: any) => toast.toast({
+      title: "Не удалось зарегистрировать замок",
+      description: err?.message?.replace(/^\d+:\s*/, "") ?? "Попробуйте ещё раз",
+      variant: "destructive",
+    }),
+    onSettled: () => {
+      setRegisteringImei(null);
+      queryClient.invalidateQueries({ queryKey: DISCOVERED_LOCKS_KEY });
+      queryClient.invalidateQueries({ queryKey: UNASSIGNED_LOCKS_KEY });
+    },
+  });
+  const handleRegister = (imei: string) => {
+    setRegisteringImei(imei);
+    registerMut.mutate(imei);
+  };
 
   // A lock selected for a pending swap has not reported for this bike yet, so
   // never show the old lock's charge as though it were the selected lock's data.
@@ -143,6 +188,9 @@ export function BikeFormDialog({
             value={form.lockImei}
             onChange={(imei) => setForm((f) => ({ ...f, lockImei: imei }))}
             locks={locksQ.data ?? []}
+            discovered={discoveredQ.data ?? []}
+            registeringImei={registeringImei}
+            onRegister={handleRegister}
             currentImei={editing?.lockImei ?? null}
             required={!editing}
           />

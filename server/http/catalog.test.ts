@@ -13,6 +13,7 @@ const storageMock = vi.hoisted(() => ({
   getUser: vi.fn(),
   listBikes: vi.fn(),
   listUnassignedLocks: vi.fn(),
+  listDiscoveredLocks: vi.fn(),
   listLocks: vi.fn(),
   createLock: vi.fn(),
   getLock: vi.fn(),
@@ -128,6 +129,46 @@ describe("GET /api/admin/locks/unassigned", () => {
     await getLocks();
 
     expect(storageMock.listUnassignedLocks).toHaveBeenCalledWith();
+  });
+});
+
+describe("GET /api/admin/locks/discovered", () => {
+  async function getDiscovered(): Promise<{ status: number; body: any }> {
+    if (!server) await start();
+    const res = await fetch(`${baseUrl}/api/admin/locks/discovered`);
+    return { status: res.status, body: await res.json() };
+  }
+
+  it("requires a session", async () => {
+    const res = await getDiscovered();
+
+    expect(res.status).toBe(401);
+    expect(storageMock.listDiscoveredLocks).not.toHaveBeenCalled();
+  });
+
+  it("refuses a signed-in rider", async () => {
+    sessionUserId = "u1";
+    storageMock.getUser.mockResolvedValue({ id: "u1", role: "rider" });
+
+    const res = await getDiscovered();
+
+    expect(res.status).toBe(403);
+    expect(storageMock.listDiscoveredLocks).not.toHaveBeenCalled();
+  });
+
+  it("returns imei + firstSeen + lastSeen for an operator", async () => {
+    sessionUserId = "u2";
+    storageMock.getUser.mockResolvedValue({ id: "u2", role: "operator" });
+    storageMock.listDiscoveredLocks.mockResolvedValue([
+      { imei: "861234567890123", firstSeen: 1_700_000_000_000, lastSeen: 1_700_000_100_000 },
+    ]);
+
+    const res = await getDiscovered();
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([
+      { imei: "861234567890123", firstSeen: 1_700_000_000_000, lastSeen: 1_700_000_100_000 },
+    ]);
   });
 });
 

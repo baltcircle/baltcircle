@@ -290,6 +290,13 @@ export function registerCatalogRoutes(app: Express): void {
     res.json(await storage.listUnassignedLocks());
   });
 
+  // A lock that has dialled into the OMNI gateway but has no registry row yet
+  // (see server/storage/bike.ts:listDiscoveredLocks). Lets an operator learn a
+  // brand-new lock's IMEI and register it right after powering it on.
+  app.get("/api/admin/locks/discovered", requireRole("operator", "admin"), async (_req, res) => {
+    res.json(await storage.listDiscoveredLocks());
+  });
+
   // -------------- Admin: lock device registry (Phase 1) --------------
   // This only owns registered-device metadata. The OMNI TCP gateway is
   // intentionally outside this API and will update telemetry in a later phase.
