@@ -29,13 +29,23 @@ export function ticketMarkerColor(priority: string): string {
  *  solid black via CSS filter so it reads on every status colour) centred
  *  inside the circle instead of a blank dot — status colour still comes
  *  from `color`, only the glyph is added (bike-marker rebrand). */
+// Alpha applied to the bike-marker circle fill (as a 2-digit hex suffix on
+// the #rrggbb status colour) so the black bicycle glyph reads more clearly
+// against it — a fully opaque fill made the icon harder to distinguish from
+// its background, especially on the darker status colours.
+const BIKE_FILL_ALPHA_HEX = "cc"; // ~80% opacity
+
 export function dotMarkerEl(color: string, opts: { ring?: boolean; size?: number; clickable?: boolean; fallen?: boolean; bike?: boolean } = {}): HTMLDivElement {
   const size = opts.fallen ? Math.max(opts.size ?? 16, 22) : (opts.size ?? 16);
   const el = document.createElement("div");
   el.style.width = `${size}px`;
   el.style.height = `${size}px`;
   el.style.borderRadius = "50%";
-  el.style.background = opts.fallen ? MARKER_COLORS.fallen : color;
+  el.style.background = opts.fallen
+    ? MARKER_COLORS.fallen
+    : opts.bike
+      ? `${color}${BIKE_FILL_ALPHA_HEX}`
+      : color;
   el.style.border = opts.ring ? "3px solid #fff" : "2px solid #fff";
   el.style.boxShadow = "0 1px 4px rgba(0,0,0,0.35)";
   el.style.boxSizing = "border-box";
