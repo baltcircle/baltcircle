@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Lock, Route, Pause, PlusCircle, Loader2, X } from "lucide-react";
+import { Lock, Route, Pause, PlusCircle, Loader2, X, Bike } from "lucide-react";
 import { PauseGraceCountdown } from "@/components/PauseGraceCountdown";
 import type { Ride } from "@shared/schema";
 import type { Tariff } from "@shared/geo";
@@ -25,11 +25,15 @@ interface ActiveRideCardProps {
   cancellingEnd: boolean;
   onExtend: (tariff: Tariff["id"]) => void;
   extending: boolean;
+  /** true when the rider has room for a second simultaneous ride (< max active). */
+  showAddSecondRide?: boolean;
+  onAddSecondRide?: () => void;
 }
 
 export function ActiveRideCard({
   ride, onEnd, ending, onPause, onResume, pausing, resuming, awaitingLockClose,
   awaitingEndLockClose, onCancelEnd, cancellingEnd, onExtend, extending,
+  showAddSecondRide, onAddSecondRide,
 }: ActiveRideCardProps) {
   const [extendOpen, setExtendOpen] = useState(false);
   const paused = ride.pausedAt != null;
@@ -97,13 +101,13 @@ export function ActiveRideCard({
         </div>
       )}
 
-      <div className="mt-2 grid grid-cols-2 gap-2">
+      <div className={`mt-2 grid gap-2 ${showAddSecondRide ? "grid-cols-3" : "grid-cols-2"}`}>
         <button
           type="button"
           onClick={paused || awaitingLockClose ? onResume : onPause}
           disabled={pausing || resuming || awaitingEndLockClose}
           data-testid={paused ? "button-resume-ride" : "button-pause-ride"}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-muted h-11 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-muted min-h-11 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
         >
           {pausing || resuming ? (
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -126,10 +130,25 @@ export function ActiveRideCard({
           onClick={() => setExtendOpen(true)}
           disabled={extending || awaitingEndLockClose}
           data-testid="button-extend-ride"
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-muted h-11 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-muted min-h-11 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
         >
           <PlusCircle className="w-4 h-4" /> Продлить
         </button>
+        {showAddSecondRide && (
+          <button
+            type="button"
+            onClick={onAddSecondRide}
+            disabled={awaitingEndLockClose}
+            data-testid="button-add-second-ride"
+            className="inline-flex flex-col items-center justify-center gap-1 rounded-xl bg-muted min-h-11 py-2 px-1 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
+          >
+            <span className="relative inline-flex items-center justify-center w-5 h-4 shrink-0">
+              <Bike className="w-3.5 h-3.5 absolute left-0 top-0 opacity-60" />
+              <Bike className="w-3.5 h-3.5 absolute right-0 top-0.5" />
+            </span>
+            <span className="text-[10px] leading-tight text-center">Ещё один велосипед</span>
+          </button>
+        )}
       </div>
 
       <div className="mt-2">

@@ -33,8 +33,12 @@ export async function startRideForPaidOrder(
 ): Promise<{ ok: true; rideId: number } | { ok: false; reason: string }> {
   let rideId: number | null = order.rideId ?? null;
   if (rideId == null) {
-    const existing = await storage.getActiveRide(order.userId);
-    if (existing && existing.bikeId === order.bikeId) {
+    // The rider may hold up to MAX_ACTIVE_RIDES_PER_USER concurrent active
+    // rides now, so "the" active ride for this bike is no longer unique by
+    // definition — find the one (if any) whose bikeId matches this order.
+    const existing = (await storage.getActiveRides(order.userId))
+      .find((r) => r.bikeId === order.bikeId);
+    if (existing) {
       rideId = existing.id;
     } else {
       const started = await storage.startRide({

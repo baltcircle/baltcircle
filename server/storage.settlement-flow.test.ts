@@ -91,7 +91,13 @@ function extractEqValue(cond: unknown): unknown {
 interface SettlementState {
   bikes: Map<string, Record<string, unknown>>;
   wallet: { balance: number } | undefined;
+  // `ride` is kept as a convenience alias to the most recently inserted or
+  // updated ride row, for the many single-ride tests in this file that only
+  // ever have one. `rides` is the full backing array — the two-bikes-at-once
+  // feature means a rider can hold more than one active row at a time, so any
+  // query keyed by userId+status (not a specific id) must read from `rides`.
   ride: Record<string, unknown> | undefined;
+  rides: Record<string, unknown>[];
   ridePointsRows: { x: number; y: number; t: number }[];
   paymentRows: Record<string, unknown>[];
   parkingRows: Record<string, unknown>[];
@@ -114,6 +120,7 @@ function makeSettlementState(fleet: Bike | Bike[], walletBalance: number | undef
     bikes: new Map(bikeList.map((b) => [b.id, { ...b } as Record<string, unknown>])),
     wallet: walletBalance === undefined ? undefined : { balance: walletBalance },
     ride: undefined,
+    rides: [],
     ridePointsRows: [],
     paymentRows: [],
     parkingRows: [{ id: "P-1", lat: 10, lng: 20, radius: 999999, status: "active", archivedAt: null }],
@@ -132,7 +139,19 @@ function makeTx(state: SettlementState) {
       }
       return Array.from(state.bikes.values());
     }
-    if (table === rides) return state.ride ? [state.ride] : [];
+    if (table === rides) {
+      const id = extractEqValue(cond);
+      if (typeof id === "number") {
+        const r = state.rides.find((row) => row.id === id);
+        return r ? [r] : [];
+      }
+      // No plain id equality could be extracted — this is the raw
+      // `userId + status = 'active'` SQL condition startRide's slot-limit
+      // check runs (server/storage/ride.ts), not a specific-row lookup.
+      // Every fixture in this file belongs to a single rider, so "all active
+      // rows" is the correct answer here regardless of the literal userId.
+      return state.rides.filter((row) => row.status === "active");
+    }
     if (table === parkings) return state.parkingRows;
     return [];
   }
@@ -164,6 +183,7 @@ function makeTx(state: SettlementState) {
             returning: () => {
               const row = { id: state.nextRideId++, ...values };
               state.ride = row;
+              state.rides.push(row);
               return Promise.resolve([row]);
             },
           };
@@ -188,7 +208,14 @@ function makeTx(state: SettlementState) {
             const fallback = state.bikes.size === 1 ? state.bikes.values().next().value : undefined;
             Object.assign(target ?? fallback ?? {}, patch);
           }
-          if (table === rides && state.ride) Object.assign(state.ride, patch);
+          if (table === rides) {
+            const id = extractEqValue(cond);
+            const target = typeof id === "number" ? state.rides.find((row) => row.id === id) : state.ride;
+            if (target) {
+              Object.assign(target, patch);
+              state.ride = target;
+            }
+          }
           return Promise.resolve();
         },
       }),
@@ -358,20 +385,41 @@ describe("settlement flow — guards that must prevent any settlement at all", (
     expect(state.paymentRows).toHaveLength(0);
   });
 
-  it("refuses a second ride for a rider who already has one active, without charging the wallet again — even on a different, available bike", async () => {
+  it("allows a second concurrent ride on a different bike (two-bikes-at-once), assigning the next free slot", async () => {
     const state = makeSettlementState([makeBike({ id: "BC-01" }), makeBike({ id: "BC-02" })], 200000);
     dbMock.transaction.mockImplementation((cb: (t: unknown) => unknown) => cb(makeTx(state)));
 
     const first = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1" });
     expect(first).not.toHaveProperty("error");
+    expect((first as { activeSlot: number }).activeSlot).toBe(1);
     const balanceAfterFirst = state.wallet!.balance;
 
     const second = await storage.startRide({ bikeId: "BC-02", userId: "user-1", tariff: "h2" });
 
-    expect(second).toEqual({ error: "У вас уже есть активная поездка" });
-    expect(state.wallet!.balance).toBe(balanceAfterFirst); // no second debit
-    expect(state.paymentRows).toHaveLength(1); // only the first ride's charge
-    expect(state.bikes.get("BC-02")!.status).toBe("available"); // the second bike was never claimed
+    expect(second).not.toHaveProperty("error");
+    expect((second as { activeSlot: number }).activeSlot).toBe(2);
+    expect(state.wallet!.balance).toBeLessThan(balanceAfterFirst); // the second ride is charged too
+    expect(state.paymentRows).toHaveLength(2);
+    expect(state.bikes.get("BC-02")!.status).toBe("rented");
+  });
+
+  it("refuses a third simultaneous ride once the rider already holds the max of two, without charging the wallet again", async () => {
+    const state = makeSettlementState(
+      [makeBike({ id: "BC-01" }), makeBike({ id: "BC-02" }), makeBike({ id: "BC-03" })],
+      200000,
+    );
+    dbMock.transaction.mockImplementation((cb: (t: unknown) => unknown) => cb(makeTx(state)));
+
+    await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1" });
+    await storage.startRide({ bikeId: "BC-02", userId: "user-1", tariff: "h1" });
+    const balanceAfterTwo = state.wallet!.balance;
+
+    const third = await storage.startRide({ bikeId: "BC-03", userId: "user-1", tariff: "h2" });
+
+    expect(third).toEqual({ error: "У вас уже максимум активных поездок (2)" });
+    expect(state.wallet!.balance).toBe(balanceAfterTwo); // no third debit
+    expect(state.paymentRows).toHaveLength(2); // only the first two rides' charges
+    expect(state.bikes.get("BC-03")!.status).toBe("available"); // the third bike was never claimed
   });
 });
 

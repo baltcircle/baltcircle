@@ -61,8 +61,8 @@ export function registerRideRoutes(app: Express): void {
     return res.json(await storage.listRides({ userId: riderId(req), limit }));
   });
   app.get("/api/rides/active", async (req, res) => {
-    const ride = await storage.getActiveRide(riderId(req));
-    res.json(ride ?? null);
+    const rides = await storage.getActiveRides(riderId(req));
+    res.json(rides);
   });
   // Server-Sent Events stream of the caller's active ride. Replaces the 4s
   // polling of /api/rides/active: the client opens ONE EventSource and the
@@ -97,9 +97,9 @@ export function registerRideRoutes(app: Express): void {
       if (sending) { dirty = true; return; }
       sending = true;
       try {
-        const ride = await storage.getActiveRide(uid);
+        const rides = await storage.getActiveRides(uid);
         if (closed) return;
-        res.write(`data: ${JSON.stringify(ride ?? null)}\n\n`);
+        res.write(`data: ${JSON.stringify(rides)}\n\n`);
       } catch {
         // A transient read error shouldn't kill the stream; the next event or
         // the client's reconnect will re-sync.

@@ -275,7 +275,7 @@ export interface IRideStorage {
   resumeRide(rideId: number): Promise<Ride | { error: string }>;
   extendRide(rideId: number, tariff: string): Promise<Ride | { error: string }>;
   getRide(rideId: number): Promise<Ride | undefined>;
-  getActiveRide(userId: string): Promise<Ride | undefined>;
+  getActiveRides(userId: string): Promise<Ride[]>;
   listRides(opts?: { userId?: string; limit?: number }): Promise<RideWithFeedback[]>;
   listAdminRides(opts?: { limit?: number; offset?: number }): Promise<AdminRide[]>;
   countRides(): Promise<number>;

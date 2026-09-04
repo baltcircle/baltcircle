@@ -1,0 +1,1 @@
+ALTER TABLE "rides" ADD COLUMN "active_slot" integer;

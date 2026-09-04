@@ -41,13 +41,13 @@ export function useActiveRideStream(): void {
 
       next.onmessage = (ev) => {
         lastActivityAt = Date.now();
-        let ride: Ride | null;
+        let rides: Ride[];
         try {
-          ride = JSON.parse(ev.data) as Ride | null;
+          rides = JSON.parse(ev.data) as Ride[];
         } catch {
           return; // ignore a malformed frame; the next event re-syncs
         }
-        qc.setQueryData(ACTIVE_RIDE_KEY, ride);
+        qc.setQueryData(ACTIVE_RIDE_KEY, rides);
         // A ride change moved/freed a bike → refresh the map's bike layer.
         qc.invalidateQueries({ queryKey: BIKES_KEY });
       };

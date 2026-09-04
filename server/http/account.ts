@@ -59,7 +59,7 @@ export function registerAccountRoutes(app: Express): void {
 
       // This early check avoids any external unlinks when deletion is already
       // impossible. DatabaseStorage checks it again in its final transaction.
-      if (await storage.getActiveRide(userId)) {
+      if ((await storage.getActiveRides(userId)).length > 0) {
         return res.status(409).json({ error: "Сначала завершите активную поездку." });
       }
 

@@ -7,7 +7,7 @@ import type { PaymentOrder, WalletTopupOrder } from "@shared/schema";
 // and left unmocked so we exercise the real AUTHORIZED/CONFIRMED/REJECTED mapping.
 const storageMock = vi.hoisted(() => ({
   getRidePaymentOrder: vi.fn(),
-  getActiveRide: vi.fn(),
+  getActiveRides: vi.fn(),
   startRide: vi.fn(),
   updateRidePaymentOrder: vi.fn(),
   findCardMethodByOrderId: vi.fn(),
@@ -133,7 +133,7 @@ beforeEach(() => {
 
 describe("startRideForPaidOrder", () => {
   it("starts a new ride and marks the order paid with the ride id", async () => {
-    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.getActiveRides.mockResolvedValue([]);
     storageMock.startRide.mockResolvedValue({ id: 42 });
 
     const res = await startRideForPaidOrder(makeOrder(), "pay-1");
@@ -151,11 +151,11 @@ describe("startRideForPaidOrder", () => {
 
     expect(res).toEqual({ ok: true, rideId: 99 });
     expect(storageMock.startRide).not.toHaveBeenCalled();
-    expect(storageMock.getActiveRide).not.toHaveBeenCalled();
+    expect(storageMock.getActiveRides).not.toHaveBeenCalled();
   });
 
   it("reuses an already-active ride on the same bike instead of starting another", async () => {
-    storageMock.getActiveRide.mockResolvedValue({ id: 7, bikeId: "BC-01" });
+    storageMock.getActiveRides.mockResolvedValue([{ id: 7, bikeId: "BC-01" }]);
 
     const res = await startRideForPaidOrder(makeOrder(), "pay-1");
 
@@ -164,7 +164,7 @@ describe("startRideForPaidOrder", () => {
   });
 
   it("keeps the order paid but reports failure when the ride cannot start", async () => {
-    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.getActiveRides.mockResolvedValue([]);
     storageMock.startRide.mockResolvedValue({ error: "Велосипед недоступен" });
 
     const res = await startRideForPaidOrder(makeOrder(), "pay-1");
@@ -181,7 +181,7 @@ describe("handleRidePaymentNotification", () => {
   it("starts the ride on a CONFIRMED notification", async () => {
     const order = makeOrder();
     storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(order);
-    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.getActiveRides.mockResolvedValue([]);
     storageMock.startRide.mockResolvedValue({ id: 42 });
 
     await handleRidePaymentNotification(order, {
@@ -252,7 +252,7 @@ describe("handleRidePaymentNotification", () => {
 
   it("processing a duplicate CONFIRMED for an already-paid order is a no-op (webhook retry safety)", async () => {
     // First delivery: pending -> paid.
-    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.getActiveRides.mockResolvedValue([]);
     storageMock.startRide.mockResolvedValue({ id: 42 });
     const order = makeOrder();
     storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(order);
@@ -278,7 +278,7 @@ describe("handleRidePaymentNotification", () => {
       claimedOnce = true;
       return order;
     });
-    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.getActiveRides.mockResolvedValue([]);
     storageMock.startRide.mockResolvedValue({ id: 42 });
 
     await Promise.all([
@@ -293,7 +293,7 @@ describe("handleRidePaymentNotification", () => {
   it("releases the claim back to pending if starting the ride throws, so a retried notification can still resolve it (audit HIGH #6)", async () => {
     const order = makeOrder();
     storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(order);
-    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.getActiveRides.mockResolvedValue([]);
     storageMock.startRide.mockRejectedValue(new Error("db unavailable"));
     storageMock.updateRidePaymentOrder.mockResolvedValue(undefined);
 
@@ -331,7 +331,7 @@ describe("handleRidePaymentNotification — ride_overage purpose (deferred/3DS w
     expect(dbMock.insert).toHaveBeenCalledOnce();
     // Never routed into the ordinary rideId-extend branch.
     expect(storageMock.startRide).not.toHaveBeenCalled();
-    expect(storageMock.getActiveRide).not.toHaveBeenCalled();
+    expect(storageMock.getActiveRides).not.toHaveBeenCalled();
   });
 
   it("on failed: marks the order failed, raises the operator alert, sends the rider the \"недостаточно средств\" push, writes NO ledger row", async () => {
@@ -476,7 +476,7 @@ describe("handleTbankNotification routing", () => {
   it("routes a notification carrying our ride OrderId to the ride-payment path", async () => {
     storageMock.getRidePaymentOrder.mockResolvedValue(makeOrder());
     storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(makeOrder());
-    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.getActiveRides.mockResolvedValue([]);
     storageMock.startRide.mockResolvedValue({ id: 42 });
 
     await handleTbankNotification({ OrderId: "ride-abc", Status: "CONFIRMED", PaymentId: "p" });
@@ -626,7 +626,7 @@ describe("handleTbankNotification routing", () => {
     // (ride payments never call refundVerificationCharge in the first place).
     storageMock.getRidePaymentOrder.mockResolvedValue(makeOrder());
     storageMock.claimRidePaymentOrderForProcessing.mockResolvedValue(makeOrder());
-    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.getActiveRides.mockResolvedValue([]);
     storageMock.startRide.mockResolvedValue({ id: 42 });
 
     await handleTbankNotification({

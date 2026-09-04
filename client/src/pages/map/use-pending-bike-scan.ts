@@ -8,7 +8,7 @@ interface UsePendingBikeScanParams {
   userLoading: boolean;
   isRegistered: boolean;
   bikes: Bike[] | undefined;
-  pendingMulti: MutableRefObject<boolean | null>;
+  pendingScan: MutableRefObject<boolean>;
   setRegOpen: (open: boolean) => void;
   onBikeScanned: (bike: Bike) => void;
 }
@@ -23,7 +23,7 @@ export function usePendingBikeScan({
   userLoading,
   isRegistered,
   bikes,
-  pendingMulti,
+  pendingScan,
   setRegOpen,
   onBikeScanned,
 }: UsePendingBikeScanParams) {
@@ -52,7 +52,7 @@ export function usePendingBikeScan({
       return;
     }
     if (!isRegistered) {
-      pendingMulti.current = false;
+      pendingScan.current = true;
       setRegOpen(true);
       return;
     }

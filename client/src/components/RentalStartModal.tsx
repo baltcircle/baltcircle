@@ -24,7 +24,6 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   bike: Bike | null;
-  multi?: boolean;
 }
 
 interface RideInitResponse {
@@ -41,7 +40,7 @@ interface ChargeSavedCardResponse {
   amountKopecks: number;
 }
 
-export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
+export function RentalStartModal({ open, onOpenChange, bike }: Props) {
   const toast = useToast();
   const [, navigate] = useLocation();
   const [tariff, setTariff] = useState<Tariff["id"]>("h1");
@@ -263,12 +262,6 @@ export function RentalStartModal({ open, onOpenChange, bike, multi }: Props) {
         ) : (
           <div className="rounded-xl border border-card-border bg-muted/40 p-4 text-sm text-muted-foreground flex items-center gap-2" data-testid="rental-bike-info">
             <BikeIcon className="w-4 h-4" /> Выберите доступный велосипед на карте или отсканируйте QR.
-          </div>
-        )}
-
-        {multi && (
-          <div className="text-xs text-muted-foreground" data-testid="rental-multi-hint">
-            Режим «два велосипеда»: второй велосипед можно отсканировать после начала поездки.
           </div>
         )}
 

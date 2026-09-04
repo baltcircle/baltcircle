@@ -17,7 +17,7 @@ export function RentPage() {
   const [loc, navigate] = useLocation();
   const toast = useToast();
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
-  const activeQ = useQuery<Ride | null>({ queryKey: ["/api/rides/active"] });
+  const activeQ = useQuery<Ride[]>({ queryKey: ["/api/rides/active"] });
   // Live active-ride updates via SSE (replaces the old 4s poll).
   useActiveRideStream();
   const { isRegistered } = useCurrentUser();
@@ -78,10 +78,14 @@ export function RentPage() {
 
   // Если активная поездка уже идёт — вся UI живёт на карте (MapPage), а не в дублющем
   // overlay-экране. Редиректим обратно на карту с replace — не засоряем историю.
+  // activeQ.data — массив (>=1 запись у гонщика с активной поездкой), поэтому
+  // проверяем длину: пустой массив после резолва запроса не должен считаться
+  // «есть активная поездка» (пустой массив истинен как значение в JS).
+  const hasActiveRide = (activeQ.data?.length ?? 0) > 0;
   useEffect(() => {
-    if (activeQ.data) navigate("/", { replace: true });
-  }, [activeQ.data, navigate]);
-  if (activeQ.data) return null;
+    if (hasActiveRide) navigate("/", { replace: true });
+  }, [hasActiveRide, navigate]);
+  if (hasActiveRide) return null;
 
   const bike = bikesQ.data?.find(b => b.id === code.trim().toUpperCase());
 

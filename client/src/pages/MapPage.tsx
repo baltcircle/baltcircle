@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 
 import type { Bike, MapObject, Parking, PublicPaymentMethod, Ride } from "@shared/schema";
 import type { Tariff } from "@shared/geo";
+import { MAX_ACTIVE_RIDES_PER_USER } from "@shared/geo";
 import { PAYMENT_METHODS_KEY } from "@/lib/payment";
 import { MapLibreMap } from "@/components/MapLibreMap";
 import { RentalStartModal } from "@/components/RentalStartModal";
@@ -25,9 +26,17 @@ import { usePaymentBanner } from "./map/use-payment-banner";
 import { useReservationBanner } from "./map/use-reservation-banner";
 import { usePendingBikeScan } from "./map/use-pending-bike-scan";
 import { ActiveRideCard } from "./map/ActiveRideCard";
+import { SecondaryRideBar } from "./map/SecondaryRideBar";
+import { ExtendRideDialog } from "@/components/ExtendRideDialog";
 import { RideFeedbackDialog } from "@/components/RideFeedbackDialog";
 import { ScanAndPaymentBanner } from "./map/ScanAndPaymentBanner";
 import { ReservationBanner } from "./map/ReservationBanner";
+
+const ACTIVE_RIDES_KEY = ["/api/rides/active"] as const;
+
+function patchActiveRide(old: Ride[] | undefined, updated: Ride): Ride[] {
+  return (old ?? []).map((r) => (r.id === updated.id ? updated : r));
+}
 
 export function MapPage() {
   const toast = useToast();
@@ -35,8 +44,8 @@ export function MapPage() {
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
   const mapObjectsQ = useQuery<MapObject[]>({ queryKey: ["/api/map-objects"] });
   const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
-  const activeQ = useQuery<Ride | null>({
-    queryKey: ["/api/rides/active"],
+  const activeQ = useQuery<Ride[]>({
+    queryKey: ACTIVE_RIDES_KEY,
   });
   // Live active-ride updates via SSE (replaces the old 4s poll).
   useActiveRideStream();
@@ -44,39 +53,66 @@ export function MapPage() {
   useFleetStream();
   const { isRegistered, isLoading: userLoading } = useCurrentUser();
 
-  const activeRide = activeQ.data ?? null;
+  const activeRides = activeQ.data ?? [];
+  // Фиксированные "слоты" по позиции в массиве (не по фокусу) — трекер/поллер
+  // не должны перемонтироваться, когда рядер просто переключает фокус между
+  // двумя уже идущими поездками; каждый хук сам сбрасывает историю по ride.id.
+  const rideSlotA = activeRides[0] ?? null;
+  const rideSlotB = activeRides[1] ?? null;
+
+  // Какая из (максимум двух) активных поездок сейчас показана полной
+  // карточкой ActiveRideCard; вторая — компактной SecondaryRideBar.
+  const [focusedRideId, setFocusedRideId] = useState<number | null>(null);
+  useEffect(() => {
+    if (activeRides.length === 0) {
+      if (focusedRideId !== null) setFocusedRideId(null);
+      return;
+    }
+    if (!activeRides.some((r) => r.id === focusedRideId)) {
+      setFocusedRideId(activeRides[0].id);
+    }
+  }, [activeRides, focusedRideId]);
+  const focusedRide = activeRides.find((r) => r.id === focusedRideId) ?? activeRides[0] ?? null;
+  const secondaryRide = activeRides.find((r) => r.id !== focusedRide?.id) ?? null;
 
   // GPS-трекер активной аренды: слушает onUserLocation от MapLibreMap и шлёт
   // точки на /api/rides/{id}/point (тротлинг 3с + фильтр GPS-дребезга <5м).
-  const rideTracker = useActiveRideTracker(activeRide);
+  // Всегда ровно два вызова хука (см. rules-of-hooks) — по одному на слот.
+  const rideTrackerA = useActiveRideTracker(rideSlotA);
+  const rideTrackerB = useActiveRideTracker(rideSlotB);
+  const focusedTracker = focusedRide?.id === rideSlotB?.id ? rideTrackerB : rideTrackerA;
 
   // Авторитетный трек поездки от бортового трекера велосипеда (репортит даже при
   // заблокированном телефоне). Пока трекер отдаёт точки — рисуем маршрут по ним;
   // если трекера нет/молчит, сервер вернёт source:"phone" и мы падаем обратно на
-  // трек из телефона (текущее поведение, без регресса).
-  const trackPoll = useRideTrackPoll(activeRide?.id);
+  // трек из телефона (текущее поведение, без регресса). Опрашиваем оба слота —
+  // на карте рисуем маршрут только сфокусированной поездки.
+  const trackPollA = useRideTrackPoll(rideSlotA?.id);
+  const trackPollB = useRideTrackPoll(rideSlotB?.id);
+  const focusedTrackPoll = focusedRide?.id === rideSlotB?.id ? trackPollB : trackPollA;
   // Пока замок активно отдаёт свой трек — разрыв телефонного GPS (экран заблокирован,
   // вкладка в фоне) никак не влияет на записанный маршрут — не пугаем об этом тостом.
-  const trackedByLock = trackPoll.data?.source === "tracker";
+  const trackedByLock = focusedTrackPoll.data?.source === "tracker";
 
   // Screen Wake Lock + уведомление о разрывах трекинга на время активной аренды.
-  const rideGuard = useRideGuard(!!activeRide, trackedByLock);
+  const rideGuard = useRideGuard(activeRides.length > 0, trackedByLock);
   const displayRide = useMemo<Ride | null>(() => {
-    if (!activeRide) return null;
-    const merged = trackPoll.data;
+    if (!focusedRide) return null;
+    const merged = focusedTrackPoll.data;
     if (merged?.source === "tracker" && merged.points.length > 1) {
-      return { ...activeRide, track: JSON.stringify(merged.points) };
+      return { ...focusedRide, track: JSON.stringify(merged.points) };
     }
-    return activeRide;
-  }, [activeRide, trackPoll.data]);
+    return focusedRide;
+  }, [focusedRide, focusedTrackPoll.data]);
 
   // Пока своя аренда на паузе — её маркер должен красится как «Бронь», а не
   // как обычная «В аренде» (bike-status lifecycle: пауза — состояние Ride,
   // не bikes.status, поэтому цвет переопределяется отдельно от статуса).
-  const pausedBikeIds = useMemo<Set<string> | undefined>(
-    () => (activeRide?.pausedAt != null ? new Set([activeRide.bikeId]) : undefined),
-    [activeRide],
-  );
+  // Учитываем ОБЕ активные поездки, не только сфокусированную.
+  const pausedBikeIds = useMemo<Set<string> | undefined>(() => {
+    const ids = activeRides.filter((r) => r.pausedAt != null).map((r) => r.bikeId);
+    return ids.length ? new Set(ids) : undefined;
+  }, [activeRides]);
 
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -95,18 +131,22 @@ export function MapPage() {
   }, [availableBikes, selected]);
 
   const [rentalOpen, setRentalOpen] = useState(false);
-  const [rentalMulti, setRentalMulti] = useState(false);
   const [regOpen, setRegOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
+  const [secondaryExtendOpen, setSecondaryExtendOpen] = useState(false);
   const [feedbackRideId, setFeedbackRideId] = useState<number | null>(null);
 
   const { drawerOpen, setDrawerOpen, drawerMountedOpen, drawerInstantTick } = useDrawerState();
   const { geoCenter, lastPosRef, handleGeolocate } = useGeolocation();
-  const { showPaymentBanner, dismissPaymentBanner } = usePaymentBanner(isRegistered, !!activeRide);
+  const { showPaymentBanner, dismissPaymentBanner } = usePaymentBanner(isRegistered, activeRides.length > 0);
   const { reservation, cancelling, cancelReservation, onExpire: onReservationExpire } =
-    useReservationBanner(isRegistered, !!activeRide);
+    useReservationBanner(isRegistered, activeRides.length > 0);
 
-  const pendingMulti = useRef<boolean | null>(null);
+  // true пока ждём регистрацию, чтобы после неё открыть QR-скан (goRent) —
+  // раньше сюда же кодировался флаг "multi", но выделенного multi-режима
+  // сканирования больше нет: вторая поездка стартует тем же сканом, что и
+  // первая, backend сам решает через MAX_ACTIVE_RIDES_PER_USER.
+  const pendingScan = useRef<boolean>(false);
   // Клик по маркеру велосипеда на карте — как и goRent(), требует регистрации;
   // если её нет, откладываем открытие модалки аренды до onRegistered ниже.
   const pendingBikeId = useRef<string | null>(null);
@@ -114,8 +154,11 @@ export function MapPage() {
   // Пока true — показываем «Закройте замок…» вместо тикающего таймера паузы;
   // становится false либо когда lockReport подтвердит паузу (pausedAt придёт
   // по SSE — см. эффект ниже), либо по истечении TTL армирования, либо при
-  // явной отмене через «Отмена» (resume до фактической паузы).
-  const [awaitingLockClose, setAwaitingLockClose] = useState(false);
+  // явной отмене через «Отмена» (resume до фактической паузы). Храним id
+  // конкретной поездки (не булево) — при двух одновременных поездках это не
+  // даёт статусу паузы одной поездки "утечь" на карточку другой при
+  // переключении фокуса.
+  const [awaitingLockCloseRideId, setAwaitingLockCloseRideId] = useState<number | null>(null);
   const lockCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearLockCloseTimer = () => {
     if (lockCloseTimer.current) {
@@ -126,12 +169,13 @@ export function MapPage() {
   // Как только пауза реально применилась (или поездка закончилась/сменилась),
   // ожидание закрытия замка больше не актуально.
   useEffect(() => {
-    if (!activeRide || activeRide.pausedAt != null) {
+    if (awaitingLockCloseRideId == null) return;
+    const ride = activeRides.find((r) => r.id === awaitingLockCloseRideId);
+    if (!ride || ride.pausedAt != null) {
       clearLockCloseTimer();
-      setAwaitingLockClose(false);
+      setAwaitingLockCloseRideId(null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRide?.id, activeRide?.pausedAt]);
+  }, [activeRides, awaitingLockCloseRideId]);
   useEffect(() => () => clearLockCloseTimer(), []);
 
   // Аналогично awaitingLockClose/lockCloseTimer выше, но для flow завершения —
@@ -139,7 +183,7 @@ export function MapPage() {
   // паузы от ожидания завершения (разный текст/кнопка) и оба могут быть
   // активны независимо друг от друга (хотя на одном замке они взаимоисключаются
   // на сервере — requestEndRide чистит pending-паузу того же замка).
-  const [awaitingEndLockClose, setAwaitingEndLockClose] = useState(false);
+  const [awaitingEndLockCloseRideId, setAwaitingEndLockCloseRideId] = useState<number | null>(null);
   // См. комментарий у endMut.onMutate выше — rideId завершаемой поездки,
   // нужен эффекту ниже, чтобы открыть диалог оценки после асинхронного завершения.
   const pendingEndRideId = useRef<number | null>(null);
@@ -150,29 +194,29 @@ export function MapPage() {
       endLockCloseTimer.current = null;
     }
   };
-  // Как только поездка реально завершилась (activeRide пришёл по SSE как null,
-  // когда асинхронный endRide отработал на lockReport) или сменилась на другую,
-  // ожидание больше не актуально.
+  // Как только поездка реально завершилась (пропала из списка активных, когда
+  // асинхронный endRide отработал на lockReport) — открываем диалог оценки.
+  // Проверяем именно по id через ref, а не "activeRides пуст": при двух
+  // одновременных поездках завершение одной не обязано опустошать список.
   useEffect(() => {
-    if (!activeRide) {
+    const pendingId = pendingEndRideId.current;
+    if (pendingId == null) return;
+    if (!activeRides.some((r) => r.id === pendingId)) {
       // Поездка реально засеттлилась пока мы ждали закрытие замка — без этой ветки
       // диалог оценки никогда не открывался для асинхронного endRide (endMut's
       // "expiresInMs" ветка возвращается до settlement и никогда не вызывает
       // setFeedbackRideId сама по себе) — это был баг из-за которого рейтинг
       // перестал появляться: большинство велосипедов с реальным замком 100% идёт через
-      // эту ветку. Проверяем именно ref, а не awaitingEndLockClose — тот к этому
+      // эту ветку. Проверяем именно ref, а не awaitingEndLockCloseRideId — тот к этому
       // моменту мог уже сброситься по TTL-таймауту (см. endMut), а ride всё равно
       // settled чуть позже по SSE/refetch; ref остаётся источником правды до тех
       // пор, пока сам не будет использован или явно очищен новым endMut.mutate.
-      if (pendingEndRideId.current != null) {
-        setFeedbackRideId(pendingEndRideId.current);
-      }
+      setFeedbackRideId(pendingId);
       pendingEndRideId.current = null;
       clearEndLockCloseTimer();
-      setAwaitingEndLockClose(false);
+      setAwaitingEndLockCloseRideId((cur) => (cur === pendingId ? null : cur));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRide?.id]);
+  }, [activeRides]);
   useEffect(() => () => clearEndLockCloseTimer(), []);
 
   type EndResponse = Ride | { status: "awaiting_lock_close"; expiresInMs: number };
@@ -183,18 +227,19 @@ export function MapPage() {
       return res.json() as Promise<EndResponse>;
     },
     // Запоминаем, какую поездку завершаем, ДО ответа сервера — когда замок
-    // подтверждает закрытие асинхронно (awaiting_lock_close ветка ниже), activeRide
-    // к тому моменту уже обнулится до null по SSE, и data.id в этом случае недоступен —
-    // без этого ref диалог оценки не знает, для какой поездки его открыть.
+    // подтверждает закрытие асинхронно (awaiting_lock_close ветка ниже), эта
+    // поездка к тому моменту уже пропадёт из списка активных по SSE, и data.id
+    // в этом случае недоступен — без этого ref диалог оценки не знает, для
+    // какой поездки его открыть.
     onMutate: (rideId) => {
       pendingEndRideId.current = rideId;
     },
-    onSuccess: (data) => {
+    onSuccess: (data, rideId) => {
       if ("expiresInMs" in data) {
-        setAwaitingEndLockClose(true);
+        setAwaitingEndLockCloseRideId(rideId);
         clearEndLockCloseTimer();
         endLockCloseTimer.current = setTimeout(() => {
-          setAwaitingEndLockClose(false);
+          setAwaitingEndLockCloseRideId((cur) => (cur === rideId ? null : cur));
           toast.toast({
             title: "Не дождались закрытия замка",
             description: "Попробуйте завершить поездку ещё раз.",
@@ -206,14 +251,14 @@ export function MapPage() {
           // наблюдателя он просто помечает кэш устаревшим, не выполняя
           // запрос — принудительный refetch подтягивает реальное
           // состояние (поездка могла уже завершиться на сервере).
-          void queryClient.refetchQueries({ queryKey: ["/api/rides/active"], type: "active" });
+          void queryClient.refetchQueries({ queryKey: ACTIVE_RIDES_KEY, type: "active" });
         }, data.expiresInMs);
-        queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+        queryClient.invalidateQueries({ queryKey: ACTIVE_RIDES_KEY });
         return;
       }
       clearEndLockCloseTimer();
-      setAwaitingEndLockClose(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+      setAwaitingEndLockCloseRideId((cur) => (cur === rideId ? null : cur));
+      queryClient.invalidateQueries({ queryKey: ACTIVE_RIDES_KEY });
       queryClient.invalidateQueries({ queryKey: ["/api/rides"] });
       queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
@@ -236,9 +281,10 @@ export function MapPage() {
       const res = await apiRequest("POST", `/api/rides/${rideId}/cancel-end`);
       return res.json() as Promise<{ ok: true }>;
     },
-    onSuccess: () => {
+    onSuccess: (_data, rideId) => {
       clearEndLockCloseTimer();
-      setAwaitingEndLockClose(false);
+      setAwaitingEndLockCloseRideId((cur) => (cur === rideId ? null : cur));
+      if (pendingEndRideId.current === rideId) pendingEndRideId.current = null;
     },
     onError: (err: any) => {
       toast.toast({
@@ -258,16 +304,16 @@ export function MapPage() {
       const res = await apiRequest("POST", `/api/rides/${rideId}/pause`);
       return res.json() as Promise<PauseResponse>;
     },
-    onSuccess: (data) => {
+    onSuccess: (data, rideId) => {
       if (data.status === "paused") {
         clearLockCloseTimer();
-        setAwaitingLockClose(false);
-        queryClient.setQueryData(["/api/rides/active"], data.ride);
+        setAwaitingLockCloseRideId(null);
+        queryClient.setQueryData<Ride[]>(ACTIVE_RIDES_KEY, (old) => patchActiveRide(old, data.ride));
       } else {
-        setAwaitingLockClose(true);
+        setAwaitingLockCloseRideId(rideId);
         clearLockCloseTimer();
         lockCloseTimer.current = setTimeout(() => {
-          setAwaitingLockClose(false);
+          setAwaitingLockCloseRideId((cur) => (cur === rideId ? null : cur));
           toast.toast({
             title: "Не дождались закрытия замка",
             description: "Попробуйте поставить на паузу ещё раз.",
@@ -275,10 +321,10 @@ export function MapPage() {
           });
           // См. аналогичный комментарий в endMut — форсируем ресинк на случай
           // пропущенного SSE-пуша.
-          void queryClient.refetchQueries({ queryKey: ["/api/rides/active"], type: "active" });
+          void queryClient.refetchQueries({ queryKey: ACTIVE_RIDES_KEY, type: "active" });
         }, data.expiresInMs);
       }
-      queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+      queryClient.invalidateQueries({ queryKey: ACTIVE_RIDES_KEY });
     },
     onError: (err: any) => {
       toast.toast({
@@ -296,9 +342,9 @@ export function MapPage() {
     },
     onSuccess: (ride) => {
       clearLockCloseTimer();
-      setAwaitingLockClose(false);
-      queryClient.setQueryData(["/api/rides/active"], ride);
-      queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+      setAwaitingLockCloseRideId(null);
+      queryClient.setQueryData<Ride[]>(ACTIVE_RIDES_KEY, (old) => patchActiveRide(old, ride));
+      queryClient.invalidateQueries({ queryKey: ACTIVE_RIDES_KEY });
       queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
       queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
     },
@@ -317,7 +363,7 @@ export function MapPage() {
   // extending is possible.
   const paymentMethodsQ = useQuery<PublicPaymentMethod[]>({
     queryKey: PAYMENT_METHODS_KEY,
-    enabled: !!activeRide,
+    enabled: activeRides.length > 0,
   });
   const extendActiveMethods = (paymentMethodsQ.data ?? []).filter(
     (m) => m.status === "active" && m.provider === "tbank"
@@ -340,7 +386,7 @@ export function MapPage() {
       const res = await apiRequest(
         "POST",
         "/api/payments/tbank/ride/extend-saved-card",
-        { tariffId: tariff, paymentMethodId: method.id },
+        { rideId, tariffId: tariff, paymentMethodId: method.id },
         { "Idempotency-Key": crypto.randomUUID() },
       );
       const data = (await res.json()) as { orderId: string; status: "paid" | "pending"; rideId?: number; amountKopecks: number };
@@ -348,15 +394,15 @@ export function MapPage() {
     },
     onSuccess: (result) => {
       if (result.kind === "wallet") {
-        queryClient.setQueryData(["/api/rides/active"], result.ride);
-        queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+        queryClient.setQueryData<Ride[]>(ACTIVE_RIDES_KEY, (old) => patchActiveRide(old, result.ride));
+        queryClient.invalidateQueries({ queryKey: ACTIVE_RIDES_KEY });
         queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
         queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
         toast.toast({ title: "Аренда продлена" });
         return;
       }
       if (result.data.status === "paid") {
-        queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+        queryClient.invalidateQueries({ queryKey: ACTIVE_RIDES_KEY });
         queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
         toast.toast({ title: "Аренда продлена" });
         return;
@@ -374,18 +420,13 @@ export function MapPage() {
     },
   });
 
-  const openScan = (multi: boolean) => {
-    setRentalMulti(multi);
-    setScanOpen(true);
-  };
-
-  const goRent = (multi = false) => {
+  const goRent = () => {
     if (!isRegistered) {
-      pendingMulti.current = multi;
+      pendingScan.current = true;
       setRegOpen(true);
       return;
     }
-    openScan(multi);
+    setScanOpen(true);
   };
 
   const onBikeScanned = (b: Bike) => {
@@ -407,10 +448,12 @@ export function MapPage() {
     userLoading,
     isRegistered,
     bikes: bikesQ.data,
-    pendingMulti,
+    pendingScan,
     setRegOpen,
     onBikeScanned,
   });
+
+  const canAddSecondRide = activeRides.length > 0 && activeRides.length < MAX_ACTIVE_RIDES_PER_USER;
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
@@ -441,11 +484,16 @@ export function MapPage() {
           height="100%"
           showLabels={false}
           center={geoCenter}
-          followUser={!!activeRide}
+          followUser={activeRides.length > 0}
           onUserLocation={(lat, lng) => {
             lastPosRef.current = { lat, lng };
-            if (activeRide) {
-              rideTracker.push(lat, lng);
+            // Телефон физически может быть только у одного велосипеда — шлём
+            // GPS только на трекер СФОКУСИРОВАННОЙ поездки; у второй поездки
+            // расстояние считается по её собственному бортовому трекеру
+            // (see use-ride-track-poll), фолбэк на "чужой" телефонный GPS
+            // испортил бы её маршрут.
+            if (focusedRide) {
+              focusedTracker.push(lat, lng);
               rideGuard.notePoint();
             }
           }}
@@ -488,22 +536,34 @@ export function MapPage() {
           <MapPin className="w-5 h-5" />
         </button>
 
-        {activeRide ? (
-          <ActiveRideCard
-            ride={activeRide}
-            onEnd={() => endMut.mutate(activeRide.id)}
-            ending={endMut.isPending}
-            onPause={() => pauseMut.mutate(activeRide.id)}
-            onResume={() => resumeMut.mutate(activeRide.id)}
-            pausing={pauseMut.isPending}
-            resuming={resumeMut.isPending}
-            awaitingLockClose={awaitingLockClose}
-            awaitingEndLockClose={awaitingEndLockClose}
-            onCancelEnd={() => cancelEndMut.mutate(activeRide.id)}
-            cancellingEnd={cancelEndMut.isPending}
-            onExtend={(tariff) => extendMut.mutate({ rideId: activeRide.id, tariff })}
-            extending={extendMut.isPending}
-          />
+        {focusedRide ? (
+          <div className="flex flex-col gap-2">
+            <ActiveRideCard
+              ride={focusedRide}
+              onEnd={() => endMut.mutate(focusedRide.id)}
+              ending={endMut.isPending}
+              onPause={() => pauseMut.mutate(focusedRide.id)}
+              onResume={() => resumeMut.mutate(focusedRide.id)}
+              pausing={pauseMut.isPending}
+              resuming={resumeMut.isPending}
+              awaitingLockClose={awaitingLockCloseRideId === focusedRide.id}
+              awaitingEndLockClose={awaitingEndLockCloseRideId === focusedRide.id}
+              onCancelEnd={() => cancelEndMut.mutate(focusedRide.id)}
+              cancellingEnd={cancelEndMut.isPending}
+              onExtend={(tariff) => extendMut.mutate({ rideId: focusedRide.id, tariff })}
+              extending={extendMut.isPending}
+              showAddSecondRide={canAddSecondRide}
+              onAddSecondRide={() => setScanOpen(true)}
+            />
+            {secondaryRide && (
+              <SecondaryRideBar
+                ride={secondaryRide}
+                onFocus={() => setFocusedRideId(secondaryRide.id)}
+                onExtend={() => setSecondaryExtendOpen(true)}
+                extending={extendMut.isPending}
+              />
+            )}
+          </div>
         ) : (
           <>
             {reservation && (
@@ -516,7 +576,7 @@ export function MapPage() {
             )}
             <ScanAndPaymentBanner
               isRegistered={isRegistered}
-              onScan={() => goRent(false)}
+              onScan={goRent}
               showPaymentBanner={showPaymentBanner}
               onDismissBanner={dismissPaymentBanner}
             />
@@ -532,15 +592,14 @@ export function MapPage() {
         onOpenChange={(open) => {
           setRegOpen(open);
           if (!open) {
-            pendingMulti.current = null;
+            pendingScan.current = false;
             pendingBikeId.current = null;
           }
         }}
         onRegistered={() => {
-          if (pendingMulti.current !== null) {
-            const multi = pendingMulti.current;
-            pendingMulti.current = null;
-            openScan(multi);
+          if (pendingScan.current) {
+            pendingScan.current = false;
+            setScanOpen(true);
           } else if (pendingBikeId.current) {
             const bikeId = pendingBikeId.current;
             pendingBikeId.current = null;
@@ -553,7 +612,7 @@ export function MapPage() {
       <QrScanModal
         open={scanOpen}
         onOpenChange={setScanOpen}
-        myActiveRideBikeId={activeRide?.bikeId ?? null}
+        myActiveRideBikeIds={activeRides.map((r) => r.bikeId)}
         myReservationBikeId={reservation?.bikeId ?? null}
         onBikeSelected={onBikeScanned}
       />
@@ -562,7 +621,16 @@ export function MapPage() {
         open={rentalOpen}
         onOpenChange={setRentalOpen}
         bike={bike ?? availableBikes[0] ?? null}
-        multi={rentalMulti}
+      />
+
+      <ExtendRideDialog
+        open={secondaryExtendOpen}
+        onOpenChange={setSecondaryExtendOpen}
+        pending={extendMut.isPending}
+        onConfirm={(tariff) => {
+          if (secondaryRide) extendMut.mutate({ rideId: secondaryRide.id, tariff });
+          setSecondaryExtendOpen(false);
+        }}
       />
 
       <RideFeedbackDialog

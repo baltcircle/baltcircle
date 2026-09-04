@@ -742,6 +742,14 @@ export const rides = pgTable("rides", {
   // false by storage.startRide. Column kept for backward-compat with existing
   // rows/analytics rather than dropped outright.
   isTest: boolean("is_test").notNull().default(false),
+  // Which of the rider's up-to-MAX_ACTIVE_RIDES_PER_USER concurrent active
+  // rides this is: 1 or 2 while status='active', reset to null the moment
+  // status leaves 'active' (end/cancel). Backs the partial unique index
+  // idx_rides_active_user (user_id, active_slot) — see server/db/bootstrap.ts
+  // createRideRaceGuardIndexes() — which replaced the old "1 active ride per
+  // user" unique index when two-bikes-per-rider shipped. Null for every
+  // historical/non-active row.
+  activeSlot: integer("active_slot"),
 }, (t) => [
   index("idx_rides_user_status").on(t.userId, t.status),
   index("idx_rides_user").on(t.userId),
@@ -1121,7 +1129,15 @@ export type RideChargeSavedCardInput = z.infer<typeof rideChargeSavedCardSchema>
 // method — no hosted form. bikeId is deliberately NOT accepted from the client:
 // the server resolves it (and validates ownership) from the rider's active ride,
 // so a tampered bikeId can never redirect the charge to someone else's ride.
+//
+// rideId IS accepted (added when a rider can hold up to MAX_ACTIVE_RIDES_PER_USER
+// concurrent active rides, so "the" active ride is no longer unambiguous) — but
+// the server still never trusts it blindly: the handler re-verifies the row
+// belongs to this userId AND is status==='active' before charging anything,
+// preserving the original "never trust an unverified ride" guarantee explicitly
+// instead of implicitly.
 export const rideExtendSavedCardSchema = z.object({
+  rideId: z.number().int().positive(),
   tariffId: z.enum(["h1", "h2", "h3", "m1"]),
   paymentMethodId: z.number().int().positive().optional(),
 });

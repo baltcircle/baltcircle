@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const storageMock = vi.hoisted(() => ({
   getUser: vi.fn(),
-  getActiveRide: vi.fn(),
+  getActiveRides: vi.fn(),
   listPaymentMethods: vi.fn(),
   unlinkPaymentMethod: vi.fn(),
   deleteAccount: vi.fn(),
@@ -59,7 +59,7 @@ async function invoke(handler: Handler, req: any, res: any) {
 beforeEach(() => {
   vi.clearAllMocks();
   storageMock.getUser.mockResolvedValue({ id: "user-1", phone: "+79991234567" });
-  storageMock.getActiveRide.mockResolvedValue(undefined);
+  storageMock.getActiveRides.mockResolvedValue([]);
   storageMock.listPaymentMethods.mockResolvedValue([]);
   storageMock.unlinkPaymentMethod.mockResolvedValue(true);
   storageMock.deleteAccount.mockResolvedValue({ ok: true });
@@ -116,7 +116,7 @@ describe("DELETE /api/account", () => {
 
   it("blocks deletion while a ride is active without unlinking payment methods", async () => {
     const { del } = routeApp();
-    storageMock.getActiveRide.mockResolvedValue({ id: 99, status: "active" });
+    storageMock.getActiveRides.mockResolvedValue([{ id: 99, status: "active" }]);
     const res = response();
 
     const nextError = await invoke(del.get("/api/account")!, request({ userId: "user-1", destroy: vi.fn() }), res);

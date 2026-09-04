@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const storageMock = vi.hoisted(() => ({
   getUser: vi.fn(),
-  getActiveRide: vi.fn(),
+  getActiveRides: vi.fn(),
   listPaymentMethods: vi.fn(),
   deleteAccount: vi.fn(),
 }));
@@ -75,7 +75,7 @@ const RIDER = { id: "user-1", role: "rider", name: "Тест Пользоват�
 
 beforeEach(() => {
   vi.clearAllMocks();
-  storageMock.getActiveRide.mockResolvedValue(undefined);
+  storageMock.getActiveRides.mockResolvedValue([]);
   storageMock.listPaymentMethods.mockResolvedValue([]);
   storageMock.deleteAccount.mockResolvedValue({ ok: true });
   unlinkPaymentMethodForUserMock.mockResolvedValue({ ok: true });
@@ -144,7 +144,7 @@ describe("DELETE /api/admin/users/:id", () => {
     expect(nextError).toBeUndefined();
     expect(res.code).toBe(403);
     expect(res.body).toEqual({ error: "Нельзя удалить другого администратора" });
-    expect(storageMock.getActiveRide).not.toHaveBeenCalled();
+    expect(storageMock.getActiveRides).not.toHaveBeenCalled();
     expect(storageMock.deleteAccount).not.toHaveBeenCalled();
   });
 
@@ -152,7 +152,7 @@ describe("DELETE /api/admin/users/:id", () => {
     const { del } = routeApp();
     storageMock.getUser.mockImplementation((id: string) =>
       Promise.resolve(id === ADMIN.id ? ADMIN : RIDER));
-    storageMock.getActiveRide.mockResolvedValue({ id: 99, status: "active" });
+    storageMock.getActiveRides.mockResolvedValue([{ id: 99, status: "active" }]);
     const res = response();
 
     const nextError = await invoke(del.get("/api/admin/users/:id")!, request(ADMIN.id, { id: RIDER.id }), res);

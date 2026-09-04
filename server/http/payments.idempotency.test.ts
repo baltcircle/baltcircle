@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const storageMock = vi.hoisted(() => ({
   getUser: vi.fn(),
   getBike: vi.fn(),
-  getActiveRide: vi.fn(),
+  getActiveRides: vi.fn(),
   getActiveSavedCard: vi.fn(),
   createRidePaymentOrder: vi.fn(),
   reserveRidePaymentOrder: vi.fn(),
@@ -119,7 +119,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   storageMock.getUser.mockResolvedValue({ id: "user-1", role: "rider", email: "rider@example.com", phone: "+79991234567" });
   storageMock.getBike.mockResolvedValue({ id: "bike-1", status: "available" });
-  storageMock.getActiveRide.mockResolvedValue(null);
+  storageMock.getActiveRides.mockResolvedValue([]);
   tbankMock.getTbankConfig.mockReturnValue({ publicAppUrl: "https://app.example.test" });
 });
 

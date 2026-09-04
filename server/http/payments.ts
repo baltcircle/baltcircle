@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { storage } from "../storage";
 import { errMessage } from "../error-utils";
 import { z } from "zod";
-import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
+import { TARIFFS, tariffPriceKopecks, MAX_ACTIVE_RIDES_PER_USER } from "@shared/geo";
 import {
   insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
   adminSetRoleSchema, adminSetBlockedSchema,
@@ -421,8 +421,8 @@ export function registerPaymentRoutes(app: Express): void {
     if (bike.status !== "available" && bike.status !== "reserved") {
       return res.status(409).json({ error: "Велосипед недоступен" });
     }
-    if (await storage.getActiveRide(userId)) {
-      return res.status(409).json({ error: "У вас уже есть активная поездка" });
+    if ((await storage.getActiveRides(userId)).length >= MAX_ACTIVE_RIDES_PER_USER) {
+      return res.status(409).json({ error: `У вас уже максимум активных поездок (${MAX_ACTIVE_RIDES_PER_USER})` });
     }
 
     const tariffDef = TARIFFS.find((t) => t.id === parsed.data.tariffId);
@@ -557,8 +557,8 @@ export function registerPaymentRoutes(app: Express): void {
     if (bike.status !== "available" && bike.status !== "reserved") {
       return res.status(409).json({ error: "Велосипед недоступен" });
     }
-    if (await storage.getActiveRide(userId)) {
-      return res.status(409).json({ error: "У вас уже есть активная поездка" });
+    if ((await storage.getActiveRides(userId)).length >= MAX_ACTIVE_RIDES_PER_USER) {
+      return res.status(409).json({ error: `У вас уже максимум активных поездок (${MAX_ACTIVE_RIDES_PER_USER})` });
     }
 
     const tariffDef = TARIFFS.find((t) => t.id === parsed.data.tariffId);
@@ -748,7 +748,10 @@ export function registerPaymentRoutes(app: Express): void {
       return res.json({ orderId: existingByKey.orderId, status: "pending", amountKopecks: existingByKey.amountKopecks });
     }
 
-    const activeRide = await storage.getActiveRide(userId);
+    // Never trust the client-supplied rideId directly (see the schema's
+    // comment): the charge only ever applies to a ride we've independently
+    // confirmed belongs to this rider AND is still active.
+    const activeRide = (await storage.getActiveRides(userId)).find((r) => r.id === parsed.data.rideId);
     if (!activeRide) return res.status(409).json({ error: "Нет активной поездки" });
 
     const tariffDef = TARIFFS.find((t) => t.id === parsed.data.tariffId);

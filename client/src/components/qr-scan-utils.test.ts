@@ -59,13 +59,19 @@ describe("classifyBikeForScan", () => {
 
   it("lets the scanning rider's own rented bike through", () => {
     const bike = makeBike({ id: "BC-01", status: "rented" });
-    const result = classifyBikeForScan(bike, { myActiveRideBikeId: "BC-01" });
+    const result = classifyBikeForScan(bike, { myActiveRideBikeIds: ["BC-01"] });
+    expect(result).toEqual({ bike });
+  });
+
+  it("lets a bike through when it's the second of two concurrently rented bikes", () => {
+    const bike = makeBike({ id: "BC-02", status: "rented" });
+    const result = classifyBikeForScan(bike, { myActiveRideBikeIds: ["BC-01", "BC-02"] });
     expect(result).toEqual({ bike });
   });
 
   it("reports \u00ab\u0432 \u0430\u0440\u0435\u043d\u0434\u0435\u00bb for a bike rented by someone else", () => {
     const bike = makeBike({ id: "BC-01", status: "rented" });
-    const result = classifyBikeForScan(bike, { myActiveRideBikeId: "BC-02" });
+    const result = classifyBikeForScan(bike, { myActiveRideBikeIds: ["BC-02"] });
     expect(result).toEqual({ error: "\u0412\u0435\u043b\u043e\u0441\u0438\u043f\u0435\u0434 \u043d\u0430\u0445\u043e\u0434\u0438\u0442\u044c\u0441\u044f \u0432 \u0430\u0440\u0435\u043d\u0434\u0435" });
   });
 
