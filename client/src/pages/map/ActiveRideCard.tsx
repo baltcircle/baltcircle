@@ -7,6 +7,10 @@ import { RideTimer } from "@/components/RideTimer";
 import { LiveOverage } from "@/components/LiveOverage";
 import { ExtendRideDialog } from "@/components/ExtendRideDialog";
 import { AwaitingLockCloseDialog } from "@/components/AwaitingLockCloseDialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { fmtDistance } from "@/lib/format";
 import { OVERAGE_MINUTE_PRICE } from "@shared/geo";
 import { cn } from "@/lib/utils";
@@ -44,6 +48,7 @@ export function ActiveRideCard({
   showRideSwitcher, activeSlot = 1, onSelectSlot,
 }: ActiveRideCardProps) {
   const [extendOpen, setExtendOpen] = useState(false);
+  const [confirmEndOpen, setConfirmEndOpen] = useState(false);
   const paused = ride.pausedAt != null;
 
   return (
@@ -180,7 +185,11 @@ export function ActiveRideCard({
       <div className="mt-2">
         <button
           type="button"
-          onClick={awaitingEndLockClose ? onCancelEnd : onEnd}
+          onClick={() => {
+            if (awaitingEndLockClose) { onCancelEnd(); return; }
+            if (paused) { setConfirmEndOpen(true); return; }
+            onEnd();
+          }}
           disabled={ending || cancellingEnd}
           data-testid="button-end-ride"
           className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-sand-deep text-brand-bark h-11 font-medium shadow-sm hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
@@ -205,6 +214,29 @@ export function ActiveRideCard({
           setExtendOpen(false);
         }}
       />
+
+      <AlertDialog open={confirmEndOpen} onOpenChange={setConfirmEndOpen}>
+        <AlertDialogContent className="rounded-3xl" data-testid="dialog-confirm-end-ride">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Завершить поездку?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Замок уже закрыт, поездка на паузе. После завершения продолжить её будет нельзя — будет списана итоговая стоимость.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-confirm-end-ride">Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="button-confirm-end-ride"
+              onClick={() => {
+                setConfirmEndOpen(false);
+                onEnd();
+              }}
+            >
+              Завершить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
