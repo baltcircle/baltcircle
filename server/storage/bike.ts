@@ -21,11 +21,17 @@ const LOCK_TAKEN = "Этот замок только что назначили �
 // physical lock is still open — a rider could otherwise pick it up before the
 // operator actually re-secures it. locks.last_lock_state is the only
 // currently-persisted, directly-queryable signal for "is the lock physically
-// closed right now" (refreshed by heartbeat, ~4 min cadence, and forced to
-// "locked" on lock-close events) — it can lag reality by a few minutes but is
-// the best available signal without new protocol plumbing. Fail-closed: a
-// lock with no reported state yet (brand-new/never connected) or a missing
-// registry row is treated the same as "open", not "unknown-so-allow".
+// closed right now" (refreshed by heartbeat, ~4 min cadence; by a status
+// (§1.3.7) report; forced to "locked" on lock-close events; and forced to
+// "unlocked" on a successful server-issued unlock, see server/omni/store.ts's
+// unlockResult case — the last one previously did NOT update this column,
+// which let a bike moved into "service"/etc (auto-unlocked via
+// suppressMovementAlarmOnStatusChange) be immediately re-marked "available"
+// on the same stale pre-unlock "locked" row, bug: 2026-09) — it can lag
+// reality by a few minutes but is the best available signal without new
+// protocol plumbing. Fail-closed: a lock with no reported state yet
+// (brand-new/never connected) or a missing registry row is treated the same
+// as "open", not "unknown-so-allow".
 export const LOCK_OPEN_BLOCKS_AVAILABLE = "Нельзя перевести велосипед в статус «Доступен» — замок открыт";
 
 export async function assertLockClosedForAvailable(

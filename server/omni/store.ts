@@ -437,6 +437,35 @@ export class PgOmniStore implements OmniStore {
         }
         return true;
       }
+      // §1.3.7 lock-info response — carries a definitive `locked` boolean,
+      // same as heartbeat. Previously fell through to `default` below and
+      // silently dropped `locked`, leaving last_lock_state stale whenever
+      // this report type arrived (bug: 2026-09, found investigating the
+      // "available" lock-state guard being bypassable).
+      case "status":
+        await pool.query(`UPDATE locks SET ${base}, last_lock_state = $3 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
+          [imei, at, message.locked ? "locked" : "unlocked"]);
+        return true;
+      // A server-issued unlock (sendUnlockCommand — admin "Разомкнуть", or the
+      // automatic unlock fired when a bike enters an out-of-rotation status
+      // like maintenance, see suppressMovementAlarmOnStatusChange) only ever
+      // reaches here on success: server.ts's resolveUnlock settles the
+      // in-memory promise from this same message but does not touch
+      // last_lock_state itself, and this report type otherwise fell into the
+      // `default` branch below (which only bumps last_seen_at). That gap let
+      // a stale "locked" row (from an earlier lockReport/heartbeat) survive
+      // an admin unlock, so the "available" guard (assertLockClosedForAvailable)
+      // could pass on a lock that was just told to open (bug: 2026-09). A
+      // failed unlock (message.success === false) leaves last_lock_state
+      // untouched — the lock didn't necessarily move, fail-closed still
+      // applies via whatever state was already stored.
+      case "unlockResult":
+        if (message.success) {
+          await pool.query(`UPDATE locks SET ${base}, last_lock_state = $3 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at, "unlocked"]);
+        } else {
+          await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
+        }
+        return true;
       case "firmware":
         await pool.query(`UPDATE locks SET ${base}, firmware_version = $3, device_type_code = $4 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
           [imei, at, message.firmwareVersion, message.deviceTypeCode]);

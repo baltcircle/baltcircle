@@ -557,3 +557,47 @@ describe("applyLiveUpdates auto-offline on low lock battery (rental spec addendu
     }
   });
 });
+
+describe("persistLockReport last_lock_state coverage for status/unlockResult (2026-09 fix)", () => {
+  // Previously both report types fell through to the `default` case, which
+  // only bumps last_seen_at — last_lock_state was left stale, which let the
+  // "available" guard (assertLockClosedForAvailable) pass on a lock that had
+  // just been told to open (e.g. via the auto-unlock fired when a bike enters
+  // "service" — suppressMovementAlarmOnStatusChange — or via the admin
+  // "Разомкнуть" button).
+
+  it("a status report with locked: true stamps last_lock_state = 'locked'", async () => {
+    const msg: OmniMessage = { type: "status", voltageCv: 400, signal: 20, satellites: 8, locked: true };
+    await store.persistLockReport(IMEI, msg, 1000);
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_lock_state: "locked" });
+  });
+
+  it("a status report with locked: false stamps last_lock_state = 'unlocked'", async () => {
+    fake.locks.set(IMEI, { last_seen_at: null, last_lock_state: "locked" });
+    const msg: OmniMessage = { type: "status", voltageCv: 400, signal: 20, satellites: 8, locked: false };
+    await store.persistLockReport(IMEI, msg, 1000);
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_lock_state: "unlocked" });
+  });
+
+  it("a successful unlockResult stamps last_lock_state = 'unlocked', overwriting a stale 'locked' row", async () => {
+    fake.locks.set(IMEI, { last_seen_at: 500, last_lock_state: "locked" });
+    const msg: OmniMessage = { type: "unlockResult", success: true, userId: "0", at: 1000 };
+    await store.persistLockReport(IMEI, msg, 1000);
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_lock_state: "unlocked" });
+  });
+
+  it("a failed unlockResult leaves last_lock_state untouched", async () => {
+    fake.locks.set(IMEI, { last_seen_at: 500, last_lock_state: "locked" });
+    const msg: OmniMessage = { type: "unlockResult", success: false, userId: "0", at: 1000 };
+    await store.persistLockReport(IMEI, msg, 1000);
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_lock_state: "locked" });
+  });
+
+  it("respects the ordering guard: a stale unlockResult arriving after a fresher report does not overwrite last_lock_state", async () => {
+    const fresh: OmniMessage = { type: "heartbeat", locked: true, voltageCv: 400, signal: 20 };
+    await store.persistLockReport(IMEI, fresh, 2000);
+    const stale: OmniMessage = { type: "unlockResult", success: true, userId: "0", at: 1000 };
+    await store.persistLockReport(IMEI, stale, 1000);
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_lock_state: "locked", last_seen_at: 2000 });
+  });
+});
