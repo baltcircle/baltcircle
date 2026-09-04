@@ -1,7 +1,6 @@
-import { Loader2 } from "lucide-react";
+import { Lock, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { LockCloseIcon } from "@/components/icons/LockCloseIcon";
 
 interface Props {
   open: boolean;
@@ -29,7 +28,7 @@ export function AwaitingLockCloseDialog({ open, mode, onCancel, cancelling }: Pr
       >
         <div className="flex flex-col items-center gap-3 py-2">
           <div className="w-16 h-16 rounded-full bg-brand-sea-soft flex items-center justify-center">
-            <LockCloseIcon className="w-9 h-9 text-brand-sea" />
+            <Lock className="w-9 h-9 text-brand-sea" />
           </div>
           <DialogTitle className="font-display font-light text-lg">
             Закройте замок велосипеда
