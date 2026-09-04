@@ -6,6 +6,7 @@ import type { Tariff } from "@shared/geo";
 import { RideTimer } from "@/components/RideTimer";
 import { LiveOverage } from "@/components/LiveOverage";
 import { ExtendRideDialog } from "@/components/ExtendRideDialog";
+import { AwaitingLockCloseDialog } from "@/components/AwaitingLockCloseDialog";
 import { fmtDistance } from "@/lib/format";
 import { OVERAGE_MINUTE_PRICE } from "@shared/geo";
 import { cn } from "@/lib/utils";
@@ -119,17 +120,12 @@ export function ActiveRideCard({
         </div>
       )}
 
-      {(awaitingLockClose || awaitingEndLockClose) && (
-        <div
-          className="mt-2 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-300 px-3 py-2 text-xs font-medium flex items-center gap-2"
-          data-testid="text-awaiting-lock-close"
-        >
-          <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-          {awaitingEndLockClose
-            ? "Закройте замок велосипеда, чтобы завершить поездку"
-            : "Закройте замок велосипеда, чтобы поставить поездку на паузу"}
-        </div>
-      )}
+      <AwaitingLockCloseDialog
+        open={awaitingLockClose || awaitingEndLockClose}
+        mode={awaitingEndLockClose ? "end" : "pause"}
+        onCancel={awaitingEndLockClose ? onCancelEnd : onResume}
+        cancelling={awaitingEndLockClose ? cancellingEnd : resuming}
+      />
 
       <div className={`mt-2 grid gap-2 ${showAddSecondRide ? "grid-cols-3" : "grid-cols-2"}`}>
         <button
