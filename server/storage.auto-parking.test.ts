@@ -26,6 +26,10 @@ function bikeRow(overrides: Partial<Bike> = {}): Bike {
   } as Bike;
 }
 
+function lockRow(overrides: Record<string, unknown> = {}) {
+  return { imei: "IMEI-1", lastLockState: "locked", ...overrides };
+}
+
 function parkingRow(overrides: Partial<Parking> = {}): Parking {
   return {
     id: "P-new", name: "New parking", city: "Калининград", lat: 350, lng: 215,
@@ -202,10 +206,11 @@ describe("one-shot parking recalc arming on the into-available transition (bike-
   it("arms a recalc when a locked bike enters available from a slower-cadence status (maintenance, 3600s > 120s)", async () => {
     const bike = bikeRow({ status: "maintenance", lockImei: "IMEI-1" });
     const updated = bikeRow({ status: "available", lockImei: "IMEI-1", parkingId: "P-new" });
-    // getBike(existing) -> resolveLockPositionForBikeStatusChange's locks
-    // lookup (no last-known fix) -> listParkings() -> getBike() inside
+    // getBike(existing) -> assertLockClosedForAvailable's locks lookup (lock is
+    // closed, so the transition proceeds) -> resolveLockPositionForBikeStatusChange's
+    // locks lookup (no last-known fix) -> listParkings() -> getBike() inside
     // updateBike's parkingId patch -> final getBike(workingId).
-    const selectResults: unknown[][] = [[bike], [], [parkingRow()], [], [updated]];
+    const selectResults: unknown[][] = [[bike], [lockRow()], [], [parkingRow()], [], [updated]];
     dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
     dbMock.update.mockImplementation(() => {
       const chain: any = { set: () => chain, where: () => Promise.resolve() };
@@ -222,7 +227,7 @@ describe("one-shot parking recalc arming on the into-available transition (bike-
   it("does not arm a recalc entering available from an already-fast-cadence status (reserved, 10s)", async () => {
     const bike = bikeRow({ status: "reserved", lockImei: "IMEI-1" });
     const updated = bikeRow({ status: "available", lockImei: "IMEI-1", parkingId: "P-new" });
-    const selectResults: unknown[][] = [[bike], [], [parkingRow()], [], [updated]];
+    const selectResults: unknown[][] = [[bike], [lockRow()], [], [parkingRow()], [], [updated]];
     dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
     dbMock.update.mockImplementation(() => {
       const chain: any = { set: () => chain, where: () => Promise.resolve() };
@@ -274,7 +279,7 @@ describe("one-shot parking recalc arming on the into-available transition (bike-
   it("is a safe no-op when no gateway is registered (e.g. in tests or before the TCP server starts)", async () => {
     const bike = bikeRow({ status: "maintenance", lockImei: "IMEI-1" });
     const updated = bikeRow({ status: "available", lockImei: "IMEI-1", parkingId: "P-new" });
-    const selectResults: unknown[][] = [[bike], [], [parkingRow()], [], [updated]];
+    const selectResults: unknown[][] = [[bike], [lockRow()], [], [parkingRow()], [], [updated]];
     dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
     dbMock.update.mockImplementation(() => {
       const chain: any = { set: () => chain, where: () => Promise.resolve() };
@@ -282,5 +287,91 @@ describe("one-shot parking recalc arming on the into-available transition (bike-
     });
 
     await expect(storage.adminUpdateBike("BC-01", { status: "available" })).resolves.not.toThrow();
+  });
+});
+
+describe("blocks entering \"available\" while the lock is physically open (2026-09 lock-state guard)", () => {
+  it("rejects the transition when the lock's last reported state is unlocked", async () => {
+    const bike = bikeRow({ status: "maintenance", lockImei: "IMEI-1" });
+    const selectResults: unknown[][] = [[bike], [lockRow({ lastLockState: "unlocked" })]];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    const setSpy = vi.fn();
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: (v: unknown) => { setSpy(v); return chain; }, where: () => Promise.resolve() };
+      return chain;
+    });
+
+    const result = await storage.adminUpdateBike("BC-01", { status: "available" });
+
+    expect(result).toEqual({ error: expect.stringContaining("замок открыт") });
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the lock has never reported a state (null)", async () => {
+    const bike = bikeRow({ status: "maintenance", lockImei: "IMEI-1" });
+    const selectResults: unknown[][] = [[bike], [lockRow({ lastLockState: null })]];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    const setSpy = vi.fn();
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: (v: unknown) => { setSpy(v); return chain; }, where: () => Promise.resolve() };
+      return chain;
+    });
+
+    const result = await storage.adminUpdateBike("BC-01", { status: "available" });
+
+    expect(result).toEqual({ error: expect.stringContaining("замок открыт") });
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the lock has no registry row at all", async () => {
+    const bike = bikeRow({ status: "maintenance", lockImei: "IMEI-1" });
+    const selectResults: unknown[][] = [[bike], []];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    const setSpy = vi.fn();
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: (v: unknown) => { setSpy(v); return chain; }, where: () => Promise.resolve() };
+      return chain;
+    });
+
+    const result = await storage.adminUpdateBike("BC-01", { status: "available" });
+
+    expect(result).toEqual({ error: expect.stringContaining("замок открыт") });
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it("allows the transition when the bike has no lock attached", async () => {
+    const bike = bikeRow({ status: "maintenance", lockImei: null });
+    const updated = bikeRow({ status: "available", lockImei: null, parkingId: "P-new" });
+    // getBike(existing) -> listParkings' parkings select -> listParkings'
+    // internal listBikes select -> recalculateBikeParking's updateBike ->
+    // getBike (unused return) -> final adminUpdateBike getBike(workingId).
+    const selectResults: unknown[][] = [[bike], [parkingRow()], [], [bike], [updated]];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: () => chain, where: () => Promise.resolve() };
+      return chain;
+    });
+
+    const result = await storage.adminUpdateBike("BC-01", { status: "available" });
+
+    expect(result).toEqual({ bike: updated });
+  });
+
+  it("checks the newly assigned lock, not the old one, when swapping locks in the same PATCH", async () => {
+    const bike = bikeRow({ status: "maintenance", lockImei: "IMEI-OLD" });
+    // The old lock would pass (locked), but the PATCH swaps to IMEI-NEW, whose
+    // registry row has no reported state yet -> must fail closed on IMEI-NEW.
+    const selectResults: unknown[][] = [[bike], [lockRow({ imei: "IMEI-NEW", lastLockState: null })]];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    const setSpy = vi.fn();
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: (v: unknown) => { setSpy(v); return chain; }, where: () => Promise.resolve() };
+      return chain;
+    });
+
+    const result = await storage.adminUpdateBike("BC-01", { status: "available", lockImei: "IMEI-NEW" });
+
+    expect(result).toEqual({ error: expect.stringContaining("замок открыт") });
+    expect(setSpy).not.toHaveBeenCalled();
   });
 });

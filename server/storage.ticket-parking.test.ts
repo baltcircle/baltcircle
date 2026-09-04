@@ -35,6 +35,10 @@ function bikeRow(overrides: Partial<Bike> = {}): Bike {
   } as Bike;
 }
 
+function lockRow(overrides: Record<string, unknown> = {}) {
+  return { imei: "IMEI-1", lastLockState: "locked", ...overrides };
+}
+
 function selectFrom(rows: unknown[]) {
   const chain: any = {
     from: () => chain,
@@ -68,6 +72,7 @@ describe("closing a ticket with returnBikeToAvailable recalculates parking from 
     const selectResults: unknown[][] = [
       [ticketRow({ status: "new" })], // existing ticket
       [staleBike],                    // getBike(existing.bikeId) inside returnBikeToAvailable branch
+      [lockRow()],                    // assertLockClosedForAvailable's locks lookup (closed -> proceeds)
       [ticketRow({ status: "closed" })], // getTicket() final select (ticket row)
       [],                                 // getTicket() final select (comments)
     ];
@@ -96,6 +101,7 @@ describe("closing a ticket with returnBikeToAvailable recalculates parking from 
     const selectResults: unknown[][] = [
       [ticketRow({ status: "new" })],
       [staleBike],
+      [lockRow()],
       [ticketRow({ status: "closed" })],
       [],
     ];
@@ -127,6 +133,7 @@ describe("arming a one-shot parking recalc when returnBikeToAvailable closes a m
     const selectResults: unknown[][] = [
       [ticketRow({ status: "new" })],
       [staleBike],
+      [lockRow()],
       [ticketRow({ status: "closed" })],
       [],
     ];
@@ -184,6 +191,7 @@ describe("arming a one-shot parking recalc when returnBikeToAvailable closes a m
     const selectResults: unknown[][] = [
       [ticketRow({ status: "new" })],
       [staleBike],
+      [lockRow()],
       [ticketRow({ status: "closed" })],
       [],
     ];
@@ -213,6 +221,7 @@ describe("arming a one-shot parking recalc when returnBikeToAvailable closes a m
     const selectResults: unknown[][] = [
       [ticketRow({ status: "new" })],
       [staleBike],
+      [lockRow()],
       [ticketRow({ status: "closed" })],
       [],
     ];
@@ -232,5 +241,69 @@ describe("arming a one-shot parking recalc when returnBikeToAvailable closes a m
 
     updateBikeSpy.mockRestore();
     recalcSpy.mockRestore();
+  });
+});
+
+describe("blocks closing a ticket with returnBikeToAvailable while the lock is open (2026-09 lock-state guard)", () => {
+  it("rejects the close and leaves the ticket untouched when the lock's last state is unlocked", async () => {
+    const staleBike = bikeRow({ lockImei: "IMEI-1" });
+    const selectResults: unknown[][] = [
+      [ticketRow({ status: "new" })],
+      [staleBike],
+      [lockRow({ lastLockState: "unlocked" })],
+    ];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    const setSpy = vi.fn();
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: (v: unknown) => { setSpy(v); return chain; }, where: () => Promise.resolve() };
+      return chain;
+    });
+    dbMock.insert.mockImplementation(() => ({ values: () => Promise.resolve() }));
+
+    const result = await storage.updateTicket(1, { status: "closed", returnBikeToAvailable: true }, "operator");
+
+    expect(result).toEqual({ error: expect.stringContaining("замок открыт") });
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(dbMock.insert).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the lock has no registry row at all", async () => {
+    const staleBike = bikeRow({ lockImei: "IMEI-1" });
+    const selectResults: unknown[][] = [
+      [ticketRow({ status: "new" })],
+      [staleBike],
+      [],
+    ];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    const setSpy = vi.fn();
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: (v: unknown) => { setSpy(v); return chain; }, where: () => Promise.resolve() };
+      return chain;
+    });
+
+    const result = await storage.updateTicket(1, { status: "closed", returnBikeToAvailable: true }, "operator");
+
+    expect(result).toEqual({ error: expect.stringContaining("замок открыт") });
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it("still closes the ticket normally when returnBikeToAvailable is not requested", async () => {
+    const selectResults: unknown[][] = [
+      [ticketRow({ status: "new" })],
+      [ticketRow({ status: "closed" })],
+      [],
+    ];
+    dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));
+    const setSpy = vi.fn();
+    dbMock.update.mockImplementation(() => {
+      const chain: any = { set: (v: unknown) => { setSpy(v); return chain; }, where: () => Promise.resolve() };
+      return chain;
+    });
+    dbMock.insert.mockImplementation(() => ({ values: () => Promise.resolve() }));
+
+    const result = await storage.updateTicket(1, { status: "closed" }, "operator");
+
+    expect(result).not.toHaveProperty("error");
+    expect(setSpy).toHaveBeenCalled();
   });
 });

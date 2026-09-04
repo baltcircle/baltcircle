@@ -303,7 +303,7 @@ export interface ITicketStorage {
   countTickets(): Promise<number>;
   getTicket(id: number): Promise<TicketWithComments | undefined>;
   createTicket(input: CreateTicketInput): Promise<TicketWithComments>;
-  updateTicket(id: number, patch: UpdateTicketInput, actor: string): Promise<TicketWithComments | undefined>;
+  updateTicket(id: number, patch: UpdateTicketInput, actor: string): Promise<TicketWithComments | { error: string } | undefined>;
   addTicketComment(id: number, author: string, body: string): Promise<TicketWithComments | undefined>;
 }
 
