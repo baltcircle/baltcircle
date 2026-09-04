@@ -141,7 +141,7 @@ describe("startRide physical unlock gate (audit F-04)", () => {
     expect(result).not.toHaveProperty("error");
   });
 
-  it("always tags the created ride isTest: false — the per-bike test-unit flag was removed", async () => {
+  it("always tags the created ride isTest: false when not requested — the per-bike test-unit flag was removed", async () => {
     const bike = makeBike({ lockImei: null });
     const { tx, calls } = makeTx([[bike], [], [makeParking()]]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
@@ -151,6 +151,25 @@ describe("startRide physical unlock gate (audit F-04)", () => {
     expect(result).not.toHaveProperty("error");
     const rideInsert = calls.insertValues.find((v: any) => v && "bikeId" in v && "startedAt" in v);
     expect(rideInsert).toMatchObject({ isTest: false });
+  });
+
+  // Operator/admin test-ride feature (POST /api/rides/start-test): isTest
+  // rides get a real unlock/tracking lifecycle but must never touch the
+  // wallet or bill a non-zero cost, regardless of the tariff picked for
+  // duration bookkeeping.
+  it("forces cost to 0 and skips the wallet debit entirely when isTest is true, even though prepaid is false", async () => {
+    const bike = makeBike({ lockImei: null });
+    const { tx, calls } = makeTx([[bike], [], [makeParking()]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.startRide({
+      bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: false, isTest: true,
+    });
+
+    expect(result).not.toHaveProperty("error");
+    expect(calls.execute.some((q: any) => String(q).includes("UPDATE wallet"))).toBe(false);
+    const rideInsert = calls.insertValues.find((v: any) => v && "bikeId" in v && "startedAt" in v);
+    expect(rideInsert).toMatchObject({ isTest: true, cost: 0 });
   });
 
   it("keeps the ride active when the lock confirms the unlock", async () => {

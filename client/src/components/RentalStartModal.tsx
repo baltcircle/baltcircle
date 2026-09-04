@@ -13,11 +13,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import { TARIFFS } from "@shared/geo";
 import type { Tariff } from "@shared/geo";
+import type { Ride } from "@shared/schema";
 import {
   Bike as BikeIcon, Check, CreditCard, QrCode, Loader2,
-  AlertCircle, Smartphone, CalendarClock,
+  AlertCircle, Smartphone, CalendarClock, FlaskConical,
 } from "lucide-react";
 
 interface Props {
@@ -218,6 +220,30 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
     },
   });
 
+  // Test ride (operator/admin only): starts a real ride — real unlock, real
+  // GPS/geofence, real tracking, pause/extend/end — but the server forces
+  // cost to 0 throughout (POST /api/rides/start-test, requireRole-enforced
+  // server-side; this client-side gate is UX only, never the real guard).
+  const { isOperator, isAdmin } = useCurrentUser();
+  const canStartTest = isOperator || isAdmin;
+  const testMut = useMutation<Ride, Error, void>({
+    mutationFn: async () => {
+      if (!bike) throw new Error("Велосипед не выбран");
+      const res = await apiRequest("POST", "/api/rides/start-test", { bikeId: bike.id, tariff });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
+      toast.toast({ title: "Тестовая поездка начата", description: "Оплата не производится." });
+      onOpenChange(false);
+      navigate("/rent");
+    },
+    onError: (err) => {
+      toast.toast({ title: "Не удалось начать тестовую поездку", description: cleanErr(err), variant: "destructive" });
+    },
+  });
+
   const submitting = payMut.isPending || chargeMut.isPending;
   const selectedTariff = TARIFFS.find((t) => t.id === tariff);
   // "available" bikes can always be started; a "reserved" bike can ONLY be
@@ -227,6 +253,8 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
     && paymentsConfigured && !submitting;
   const canBook = !!bike && bike.status === "available"
     && !hasReservationElsewhere && !hasReservationForThisBike && !bookMut.isPending;
+  const canStartTestRide = canStartTest && !!bike
+    && (bike.status === "available" || hasReservationForThisBike) && !testMut.isPending;
 
   function onPrimary() {
     if (useSavedCard) chargeMut.mutate();
@@ -370,11 +398,33 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
         )}
 
         {/* Error state if creating the payment / charging the card / booking fails. */}
-        {(payMut.isError || chargeMut.isError || bookMut.isError) && (
+        {(payMut.isError || chargeMut.isError || bookMut.isError || testMut.isError) && (
           <div className="rounded-md bg-destructive/10 text-destructive text-xs p-2.5 flex items-start gap-1.5" data-testid="rental-start-error">
             <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <span>{cleanErr((payMut.error ?? chargeMut.error ?? bookMut.error) as Error)}</span>
+            <span>{cleanErr((payMut.error ?? chargeMut.error ?? bookMut.error ?? testMut.error) as Error)}</span>
           </div>
+        )}
+
+        {/* Operator/admin-only: full real ride lifecycle, cost forced to 0
+            server-side, excluded from rider/staff ride-history feeds. */}
+        {canStartTest && (
+          <Button
+            type="button"
+            variant="secondary"
+            className="w-full"
+            disabled={!canStartTestRide}
+            onClick={() => testMut.mutate()}
+            data-testid="button-start-test-ride"
+          >
+            {testMut.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <>
+                <FlaskConical className="w-4 h-4 mr-1.5 shrink-0" />
+                <span className="truncate">Тестовая поездка (бесплатно)</span>
+              </>
+            )}
+          </Button>
         )}
 
         <DialogFooter className="flex-row gap-2">
