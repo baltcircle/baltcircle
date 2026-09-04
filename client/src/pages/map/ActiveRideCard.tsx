@@ -4,14 +4,13 @@ import { PauseGraceCountdown } from "@/components/PauseGraceCountdown";
 import type { Ride } from "@shared/schema";
 import type { Tariff } from "@shared/geo";
 import { RideTimer } from "@/components/RideTimer";
-import { LiveOverage } from "@/components/LiveOverage";
+import { OveragePanel } from "@/components/OveragePanel";
 import { ExtendRideDialog } from "@/components/ExtendRideDialog";
 import { AwaitingLockCloseDialog } from "@/components/AwaitingLockCloseDialog";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { OVERAGE_MINUTE_PRICE } from "@shared/geo";
 import { cn } from "@/lib/utils";
 
 interface ActiveRideCardProps {
@@ -52,10 +51,19 @@ export function ActiveRideCard({
 
   return (
     <div
-      className="rounded-2xl bg-card/95 text-card-foreground backdrop-blur-sm shadow-xl px-4 py-3"
+      className="rounded-2xl bg-card/95 text-card-foreground backdrop-blur-sm shadow-xl px-5 py-4"
       data-testid="home-active-ride-card"
     >
-      <div className="flex items-center justify-between gap-3">
+      <div className="text-center">
+        <div
+          className="font-display text-lg font-medium tracking-wide text-brand-sea"
+          data-testid="text-active-bike"
+        >
+          {ride.bikeId}
+        </div>
+      </div>
+
+      <div className="mt-1 flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div
             className={`flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest ${
@@ -73,18 +81,7 @@ export function ActiveRideCard({
             <RideTimer ride={ride} />
           </div>
         </div>
-        <div className="font-display text-base font-light tabular-nums shrink-0" data-testid="text-active-bike">
-          #{ride.bikeId}
-        </div>
-        <div className="text-right shrink-0">
-          <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Овертайм</div>
-          <div className="text-[9px] text-muted-foreground" data-testid="text-overage-rate">
-            {OVERAGE_MINUTE_PRICE} рублей минута
-          </div>
-          <div className="font-display text-base font-light tabular-nums" data-testid="text-ride-overage">
-            <LiveOverage ride={ride} />
-          </div>
-        </div>
+        <OveragePanel ride={ride} />
       </div>
 
       {showRideSwitcher && (
@@ -126,9 +123,9 @@ export function ActiveRideCard({
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-muted min-h-11 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
         >
           {pausing || resuming ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
+            <Loader2 className="w-4 h-4 animate-spin text-brand-sea" />
           ) : paused || awaitingLockClose ? null : (
-            <Pause className="w-4 h-4" />
+            <Pause className="w-4 h-4 text-brand-sea" />
           )}
           {paused ? (
             <span className="flex items-baseline gap-1.5">
@@ -146,13 +143,10 @@ export function ActiveRideCard({
           onClick={onAddSecondRide}
           disabled={!showAddSecondRide || awaitingEndLockClose}
           data-testid="button-add-second-ride"
-          className="inline-flex flex-col items-center justify-center gap-1 rounded-xl bg-muted min-h-11 py-2 px-1 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-muted min-h-11 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
         >
-          <span className="relative inline-flex items-center justify-center w-5 h-4 shrink-0">
-            <Bike className="w-3.5 h-3.5 absolute left-0 top-0 opacity-60" />
-            <Bike className="w-3.5 h-3.5 absolute right-0 top-0.5" />
-          </span>
-          <span className="text-[10px] leading-tight text-center">Ещё один велосипед</span>
+          <Bike className="w-4 h-4 text-brand-sea" />
+          + велосипед
         </button>
       </div>
 
@@ -164,7 +158,7 @@ export function ActiveRideCard({
           data-testid="button-extend-ride"
           className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-muted h-11 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
         >
-          <PlusCircle className="w-4 h-4" /> Продлить аренду
+          <PlusCircle className="w-4 h-4 text-brand-sea" /> Продлить аренду
         </button>
       </div>
 
