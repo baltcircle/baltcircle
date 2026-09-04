@@ -1,4 +1,5 @@
 import { MARKER_COLORS } from "./mapStyle";
+import logoMark from "@/assets/logo-mark.png";
 
 // `paused` overrides the status colour to match "Бронь" (reserved) — for the
 // renter's own bike while their ride is on pause, it should read the same as
@@ -23,8 +24,12 @@ export function ticketMarkerColor(priority: string): string {
     : MARKER_COLORS.ticketLow;
 }
 
-/** Build a small circular DOM marker element (bikes/rides/tickets). */
-export function dotMarkerEl(color: string, opts: { ring?: boolean; size?: number; clickable?: boolean; fallen?: boolean } = {}): HTMLDivElement {
+/** Build a small circular DOM marker element (bikes/rides/tickets).
+ *  `bike: true` renders the brand bicycle mark (from the logo, forced to
+ *  solid black via CSS filter so it reads on every status colour) centred
+ *  inside the circle instead of a blank dot — status colour still comes
+ *  from `color`, only the glyph is added (bike-marker rebrand). */
+export function dotMarkerEl(color: string, opts: { ring?: boolean; size?: number; clickable?: boolean; fallen?: boolean; bike?: boolean } = {}): HTMLDivElement {
   const size = opts.fallen ? Math.max(opts.size ?? 16, 22) : (opts.size ?? 16);
   const el = document.createElement("div");
   el.style.width = `${size}px`;
@@ -43,6 +48,23 @@ export function dotMarkerEl(color: string, opts: { ring?: boolean; size?: number
     el.style.font = "700 13px/1 system-ui, sans-serif";
     el.textContent = "!";
     el.title = "Велосипед упал — требуется проверка";
+  } else if (opts.bike) {
+    el.style.display = "flex";
+    el.style.alignItems = "center";
+    el.style.justifyContent = "center";
+    const img = document.createElement("img");
+    img.src = logoMark;
+    img.alt = "";
+    img.draggable = false;
+    img.style.width = "68%";
+    img.style.height = "68%";
+    img.style.objectFit = "contain";
+    // brightness(0) collapses any opaque pixel to pure black while keeping
+    // the source alpha channel intact — recolours the navy logo mark to
+    // black without needing a separate black-variant asset.
+    img.style.filter = "brightness(0)";
+    img.style.pointerEvents = "none";
+    el.appendChild(img);
   }
   return el;
 }
