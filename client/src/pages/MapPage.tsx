@@ -26,8 +26,6 @@ import { usePaymentBanner } from "./map/use-payment-banner";
 import { useReservationBanner } from "./map/use-reservation-banner";
 import { usePendingBikeScan } from "./map/use-pending-bike-scan";
 import { ActiveRideCard } from "./map/ActiveRideCard";
-import { SecondaryRideBar } from "./map/SecondaryRideBar";
-import { ExtendRideDialog } from "@/components/ExtendRideDialog";
 import { RideFeedbackDialog } from "@/components/RideFeedbackDialog";
 import { ScanAndPaymentBanner } from "./map/ScanAndPaymentBanner";
 import { ReservationBanner } from "./map/ReservationBanner";
@@ -60,8 +58,8 @@ export function MapPage() {
   const rideSlotA = activeRides[0] ?? null;
   const rideSlotB = activeRides[1] ?? null;
 
-  // Какая из (максимум двух) активных поездок сейчас показана полной
-  // карточкой ActiveRideCard; вторая — компактной SecondaryRideBar.
+  // Какая из (максимум двух) активных поездок сейчас показана в карточке
+  // ActiveRideCard — переключается кнопками 1/2 в самой карточке.
   const [focusedRideId, setFocusedRideId] = useState<number | null>(null);
   useEffect(() => {
     if (activeRides.length === 0) {
@@ -73,7 +71,13 @@ export function MapPage() {
     }
   }, [activeRides, focusedRideId]);
   const focusedRide = activeRides.find((r) => r.id === focusedRideId) ?? activeRides[0] ?? null;
-  const secondaryRide = activeRides.find((r) => r.id !== focusedRide?.id) ?? null;
+  // 1/2-переключатель в самой карточке заменил отдельную SecondaryRideBar:
+  // слот — стабильный номер (1 или 2) из БД, не зависит от порядка activeRides.
+  const showRideSwitcher = activeRides.length >= 2;
+  const onSelectSlot = (slot: 1 | 2) => {
+    const target = activeRides.find((r) => r.activeSlot === slot);
+    if (target) setFocusedRideId(target.id);
+  };
 
   // GPS-трекер активной аренды: слушает onUserLocation от MapLibreMap и шлёт
   // точки на /api/rides/{id}/point (тротлинг 3с + фильтр GPS-дребезга <5м).
@@ -133,7 +137,6 @@ export function MapPage() {
   const [rentalOpen, setRentalOpen] = useState(false);
   const [regOpen, setRegOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
-  const [secondaryExtendOpen, setSecondaryExtendOpen] = useState(false);
   const [feedbackRideId, setFeedbackRideId] = useState<number | null>(null);
 
   const { drawerOpen, setDrawerOpen, drawerMountedOpen, drawerInstantTick } = useDrawerState();
@@ -537,33 +540,26 @@ export function MapPage() {
         </button>
 
         {focusedRide ? (
-          <div className="flex flex-col gap-2">
-            <ActiveRideCard
-              ride={focusedRide}
-              onEnd={() => endMut.mutate(focusedRide.id)}
-              ending={endMut.isPending}
-              onPause={() => pauseMut.mutate(focusedRide.id)}
-              onResume={() => resumeMut.mutate(focusedRide.id)}
-              pausing={pauseMut.isPending}
-              resuming={resumeMut.isPending}
-              awaitingLockClose={awaitingLockCloseRideId === focusedRide.id}
-              awaitingEndLockClose={awaitingEndLockCloseRideId === focusedRide.id}
-              onCancelEnd={() => cancelEndMut.mutate(focusedRide.id)}
-              cancellingEnd={cancelEndMut.isPending}
-              onExtend={(tariff) => extendMut.mutate({ rideId: focusedRide.id, tariff })}
-              extending={extendMut.isPending}
-              showAddSecondRide={canAddSecondRide}
-              onAddSecondRide={() => setScanOpen(true)}
-            />
-            {secondaryRide && (
-              <SecondaryRideBar
-                ride={secondaryRide}
-                onFocus={() => setFocusedRideId(secondaryRide.id)}
-                onExtend={() => setSecondaryExtendOpen(true)}
-                extending={extendMut.isPending}
-              />
-            )}
-          </div>
+          <ActiveRideCard
+            ride={focusedRide}
+            onEnd={() => endMut.mutate(focusedRide.id)}
+            ending={endMut.isPending}
+            onPause={() => pauseMut.mutate(focusedRide.id)}
+            onResume={() => resumeMut.mutate(focusedRide.id)}
+            pausing={pauseMut.isPending}
+            resuming={resumeMut.isPending}
+            awaitingLockClose={awaitingLockCloseRideId === focusedRide.id}
+            awaitingEndLockClose={awaitingEndLockCloseRideId === focusedRide.id}
+            onCancelEnd={() => cancelEndMut.mutate(focusedRide.id)}
+            cancellingEnd={cancelEndMut.isPending}
+            onExtend={(tariff) => extendMut.mutate({ rideId: focusedRide.id, tariff })}
+            extending={extendMut.isPending}
+            showAddSecondRide={canAddSecondRide}
+            onAddSecondRide={() => setScanOpen(true)}
+            showRideSwitcher={showRideSwitcher}
+            activeSlot={(focusedRide.activeSlot as 1 | 2) ?? 1}
+            onSelectSlot={onSelectSlot}
+          />
         ) : (
           <>
             {reservation && (
@@ -621,16 +617,6 @@ export function MapPage() {
         open={rentalOpen}
         onOpenChange={setRentalOpen}
         bike={bike ?? availableBikes[0] ?? null}
-      />
-
-      <ExtendRideDialog
-        open={secondaryExtendOpen}
-        onOpenChange={setSecondaryExtendOpen}
-        pending={extendMut.isPending}
-        onConfirm={(tariff) => {
-          if (secondaryRide) extendMut.mutate({ rideId: secondaryRide.id, tariff });
-          setSecondaryExtendOpen(false);
-        }}
       />
 
       <RideFeedbackDialog
