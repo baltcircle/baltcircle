@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Lock, Route, Pause, PlusCircle, Loader2, X, Bike } from "lucide-react";
+import { Lock, Pause, PlusCircle, Loader2, X, Bike } from "lucide-react";
 import { PauseGraceCountdown } from "@/components/PauseGraceCountdown";
 import type { Ride } from "@shared/schema";
 import type { Tariff } from "@shared/geo";
@@ -11,7 +11,6 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { fmtDistance } from "@/lib/format";
 import { OVERAGE_MINUTE_PRICE } from "@shared/geo";
 import { cn } from "@/lib/utils";
 
@@ -74,6 +73,9 @@ export function ActiveRideCard({
             <RideTimer ride={ride} />
           </div>
         </div>
+        <div className="font-display text-base font-light tabular-nums shrink-0" data-testid="text-active-bike">
+          #{ride.bikeId}
+        </div>
         <div className="text-right shrink-0">
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Овертайм</div>
           <div className="text-[9px] text-muted-foreground" data-testid="text-overage-rate">
@@ -81,23 +83,6 @@ export function ActiveRideCard({
           </div>
           <div className="font-display text-base font-light tabular-nums" data-testid="text-ride-overage">
             <LiveOverage ride={ride} />
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        <div className="rounded-xl bg-background/50 border border-card-border px-3 py-2">
-          <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Код велосипеда</div>
-          <div className="font-display text-base font-light truncate mt-0.5" data-testid="text-active-bike">
-            {ride.bikeId}
-          </div>
-        </div>
-        <div className="rounded-xl bg-background/50 border border-card-border px-3 py-2">
-          <div className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted-foreground">
-            <Route className="w-3 h-3" /> Расстояние
-          </div>
-          <div className="font-display text-base font-light tabular-nums mt-0.5" data-testid="text-ride-distance">
-            {fmtDistance(ride.distanceM ?? 0)}
           </div>
         </div>
       </div>
@@ -132,7 +117,7 @@ export function ActiveRideCard({
         cancelling={awaitingEndLockClose ? cancellingEnd : resuming}
       />
 
-      <div className={`mt-2 grid gap-2 ${showAddSecondRide ? "grid-cols-3" : "grid-cols-2"}`}>
+      <div className="mt-2 grid grid-cols-2 gap-2">
         <button
           type="button"
           onClick={paused || awaitingLockClose ? onResume : onPause}
@@ -158,28 +143,29 @@ export function ActiveRideCard({
         </button>
         <button
           type="button"
+          onClick={onAddSecondRide}
+          disabled={!showAddSecondRide || awaitingEndLockClose}
+          data-testid="button-add-second-ride"
+          className="inline-flex flex-col items-center justify-center gap-1 rounded-xl bg-muted min-h-11 py-2 px-1 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
+        >
+          <span className="relative inline-flex items-center justify-center w-5 h-4 shrink-0">
+            <Bike className="w-3.5 h-3.5 absolute left-0 top-0 opacity-60" />
+            <Bike className="w-3.5 h-3.5 absolute right-0 top-0.5" />
+          </span>
+          <span className="text-[10px] leading-tight text-center">Ещё один велосипед</span>
+        </button>
+      </div>
+
+      <div className="mt-2">
+        <button
+          type="button"
           onClick={() => setExtendOpen(true)}
           disabled={extending || awaitingEndLockClose}
           data-testid="button-extend-ride"
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-muted min-h-11 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
+          className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-muted h-11 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
         >
-          <PlusCircle className="w-4 h-4" /> Продлить
+          <PlusCircle className="w-4 h-4" /> Продлить аренду
         </button>
-        {showAddSecondRide && (
-          <button
-            type="button"
-            onClick={onAddSecondRide}
-            disabled={awaitingEndLockClose}
-            data-testid="button-add-second-ride"
-            className="inline-flex flex-col items-center justify-center gap-1 rounded-xl bg-muted min-h-11 py-2 px-1 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
-          >
-            <span className="relative inline-flex items-center justify-center w-5 h-4 shrink-0">
-              <Bike className="w-3.5 h-3.5 absolute left-0 top-0 opacity-60" />
-              <Bike className="w-3.5 h-3.5 absolute right-0 top-0.5" />
-            </span>
-            <span className="text-[10px] leading-tight text-center">Ещё один велосипед</span>
-          </button>
-        )}
       </div>
 
       <div className="mt-2">
