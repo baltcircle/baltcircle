@@ -13,7 +13,7 @@ import {
   adminCreateBikeSchema, adminUpdateBikeSchema,
   createTicketSchema, updateTicketSchema, addTicketCommentSchema,
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
-  createRideFeedbackSchema,
+  createRideFeedbackSchema, startTestRideSchema,
 } from "@shared/schema";
 import type { PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
 import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./../sms";
@@ -144,6 +144,19 @@ export function registerRideRoutes(app: Express): void {
       return res.status(403).json({ error: "Аккаунт заблокирован. Обратитесь в поддержку." });
     }
     const r = await storage.startRide({ bikeId: parsed.data.bikeId, userId: riderId(req), tariff: parsed.data.tariff });
+    if ("error" in r) return res.status(400).json(r);
+    res.json(r);
+  });
+  // Test ride: real unlock/GPS/tracking/pause/extend/end lifecycle end to end,
+  // but never touches the wallet or T-Bank (cost is forced to 0 throughout —
+  // see storage.startRide/endRide/extendRide's isTest handling). Operator/
+  // admin only — enforced server-side regardless of any client-side gating.
+  app.post("/api/rides/start-test", requireRole("operator", "admin"), async (req, res) => {
+    const parsed = startTestRideSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Bad request" });
+    const r = await storage.startRide({
+      bikeId: parsed.data.bikeId, userId: riderId(req), tariff: parsed.data.tariff, isTest: true,
+    });
     if ("error" in r) return res.status(400).json(r);
     res.json(r);
   });

@@ -483,6 +483,29 @@ describe("endRide charge confirmation push", () => {
   });
 });
 
+// Test rides (isTest=true, operator/admin-only via POST /api/rides/start-test)
+// must never bill overage — exceeding the tariff window still shows in the UI
+// (elapsed time keeps counting) but must never touch the wallet or T-Bank.
+describe("endRide — test ride never bills overage", () => {
+  it("zeroes overage and skips the wallet debit entirely for an isTest ride run past its paid window", async () => {
+    // h1 tariff pays 1h; ride ran 2h30m — 90 completed overage minutes on a
+    // normal ride, but isTest must force this to 0 regardless.
+    const activeRide = makeRide({ startedAt: NOW.getTime() - 2.5 * HOUR, isTest: true, cost: 0 });
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed", isTest: true, cost: 0 });
+    const { tx, calls } = makeTx([[activeRide], [makeBike()], [], [completedRide]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+
+    const result = await storage.endRide(activeRide.id);
+
+    expect("error" in (result as object)).toBe(false);
+    expect(calls.execute).toHaveLength(0); // no wallet UPSERT/decrement
+    expect(calls.insert).toHaveLength(0); // no wallet ride_charge ledger row
+    expect(sendToUserAsyncMock).not.toHaveBeenCalled(); // no overage-confirmation push
+    const finalPatch = calls.update.find((u) => u.patch && typeof (u.patch as any).cost === "number")?.patch as { cost?: number } | undefined;
+    expect(finalPatch?.cost).toBe(0);
+  });
+});
+
 // Production incident, 2026-08-27: this hard-block (commit 78eeeeb) had ZERO
 // test coverage before this fix — added alongside the settle-with-retry fix
 // in server/storage.ts so the gate's exact behaviour (and its exact error

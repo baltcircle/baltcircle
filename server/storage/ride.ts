@@ -247,7 +247,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         isUniqueViolation(err: unknown): boolean;
         abortUnstartedRide(rideId: number, opts: { refundKopecks: number }): Promise<void>;
       },
-      { bikeId, userId, tariff, prepaid }: { bikeId: string; userId: string; tariff: string; prepaid?: boolean },
+      { bikeId, userId, tariff, prepaid, isTest }: { bikeId: string; userId: string; tariff: string; prepaid?: boolean; isTest?: boolean },
     ) {
       // Hourly, prepaid model: the rider picks an hourly tariff (h1/h2/h3) and
       // pays its full price UP FRONT. The ride's cost is fixed to the tariff
@@ -260,8 +260,19 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       //     flow (ride/init). The wallet must NOT be charged again here.
       //   - prepaid = false -> internal/demo flow: charge the tariff price from
       //     the wallet balance atomically as part of starting the ride.
+      //
+      // isTest (admin/operator only, enforced by the caller's requireRole guard
+      // on POST /api/rides/start-test — never a rider-facing flag): a real ride
+      // in every other respect — real unlock command, geofence checks, GPS
+      // tracking, pause/extend/end — but forced to cost 0 and never touching
+      // the wallet or T-Bank, so staff can exercise the full rental lifecycle
+      // against production hardware without moving real money. Forcing
+      // costKopecks to 0 here (rather than only gating the debit below) also
+      // makes the post-commit compensation refund (abortUnstartedRide, below)
+      // and endRide's overage math correctly see a 0-cost ride regardless of
+      // which tariff duration was picked for testing.
       const tariffDef = TARIFFS.find((t) => t.id === tariff);
-      const costKopecks = tariffDef ? tariffPriceKopecks(tariffDef) : 0;
+      const costKopecks = isTest ? 0 : (tariffDef ? tariffPriceKopecks(tariffDef) : 0);
 
       // Atomic: re-check the bike/rider state and claim the bike inside ONE
       // transaction. A bare SELECT inside a transaction does NOT lock the row
@@ -395,7 +406,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             // `balance - cost` from the current row under the row's own update,
             // so two concurrent debits/credits against the same wallet always
             // both apply, in some serial order, never one clobbering the other.
-            if (!prepaid && costKopecks > 0) {
+            if (!prepaid && !isTest && costKopecks > 0) {
               await tx.execute(sql`
                 INSERT INTO wallet (user_id, balance, active_tariff, tariff_expires_at)
                 VALUES (${userId}, 0, 'payg', NULL)
@@ -430,10 +441,11 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
               totalTariffHours: tariffDef?.durationHours ?? 0,
               totalTariffMs: tariffDurationMs(tariff),
               paidUntilAt, startParkingId: startParkingMatch.id,
-              // The per-bike isTestBike flag was removed — no more designated
-              // test units, so this is always false now. Column kept (not
-              // dropped) for backward-compat with existing rows/analytics.
-              isTest: false,
+              // The per-bike isTestBike flag was removed (no more designated
+              // test units) — isTest is now set solely from the isTest param
+              // above, which only POST /api/rides/start-test (requireRole
+              // operator/admin) ever passes as true.
+              isTest: isTest === true,
               activeSlot,
             }).returning())[0] as Ride;
             await tx.update(bikes).set({
@@ -807,7 +819,12 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         const paidUntilAt = (r.paidUntilAt ?? (r.startedAt + tariffDurationMs(r.tariff))) + pauseCreditMs;
         const paidMs = paidUntilAt - r.startedAt;
         const usedMs = endedAt - r.startedAt;
-        const { extraMinutes, overageKopecks } = computeOverage(usedMs, paidMs);
+        // Test rides (r.isTest, read from the locked DB row — never client-
+        // supplied) never bill overage either: exceeding the tariff window is
+        // still visible in the UI (elapsed time keeps counting), but staff
+        // must never be charged real money for running one long.
+        const { extraMinutes, overageKopecks: rawOverageKopecks } = computeOverage(usedMs, paidMs);
+        const overageKopecks = r.isTest ? 0 : rawOverageKopecks;
         const finalCost = finalRideCost(r.cost, overageKopecks);
 
         await tx.update(rides).set({
@@ -1108,7 +1125,11 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       const outcome = await db.transaction(async (tx) => {
         const r = (await tx.select().from(rides).where(eq(rides.id, rideId)).for("update").limit(1))[0] as Ride | undefined;
         if (!r || r.status !== "active") return { error: "Поездка не активна" };
-        if (!prepaid && costKopecks > 0) {
+        // Test rides (r.isTest, from the locked DB row) never touch the wallet
+        // or create a payments row — extension must stay free, mirroring
+        // startRide/endRide's isTest handling.
+        const effectiveCostKopecks = r.isTest ? 0 : costKopecks;
+        if (!prepaid && !r.isTest && costKopecks > 0) {
           const debited = await tx.execute(sql`
             UPDATE wallet SET balance = balance - ${costKopecks}
             WHERE user_id = ${r.userId} AND balance >= ${costKopecks}
@@ -1116,10 +1137,12 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           `);
           if (debited.rows.length === 0) return { error: "Недостаточно средств на балансе" };
         }
-        await tx.insert(payments).values({
-          userId: r.userId, amount: -costKopecks, kind: "ride_charge",
-          description: `Продление аренды ${r.bikeId} • ${tariffDef.name}`, createdAt: Date.now(),
-        });
+        if (!r.isTest) {
+          await tx.insert(payments).values({
+            userId: r.userId, amount: -costKopecks, kind: "ride_charge",
+            description: `Продление аренды ${r.bikeId} • ${tariffDef.name}`, createdAt: Date.now(),
+          });
+        }
         const now = Date.now();
         // Effective paid-until right now, folding in credit from an
         // in-progress pause (same formula endRide/resumeRide use) — otherwise
@@ -1150,7 +1173,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         // label (shared/geo.ts's tariffLabelForRide reads totalTariffMs).
         const updated = (await tx.update(rides).set({
           paidUntilAt: basePaidUntilAt + tariffDurationMs(tariff),
-          cost: r.cost + costKopecks,
+          cost: r.cost + effectiveCostKopecks,
           totalTariffHours: r.totalTariffHours + tariffDef.durationHours,
           totalTariffMs: r.totalTariffMs + tariffDurationMs(tariff),
         } as any).where(eq(rides.id, rideId)).returning())[0] as Ride;
@@ -1184,14 +1207,19 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
     // active ride's points into ONE `WHERE ride_id IN (...)` query and group
     // them in memory instead, mirroring listAdminRides' existing batched-IN
     // pattern for riders.
+    // Test rides (isTest=true, admin/operator-only, always cost 0) are
+    // deliberately excluded from every history/feed view backed by this
+    // function — rider ride history, staff dashboard feeds — per product
+    // decision. They remain fully visible in listAdminRides (the ops audit
+    // table) and getActiveRides (live in-progress UI for whoever started one).
     async listRides(opts?: { userId?: string; limit?: number }): Promise<RideWithFeedback[]> {
       const limit = opts?.limit ?? 50;
       const rows = opts?.userId
         ? ((await db.select().from(rides)
-            .where(eq(rides.userId, opts.userId))
+            .where(and(eq(rides.userId, opts.userId), eq(rides.isTest, false)))
             .orderBy(desc(rides.startedAt))
             .limit(limit)) as Ride[])
-        : ((await db.select().from(rides).orderBy(desc(rides.startedAt)).limit(limit)) as Ride[]);
+        : ((await db.select().from(rides).where(eq(rides.isTest, false)).orderBy(desc(rides.startedAt)).limit(limit)) as Ride[]);
       const hydrated = await this.hydrateTracks(rows);
       return this.attachRatings(hydrated);
     }

@@ -457,6 +457,28 @@ describe("extendRide", () => {
     expect(dbMock.transaction).not.toHaveBeenCalled();
   });
 
+  // Operator/admin test-ride feature: extending an isTest ride must stay free
+  // — no wallet debit, no ride_charge ledger row, and cost stays 0 — while
+  // still functioning identically to a real ride for the paid-window/duration
+  // bookkeeping (so pause/extend/end all behave the same as a real ride).
+  it("never debits the wallet or accumulates cost when extending an isTest ride", async () => {
+    const active = makeRide({
+      isTest: true, cost: 0, totalTariffHours: 1, totalTariffMs: HOUR, paidUntilAt: NOW + 10 * 60 * 1000,
+    });
+    const { tx, calls } = makeTx([[active]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.extendRide(7, "h1");
+
+    expect(result).not.toHaveProperty("error");
+    expect(calls.execute.some((q) => String(q).includes("UPDATE wallet"))).toBe(false);
+    expect(calls.insertValues.some((v: any) => v?.kind === "ride_charge")).toBe(false);
+    const set = calls.updateSets[0] as any;
+    expect(set.cost).toBe(0);
+    expect(set.paidUntilAt).toBe(active.paidUntilAt! + HOUR); // duration bookkeeping still applies
+    expect(set.totalTariffHours).toBe(2);
+  });
+
   // Bug fix: extending mid-overtime used to anchor the new paidUntilAt on the
   // stale, already-past paidUntilAt, so a short extension (e.g. the 1-minute
   // m1 test tariff) left the result still in the past — "в пути" stayed stuck

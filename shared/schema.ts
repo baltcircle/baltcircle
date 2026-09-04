@@ -842,6 +842,15 @@ export const createRideFeedbackSchema = z.object({
 });
 export type CreateRideFeedbackInput = z.infer<typeof createRideFeedbackSchema>;
 
+// POST /api/rides/start-test body (operator/admin only, requireRole-enforced
+// server-side). Same tariff enum as /api/rides/start — the tariff only
+// determines duration bookkeeping; cost is always forced to 0 server-side.
+export const startTestRideSchema = z.object({
+  bikeId: z.string(),
+  tariff: z.enum(["h1", "h2", "h3", "m1"]),
+});
+export type StartTestRideInput = z.infer<typeof startTestRideSchema>;
+
 // Re-exported so server storage doesn't need a second import from
 // shared/feedback.ts just for these two symbols.
 export { feedbackTierForRating, FEEDBACK_REASON_IDS };
