@@ -379,9 +379,10 @@ export function MapLibreMap({
         const isFallen = fallenBikeIds?.has(b.id) ?? false;
         const isPaused = pausedBikeIds?.has(b.id) ?? false;
         const [lat, lng] = mapToReal(b.lng, b.lat);
-        // size bumped vs the old plain dot (16/20) so the bicycle glyph inside
-        // stays legible at map zoom levels (bike-marker rebrand).
-        const el = dotMarkerEl(bikeMarkerColor(b.status, isPaused), { ring: isSel, size: isSel ? 28 : 24, clickable: interactive && !!onSelectBikeRef.current, fallen: isFallen, bike: true });
+        // Fixed size regardless of selection (previously grew 24->28px on
+        // click, which read as an unintended size glitch) — selection is
+        // still indicated via the thicker white ring border, not size.
+        const el = dotMarkerEl(bikeMarkerColor(b.status, isPaused), { ring: isSel, size: 24, clickable: interactive && !!onSelectBikeRef.current, fallen: isFallen, bike: true });
         // Тултип на маркере без заряда замка — клиенту эта информация не нужна.
         // dotMarkerEl overrides title/text when fallen=true, so set the base
         // tooltip first only for the non-fallen case to avoid clobbering it.
