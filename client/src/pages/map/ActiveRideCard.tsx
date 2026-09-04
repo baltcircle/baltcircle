@@ -145,8 +145,11 @@ export function ActiveRideCard({
           data-testid="button-add-second-ride"
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-muted min-h-11 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
         >
-          <Bike className="w-4 h-4 text-brand-sea" />
-          + велосипед
+          <span className="relative inline-flex items-center justify-center w-6 h-4 shrink-0">
+            <Bike className="w-3.5 h-3.5 absolute left-0 top-0 text-brand-sea/60" />
+            <Bike className="w-3.5 h-3.5 absolute right-0 top-0.5 text-brand-sea" />
+          </span>
+          Доп. велосипед
         </button>
       </div>
 
@@ -175,11 +178,11 @@ export function ActiveRideCard({
           className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-sand-deep text-brand-bark h-11 font-medium shadow-sm hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
         >
           {ending || cancellingEnd ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
+            <Loader2 className="w-4 h-4 animate-spin text-brand-sea" />
           ) : awaitingEndLockClose ? (
-            <X className="w-4 h-4" />
+            <X className="w-4 h-4 text-brand-sea" />
           ) : (
-            <Lock className="w-4 h-4" />
+            <Lock className="w-4 h-4 text-brand-sea" />
           )}
           {awaitingEndLockClose ? "Отмена" : "Завершить поездку"}
         </button>

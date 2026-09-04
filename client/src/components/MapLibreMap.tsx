@@ -38,6 +38,8 @@ interface MapLibreMapProps {
   fallenBikeIds?: Set<string>;
   /** Bike ids whose active ride is currently paused — coloured like "Бронь" instead of their normal status colour (bike-status lifecycle audit). */
   pausedBikeIds?: Set<string>;
+  /** Rider's own currently-reserved bike id — kept visible on the customer map (so they can walk to it) but rendered non-clickable, since tapping it should not re-open the rental flow (bike marker click-gating audit). */
+  nonInteractiveBikeId?: string | null;
   /** Per-layer visibility. Omitted layers render as before (visible). */
   layers?: MapLayers;
   selectedBikeId?: string | null;
@@ -84,7 +86,7 @@ interface MapLibreMapProps {
 // ── COMPONENT ─────────────────────────────────────────────────────────────────
 export function MapLibreMap({
   parkings = [], mapObjects = [], ride = null,
-  bikes = [], activeRides = [], tickets = [], fallenBikeIds, pausedBikeIds, layers = {},
+  bikes = [], activeRides = [], tickets = [], fallenBikeIds, pausedBikeIds, nonInteractiveBikeId = null, layers = {},
   selectedBikeId, onSelectBike, onSelectParking, onSelectRide, onSelectTicket,
   interactive = true, onMapClick, onCenterGetter, followUser, onUserLocation,
   editorDraft = null,
@@ -378,16 +380,19 @@ export function MapLibreMap({
         const isSel = b.id === selectedBikeId;
         const isFallen = fallenBikeIds?.has(b.id) ?? false;
         const isPaused = pausedBikeIds?.has(b.id) ?? false;
+        // Rider's own reserved bike stays visible (so they can walk to it) but
+        // must not re-open the rental flow on tap — it's already theirs.
+        const isNonInteractive = b.id === nonInteractiveBikeId;
         const [lat, lng] = mapToReal(b.lng, b.lat);
         // Fixed size regardless of selection (previously grew 24->28px on
         // click, which read as an unintended size glitch) — selection is
         // still indicated via the thicker white ring border, not size.
-        const el = dotMarkerEl(bikeMarkerColor(b.status, isPaused), { ring: isSel, size: 24, clickable: interactive && !!onSelectBikeRef.current, fallen: isFallen, bike: true });
+        const el = dotMarkerEl(bikeMarkerColor(b.status, isPaused), { ring: isSel, size: 24, clickable: interactive && !!onSelectBikeRef.current && !isNonInteractive, fallen: isFallen, bike: true });
         // Тултип на маркере без заряда замка — клиенту эта информация не нужна.
         // dotMarkerEl overrides title/text when fallen=true, so set the base
         // tooltip first only for the non-fallen case to avoid clobbering it.
         if (!isFallen) el.title = `${b.id} · ${b.model}`;
-        addMarker([lng, lat], el, () => onSelectBikeRef.current?.(b.id));
+        addMarker([lng, lat], el, isNonInteractive ? undefined : () => onSelectBikeRef.current?.(b.id));
       }
     }
 
@@ -414,7 +419,7 @@ export function MapLibreMap({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, bikes, parkings, activeRides, tickets, selectedBikeId, interactive, fallenBikeIds, pausedBikeIds,
+  }, [ready, bikes, parkings, activeRides, tickets, selectedBikeId, interactive, fallenBikeIds, pausedBikeIds, nonInteractiveBikeId,
       show.parkings, show.bikes, show.rides, show.tickets]);
 
   // ── GeoJSON overlays: operator objects (routes/zones) ───────────────────────

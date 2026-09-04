@@ -145,6 +145,22 @@ export function MapPage() {
   const { reservation, cancelling, cancelReservation, onExpire: onReservationExpire } =
     useReservationBanner(isRegistered, activeRides.length > 0);
 
+  // Rider-facing map must never surface a bike a customer couldn't rent right
+  // now. The server (filterBikesForRider) already restricts /api/bikes to
+  // available bikes + this rider's own rented/reserved bike (everyone else's
+  // is invisible). We additionally drop our own RENTED bike here — its live
+  // position is already conveyed by the active-ride start marker/track, so a
+  // second clickable dot for a bike the rider already has would just invite
+  // re-opening the rental flow on it. Our own RESERVED bike is kept visible
+  // (it's the only way to see where it is before pickup) but is rendered
+  // non-interactive via nonInteractiveBikeId below.
+  const mapBikes = useMemo(
+    () => bikesQ.data?.filter(
+      (b) => b.status === "available" || (b.status === "reserved" && b.id === reservation?.bikeId)
+    ) ?? [],
+    [bikesQ.data, reservation?.bikeId]
+  );
+
   // true пока ждём регистрацию, чтобы после неё открыть QR-скан (goRent) —
   // раньше сюда же кодировался флаг "multi", но выделенного multi-режима
   // сканирования больше нет: вторая поездка стартует тем же сканом, что и
@@ -438,6 +454,12 @@ export function MapPage() {
   };
 
   const onMapBikeClick = (bikeId: string) => {
+    // Defensive re-check even though the map no longer renders a clickable
+    // marker for our own reserved bike (nonInteractiveBikeId) or for our own
+    // rented bike (excluded from mapBikes entirely) — guards against a stale
+    // marker click racing a status change that hasn't re-rendered yet.
+    const clicked = bikesQ.data?.find((b) => b.id === bikeId);
+    if (!clicked || clicked.status !== "available") return;
     if (!isRegistered) {
       pendingBikeId.current = bikeId;
       setRegOpen(true);
@@ -479,8 +501,9 @@ export function MapPage() {
         <MapLibreMap
           parkings={parkingsQ.data ?? []}
           mapObjects={mapObjectsQ.data ?? []}
-          bikes={bikesQ.data ?? []}
+          bikes={mapBikes}
           pausedBikeIds={pausedBikeIds}
+          nonInteractiveBikeId={reservation?.bikeId ?? null}
           selectedBikeId={selected}
           onSelectBike={onMapBikeClick}
           ride={displayRide}
