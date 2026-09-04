@@ -8,6 +8,7 @@ import { LiveOverage } from "@/components/LiveOverage";
 import { ExtendRideDialog } from "@/components/ExtendRideDialog";
 import { fmtDistance } from "@/lib/format";
 import { OVERAGE_MINUTE_PRICE } from "@shared/geo";
+import { cn } from "@/lib/utils";
 
 interface ActiveRideCardProps {
   ride: Ride;
@@ -28,12 +29,18 @@ interface ActiveRideCardProps {
   /** true when the rider has room for a second simultaneous ride (< max active). */
   showAddSecondRide?: boolean;
   onAddSecondRide?: () => void;
+  /** true when the rider has two simultaneous active rides — shows the 1/2 slot switcher. */
+  showRideSwitcher?: boolean;
+  /** which ride slot (1 or 2) this card is currently displaying. */
+  activeSlot?: 1 | 2;
+  onSelectSlot?: (slot: 1 | 2) => void;
 }
 
 export function ActiveRideCard({
   ride, onEnd, ending, onPause, onResume, pausing, resuming, awaitingLockClose,
   awaitingEndLockClose, onCancelEnd, cancellingEnd, onExtend, extending,
   showAddSecondRide, onAddSecondRide,
+  showRideSwitcher, activeSlot = 1, onSelectSlot,
 }: ActiveRideCardProps) {
   const [extendOpen, setExtendOpen] = useState(false);
   const paused = ride.pausedAt != null;
@@ -88,6 +95,29 @@ export function ActiveRideCard({
           </div>
         </div>
       </div>
+
+      {showRideSwitcher && (
+        <div
+          className="mt-2 h-11 flex rounded-xl border border-card-border bg-background/50 overflow-hidden"
+          data-testid="ride-slot-switcher"
+        >
+          {([1, 2] as const).map((slot) => (
+            <button
+              key={slot}
+              type="button"
+              onClick={() => onSelectSlot?.(slot)}
+              data-testid={`button-ride-slot-${slot}`}
+              className={cn(
+                "flex-1 flex items-center justify-center font-display text-base transition-colors hover-elevate active:scale-[0.98]",
+                slot === 1 && "border-r border-card-border",
+                activeSlot === slot ? "bg-primary text-black font-medium" : "text-muted-foreground font-light"
+              )}
+            >
+              {slot}
+            </button>
+          ))}
+        </div>
+      )}
 
       {(awaitingLockClose || awaitingEndLockClose) && (
         <div
