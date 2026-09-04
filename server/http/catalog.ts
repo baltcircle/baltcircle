@@ -116,13 +116,14 @@ const RIDER_HIDDEN_STATUSES: ReadonlySet<string> = new Set(
 //  - "archived" is already excluded by storage.listBikes().
 async function filterBikesForRider(bikes: Bike[], req: Request): Promise<Bike[]> {
   const uid = riderId(req);
-  const [myRide, myReservation] = await Promise.all([
-    storage.getActiveRide(uid),
+  const [myRides, myReservation] = await Promise.all([
+    storage.getActiveRides(uid),
     storage.getActiveReservationForUser(uid),
   ]);
+  const myRideBikeIds = new Set(myRides.map((r) => r.bikeId));
   return bikes.filter((b) => {
     if (b.status === "available") return true;
-    if (b.status === "rented") return myRide?.bikeId === b.id;
+    if (b.status === "rented") return myRideBikeIds.has(b.id);
     if (b.status === "reserved") return myReservation?.bikeId === b.id;
     return !RIDER_HIDDEN_STATUSES.has(b.status);
   });

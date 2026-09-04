@@ -9,6 +9,12 @@ import type { BikeStatus } from "./schema";
 export const MAP_W = 1000;
 export const MAP_H = 700;
 
+// Max number of concurrent active rides a single rider may hold ("two bikes
+// at once" feature). Enforced both at the DB layer (idx_rides_active_user
+// partial unique index on (user_id, active_slot), see server/db/bootstrap.ts)
+// and at the app layer (server/storage/ride.ts startRide transaction).
+export const MAX_ACTIVE_RIDES_PER_USER: number = 2;
+
 export interface Tariff {
   id: "h1" | "h2" | "h3" | "m1";
   name: string;

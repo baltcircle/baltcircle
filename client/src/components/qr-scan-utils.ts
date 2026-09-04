@@ -61,7 +61,7 @@ export function normalizeCode(raw: string): string {
 // from /api/rides/active + the reservation-banner query, both already scoped
 // to the current session by the server.
 export interface ScanOwnership {
-  myActiveRideBikeId?: string | null;
+  myActiveRideBikeIds?: string[];
   myReservationBikeId?: string | null;
 }
 
@@ -99,7 +99,7 @@ export function classifyBikeForScan(
   bike: Bike,
   ownership: ScanOwnership,
 ): { bike: Bike } | { error: string } {
-  if (bike.status === "rented" && bike.id === ownership.myActiveRideBikeId) return { bike };
+  if (bike.status === "rented" && (ownership.myActiveRideBikeIds ?? []).includes(bike.id)) return { bike };
   if (bike.status === "reserved" && bike.id === ownership.myReservationBikeId) return { bike };
   const message = scanMessageForStatus(bike.status);
   if (message) return { error: message };

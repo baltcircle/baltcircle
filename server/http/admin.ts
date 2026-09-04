@@ -125,7 +125,7 @@ export function registerAdminUserRoutes(app: Express): void {
 
       // Same early guard as the self-service route: avoid any external
       // unlink calls when deletion is already impossible.
-      if (await storage.getActiveRide(targetId)) {
+      if ((await storage.getActiveRides(targetId)).length > 0) {
         return res.status(409).json({ error: "Сначала завершите активную поездку." });
       }
 

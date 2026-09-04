@@ -11,7 +11,7 @@
 // sqlite-to-pg.ts), not by this bootstrap.
 import {
   PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES,
-  TARIFFS, tariffPriceKopecks,
+  TARIFFS, tariffPriceKopecks, MAX_ACTIVE_RIDES_PER_USER,
 } from "@shared/geo";
 import { logger } from "../logger";
 import { runSchemaMigrations } from "./migrate";
@@ -66,12 +66,41 @@ async function createRideRaceGuardIndexes() {
       WHERE status = 'active' ORDER BY bike_id, started_at DESC, id DESC
     )
   `);
+  // A rider may hold up to MAX_ACTIVE_RIDES_PER_USER (2) concurrent active
+  // rides ("two bikes at once"). Rank each user's active rides by recency and
+  // cancel everything past the limit, freeing active_slot on the cancelled
+  // rows so the partial unique index below never sees a stale value.
   await pool.query(`
-    UPDATE rides SET status = 'cancelled'
-    WHERE status = 'active' AND id NOT IN (
-      SELECT DISTINCT ON (user_id) id FROM rides
-      WHERE status = 'active' ORDER BY user_id, started_at DESC, id DESC
+    WITH ranked AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY user_id ORDER BY started_at DESC, id DESC
+      ) AS rn
+      FROM rides WHERE status = 'active'
     )
+    UPDATE rides SET status = 'cancelled', active_slot = NULL
+    WHERE status = 'active' AND id IN (
+      SELECT id FROM ranked WHERE rn > ${MAX_ACTIVE_RIDES_PER_USER}
+    )
+  `);
+  // Backfill/repair active_slot (1..MAX_ACTIVE_RIDES_PER_USER) for every
+  // surviving active ride, so the slot-based unique index below always has a
+  // value to key on even for rows started before this column existed.
+  await pool.query(`
+    WITH ranked AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY user_id ORDER BY started_at DESC, id DESC
+      ) AS rn
+      FROM rides WHERE status = 'active'
+    )
+    UPDATE rides SET active_slot = ranked.rn
+    FROM ranked
+    WHERE rides.id = ranked.id AND rides.active_slot IS DISTINCT FROM ranked.rn
+  `);
+  // Safety net: any non-active row should never carry a slot (end/cancel
+  // paths clear it themselves — this only catches rows from before that
+  // logic existed, or any future path that forgets to).
+  await pool.query(`
+    UPDATE rides SET active_slot = NULL WHERE status <> 'active' AND active_slot IS NOT NULL
   `);
   await pool.query(`
     UPDATE bikes SET status = 'available'
@@ -80,9 +109,13 @@ async function createRideRaceGuardIndexes() {
   await pool.query(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_active_bike ON rides (bike_id) WHERE status = 'active';`,
   );
-  await pool.query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_active_user ON rides (user_id) WHERE status = 'active';`,
-  );
+  // Replaced by the slot-based index below when two-bikes-per-rider shipped —
+  // drop the old "exactly one active ride per user" index if it still exists.
+  await pool.query(`DROP INDEX IF EXISTS idx_rides_active_user;`);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_active_user_slot
+    ON rides (user_id, active_slot) WHERE status = 'active' AND active_slot IS NOT NULL;
+  `);
 }
 
 // Same belt-and-suspenders idea for reservations: server/storage/reservation.ts

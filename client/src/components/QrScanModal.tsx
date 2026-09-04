@@ -15,7 +15,7 @@ interface Props {
   // This rider's own in-progress rental/reservation, if any — lets a scan of
   // THEIR OWN rented/reserved bike still resolve, while anyone else scanning
   // it gets the spec'd "занят" message (bike-status lifecycle audit).
-  myActiveRideBikeId?: string | null;
+  myActiveRideBikeIds?: string[];
   myReservationBikeId?: string | null;
   // Called once a bike has been scanned / chosen, to continue into rental.
   onBikeSelected: (bike: Bike) => void;
@@ -57,7 +57,7 @@ function CameraPermissionHelp() {
 }
 
 export function QrScanModal({
-  open, onOpenChange, myActiveRideBikeId, myReservationBikeId, onBikeSelected,
+  open, onOpenChange, myActiveRideBikeIds, myReservationBikeId, onBikeSelected,
 }: Props) {
   // Manual entry only ever needs the digits — the "BC-" prefix is fixed and
   // shown as a non-editable adornment (same pattern as the +7 phone prefix in
@@ -110,7 +110,7 @@ export function QrScanModal({
         return false;
       }
       const result = classifyBikeForScan(bike, {
-        myActiveRideBikeId, myReservationBikeId,
+        myActiveRideBikeIds, myReservationBikeId,
       });
       if ("error" in result) {
         setError(result.error);
@@ -121,7 +121,7 @@ export function QrScanModal({
       onBikeSelected(result.bike);
       return true;
     },
-    [myActiveRideBikeId, myReservationBikeId, onBikeSelected, onOpenChange, stopCamera],
+    [myActiveRideBikeIds, myReservationBikeId, onBikeSelected, onOpenChange, stopCamera],
   );
 
   // Wait until the video element is actually decoding frames. The blank/white

@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const storageMock = vi.hoisted(() => ({
   getUser: vi.fn(),
   listRides: vi.fn(),
-  getActiveRide: vi.fn(),
+  getActiveRides: vi.fn(),
   startRide: vi.fn(),
   appendRidePoint: vi.fn(),
   getRide: vi.fn(),
@@ -159,32 +159,32 @@ describe("GET /api/rides", () => {
 });
 
 describe("GET /api/rides/active", () => {
-  it("returns the caller's active ride, defaulting the anonymous demo rider", async () => {
+  it("returns the caller's active rides, defaulting the anonymous demo rider", async () => {
     const { get } = routeApp();
-    storageMock.getActiveRide.mockResolvedValue({ id: 5, userId: "demo" });
+    storageMock.getActiveRides.mockResolvedValue([{ id: 5, userId: "demo" }]);
     const res = response();
 
     await get.get("/api/rides/active")!({ session: {} }, res);
 
-    expect(storageMock.getActiveRide).toHaveBeenCalledWith("demo");
-    expect(res.body).toEqual({ id: 5, userId: "demo" });
+    expect(storageMock.getActiveRides).toHaveBeenCalledWith("demo");
+    expect(res.body).toEqual([{ id: 5, userId: "demo" }]);
   });
 
-  it("returns null (not undefined) when there is no active ride", async () => {
+  it("returns an empty array when there is no active ride", async () => {
     const { get } = routeApp();
-    storageMock.getActiveRide.mockResolvedValue(undefined);
+    storageMock.getActiveRides.mockResolvedValue([]);
     const res = response();
 
     await get.get("/api/rides/active")!({ session: { userId: "user-1" } }, res);
 
-    expect(res.body).toBeNull();
+    expect(res.body).toEqual([]);
   });
 });
 
 describe("GET /api/rides/active/stream (SSE)", () => {
   it("writes SSE headers, pushes an initial snapshot, and unsubscribes on close", async () => {
     const { get } = routeApp();
-    storageMock.getActiveRide.mockResolvedValue({ id: 7, userId: "user-1" });
+    storageMock.getActiveRides.mockResolvedValue([{ id: 7, userId: "user-1" }]);
     const res = response();
     const req = { session: { userId: "user-1" }, on: vi.fn() };
 
@@ -205,7 +205,7 @@ describe("GET /api/rides/active/stream (SSE)", () => {
 
   it("pushes a fresh snapshot when the ride bus emits for this user, and stops after close", async () => {
     const { get } = routeApp();
-    storageMock.getActiveRide.mockResolvedValueOnce({ id: 1 }).mockResolvedValueOnce(null);
+    storageMock.getActiveRides.mockResolvedValueOnce([{ id: 1 }]).mockResolvedValueOnce([]);
     const res = response();
     const req = { session: { userId: "user-2" }, on: vi.fn() };
 

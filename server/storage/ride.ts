@@ -6,7 +6,7 @@ import {
   findNearestParkingWithinRadius, findNearestParkingWithinRadiusFromRealCoords,
   LOCK_GPS_LIVE_MS, PAUSE_ARM_TTL_MS, END_ARM_TTL_MS,
   RIDE_END_AWAITING_LOCK_GPS_ERROR, MAX_ACCEPTABLE_HDOP, END_GEOFENCE_SMOOTHING_SAMPLES,
-  LOW_BATTERY_AUTO_OFFLINE_THRESHOLD,
+  LOW_BATTERY_AUTO_OFFLINE_THRESHOLD, MAX_ACTIVE_RIDES_PER_USER,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
 import { pendingPauseCreditMs } from "@shared/pause";
@@ -273,7 +273,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       // commits, then re-reads the now-current ("rented") row and correctly
       // bails out below — it never reaches the insert.
       //
-      // Belt-and-suspenders: `idx_rides_active_bike` / `idx_rides_active_user`
+      // Belt-and-suspenders: `idx_rides_active_bike` / `idx_rides_active_user_slot`
       // (partial UNIQUE indexes, server/db/bootstrap.ts) make a second active
       // ride for the same bike or rider impossible at the database level too,
       // so a future code path that bypasses this lock still cannot double-book
@@ -333,14 +333,27 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             // battery-based rentability. Any bike whose battery matters is already
             // "offline" (rejected above) at LOW_BATTERY_AUTO_OFFLINE_THRESHOLD (10%);
             // anything still "available" is by definition fine to rent.
-            // No row to lock here (the rider may have zero rides), so this read
-            // alone cannot be made race-proof the same way — idx_rides_active_user
-            // is what actually closes this half of the race; a loser lands on the
-            // unique-violation catch below instead of this friendly early return.
-            const active = (await tx.select().from(rides)
-              .where(sql`${rides.userId} = ${userId} AND ${rides.status} = 'active'`)
-              .limit(1))[0] as Ride | undefined;
-            if (active) return { error: "У вас уже есть активная поездка" };
+            // A rider may hold up to MAX_ACTIVE_RIDES_PER_USER concurrent active
+            // rides ("two bikes at once"). There may be zero or one existing rows
+            // to lock (never two-then-one), so a plain FOR UPDATE on `rides` can't
+            // serialise this the way the per-bike check above does — take a
+            // per-user advisory lock instead so two simultaneous start requests
+            // for the same rider can't both observe "1 active, slot free" and
+            // both proceed. idx_rides_active_user_slot (server/db/bootstrap.ts)
+            // is the database-level backstop if this is ever bypassed.
+            await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${userId}))`);
+            const activeRows = (await tx.select().from(rides)
+              .where(sql`${rides.userId} = ${userId} AND ${rides.status} = 'active'`)) as Ride[];
+            if (activeRows.length >= MAX_ACTIVE_RIDES_PER_USER) {
+              return {
+                error: MAX_ACTIVE_RIDES_PER_USER === 1
+                  ? "У вас уже есть активная поездка"
+                  : `У вас уже максимум активных поездок (${MAX_ACTIVE_RIDES_PER_USER})`,
+              };
+            }
+            const usedSlots = new Set(activeRows.map((r) => r.activeSlot).filter((s): s is number => s != null));
+            let activeSlot = 1;
+            while (usedSlots.has(activeSlot)) activeSlot++;
 
             // Radius-gating (rental spec): a bike may only be started from inside
             // an active parking zone. The lock's GPS is the authoritative source
@@ -421,6 +434,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
               // test units, so this is always false now. Column kept (not
               // dropped) for backward-compat with existing rows/analytics.
               isTest: false,
+              activeSlot,
             }).returning())[0] as Ride;
             await tx.update(bikes).set({
               status: "rented", updatedAt: Date.now(),
@@ -437,12 +451,12 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             return row;
           });
         } catch (err) {
-          // idx_rides_active_bike / idx_rides_active_user (server/db/bootstrap.ts)
+          // idx_rides_active_bike / idx_rides_active_user_slot (server/db/bootstrap.ts)
           // are the database-level backstop for this race; this only fires if the
           // FOR UPDATE lock above was somehow bypassed — still fail closed with a
           // friendly message instead of a raw 500.
           if (this.isUniqueViolation(err)) {
-            return { error: "Не удалось начать поездку — велосипед уже забронирован или у вас уже есть активная поездка" };
+            return { error: "Не удалось начать поездку — велосипед уже забронирован или у вас уже достигнут лимит активных поездок" };
           }
           throw err;
         }
@@ -526,7 +540,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       const outcome = await db.transaction(async (tx) => {
         const ride = (await tx.select().from(rides).where(eq(rides.id, rideId)).for("update").limit(1))[0] as Ride | undefined;
         if (!ride || ride.status !== "active") return null;
-        await tx.update(rides).set({ status: "cancelled", endedAt: Date.now() } as any).where(eq(rides.id, rideId));
+        await tx.update(rides).set({ status: "cancelled", endedAt: Date.now(), activeSlot: null } as any).where(eq(rides.id, rideId));
         await tx.update(bikes).set({ status: "available", updatedAt: Date.now() } as any).where(eq(bikes.id, ride.bikeId));
         if (opts.refundKopecks > 0) {
           await tx.execute(sql`UPDATE wallet SET balance = balance + ${opts.refundKopecks} WHERE user_id = ${ride.userId}`);
@@ -797,7 +811,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         const finalCost = finalRideCost(r.cost, overageKopecks);
 
         await tx.update(rides).set({
-          endedAt, status: "completed", cost: finalCost,
+          endedAt, status: "completed", cost: finalCost, activeSlot: null,
           endLat: finalLat, endLng: finalLng,
           track: JSON.stringify(track),
           // Finalise any in-progress pause into the historical record so
@@ -1152,12 +1166,14 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       );
     }
 
-    async getActiveRide(userId: string) {
-      return this.hydrateTrack(
-        (await db.select().from(rides)
-          .where(sql`${rides.userId} = ${userId} AND ${rides.status} = 'active'`)
-          .limit(1))[0] as Ride | undefined,
-      );
+    // Up to MAX_ACTIVE_RIDES_PER_USER (2) rows, ordered by slot (1 then 2) so
+    // callers that pick "the first/focused ride" get a stable, deterministic
+    // choice rather than DB-order-dependent luck.
+    async getActiveRides(userId: string): Promise<Ride[]> {
+      const rows = (await db.select().from(rides)
+        .where(sql`${rides.userId} = ${userId} AND ${rides.status} = 'active'`)
+        .orderBy(asc(rides.activeSlot))) as Ride[];
+      return this.hydrateTracks(rows);
     }
 
     // Audit MEDIUM: hydrateTrack used to be called once per row (Promise.all
