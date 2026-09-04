@@ -42,7 +42,23 @@ jobs:
       - name: Unit tests
         run: npm test
       - name: Dependency vulnerability audit
-        run: npm audit --audit-level=high
+        # 2026-09-04: registry.npmjs.org's legacy audit endpoint
+        # (/-/npm/v1/security/audits/quick) has started intermittently
+        # returning 400/503 unrelated to any real advisory (npm itself warns
+        # the endpoint "is being retired") — this was failing the deploy gate
+        # on pure registry flakiness. Retry with backoff so a genuine
+        # high-severity finding still fails the build, but a transient
+        # registry hiccup does not block deploys of otherwise-green commits.
+        run: |
+          for attempt in 1 2 3; do
+            if npm audit --audit-level=high; then
+              exit 0
+            fi
+            echo "npm audit attempt $attempt/3 failed — retrying in 20s"
+            sleep 20
+          done
+          echo "npm audit failed after 3 attempts"
+          exit 1
 
   deploy:
     name: Deploy on Yandex Cloud VM

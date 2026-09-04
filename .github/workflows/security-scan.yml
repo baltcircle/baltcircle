@@ -46,7 +46,20 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm audit --audit-level=high
+      - name: npm audit
+        # See deploy.yml's matching step for context: registry.npmjs.org's
+        # legacy audit endpoint intermittently returns 400/503 unrelated to
+        # any real advisory, so retry with backoff before failing.
+        run: |
+          for attempt in 1 2 3; do
+            if npm audit --audit-level=high; then
+              exit 0
+            fi
+            echo "npm audit attempt $attempt/3 failed — retrying in 20s"
+            sleep 20
+          done
+          echo "npm audit failed after 3 attempts"
+          exit 1
 
   image-scan:
     name: Container image scan + SBOM
