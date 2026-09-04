@@ -378,6 +378,37 @@ describe("connection lifecycle", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  // Regression (production incident, 2026-09-04): the exact scenario the
+  // discovered-locks admin flow creates. A device dials in before being
+  // registered, gets negative-cached as "unknown", then an operator
+  // registers it (server/http/catalog.ts's POST /api/admin/locks). Without
+  // admitImei() evicting that stale cache entry, the device's very next
+  // reconnect, even though the registry row now genuinely exists, is still
+  // rejected from cache alone with no DB re-check, for up to
+  // IMEI_NEGATIVE_TTL_MS after registration.
+  it("admits a freshly registered IMEI so the next reconnect is re-checked instead of cache-rejected", async () => {
+    const { server, store, lock } = await harness();
+    const spy = vi.spyOn(store, "resolveLock");
+
+    const rejected = await lock(UNKNOWN_IMEI);
+    rejected.sendCheckin();
+    await waitFor(() => server.connectionCount === 0);
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Operator registers the lock (what POST /api/admin/locks now does)...
+    store.registry.set(UNKNOWN_IMEI, { bikeId: "bike-new", status: "active" });
+    // Without this call, a reconnect here would be rejected from the stale
+    // cached "unknown" verdict, never reaching resolveLock again.
+    server.admitImei(UNKNOWN_IMEI);
+
+    const reconnected = await lock(UNKNOWN_IMEI);
+    reconnected.sendCheckin();
+
+    await waitFor(() => store.onlineCalls.some((c) => c.online === true));
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(server.connectionCount).toBe(1);
+  });
+
   it("still rejects an unregistered lock when the sighting write fails", async () => {
     const { server, store, lock } = await harness();
     store.sightingError = new Error("db down");

@@ -267,6 +267,36 @@ describe("lock device registry admin CRUD", () => {
     expect(res.body.error).toContain("IMEI");
   });
 
+  // Regression (production incident, 2026-09-04): a device that dialled in
+  // before being registered is negative-cached as "unknown" for
+  // IMEI_NEGATIVE_TTL_MS; without busting that cache entry on registration,
+  // its reconnects keep getting rejected against the stale verdict for up to
+  // 5 minutes after this call, and no telemetry (GPS included) reaches the
+  // server in the meantime.
+  it("admits the newly registered IMEI into the gateway's auth cache", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.createLock.mockResolvedValue({ lock: registeredLock });
+    const admitImei = vi.fn();
+    setLockGateway({ admitImei } as any);
+
+    const res = await lockRequest("/api/admin/locks", "POST", { imei: registeredLock.imei });
+
+    expect(res.status).toBe(201);
+    expect(admitImei).toHaveBeenCalledWith(registeredLock.imei);
+  });
+
+  it("does not fail lock registration when the gateway process is not running", async () => {
+    sessionUserId = operator.id;
+    storageMock.getUser.mockResolvedValue(operator);
+    storageMock.createLock.mockResolvedValue({ lock: registeredLock });
+    setLockGateway(null);
+
+    const res = await lockRequest("/api/admin/locks", "POST", { imei: registeredLock.imei });
+
+    expect(res.status).toBe(201);
+  });
+
   it("sends an operator's manual unlock through the live gateway", async () => {
     sessionUserId = operator.id;
     storageMock.getUser.mockResolvedValue(operator);

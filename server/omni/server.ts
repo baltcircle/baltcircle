@@ -316,6 +316,24 @@ export class OmniTcpServer {
     conn.destroy("decommissioned_by_admin");
   }
 
+  /**
+   * Mirror of revokeImei() for the opposite direction (production incident,
+   * 2026-09-04): resolveAuth() negative-caches an "unknown" IMEI for
+   * IMEI_NEGATIVE_TTL_MS (5 minutes) so a scanning/spoofed device cannot force
+   * a DB round-trip on every reconnect. A device that dialled in BEFORE an
+   * operator registered it (the exact discovered-locks flow this cache entry
+   * exists to throttle) is still negative-cached the moment `POST
+   * /api/admin/locks` inserts its registry row — without this, every
+   * reconnect attempt from that now-legitimate device keeps hitting the stale
+   * cached rejection and getting destroyed, for up to 5 minutes after
+   * registration, with no telemetry (including GPS) reaching the server in
+   * the meantime. Dropping the cache entry forces the device's very next
+   * reconnect through a fresh resolveLock() DB check, which now finds the row.
+   */
+  admitImei(imei: string): void {
+    this.imeiCache.delete(imei);
+  }
+
   async close(): Promise<void> {
     if (this.offlineSweepTimer !== null) clearInterval(this.offlineSweepTimer);
     this.offlineSweepTimer = null;
