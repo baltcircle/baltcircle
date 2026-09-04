@@ -3,6 +3,7 @@ import type { Ticket, TicketComment, TicketWithComments, CreateTicketInput, Upda
 import { eq, desc, count } from "drizzle-orm";
 import { db } from "../db/bootstrap";
 import { getLockGateway } from "../omni/gateway";
+import { assertLockClosedForAvailable } from "./bike";
 import type { Constructor } from "./mixin";
 import type { ITicketStorage, IBikeStorage } from "./interfaces";
 import type { Bike } from "@shared/schema";
@@ -86,9 +87,24 @@ export function TicketMixin<TBase extends Constructor>(Base: TBase) {
       id: number,
       patch: UpdateTicketInput,
       actor: string,
-    ): Promise<TicketWithComments | undefined> {
+    ): Promise<TicketWithComments | { error: string } | undefined> {
       const existing = (await db.select().from(tickets).where(eq(tickets.id, id)).limit(1))[0] as Ticket | undefined;
       if (!existing) return undefined;
+
+      // Closing with returnBikeToAvailable pulls the bike out of maintenance
+      // back into the rental pool — validate the lock is closed BEFORE writing
+      // anything, so a rejection leaves both the ticket and the bike untouched
+      // instead of half-applying the close (ticket closed, bike stuck in service).
+      let bikeToReturn: Bike | undefined;
+      if (patch.returnBikeToAvailable) {
+        const bike = await this.getBike(existing.bikeId);
+        if (bike && bike.status === "maintenance") {
+          const lockError = await assertLockClosedForAvailable(bike.lockImei);
+          if (lockError) return { error: lockError };
+          bikeToReturn = bike;
+        }
+      }
+
       const now = Date.now();
       const set: Partial<Ticket> = { updatedAt: now };
 
@@ -113,25 +129,23 @@ export function TicketMixin<TBase extends Constructor>(Base: TBase) {
       await db.update(tickets).set(set as any).where(eq(tickets.id, id));
 
       // Optional action when closing: return the bike to the rental pool if it's
-      // currently in maintenance because of this issue.
-      if (patch.returnBikeToAvailable) {
-        const bike = await this.getBike(existing.bikeId);
-        if (bike && bike.status === "maintenance") {
-          // updateBike() also syncs lat/lng from the lock's current GPS fix on
-          // this status change — recalculate against its return value, not
-          // the pre-update `bike`, or parking would be matched against the
-          // bike's stale pre-service position instead of where it actually is.
-          const updated = await this.updateBike(bike.id, { status: "available" });
-          if (updated) {
-            await this.recalculateBikeParking(updated);
-            // bike.status === "maintenance" was just checked above, i.e. the position
-            // this recalc used can be up to that status's 3600s tracking interval
-            // stale (bike-status lifecycle spec, 2026-09) — arm a one-shot follow-up
-            // recompute for whenever the bike's next real GPS fix lands.
-            if (bike.lockImei) getLockGateway()?.armParkingRecalc(bike.lockImei, bike.id);
-          }
-          await this.addEvent(id, actor, `Велосипед ${bike.id} возвращён в доступные`, "event");
+      // currently in maintenance because of this issue (lock-open check already
+      // ran above, before any writes).
+      if (bikeToReturn) {
+        // updateBike() also syncs lat/lng from the lock's current GPS fix on
+        // this status change — recalculate against its return value, not
+        // the pre-update `bikeToReturn`, or parking would be matched against the
+        // bike's stale pre-service position instead of where it actually is.
+        const updated = await this.updateBike(bikeToReturn.id, { status: "available" });
+        if (updated) {
+          await this.recalculateBikeParking(updated);
+          // bike.status === "maintenance" was just checked above, i.e. the position
+          // this recalc used can be up to that status's 3600s tracking interval
+          // stale (bike-status lifecycle spec, 2026-09) — arm a one-shot follow-up
+          // recompute for whenever the bike's next real GPS fix lands.
+          if (bikeToReturn.lockImei) getLockGateway()?.armParkingRecalc(bikeToReturn.lockImei, bikeToReturn.id);
         }
+        await this.addEvent(id, actor, `Велосипед ${bikeToReturn.id} возвращён в доступные`, "event");
       }
       return this.getTicket(id);
     }

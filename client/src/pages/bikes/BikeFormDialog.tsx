@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import type { Bike, BikeStatus } from "@shared/schema";
 import { BIKE_STATUSES } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { errorMessage } from "@/lib/error-message";
 import { useToast } from "@/hooks/use-toast";
 import { Field } from "@/components/FormField";
 import { Input } from "@/components/ui/input";
@@ -126,7 +127,7 @@ export function BikeFormDialog({
     // On success the claimed lock is no longer unassigned; on a lost race (409)
     // the picker must drop the lock the other operator took. Either way, refetch.
     onSettled: () => queryClient.invalidateQueries({ queryKey: UNASSIGNED_LOCKS_KEY }),
-    onError: (err: any) => setFormError(err?.message?.replace(/^\d+:\s*/, "") ?? "Не удалось сохранить"),
+    onError: (err: any) => setFormError(errorMessage(err, "Не удалось сохранить")),
   });
 
   const submitForm = () => {

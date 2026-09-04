@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import type { TicketComment, TicketWithComments } from "@shared/schema";
 import { TICKET_PRIORITIES, TICKET_STATUSES } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { errorMessage } from "@/lib/error-message";
 import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -41,7 +42,7 @@ export function TicketDetail({ id, onClose, toast }: {
       return res.json();
     },
     onSuccess: invalidate,
-    onError: (e: any) => toast.toast({ title: "Не удалось обновить", description: String(e?.message ?? e), variant: "destructive" }),
+    onError: (e: any) => toast.toast({ title: "Не удалось обновить", description: errorMessage(e, "Попробуйте ещё раз"), variant: "destructive" }),
   });
 
   const commentMut = useMutation({

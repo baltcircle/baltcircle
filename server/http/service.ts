@@ -67,6 +67,7 @@ export function registerServiceTicketRoutes(app: Express): void {
     }
     const t = await storage.updateTicket(Number(req.params.id), parsed.data, (await actorName(req)));
     if (!t) return res.status(404).json({ error: "Заявка не найдена" });
+    if ("error" in t) return res.status(400).json({ error: t.error });
     res.json(t);
   });
   app.post("/api/tickets/:id/comments", requireServiceStaff, async (req, res) => {

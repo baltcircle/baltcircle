@@ -17,6 +17,26 @@ import type { IBikeStorage, IParkingStorage } from "./interfaces";
 // instead of a 500.
 const LOCK_TAKEN = "Этот замок только что назначили другому велосипеду — выберите другой";
 
+// Bike-status lifecycle: a bike must not re-enter the rental pool while its
+// physical lock is still open — a rider could otherwise pick it up before the
+// operator actually re-secures it. locks.last_lock_state is the only
+// currently-persisted, directly-queryable signal for "is the lock physically
+// closed right now" (refreshed by heartbeat, ~4 min cadence, and forced to
+// "locked" on lock-close events) — it can lag reality by a few minutes but is
+// the best available signal without new protocol plumbing. Fail-closed: a
+// lock with no reported state yet (brand-new/never connected) or a missing
+// registry row is treated the same as "open", not "unknown-so-allow".
+export const LOCK_OPEN_BLOCKS_AVAILABLE = "Нельзя перевести велосипед в статус «Доступен» — замок открыт";
+
+export async function assertLockClosedForAvailable(
+  lockImei: string | null | undefined,
+): Promise<string | null> {
+  if (!lockImei) return null; // no lock attached — nothing to verify
+  const lockRow = (await db.select().from(locks).where(eq(locks.imei, lockImei)).limit(1))[0] as Lock | undefined;
+  if (lockRow?.lastLockState !== "locked") return LOCK_OPEN_BLOCKS_AVAILABLE;
+  return null;
+}
+
 // Audit (scalability): bike_telemetry is unbounded heartbeat/GPS check-in
 // noise from every lock (Q0/H0/D0/S5/W0 reports), unrelated to ride_points
 // (permanent per-ride track history, never purged). 30 days covers the
@@ -220,6 +240,15 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
     ) {
       const existing = await this.getBike(id);
       if (!existing) return { error: "Велосипед не найден" };
+
+      // Block entering "available" while the lock is open. Checked against the
+      // PATCH's own lockImei when a lock swap is part of the same request — a
+      // brand-new lock has never reported a state yet, so it fails closed too.
+      if (patch.status === "available") {
+        const effectiveLockImei = patch.lockImei !== undefined ? patch.lockImei.trim() : existing.lockImei;
+        const lockError = await assertLockClosedForAvailable(effectiveLockImei);
+        if (lockError) return { error: lockError };
+      }
 
       // Rename: bikes.id is referenced by FK (ON UPDATE CASCADE) from
       // reservations/alerts/locks/rides/tickets/paymentOrders, so a single
