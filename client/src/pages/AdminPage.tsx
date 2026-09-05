@@ -9,7 +9,7 @@ import { fmtRelative, fmtRub } from "@/lib/format";
 import {
   Map as MapIcon, Users as UsersIcon, Wrench,
   Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity, ChevronRight,
-  LifeBuoy, MessageSquare, AlertOctagon, ShieldAlert, PowerOff,
+  LifeBuoy, MessageSquare, AlertOctagon, ShieldAlert, PowerOff, Unlock,
 } from "lucide-react";
 import { useSupportUnread } from "@/hooks/use-support-unread";
 import { playSupportChime, primeAudio } from "@/lib/support-notify";
@@ -72,6 +72,10 @@ export function AdminPage() {
   // "lost", see server/omni/theft-registry.ts), not every single alarm blip.
   const theftAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "theft");
   const offlineAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "low_battery");
+  // Audit: lock-open-while-available (2026-09) — велосипед физически открыт,
+  // но при этом статус позволял (или почти позволил) сдать его в аренду
+  // повторно. Критичнее кражи: замок буквально стоит открытым на улице.
+  const unattendedUnlockAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "lock_open_unattended");
 
   // Звуковое уведомление при новой краже (тот же паттерн, что и useSupportUnread).
   useEffect(() => {
@@ -97,6 +101,20 @@ export function AdminPage() {
     seenTheftIdsRef.current = ids;
     if (hasNew) playSupportChime();
   }, [fleetAlertsQ.data, theftAlerts]);
+
+  // Звуковое уведомление при новом lock_open_unattended — тот же паттерн, что и кража.
+  const seenUnlockedIdsRef = useRef<Set<number> | null>(null);
+  useEffect(() => {
+    if (!fleetAlertsQ.data) return;
+    const ids = new Set(unattendedUnlockAlerts.map((a) => a.id));
+    if (seenUnlockedIdsRef.current === null) {
+      seenUnlockedIdsRef.current = ids;
+      return;
+    }
+    const hasNew = Array.from(ids).some((id) => !seenUnlockedIdsRef.current!.has(id));
+    seenUnlockedIdsRef.current = ids;
+    if (hasNew) playSupportChime();
+  }, [fleetAlertsQ.data, unattendedUnlockAlerts]);
 
   const m = useMemo(() => deriveMetrics({ bikes, users, rides, tickets, mapObjects, parkings }), [
     bikes, users, rides, tickets, mapObjects, parkings,
@@ -274,6 +292,58 @@ export function AdminPage() {
                     {t.userName ?? t.userPhone ?? t.userId}
                   </div>
                 </Link>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* ---------- lock_open_unattended (2026-09 audit: late/unsolicited positive unlock echo, manual ack) ---------- */}
+      <div className="grid lg:grid-cols-3 gap-4 mt-4">
+        <Card className="p-5 lg:col-span-3" data-testid="dashboard-unlocked-alerts">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-display text-lg font-light flex items-center gap-2">
+              <Unlock className={`w-4 h-4 ${unattendedUnlockAlerts.length ? "text-rose-600" : "text-muted-foreground"}`} />
+              Открытые велосипеды без присмотра
+            </h2>
+            {unattendedUnlockAlerts.length > 0 && <Badge variant="destructive">{unattendedUnlockAlerts.length}</Badge>}
+          </div>
+          {fleetAlertsQ.isLoading ? (
+            <div className="text-sm text-muted-foreground py-4">Загружаем данные…</div>
+          ) : unattendedUnlockAlerts.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-4" data-testid="dashboard-unlocked-alerts-empty">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              Открытых без присмотра велосипедов нет.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {unattendedUnlockAlerts.map((a) => (
+                <div
+                  key={a.id}
+                  className="flex items-center gap-3 rounded-lg border border-rose-300 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 p-3"
+                  data-testid={`dashboard-unlocked-alert-${a.id}`}
+                >
+                  <span className="flex items-center justify-center w-8 h-8 rounded-full shrink-0 bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">
+                    <Unlock className="w-4 h-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <Link href="/admin/bikes" className="text-sm font-medium hover:underline">
+                      {a.bikeId}
+                    </Link>
+                    <div className="text-xs text-muted-foreground truncate">
+                      Замок открыт, но статус «доступен» {fmtRelative(a.createdAt)}
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={ackAlertMut.isPending}
+                    onClick={() => ackAlertMut.mutate(a.id)}
+                    data-testid={`ack-unlocked-alert-${a.id}`}
+                  >
+                    Подтвердить
+                  </Button>
+                </div>
               ))}
             </div>
           )}

@@ -337,6 +337,18 @@ app.use((req, res, next) => {
         logger.error({ err, bikeId }, "post-status-change parking recalc failed");
       });
     },
+    // Audit: lock-open-while-available (2026-09 production incident,
+    // BC-001). A late/unsolicited positive unlock echo means the lock is
+    // physically open right now, regardless of whatever status the bike
+    // shows — reconcile it out of the rental pool immediately instead of
+    // waiting for an operator to notice. A negative echo (success: false)
+    // means the lock never moved, so there is nothing to correct.
+    onUnsolicitedUnlockEcho: (imei, success, at) => {
+      if (!success) return;
+      storage.reconcileUnattendedOpenLock(imei, at).catch((err) => {
+        logger.error({ err, imei }, "unsolicited-unlock reconciliation failed");
+      });
+    },
   });
   await lockGateway.listen();
   setLockGateway(lockGateway);

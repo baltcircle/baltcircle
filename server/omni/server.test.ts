@@ -735,6 +735,65 @@ describe("armParkingRecalc (bike-status lifecycle spec, 2026-09)", () => {
   });
 });
 
+// Audit: lock-open-while-available (2026-09 production incident, BC-001).
+// A positive unlockResult echo arriving for an IMEI the server has no
+// pending unlock tracked for is either a late echo (the caller already gave
+// up and moved on) or a genuinely unsolicited report from the lock. Either
+// way the lock is physically open right now, regardless of whatever the
+// bike's status says — onUnsolicitedUnlockEcho is the hook the fix's
+// reconciliation (storage/bike.ts's reconcileUnattendedOpenLock, wired in
+// server/index.ts) hangs off.
+describe("onUnsolicitedUnlockEcho (audit: lock-open-while-available, 2026-09)", () => {
+  it("fires with success: true for a late/unsolicited positive unlock echo", async () => {
+    const onUnsolicitedUnlockEcho = vi.fn();
+    const { lock } = await harness({ onUnsolicitedUnlockEcho });
+    const device = await lock(IMEI_A);
+
+    device.sendUnlockResult(true);
+
+    await waitFor(() => onUnsolicitedUnlockEcho.mock.calls.length === 1);
+    expect(onUnsolicitedUnlockEcho).toHaveBeenCalledWith(IMEI_A, true, expect.any(Number));
+  });
+
+  it("also fires with success: false — the caller decides whether a negative echo needs reconciliation", async () => {
+    const onUnsolicitedUnlockEcho = vi.fn();
+    const { lock } = await harness({ onUnsolicitedUnlockEcho });
+    const device = await lock(IMEI_A);
+
+    device.sendUnlockResult(false);
+
+    await waitFor(() => onUnsolicitedUnlockEcho.mock.calls.length === 1);
+    expect(onUnsolicitedUnlockEcho).toHaveBeenCalledWith(IMEI_A, false, expect.any(Number));
+  });
+
+  it("does NOT fire when the echo resolves a genuinely pending unlock", async () => {
+    const onUnsolicitedUnlockEcho = vi.fn();
+    const { server, store, lock } = await harness({ onUnsolicitedUnlockEcho });
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    const pending = server.sendUnlockCommand(IMEI_A, "1");
+    await device.nextCommand(); // the L0 unlock command itself
+    device.sendUnlockResult(true);
+    await pending;
+
+    expect(onUnsolicitedUnlockEcho).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op when the option is not configured", async () => {
+    const { lock } = await harness();
+    const device = await lock(IMEI_A);
+
+    // Would throw if the server tried to call a missing callback directly
+    // instead of using the optional-chaining `?.()` call.
+    device.sendUnlockResult(true);
+    await waitFor(() => device.received.length >= 1); // the Re ack for L0
+
+    expect(true).toBe(true);
+  });
+});
+
 describe("Phase 2 lock registry projection", () => {
   it("runs a ten-minute stale-presence sweep in the background", async () => {
     const { store } = await harness({ offlineAfterMs: 10 * 60_000, offlineSweepIntervalMs: 5 });

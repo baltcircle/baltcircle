@@ -34,6 +34,22 @@ export interface OmniServerOptions {
    * still be driven end-to-end in tests without a live Postgres.
    */
   onParkingRecalcFix?: (bikeId: string, lat: number, lng: number) => void;
+  /**
+   * Audit: lock-open-while-available (2026-09). Fired whenever a positive
+   * unlockResult echo arrives for an IMEI this server has no pending unlock
+   * tracked for — i.e. a late echo (the original startRide caller already
+   * gave up/aborted, exactly the production incident timing: 08:44:18
+   * timeout -> 08:44:59 late "success:true" echo on a new TCP session) or a
+   * genuinely unsolicited report. Same reasoning as onParkingRecalcFix for
+   * staying out of OmniStore: reconciling the bike's status needs the full
+   * Drizzle storage layer, which this module deliberately stays decoupled
+   * from so it can still be driven end-to-end in tests without a live
+   * Postgres. Not fired for message.success === false — persistLockReport's
+   * unlockResult case (server/omni/store.ts) already leaves
+   * locks.last_lock_state untouched on a negative echo, so there is nothing
+   * to reconcile.
+   */
+  onUnsolicitedUnlockEcho?: (imei: string, success: boolean, at: number) => void;
   /** Hard cap on concurrent sockets; excess connections are closed at accept. */
   maxConnections?: number;
   /** Close a socket that has sent nothing for this long (~3 missed H0s). */
@@ -97,7 +113,7 @@ export class OmniTcpServer {
   private readonly server: Server;
   private readonly log: Logger;
   private readonly writer: TelemetryWriter;
-  private readonly opts: Required<Omit<OmniServerOptions, "store" | "logger" | "writer" | "host" | "onParkingRecalcFix">>
+  private readonly opts: Required<Omit<OmniServerOptions, "store" | "logger" | "writer" | "host" | "onParkingRecalcFix" | "onUnsolicitedUnlockEcho">>
     & { host: string };
 
   /** Live sockets keyed by IMEI. At most one connection per device. */
@@ -533,7 +549,7 @@ export class OmniTcpServer {
         this.log.error({ err, imei, type: message.type }, "failed to persist lock report");
       }
     }
-    if (message.type === "unlockResult") this.resolveUnlock(imei, message);
+    if (message.type === "unlockResult") this.resolveUnlock(imei, message, receivedAt);
     if (!bikeId) return;
 
     const built = buildTelemetry(bikeId, imei, message, receivedAt);
@@ -574,13 +590,14 @@ export class OmniTcpServer {
     this.writer.add(built.row, built.live);
   }
 
-  private resolveUnlock(imei: string, message: Extract<OmniMessage, { type: "unlockResult" }>): void {
+  private resolveUnlock(imei: string, message: Extract<OmniMessage, { type: "unlockResult" }>, receivedAt: number): void {
     const pending = this.pendingUnlocks.get(imei);
     if (!pending) {
       this.log.info(
         { imei, userId: message.userId, success: message.success, at: message.at },
         "unlockResult: no pending unlock for this lock (late echo or unsolicited report)",
       );
+      this.options.onUnsolicitedUnlockEcho?.(imei, message.success, message.at ?? receivedAt);
       return;
     }
     if (message.userId && message.userId !== "") {

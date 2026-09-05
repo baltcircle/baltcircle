@@ -21,6 +21,31 @@ function emptySelectChain() {
   };
   return chain;
 }
+
+// Audit: lock-open-while-available (2026-09). endRide's final settlement now
+// also runs an UNCONDITIONAL isLockReportedClosed(bike?.lockImei) check via
+// the same module-level db.select() this file already mocks for the
+// pre-transaction funding-order lookup — but that check specifically targets
+// `.from(locks)`, so the default must branch on the `.from()` argument:
+// every pre-existing lockImei-set test below expects its current
+// available/offline outcome (i.e. a CLOSED lock) and must not be silently
+// diverted to "maintenance" just because the blanket empty-chain default
+// used to answer every table the same way. Only the dedicated new tests in
+// the "lock-open-unconfirmed guard" describe block below override this to
+// an open/missing lock state.
+function lockStateSelectChain(rows: unknown[]) {
+  const chain: any = {
+    from: () => chain,
+    where: () => chain,
+    limit: () => Promise.resolve(rows),
+  };
+  return chain;
+}
+function defaultSelectDispatcher(lockRows: unknown[] = [{ lastLockState: "locked" }]) {
+  return () => ({
+    from: (table: unknown) => (table === locks ? lockStateSelectChain(lockRows) : emptySelectChain()),
+  });
+}
 const dbMock = vi.hoisted(() => ({
   transaction: vi.fn(),
   select: vi.fn(),
@@ -38,7 +63,7 @@ vi.mock("./push", () => ({ sendToUserAsync: sendToUserAsyncMock }));
 vi.mock("./omni/gateway", () => ({ getLockGateway: getLockGatewayMock }));
 
 import { storage, rideEvents } from "./storage";
-import { bikes } from "@shared/schema";
+import { bikes, locks } from "@shared/schema";
 import { realToMap, RIDE_END_AWAITING_LOCK_GPS_ERROR, LOCK_GPS_LIVE_MS } from "@shared/geo";
 
 const HOUR = 60 * 60 * 1000;
@@ -166,7 +191,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   vi.clearAllMocks();
   poolMock.query.mockResolvedValue({ rows: [] });
-  dbMock.select.mockImplementation(() => emptySelectChain());
+  dbMock.select.mockImplementation(defaultSelectDispatcher());
   getLockGatewayMock.mockReturnValue(null);
 });
 
@@ -590,6 +615,79 @@ describe("endRide — lock-equipped bike GPS/radius gate", () => {
     const result = await storage.endRide(activeRide.id, { skipGeofence: true });
 
     expect(result).toEqual(completedRide);
+  });
+});
+
+// Audit: lock-open-while-available (2026-09 production incident, BC-001).
+// The admin force-end path (skipGeofence: true) is exactly the bypass that
+// let a bike return to "available" while its lock was still open. This
+// block pins the NEW unconditional isLockReportedClosed check that runs
+// regardless of skipGeofence — see server/storage/ride.ts's comment right
+// above lockOpenUnconfirmed.
+describe("endRide — lock-open-unconfirmed guard (audit: lock-open-while-available, 2026-09)", () => {
+  it("diverts to maintenance and fires the critical alert on an admin force-end when the lock is still reporting open", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI });
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx, calls } = makeTx([[activeRide], [bike], [], [completedRide]]); // skipGeofence -> no locks select in this tx queue
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+    dbMock.select.mockImplementation(defaultSelectDispatcher([{ lastLockState: "unlocked" }]));
+    const alertSpy = vi.spyOn(storage, "createLockOpenUnattendedAlert").mockResolvedValue(null);
+
+    await storage.endRide(activeRide.id, { skipGeofence: true });
+
+    const bikeUpdates = calls.update.filter((c) => c.table === bikes);
+    expect(bikeUpdates.some((c) => (c.patch as any).status === "maintenance" && (c.patch as any).maintenanceReason === "auto:lock_open_unconfirmed")).toBe(true);
+    expect(bikeUpdates.some((c) => (c.patch as any).status === "available")).toBe(false);
+    expect(alertSpy).toHaveBeenCalledWith("BC-01", expect.any(Number));
+  });
+
+  it("also diverts to maintenance when the lock has no reported state at all (fail-closed, missing registry row)", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI });
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx, calls } = makeTx([[activeRide], [bike], [], [completedRide]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+    dbMock.select.mockImplementation(defaultSelectDispatcher([])); // no locks row
+    vi.spyOn(storage, "createLockOpenUnattendedAlert").mockResolvedValue(null);
+
+    await storage.endRide(activeRide.id, { skipGeofence: true });
+
+    const bikeUpdates = calls.update.filter((c) => c.table === bikes);
+    expect(bikeUpdates.some((c) => (c.patch as any).status === "maintenance")).toBe(true);
+  });
+
+  it("does not fire the alert and keeps the normal outcome when the lock confirms closed, even on an admin force-end", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI, battery: 90 });
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx, calls } = makeTx([[activeRide], [bike], [], [completedRide]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+    // defaultSelectDispatcher() default ("locked") applies — no override needed.
+    const alertSpy = vi.spyOn(storage, "createLockOpenUnattendedAlert").mockResolvedValue(null);
+
+    await storage.endRide(activeRide.id, { skipGeofence: true });
+
+    const bikeUpdates = calls.update.filter((c) => c.table === bikes);
+    expect(bikeUpdates.some((c) => (c.patch as any).status === "available")).toBe(true);
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it("prioritises the lock-open maintenance diversion over the low-battery auto-offline outcome", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI, battery: 5 }); // would otherwise auto-offline
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx, calls } = makeTx([[activeRide], [bike], [], [completedRide]]);
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+    dbMock.select.mockImplementation(defaultSelectDispatcher([{ lastLockState: "unlocked" }]));
+    vi.spyOn(storage, "createLockOpenUnattendedAlert").mockResolvedValue(null);
+    vi.spyOn(storage, "createLowBatteryOfflineAlert").mockResolvedValue(null);
+
+    await storage.endRide(activeRide.id, { skipGeofence: true });
+
+    const bikeUpdates = calls.update.filter((c) => c.table === bikes);
+    expect(bikeUpdates.some((c) => (c.patch as any).status === "maintenance")).toBe(true);
+    expect(bikeUpdates.some((c) => (c.patch as any).status === "offline")).toBe(false);
   });
 });
 

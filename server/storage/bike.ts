@@ -34,12 +34,23 @@ const LOCK_TAKEN = "Этот замок только что назначили �
 // as "open", not "unknown-so-allow".
 export const LOCK_OPEN_BLOCKS_AVAILABLE = "Нельзя перевести велосипед в статус «Доступен» — замок открыт";
 
+// Shared by assertLockClosedForAvailable below and by ride.ts's
+// abortUnstartedRide/endRide (audit: lock-open-while-available, 2026-09) —
+// both need the exact same fail-closed read of locks.last_lock_state, just
+// with a different caller-side response to "not closed" (a rejected PATCH
+// vs. diverting the bike to maintenance instead of available/offline).
+// No lockImei at all -> true: "nothing to verify", matches
+// assertLockClosedForAvailable's existing no-op semantics for lockless bikes.
+export async function isLockReportedClosed(lockImei: string | null | undefined): Promise<boolean> {
+  if (!lockImei) return true;
+  const lockRow = (await db.select().from(locks).where(eq(locks.imei, lockImei)).limit(1))[0] as Lock | undefined;
+  return lockRow?.lastLockState === "locked";
+}
+
 export async function assertLockClosedForAvailable(
   lockImei: string | null | undefined,
 ): Promise<string | null> {
-  if (!lockImei) return null; // no lock attached — nothing to verify
-  const lockRow = (await db.select().from(locks).where(eq(locks.imei, lockImei)).limit(1))[0] as Lock | undefined;
-  if (lockRow?.lastLockState !== "locked") return LOCK_OPEN_BLOCKS_AVAILABLE;
+  if (!(await isLockReportedClosed(lockImei))) return LOCK_OPEN_BLOCKS_AVAILABLE;
   return null;
 }
 
@@ -534,6 +545,41 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
         if (deleted < batchSize) break; // caught up — nothing older left
       }
       return totalDeleted;
+    }
+
+    // Audit: lock-open-while-available (2026-09 production incident). A late
+    // (post-abort) or otherwise unsolicited positive unlock echo for a lock
+    // currently bound to an "available" bike means the bike is physically
+    // open but still listed as rentable — the exact gap that let BC-001 sit
+    // open and publicly bookable for the whole incident window. Called from
+    // server/index.ts's onUnsolicitedUnlockEcho bridge (server/omni/server.ts),
+    // itself only fired for lock IMEIs OmniTcpServer has no pending unlock
+    // tracked for — i.e. never on the normal startRide happy path.
+    //
+    // Single atomic UPDATE ... WHERE status = 'available' ... RETURNING id
+    // (same pattern as store.ts's auto-"lost" transition) — no read-then-write
+    // race: if the bike has already moved off "available" for any other
+    // reason (rented again, put in maintenance by an operator, archived) by
+    // the time this runs, the WHERE simply matches zero rows and this is a
+    // silent no-op, never clobbering a newer, unrelated status.
+    async reconcileUnattendedOpenLock(
+      this: IBikeStorage & {
+        invalidateBikesCache(opts?: { silent?: boolean }): void;
+        createLockOpenUnattendedAlert(bikeId: string, at: number): Promise<unknown>;
+      },
+      imei: string,
+      at: number,
+    ): Promise<void> {
+      const result = await pool.query<{ id: string }>(
+        `UPDATE bikes SET status = 'maintenance', maintenance_reason = 'auto:lock_open_unattended', updated_at = $2
+         WHERE lock_imei = $1 AND status = 'available'
+         RETURNING id`,
+        [imei, at],
+      );
+      const bikeId = result.rows[0]?.id;
+      if (!bikeId) return;
+      this.invalidateBikesCache();
+      this.createLockOpenUnattendedAlert(bikeId, at).catch(() => {});
     }
   };
 }

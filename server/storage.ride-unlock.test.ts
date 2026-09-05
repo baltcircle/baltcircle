@@ -7,7 +7,7 @@ import type { Bike, Ride } from "@shared/schema";
 // isolation from a real Postgres/OMNI gateway, following the mocking pattern
 // already established in storage.ride-end.test.ts.
 
-const dbMock = vi.hoisted(() => ({ transaction: vi.fn() }));
+const dbMock = vi.hoisted(() => ({ transaction: vi.fn(), select: vi.fn() }));
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 const sendToUserAsyncMock = vi.hoisted(() => vi.fn());
 const sendUnlockCommandMock = vi.hoisted(() => vi.fn());
@@ -116,11 +116,30 @@ function makeTx(selectQueue: unknown[][]) {
   return { tx, calls };
 }
 
+// abortUnstartedRide's isLockReportedClosed(opts.lockImei) read runs on the
+// module-level `db` (mocked here), NOT `tx` — it happens before the
+// transaction opens (audit: lock-open-while-available, 2026-09), so it needs
+// its own default separate from makeTx's tx.select queue. Every existing
+// test in this file that reaches abortUnstartedRide expects the pre-fix
+// "available" outcome, i.e. a closed lock — defaulting to "locked" here
+// keeps them green; only the new dedicated tests below override this.
+function mockLockState(rows: unknown[]) {
+  dbMock.select.mockImplementation(() => {
+    const chain: any = {
+      from: () => chain,
+      where: () => chain,
+      limit: () => Promise.resolve(rows),
+    };
+    return chain;
+  });
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   vi.clearAllMocks();
   poolMock.query.mockResolvedValue({ rows: [] });
+  mockLockState([{ lastLockState: "locked" }]);
 });
 
 afterEach(() => {
@@ -254,6 +273,67 @@ describe("startRide physical unlock gate (audit F-04)", () => {
     const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: false });
 
     expect(result).toHaveProperty("error");
+  });
+});
+
+// Audit: lock-open-while-available (2026-09 production incident, BC-001).
+// abortUnstartedRide previously always put the bike back to "available"
+// regardless of what the lock itself was reporting — if a late positive
+// unlock echo lands (or was already sitting there) right as the unlock
+// attempt is being unwound, the bike went back on offer while physically
+// open. isLockReportedClosed's fail-closed read must divert to "maintenance"
+// instead, and raise the same critical alert reconcileUnattendedOpenLock
+// uses.
+describe("abortUnstartedRide lock-state guard (audit: lock-open-while-available, 2026-09)", () => {
+  it("diverts the bike to maintenance and fires the critical alert when the lock is not reported closed", async () => {
+    const bike = makeBike({ lockImei: "868000000000001" });
+    const activeRideForRollback = makeRide({ cost: 35000, status: "active" });
+    const { tx, calls } = makeTx([[bike], [], [], [makeParking()], [activeRideForRollback]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    getLockGatewayMock.mockReturnValue(null); // gateway not running -> unlock never confirmed
+    mockLockState([{ lastLockState: "unlocked" }]); // lock itself says: still open
+    const alertSpy = vi.spyOn(storage, "createLockOpenUnattendedAlert").mockResolvedValue(null);
+
+    const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: false });
+
+    expect(result).toHaveProperty("error");
+    expect(calls.updateSets.some((v: any) => v.status === "maintenance" && v.maintenanceReason === "auto:lock_open_unconfirmed")).toBe(true);
+    expect(calls.updateSets.some((v: any) => v.status === "available")).toBe(false);
+    expect(alertSpy).toHaveBeenCalledWith("BC-01", expect.any(Number));
+    // Wallet is still refunded regardless of the lock-state outcome — the
+    // rider must not be charged for a ride that never actually started.
+    expect(calls.execute.some((q) => String(q).includes("UPDATE wallet") && String(q).includes("balance +"))).toBe(true);
+  });
+
+  it("also diverts to maintenance when the lock has no reported state at all (fail-closed, missing registry row)", async () => {
+    const bike = makeBike({ lockImei: "868000000000001" });
+    const activeRideForRollback = makeRide({ cost: 35000, status: "active" });
+    const { tx, calls } = makeTx([[bike], [], [], [makeParking()], [activeRideForRollback]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    getLockGatewayMock.mockReturnValue(null);
+    mockLockState([]); // no locks row at all
+    vi.spyOn(storage, "createLockOpenUnattendedAlert").mockResolvedValue(null);
+
+    const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: false });
+
+    expect(result).toHaveProperty("error");
+    expect(calls.updateSets.some((v: any) => v.status === "maintenance")).toBe(true);
+  });
+
+  it("does not fire the alert and keeps the available outcome when the lock confirms closed", async () => {
+    const bike = makeBike({ lockImei: "868000000000001" });
+    const activeRideForRollback = makeRide({ cost: 35000, status: "active" });
+    const { tx, calls } = makeTx([[bike], [], [], [makeParking()], [activeRideForRollback]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    getLockGatewayMock.mockReturnValue(null);
+    mockLockState([{ lastLockState: "locked" }]);
+    const alertSpy = vi.spyOn(storage, "createLockOpenUnattendedAlert").mockResolvedValue(null);
+
+    const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: false });
+
+    expect(result).toHaveProperty("error");
+    expect(calls.updateSets.some((v: any) => v.status === "available")).toBe(true);
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 });
 

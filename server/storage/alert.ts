@@ -116,6 +116,23 @@ export function AlertMixin<TBase extends Constructor>(Base: TBase) {
       return rowToAlert(row);
     }
 
+    /**
+     * Best-effort, called from ride.ts's abortUnstartedRide/endRide (a lock
+     * reported open right at that transition) and from bike.ts's
+     * reconcileUnattendedOpenLock (a late/unsolicited positive unlock echo
+     * for a bike that was still "available") — audit: lock-open-while-
+     * available, 2026-09 production incident (BC-001 left open and publicly
+     * bookable for ~40 minutes). Same dedup as fall/movement/low_battery: a
+     * lock stuck open keeps re-triggering on every late echo/reconciliation
+     * attempt and must not spam a fresh row each time.
+     */
+    async createLockOpenUnattendedAlert(bikeId: string, at: number): Promise<Alert | null> {
+      return this.createAlertRow(
+        bikeId, "lock_open_unattended", "critical",
+        `Велосипед ${bikeId}: замок открыт, но статус «доступен» — автоматически снят с публикации`, at,
+      );
+    }
+
     async listAlerts(opts?: { includeAcknowledged?: boolean }): Promise<Alert[]> {
       const rows = opts?.includeAcknowledged
         ? await db.select().from(alerts).orderBy(desc(alerts.createdAt))
