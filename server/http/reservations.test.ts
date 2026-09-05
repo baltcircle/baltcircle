@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const storageMock = vi.hoisted(() => ({
   createReservation: vi.fn(),
   cancelReservation: vi.fn(),
-  getActiveReservationForUser: vi.fn(),
+  getActiveReservations: vi.fn(),
 }));
 
 vi.mock("../storage", () => ({ storage: storageMock }));
@@ -130,25 +130,28 @@ describe("POST /api/reservations/:id/cancel", () => {
 });
 
 describe("GET /api/reservations/active", () => {
-  it("returns the rider's active reservation", async () => {
+  it("returns the rider's active reservations as an array", async () => {
     const { get } = routeApp();
-    const reservation = { id: 5, bikeId: "BC-01", userId: "user-1", status: "active" };
-    storageMock.getActiveReservationForUser.mockResolvedValue(reservation);
+    const reservations = [
+      { id: 5, bikeId: "BC-01", userId: "user-1", status: "active" },
+      { id: 6, bikeId: "BC-02", userId: "user-1", status: "active" },
+    ];
+    storageMock.getActiveReservations.mockResolvedValue(reservations);
     const res = response();
 
     await get.get("/api/reservations/active")!({ session: { userId: "user-1" } }, res);
 
-    expect(storageMock.getActiveReservationForUser).toHaveBeenCalledWith("user-1");
-    expect(res.body).toEqual(reservation);
+    expect(storageMock.getActiveReservations).toHaveBeenCalledWith("user-1");
+    expect(res.body).toEqual(reservations);
   });
 
-  it("returns null when the rider has no active reservation", async () => {
+  it("returns an empty array when the rider has no active reservations", async () => {
     const { get } = routeApp();
-    storageMock.getActiveReservationForUser.mockResolvedValue(undefined);
+    storageMock.getActiveReservations.mockResolvedValue([]);
     const res = response();
 
     await get.get("/api/reservations/active")!({ session: { userId: "user-1" } }, res);
 
-    expect(res.body).toBeNull();
+    expect(res.body).toEqual([]);
   });
 });

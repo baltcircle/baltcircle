@@ -102,8 +102,9 @@ beforeEach(() => {
 describe("storage.createReservation", () => {
   it("creates a reservation and flips the bike to reserved when it's available and the rider is free", async () => {
     const bike = makeBike({ status: "available" });
-    // select order: [bike FOR UPDATE], [existingForUser active reservation]
-    const { tx, calls } = makeTx([[bike], []], [{ rows: [] } /* no active ride */]);
+    // select order: [bike FOR UPDATE], [existingForUser active reservations]
+    // execute order: [advisory lock (ignored)], [active rides]
+    const { tx, calls } = makeTx([[bike], []], [{ rows: [] }, { rows: [] } /* no active ride */]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
 
     const result = await storage.createReservation({ bikeId: "BC-01", userId: "user-1" });
@@ -115,7 +116,7 @@ describe("storage.createReservation", () => {
 
   it("syncs D1 GPS tracking to the reserved (10s) interval on success (bike-status lifecycle spec, 2026-09)", async () => {
     const bike = makeBike({ status: "available", lockImei: "861234567890123" });
-    const { tx } = makeTx([[bike], []], [{ rows: [] }]);
+    const { tx } = makeTx([[bike], []], [{ rows: [] }, { rows: [] }]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
     const syncGpsTrackingForStatus = vi.fn();
     getLockGatewayMock.mockReturnValue({ syncGpsTrackingForStatus });
@@ -127,7 +128,7 @@ describe("storage.createReservation", () => {
 
   it("skips the GPS sync when the bike has no fitted lock", async () => {
     const bike = makeBike({ status: "available", lockImei: null });
-    const { tx } = makeTx([[bike], []], [{ rows: [] }]);
+    const { tx } = makeTx([[bike], []], [{ rows: [] }, { rows: [] }]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
     const syncGpsTrackingForStatus = vi.fn();
     getLockGatewayMock.mockReturnValue({ syncGpsTrackingForStatus });
@@ -147,25 +148,52 @@ describe("storage.createReservation", () => {
     expect(result).toHaveProperty("error");
   });
 
-  it("rejects a second reservation for a rider who already holds one (any bike)", async () => {
+  it("allows a second reservation on a different bike when the rider is below the combined cap", async () => {
+    // MAX_ACTIVE_RIDES_PER_USER is 2 — one existing reservation + zero active
+    // rides = 1 used, so a second reservation must be allowed (2026-09 combined-
+    // budget product decision superseding the old "exactly one" rule).
     const bike = makeBike({ status: "available" });
     const existing = makeReservation({ bikeId: "BC-02" });
-    const { tx } = makeTx([[bike], [existing]]);
+    const { tx } = makeTx([[bike], [existing]], [{ rows: [] }, { rows: [] }]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
 
     const result = await storage.createReservation({ bikeId: "BC-01", userId: "user-1" });
 
-    expect(result).toMatchObject({ error: expect.stringContaining("активная бронь") });
+    expect(result).not.toHaveProperty("error");
   });
 
-  it("rejects a reservation for a rider who already has an active ride", async () => {
+  it("allows a reservation for a rider with one active ride, below the combined cap", async () => {
+    // One active ride alone no longer hard-blocks a reservation — it only
+    // consumes one slot of the combined budget (0 reservations + 1 ride = 1 < 2).
     const bike = makeBike({ status: "available" });
-    const { tx } = makeTx([[bike], []], [{ rows: [{ id: 99 }] } /* active ride exists */]);
+    const { tx } = makeTx([[bike], []], [{ rows: [] }, { rows: [{ id: 99 }] } /* one active ride */]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
 
     const result = await storage.createReservation({ bikeId: "BC-01", userId: "user-1" });
 
-    expect(result).toMatchObject({ error: expect.stringContaining("активная поездка") });
+    expect(result).not.toHaveProperty("error");
+  });
+
+  it("rejects a reservation once the rider already holds two active reservations (at the combined cap)", async () => {
+    const bike = makeBike({ status: "available" });
+    const existing = [makeReservation({ id: 1, bikeId: "BC-02" }), makeReservation({ id: 2, bikeId: "BC-03" })];
+    const { tx } = makeTx([[bike], existing], [{ rows: [] }, { rows: [] }]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.createReservation({ bikeId: "BC-01", userId: "user-1" });
+
+    expect(result).toMatchObject({ error: expect.stringContaining("максимум активных бронирований и поездок") });
+  });
+
+  it("rejects a reservation once the rider's reservation + active ride together hit the combined cap", async () => {
+    const bike = makeBike({ status: "available" });
+    const existing = makeReservation({ bikeId: "BC-02" });
+    const { tx } = makeTx([[bike], [existing]], [{ rows: [] }, { rows: [{ id: 99 }] } /* one active ride */]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.createReservation({ bikeId: "BC-01", userId: "user-1" });
+
+    expect(result).toMatchObject({ error: expect.stringContaining("максимум активных бронирований и поездок") });
   });
 
   it("translates a unique-violation race into a friendly error instead of throwing", async () => {
@@ -289,15 +317,25 @@ describe("storage.expireOverdueReservations", () => {
   });
 });
 
-describe("storage.getActiveReservationForUser / getActiveReservationForBike", () => {
-  it("returns the active reservation row for a user", async () => {
-    const row = makeReservation();
-    const chain: any = { from: () => chain, where: () => chain, limit: () => Promise.resolve([row]) };
+describe("storage.getActiveReservations / getActiveReservationForBike", () => {
+  it("returns all active reservation rows for a user", async () => {
+    const row1 = makeReservation({ id: 1, bikeId: "BC-01" });
+    const row2 = makeReservation({ id: 2, bikeId: "BC-02" });
+    const chain: any = { from: () => chain, where: () => chain, then: (r: any) => Promise.resolve([row1, row2]).then(r) };
     dbMock.select.mockReturnValue(chain);
 
-    const result = await storage.getActiveReservationForUser("user-1");
+    const result = await storage.getActiveReservations("user-1");
 
-    expect(result).toEqual(row);
+    expect(result).toEqual([row1, row2]);
+  });
+
+  it("returns an empty array when a user has no active reservations", async () => {
+    const chain: any = { from: () => chain, where: () => chain, then: (r: any) => Promise.resolve([]).then(r) };
+    dbMock.select.mockReturnValue(chain);
+
+    const result = await storage.getActiveReservations("user-1");
+
+    expect(result).toEqual([]);
   });
 
   it("returns undefined when a bike has no active reservation", async () => {

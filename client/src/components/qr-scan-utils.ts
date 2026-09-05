@@ -62,7 +62,7 @@ export function normalizeCode(raw: string): string {
 // to the current session by the server.
 export interface ScanOwnership {
   myActiveRideBikeIds?: string[];
-  myReservationBikeId?: string | null;
+  myReservationBikeIds?: string[];
 }
 
 // Per-status rider-facing message, exactly matching the bike-status lifecycle
@@ -100,7 +100,7 @@ export function classifyBikeForScan(
   ownership: ScanOwnership,
 ): { bike: Bike } | { error: string } {
   if (bike.status === "rented" && (ownership.myActiveRideBikeIds ?? []).includes(bike.id)) return { bike };
-  if (bike.status === "reserved" && bike.id === ownership.myReservationBikeId) return { bike };
+  if (bike.status === "reserved" && (ownership.myReservationBikeIds ?? []).includes(bike.id)) return { bike };
   const message = scanMessageForStatus(bike.status);
   if (message) return { error: message };
   return { bike };

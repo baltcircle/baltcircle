@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { Ride } from "@shared/schema";
 import { SSE_STALE_THRESHOLD_MS } from "@shared/geo";
 import { API_BASE } from "@/lib/queryClient";
+import { RESERVATION_ACTIVE_KEY } from "@/lib/payment";
 import { isStreamStale } from "./sse-watchdog";
 
 export const ACTIVE_RIDE_KEY = ["/api/rides/active"] as const;
@@ -50,6 +51,14 @@ export function useActiveRideStream(): void {
         qc.setQueryData(ACTIVE_RIDE_KEY, rides);
         // A ride change moved/freed a bike → refresh the map's bike layer.
         qc.invalidateQueries({ queryKey: BIKES_KEY });
+        // A ride starting claims its reservation (active → claimed); a ride
+        // ending can free up the rider's combined reservation+ride budget for
+        // a NEW booking. Either way the reservation banner's cache can go
+        // stale here, and — unlike BIKES_KEY above — nothing else reliably
+        // invalidates it on every ride-start path (pay / saved-card / test
+        // ride / QR-claim), so without this the banner for an already-claimed
+        // reservation could keep showing until an unrelated refetch happens.
+        qc.invalidateQueries({ queryKey: RESERVATION_ACTIVE_KEY });
       };
 
       // Named heartbeat event pushed every SSE_HEARTBEAT_INTERVAL_MS by the

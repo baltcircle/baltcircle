@@ -77,13 +77,19 @@ describe("classifyBikeForScan", () => {
 
   it("lets the scanning rider's own reservation through", () => {
     const bike = makeBike({ id: "BC-01", status: "reserved" });
-    const result = classifyBikeForScan(bike, { myReservationBikeId: "BC-01" });
+    const result = classifyBikeForScan(bike, { myReservationBikeIds: ["BC-01"] });
+    expect(result).toEqual({ bike });
+  });
+
+  it("lets a bike through when it's the second of two concurrently reserved bikes", () => {
+    const bike = makeBike({ id: "BC-02", status: "reserved" });
+    const result = classifyBikeForScan(bike, { myReservationBikeIds: ["BC-01", "BC-02"] });
     expect(result).toEqual({ bike });
   });
 
   it("reports \u00ab\u0437\u0430\u0431\u0440\u043e\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u00bb for a bike reserved by someone else", () => {
     const bike = makeBike({ id: "BC-01", status: "reserved" });
-    const result = classifyBikeForScan(bike, { myReservationBikeId: "BC-02" });
+    const result = classifyBikeForScan(bike, { myReservationBikeIds: ["BC-02"] });
     expect(result).toEqual({ error: "\u0412\u0435\u043b\u043e\u0441\u0438\u043f\u0435\u0434 \u0437\u0430\u0431\u0440\u043e\u043d\u0438\u0440\u043e\u0432\u0430\u043d" });
   });
 

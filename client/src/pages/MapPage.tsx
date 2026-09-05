@@ -152,8 +152,8 @@ export function MapPage() {
   const { drawerOpen, setDrawerOpen, drawerMountedOpen, drawerInstantTick } = useDrawerState();
   const { geoCenter, lastPosRef, handleGeolocate } = useGeolocation();
   const { showPaymentBanner, dismissPaymentBanner } = usePaymentBanner(isRegistered, activeRides.length > 0);
-  const { reservation, cancelling, cancelReservation, onExpire: onReservationExpire } =
-    useReservationBanner(isRegistered, activeRides.length > 0);
+  const { reservations, cancelling, cancelReservation, onExpire: onReservationExpire } =
+    useReservationBanner(isRegistered);
 
   // Rider-facing map must never surface a bike a customer couldn't rent right
   // now. The server (filterBikesForRider) already restricts /api/bikes to
@@ -166,19 +166,22 @@ export function MapPage() {
     () => new Set(activeRides.map((r) => r.bikeId)),
     [activeRides]
   );
+  const myReservationBikeIds = useMemo(
+    () => new Set(reservations.map((r) => r.bikeId)),
+    [reservations]
+  );
   const mapBikes = useMemo(
     () => bikesQ.data?.filter(
       (b) => b.status === "available"
-        || (b.status === "reserved" && b.id === reservation?.bikeId)
+        || (b.status === "reserved" && myReservationBikeIds.has(b.id))
         || (b.status === "rented" && myActiveBikeIds.has(b.id))
     ) ?? [],
-    [bikesQ.data, reservation?.bikeId, myActiveBikeIds]
+    [bikesQ.data, myReservationBikeIds, myActiveBikeIds]
   );
-  const nonInteractiveBikeIds = useMemo(() => {
-    const ids = new Set<string>(myActiveBikeIds);
-    if (reservation) ids.add(reservation.bikeId);
-    return ids;
-  }, [myActiveBikeIds, reservation]);
+  const nonInteractiveBikeIds = useMemo(
+    () => new Set<string>([...Array.from(myActiveBikeIds), ...Array.from(myReservationBikeIds)]),
+    [myActiveBikeIds, myReservationBikeIds]
+  );
 
   // true пока ждём регистрацию, чтобы после неё открыть QR-скан (goRent) —
   // раньше сюда же кодировался флаг "multi", но выделенного multi-режима
@@ -581,6 +584,19 @@ export function MapPage() {
           <MapPin className="w-5 h-5" />
         </button>
 
+        {/* Reservation banners render alongside EITHER branch below — a rider
+            can be mid-ride on one bike while still holding a reservation on
+            another (combined MAX_ACTIVE_RIDES_PER_USER budget, shared/geo.ts),
+            so this must not be nested only inside the "no active ride" arm. */}
+        {reservations.map((r) => (
+          <ReservationBanner
+            key={r.id}
+            reservation={r}
+            onCancel={() => cancelReservation(r.id)}
+            cancelling={cancelling}
+            onExpire={() => onReservationExpire(r.id)}
+          />
+        ))}
         {focusedRide ? (
           <ActiveRideCard
             ride={focusedRide}
@@ -604,22 +620,12 @@ export function MapPage() {
             slotBikeIds={slotBikeIds}
           />
         ) : (
-          <>
-            {reservation && (
-              <ReservationBanner
-                reservation={reservation}
-                onCancel={() => cancelReservation(reservation.id)}
-                cancelling={cancelling}
-                onExpire={onReservationExpire}
-              />
-            )}
-            <ScanAndPaymentBanner
-              isRegistered={isRegistered}
-              onScan={goRent}
-              showPaymentBanner={showPaymentBanner}
-              onDismissBanner={dismissPaymentBanner}
-            />
-          </>
+          <ScanAndPaymentBanner
+            isRegistered={isRegistered}
+            onScan={goRent}
+            showPaymentBanner={showPaymentBanner}
+            onDismissBanner={dismissPaymentBanner}
+          />
         )}
       </div>
 
@@ -652,7 +658,7 @@ export function MapPage() {
         open={scanOpen}
         onOpenChange={setScanOpen}
         myActiveRideBikeIds={activeRides.map((r) => r.bikeId)}
-        myReservationBikeId={reservation?.bikeId ?? null}
+        myReservationBikeIds={Array.from(myReservationBikeIds)}
         onBikeSelected={onBikeScanned}
       />
 

@@ -26,6 +26,12 @@ const storageMock = vi.hoisted(() => ({
   adminUpdateBike: vi.fn(),
   listAlerts: vi.fn(),
   acknowledgeAlert: vi.fn(),
+  // Not exercised by any test in this file today (no test hits GET
+  // /api/bikes here — see catalog.rider-visibility.test.ts) but
+  // registerCatalogRoutes(app) mounts that route unconditionally, so these
+  // need a safe default to avoid an unmocked-call throw if that changes.
+  getActiveRides: vi.fn(),
+  getActiveReservations: vi.fn(),
 }));
 
 vi.mock("../storage", () => ({
@@ -74,6 +80,8 @@ beforeEach(() => {
   setLockGateway(null);
   sessionUserId = null;
   storageMock.getLockStatesByImei.mockResolvedValue(new Map());
+  storageMock.getActiveRides.mockResolvedValue([]);
+  storageMock.getActiveReservations.mockResolvedValue([]);
 });
 
 async function getLocks(): Promise<{ status: number; body: any }> {
