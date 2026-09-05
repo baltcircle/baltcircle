@@ -78,6 +78,16 @@ export function MapPage() {
     const target = activeRides.find((r) => r.activeSlot === slot);
     if (target) setFocusedRideId(target.id);
   };
+  // Bike id shown on each switcher button in the card header, keyed by the
+  // ride's stable slot (not array position) — lets the switcher read the
+  // actual bike code instead of a bare "1"/"2".
+  const slotBikeIds = useMemo(() => {
+    const ids: Partial<Record<1 | 2, string>> = {};
+    for (const r of activeRides) {
+      if (r.activeSlot === 1 || r.activeSlot === 2) ids[r.activeSlot] = r.bikeId;
+    }
+    return ids;
+  }, [activeRides]);
 
   // GPS-трекер активной аренды: слушает onUserLocation от MapLibreMap и шлёт
   // точки на /api/rides/{id}/point (тротлинг 3с + фильтр GPS-дребезга <5м).
@@ -148,18 +158,27 @@ export function MapPage() {
   // Rider-facing map must never surface a bike a customer couldn't rent right
   // now. The server (filterBikesForRider) already restricts /api/bikes to
   // available bikes + this rider's own rented/reserved bike (everyone else's
-  // is invisible). We additionally drop our own RENTED bike here — its live
-  // position is already conveyed by the active-ride start marker/track, so a
-  // second clickable dot for a bike the rider already has would just invite
-  // re-opening the rental flow on it. Our own RESERVED bike is kept visible
-  // (it's the only way to see where it is before pickup) but is rendered
-  // non-interactive via nonInteractiveBikeId below.
+  // is invisible). Our own RENTED and RESERVED bikes stay visible — the rider
+  // still needs to see where they are — but are rendered non-interactive via
+  // nonInteractiveBikeIds below, so tapping one can't re-open the rental flow
+  // on a bike that's already theirs.
+  const myActiveBikeIds = useMemo(
+    () => new Set(activeRides.map((r) => r.bikeId)),
+    [activeRides]
+  );
   const mapBikes = useMemo(
     () => bikesQ.data?.filter(
-      (b) => b.status === "available" || (b.status === "reserved" && b.id === reservation?.bikeId)
+      (b) => b.status === "available"
+        || (b.status === "reserved" && b.id === reservation?.bikeId)
+        || (b.status === "rented" && myActiveBikeIds.has(b.id))
     ) ?? [],
-    [bikesQ.data, reservation?.bikeId]
+    [bikesQ.data, reservation?.bikeId, myActiveBikeIds]
   );
+  const nonInteractiveBikeIds = useMemo(() => {
+    const ids = new Set<string>(myActiveBikeIds);
+    if (reservation) ids.add(reservation.bikeId);
+    return ids;
+  }, [myActiveBikeIds, reservation]);
 
   // true пока ждём регистрацию, чтобы после неё открыть QR-скан (goRent) —
   // раньше сюда же кодировался флаг "multi", но выделенного multi-режима
@@ -503,7 +522,7 @@ export function MapPage() {
           mapObjects={mapObjectsQ.data ?? []}
           bikes={mapBikes}
           pausedBikeIds={pausedBikeIds}
-          nonInteractiveBikeId={reservation?.bikeId ?? null}
+          nonInteractiveBikeIds={nonInteractiveBikeIds}
           selectedBikeId={selected}
           onSelectBike={onMapBikeClick}
           ride={displayRide}
@@ -582,6 +601,7 @@ export function MapPage() {
             showRideSwitcher={showRideSwitcher}
             activeSlot={(focusedRide.activeSlot as 1 | 2) ?? 1}
             onSelectSlot={onSelectSlot}
+            slotBikeIds={slotBikeIds}
           />
         ) : (
           <>
