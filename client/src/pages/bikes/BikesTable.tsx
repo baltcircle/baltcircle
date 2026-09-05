@@ -20,12 +20,12 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import { TablePager, useClientPagination } from "@/components/table-pager";
-import { ADMIN_BIKES_KEY, STATUS_LABEL, STATUS_TONE } from "./bike-utils";
+import { ADMIN_BIKES_KEY, STATUS_LABEL, STATUS_TONE, lockStateLabel, type AdminBikeRow } from "./bike-utils";
 
 export function BikesTable({
   bikes, parkings, canWrite, search, onQr, onEdit,
 }: {
-  bikes: Bike[];
+  bikes: AdminBikeRow[];
   parkings: Parking[];
   canWrite: boolean;
   search: string;
@@ -117,7 +117,7 @@ export function BikesTable({
             <TableHead className="w-28 text-center">Код</TableHead>
             <TableHead className="text-center">Статус</TableHead>
             <TableHead className="text-center">Замок ID</TableHead>
-            <TableHead className="text-center">Заряд замка</TableHead>
+            <TableHead className="text-center">Заряд/состояние</TableHead>
             <TableHead className="text-center">Парковка</TableHead>
             <TableHead className="text-right">Действия</TableHead>
           </TableRow>
@@ -136,8 +136,17 @@ export function BikesTable({
                 </Badge>
               </TableCell>
               <TableCell className="text-sm text-center text-muted-foreground font-mono">{b.lockImei || "—"}</TableCell>
-              <TableCell className={`text-sm text-center font-mono ${b.battery < LOW_BATTERY_AUTO_OFFLINE_THRESHOLD ? "text-destructive font-medium" : "text-muted-foreground"}`} data-testid={`text-bike-battery-${b.id}`}>
-                {b.battery}%
+              <TableCell className="text-sm text-center font-mono" data-testid={`text-bike-battery-${b.id}`}>
+                <span className={b.battery < LOW_BATTERY_AUTO_OFFLINE_THRESHOLD ? "text-destructive font-medium" : "text-muted-foreground"}>
+                  {b.battery}%
+                </span>
+                {b.lockImei && (
+                  // Красным — тот самый сценарий принудительного завершения аренды:
+                  // замок физически открыт, хотя аренда уже закрыта.
+                  <span className={b.lockState === "unlocked" ? "text-destructive font-medium" : "text-muted-foreground"}>
+                    /{lockStateLabel(b.lockState)}
+                  </span>
+                )}
               </TableCell>
               <TableCell className="text-sm text-center text-muted-foreground">{parkingName(b.parkingId)}</TableCell>
               <TableCell>

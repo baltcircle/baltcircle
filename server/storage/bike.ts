@@ -581,5 +581,20 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       this.invalidateBikesCache();
       this.createLockOpenUnattendedAlert(bikeId, at).catch(() => {});
     }
+
+    async getLockStatesByImei(imeis: string[]): Promise<Map<string, "locked" | "unlocked">> {
+      const out = new Map<string, "locked" | "unlocked">();
+      if (imeis.length === 0) return out;
+      const { rows } = await pool.query<{ imei: string; last_lock_state: string | null }>(
+        `SELECT imei, last_lock_state FROM locks WHERE imei = ANY($1::text[])`,
+        [imeis],
+      );
+      for (const row of rows) {
+        if (row.last_lock_state === "locked" || row.last_lock_state === "unlocked") {
+          out.set(row.imei, row.last_lock_state);
+        }
+      }
+      return out;
+    }
   };
 }

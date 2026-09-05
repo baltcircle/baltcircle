@@ -231,6 +231,16 @@ export interface IBikeStorage {
    * no longer "available" by the time this runs. See server/storage/bike.ts.
    */
   reconcileUnattendedOpenLock(imei: string, at: number): Promise<void>;
+  /**
+   * Bulk lock-state lookup for the admin fleet table (audit: continuous
+   * lock-state visibility, 2026-09) — lets the bikes list show "open/closed"
+   * next to battery the same way battery is already live-tracked, without
+   * duplicating locks.last_lock_state onto bikes. Keyed by IMEI; an IMEI
+   * with no reported state yet (brand-new/never connected) or not found in
+   * the registry is simply absent from the returned map — callers treat a
+   * missing entry as "нет данных", not as either lock state.
+   */
+  getLockStatesByImei(imeis: string[]): Promise<Map<string, "locked" | "unlocked">>;
 }
 
 export interface ILockStorage {

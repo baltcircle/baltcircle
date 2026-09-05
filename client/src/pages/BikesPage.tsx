@@ -10,7 +10,7 @@ import { Search, Plus } from "lucide-react";
 import { BikesTable } from "./bikes/BikesTable";
 import { BikeFormDialog } from "./bikes/BikeFormDialog";
 import { BikeQrDialog } from "./bikes/BikeQrDialog";
-import { ADMIN_BIKES_KEY } from "./bikes/bike-utils";
+import { ADMIN_BIKES_KEY, type AdminBikeRow } from "./bikes/bike-utils";
 
 // Re-exported for the existing test suite (client/src/pages/BikesPage.test.ts
 // imports pure helpers from this module path). The actual implementations now
@@ -31,7 +31,7 @@ export function BikesPage() {
   // only. The server enforces this too — this just hides the controls.
   const { isMechanic } = useCurrentUser();
   const canWrite = !isMechanic;
-  const bikesQ = useQuery<Bike[]>({ queryKey: ADMIN_BIKES_KEY });
+  const bikesQ = useQuery<AdminBikeRow[]>({ queryKey: ADMIN_BIKES_KEY });
   const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
   useFleetStream(); // живое обновление статусов велосипедов
 

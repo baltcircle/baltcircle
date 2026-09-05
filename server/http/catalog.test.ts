@@ -15,6 +15,7 @@ const storageMock = vi.hoisted(() => ({
   listUnassignedLocks: vi.fn(),
   listDiscoveredLocks: vi.fn(),
   listLocks: vi.fn(),
+  getLockStatesByImei: vi.fn(),
   createLock: vi.fn(),
   getLock: vi.fn(),
   updateLock: vi.fn(),
@@ -72,6 +73,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   setLockGateway(null);
   sessionUserId = null;
+  storageMock.getLockStatesByImei.mockResolvedValue(new Map());
 });
 
 async function getLocks(): Promise<{ status: number; body: any }> {
@@ -193,6 +195,32 @@ describe("GET /api/admin/bikes", () => {
       lockLastSeen: 1_700_000_000_000,
     })]);
     expect(storageMock.listBikes).toHaveBeenCalledWith({ includeArchived: true });
+  });
+
+  it("merges the live lock state next to each bike, keyed by its lock IMEI", async () => {
+    sessionUserId = "operator-bike-list";
+    storageMock.getUser.mockResolvedValue({ id: sessionUserId, role: "operator" });
+    storageMock.listBikes.mockResolvedValue([
+      { id: "BC-100", battery: 73, lockImei: "862596083776074" },
+      { id: "BC-200", battery: 40, lockImei: "862596083776099" },
+      { id: "BC-300", battery: 90, lockImei: null },
+    ]);
+    storageMock.getLockStatesByImei.mockResolvedValue(new Map([
+      ["862596083776074", "locked"],
+      // 862596083776099 intentionally absent — never reported yet.
+    ]));
+
+    const res = await lockRequest("/api/admin/bikes");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([
+      expect.objectContaining({ id: "BC-100", lockState: "locked" }),
+      expect.objectContaining({ id: "BC-200", lockState: null }),
+      expect.objectContaining({ id: "BC-300", lockState: null }),
+    ]);
+    expect(storageMock.getLockStatesByImei).toHaveBeenCalledWith([
+      "862596083776074", "862596083776099",
+    ]);
   });
 });
 

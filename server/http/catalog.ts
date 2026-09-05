@@ -244,7 +244,16 @@ export function registerCatalogRoutes(app: Express): void {
     const all = await storage.listBikes({ includeArchived: true });
     res.setHeader("X-Total-Count", String(all.length));
     const { limit, offset } = parsePageParams(req);
-    res.json(limit !== undefined ? all.slice(offset, offset + limit) : all);
+    const page = limit !== undefined ? all.slice(offset, offset + limit) : all;
+    // Lock state lives on the separate locks table (telemetry-owned), not on
+    // bikes — look it up only for this page/response instead of joining it
+    // into the shared, cached listBikes() result used by the map/analytics.
+    const imeis = page.map((b) => b.lockImei).filter((imei): imei is string => !!imei);
+    const lockStates = await storage.getLockStatesByImei(imeis);
+    res.json(page.map((b) => ({
+      ...b,
+      lockState: b.lockImei ? lockStates.get(b.lockImei) ?? null : null,
+    })));
   });
   app.post("/api/admin/bikes", requireRole("operator", "admin"), async (req, res) => {
     const parsed = adminCreateBikeSchema.safeParse(req.body);
