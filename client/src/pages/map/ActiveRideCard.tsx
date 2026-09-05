@@ -32,18 +32,20 @@ interface ActiveRideCardProps {
   /** true when the rider has room for a second simultaneous ride (< max active). */
   showAddSecondRide?: boolean;
   onAddSecondRide?: () => void;
-  /** true when the rider has two simultaneous active rides — shows the 1/2 slot switcher. */
+  /** true when the rider has two simultaneous active rides — shows the slot switcher in the header. */
   showRideSwitcher?: boolean;
   /** which ride slot (1 or 2) this card is currently displaying. */
   activeSlot?: 1 | 2;
   onSelectSlot?: (slot: 1 | 2) => void;
+  /** bike id to print on each switcher button, keyed by slot. */
+  slotBikeIds?: Partial<Record<1 | 2, string>>;
 }
 
 export function ActiveRideCard({
   ride, onEnd, ending, onPause, onResume, pausing, resuming, awaitingLockClose,
   awaitingEndLockClose, onCancelEnd, cancellingEnd, onExtend, extending,
   showAddSecondRide, onAddSecondRide,
-  showRideSwitcher, activeSlot = 1, onSelectSlot,
+  showRideSwitcher, activeSlot = 1, onSelectSlot, slotBikeIds,
 }: ActiveRideCardProps) {
   const [extendOpen, setExtendOpen] = useState(false);
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
@@ -54,13 +56,36 @@ export function ActiveRideCard({
       className="rounded-2xl bg-card/95 text-card-foreground backdrop-blur-sm shadow-xl px-5 py-4"
       data-testid="home-active-ride-card"
     >
-      <div className="text-center">
-        <div
-          className="font-display text-lg font-medium tracking-wide text-brand-sea"
-          data-testid="text-active-bike"
-        >
-          {ride.bikeId}
-        </div>
+      <div className="flex justify-center">
+        {showRideSwitcher ? (
+          <div
+            className="h-9 flex rounded-full border border-card-border bg-background/50 overflow-hidden"
+            data-testid="ride-slot-switcher"
+          >
+            {([1, 2] as const).map((slot) => (
+              <button
+                key={slot}
+                type="button"
+                onClick={() => onSelectSlot?.(slot)}
+                data-testid={`button-ride-slot-${slot}`}
+                className={cn(
+                  "px-4 flex items-center justify-center font-display text-sm transition-colors hover-elevate active:scale-[0.98]",
+                  slot === 1 && "border-r border-card-border",
+                  activeSlot === slot ? "bg-primary text-black font-medium" : "text-muted-foreground font-light"
+                )}
+              >
+                {slotBikeIds?.[slot] ?? slot}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div
+            className="font-display text-lg font-medium tracking-wide text-brand-sea"
+            data-testid="text-active-bike"
+          >
+            {ride.bikeId}
+          </div>
+        )}
       </div>
 
       <div className="mt-1 flex items-center justify-between gap-3">
@@ -83,29 +108,6 @@ export function ActiveRideCard({
         </div>
         <OveragePanel ride={ride} />
       </div>
-
-      {showRideSwitcher && (
-        <div
-          className="mt-2 h-11 flex rounded-xl border border-card-border bg-background/50 overflow-hidden"
-          data-testid="ride-slot-switcher"
-        >
-          {([1, 2] as const).map((slot) => (
-            <button
-              key={slot}
-              type="button"
-              onClick={() => onSelectSlot?.(slot)}
-              data-testid={`button-ride-slot-${slot}`}
-              className={cn(
-                "flex-1 flex items-center justify-center font-display text-base transition-colors hover-elevate active:scale-[0.98]",
-                slot === 1 && "border-r border-card-border",
-                activeSlot === slot ? "bg-primary text-black font-medium" : "text-muted-foreground font-light"
-              )}
-            >
-              {slot}
-            </button>
-          ))}
-        </div>
-      )}
 
       <AwaitingLockCloseDialog
         open={awaitingLockClose || awaitingEndLockClose}
@@ -175,7 +177,7 @@ export function ActiveRideCard({
           }}
           disabled={ending || cancellingEnd}
           data-testid="button-end-ride"
-          className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-sand-deep text-brand-bark h-11 font-medium shadow-sm hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
+          className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-muted h-11 font-medium hover-elevate active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none"
         >
           {ending || cancellingEnd ? (
             <Loader2 className="w-4 h-4 animate-spin text-brand-sea" />

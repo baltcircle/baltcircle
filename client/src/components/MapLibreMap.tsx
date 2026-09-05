@@ -38,8 +38,8 @@ interface MapLibreMapProps {
   fallenBikeIds?: Set<string>;
   /** Bike ids whose active ride is currently paused — coloured like "Бронь" instead of their normal status colour (bike-status lifecycle audit). */
   pausedBikeIds?: Set<string>;
-  /** Rider's own currently-reserved bike id — kept visible on the customer map (so they can walk to it) but rendered non-clickable, since tapping it should not re-open the rental flow (bike marker click-gating audit). */
-  nonInteractiveBikeId?: string | null;
+  /** Bike ids kept visible on the customer map (own active-ride/reserved bikes) but rendered non-clickable, since tapping one should not re-open the rental flow (bike marker click-gating audit). */
+  nonInteractiveBikeIds?: Set<string>;
   /** Per-layer visibility. Omitted layers render as before (visible). */
   layers?: MapLayers;
   selectedBikeId?: string | null;
@@ -86,7 +86,7 @@ interface MapLibreMapProps {
 // ── COMPONENT ─────────────────────────────────────────────────────────────────
 export function MapLibreMap({
   parkings = [], mapObjects = [], ride = null,
-  bikes = [], activeRides = [], tickets = [], fallenBikeIds, pausedBikeIds, nonInteractiveBikeId = null, layers = {},
+  bikes = [], activeRides = [], tickets = [], fallenBikeIds, pausedBikeIds, nonInteractiveBikeIds, layers = {},
   selectedBikeId, onSelectBike, onSelectParking, onSelectRide, onSelectTicket,
   interactive = true, onMapClick, onCenterGetter, followUser, onUserLocation,
   editorDraft = null,
@@ -380,9 +380,9 @@ export function MapLibreMap({
         const isSel = b.id === selectedBikeId;
         const isFallen = fallenBikeIds?.has(b.id) ?? false;
         const isPaused = pausedBikeIds?.has(b.id) ?? false;
-        // Rider's own reserved bike stays visible (so they can walk to it) but
-        // must not re-open the rental flow on tap — it's already theirs.
-        const isNonInteractive = b.id === nonInteractiveBikeId;
+        // Rider's own rented/reserved bike stays visible (so they can see it on
+        // the map / walk to it) but must not re-open the rental flow on tap.
+        const isNonInteractive = nonInteractiveBikeIds?.has(b.id) ?? false;
         const [lat, lng] = mapToReal(b.lng, b.lat);
         // Fixed size regardless of selection (previously grew 24->28px on
         // click, which read as an unintended size glitch) — selection is
@@ -419,7 +419,7 @@ export function MapLibreMap({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, bikes, parkings, activeRides, tickets, selectedBikeId, interactive, fallenBikeIds, pausedBikeIds, nonInteractiveBikeId,
+  }, [ready, bikes, parkings, activeRides, tickets, selectedBikeId, interactive, fallenBikeIds, pausedBikeIds, nonInteractiveBikeIds,
       show.parkings, show.bikes, show.rides, show.tickets]);
 
   // ── GeoJSON overlays: operator objects (routes/zones) ───────────────────────
