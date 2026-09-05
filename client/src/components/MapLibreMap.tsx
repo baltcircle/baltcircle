@@ -71,6 +71,13 @@ interface MapLibreMapProps {
   showLabels?: boolean;
   center?: [number, number] | null;
   /**
+   * Зум для программного центрирования по `center`.
+   * undefined — прежнее поведение (зум 14, кнопка «моё местоположение»);
+   * null — центрировать, не трогая текущий зум пользователя (фокус на
+   * велосипед активной аренды/брони, где пользователь мог сам приблизить карту).
+   */
+  centerZoom?: number | null;
+  /**
    * Слежение за GPS-точкой в режиме активной аренды. Когда true —
    * карта автоматически выравнивается по user location при каждом GPS update.
    */
@@ -90,7 +97,7 @@ export function MapLibreMap({
   selectedBikeId, onSelectBike, onSelectParking, onSelectRide, onSelectTicket,
   interactive = true, onMapClick, onCenterGetter, followUser, onUserLocation,
   editorDraft = null,
-  height = "100%", showLabels = false, center, className,
+  height = "100%", showLabels = false, center, centerZoom, className,
 }: MapLibreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef       = useRef<any>(null);
@@ -111,6 +118,9 @@ export function MapLibreMap({
   const onMapClickRef      = useRef(onMapClick);      onMapClickRef.current = onMapClick;
   const onCenterGetterRef  = useRef(onCenterGetter);  onCenterGetterRef.current = onCenterGetter;
   const followUserRef      = useRef(followUser);      followUserRef.current      = followUser;
+  // Зум читаем через ref: эффект центрирования триггерится ТОЛЬКО сменой
+  // ссылки на center, иначе смена одного зума двигала бы карту сама по себе.
+  const centerZoomRef      = useRef(centerZoom);      centerZoomRef.current      = centerZoom;
   const onUserLocationRef  = useRef(onUserLocation);  onUserLocationRef.current  = onUserLocation;
   // Кэш последней GPS-точки — нужен чтобы при включении followUser мгновенно
   // перелететь к точке, а не ждать следующего watchPosition tick (может быть 5-15 сек).
@@ -271,7 +281,13 @@ export function MapLibreMap({
 
   useEffect(() => {
     if (!mapRef.current || !center) return;
-    mapRef.current.flyTo({ center: [center[1], center[0]], zoom: 14, duration: 1000 });
+    const z = centerZoomRef.current;
+    mapRef.current.flyTo({
+      center: [center[1], center[0]],
+      // z === null → сохраняем текущий зум пользователя.
+      ...(z === null ? {} : { zoom: z ?? 14 }),
+      duration: 1000,
+    });
   }, [center]);
 
   // ── GEOLOCATION: watchPosition → update "user-location" source ───────────────
