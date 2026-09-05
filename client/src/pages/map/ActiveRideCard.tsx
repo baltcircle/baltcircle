@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Lock, Pause, PlusCircle, Loader2, X, Bike } from "lucide-react";
 import { PauseGraceCountdown } from "@/components/PauseGraceCountdown";
 import type { Ride } from "@shared/schema";
@@ -39,22 +39,41 @@ interface ActiveRideCardProps {
   onSelectSlot?: (slot: 1 | 2) => void;
   /** bike id to print on each switcher button, keyed by slot. */
   slotBikeIds?: Partial<Record<1 | 2, string>>;
+  /**
+   * Нажатие по свободной (некнопочной) области карточки — центрирует карту
+   * на велосипеде этой поездки. Клики по кнопкам/диалогам сюда не попадают.
+   */
+  onFocusBike?: () => void;
 }
+
+// Элементы, клик по которым — самостоятельное действие, а не «нажатие на карточку».
+const NON_FOCUS_SELECTOR =
+  'button, a, input, select, textarea, label, [role="button"], [role="dialog"], [data-no-map-focus]';
 
 export function ActiveRideCard({
   ride, onEnd, ending, onPause, onResume, pausing, resuming, awaitingLockClose,
   awaitingEndLockClose, onCancelEnd, cancellingEnd, onExtend, extending,
   showAddSecondRide, onAddSecondRide,
-  showRideSwitcher, activeSlot = 1, onSelectSlot, slotBikeIds,
+  showRideSwitcher, activeSlot = 1, onSelectSlot, slotBikeIds, onFocusBike,
 }: ActiveRideCardProps) {
   const [extendOpen, setExtendOpen] = useState(false);
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
   const paused = ride.pausedAt != null;
 
+  const handleCardClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (!onFocusBike) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.(NON_FOCUS_SELECTOR)) return;
+    // Не перехватываем выделение текста как нажатие.
+    if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
+    onFocusBike();
+  };
+
   return (
     <div
       className="rounded-2xl bg-card/95 text-card-foreground backdrop-blur-sm shadow-xl px-5 py-4"
       data-testid="home-active-ride-card"
+      onClick={handleCardClick}
     >
       <div className="flex justify-center">
         {showRideSwitcher ? (
