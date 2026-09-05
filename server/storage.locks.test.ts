@@ -277,6 +277,34 @@ describe("updateLock provisioning metadata", () => {
   });
 });
 
+describe("getLockStatesByImei (audit: continuous lock-state visibility)", () => {
+  it("returns an empty map without querying when given no IMEIs", async () => {
+    const result = await storage.getLockStatesByImei([]);
+
+    expect(result).toEqual(new Map());
+    expect(poolMock.query).not.toHaveBeenCalled();
+  });
+
+  it("maps only recognised lock states, omitting unreported/unknown IMEIs", async () => {
+    poolMock.query.mockResolvedValue({
+      rows: [
+        { imei: "861111111111111", last_lock_state: "locked" },
+        { imei: "862222222222222", last_lock_state: "unlocked" },
+        { imei: "863333333333333", last_lock_state: null },
+      ],
+    });
+
+    const result = await storage.getLockStatesByImei([
+      "861111111111111", "862222222222222", "863333333333333",
+    ]);
+
+    expect(result).toEqual(new Map([
+      ["861111111111111", "locked"],
+      ["862222222222222", "unlocked"],
+    ]));
+  });
+});
+
 describe("getActiveRideForBike (audit F-07)", () => {
   it("returns the active ride row for a bike", async () => {
     const ride = { id: 42, bikeId: "BC-01", userId: "rider-9", status: "active" };

@@ -43,6 +43,28 @@ export type LockBatterySnapshot = {
   lockLastSeen: number | null;
 };
 
+/** Live lock open/closed state, as reported by the lock's own heartbeat. */
+export type LockState = "locked" | "unlocked";
+
+/**
+ * /api/admin/bikes shape: the plain Bike row plus the lock's current
+ * open/closed state, merged in server-side from the separate locks table
+ * (audit: continuous lock-state visibility, 2026-09) — lets operators check
+ * the physical lock after a forced ride end without leaving the fleet table.
+ * null covers both "no lock fitted" and "lock fitted but never reported yet".
+ */
+export type AdminBikeRow = Bike & { lockState: LockState | null };
+
+const LOCK_STATE_LABEL: Record<LockState, string> = {
+  locked: "закрыт",
+  unlocked: "открыт",
+};
+
+/** Russian label for a lock's live state; "нет данных" covers unknown/no lock. */
+export function lockStateLabel(lockState: LockState | null | undefined): string {
+  return lockState ? LOCK_STATE_LABEL[lockState] : "нет данных";
+}
+
 /**
  * The bike snapshot is populated by lock telemetry. Do not surface the schema
  * default (100%) as a live reading until the bound lock has actually reported.
