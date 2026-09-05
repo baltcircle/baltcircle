@@ -13,6 +13,13 @@ export const MAP_H = 700;
 // at once" feature). Enforced both at the DB layer (idx_rides_active_user
 // partial unique index on (user_id, active_slot), see server/db/bootstrap.ts)
 // and at the app layer (server/storage/ride.ts startRide transaction).
+//
+// Also doubles as the COMBINED cap on (active reservations + active rides)
+// per rider — a reservation and a ride draw from the same "how many bikes
+// can this person be holding at once" budget (product decision, 2026-09).
+// server/storage/reservation.ts's createReservation enforces this side of
+// it under the same per-user advisory lock startRide uses, so the two
+// checks can never race each other into letting a rider exceed the budget.
 export const MAX_ACTIVE_RIDES_PER_USER: number = 2;
 
 export interface Tariff {

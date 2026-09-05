@@ -31,7 +31,7 @@ export function registerReservationRoutes(app: Express): void {
   });
 
   app.get("/api/reservations/active", requireAuth, async (req, res) => {
-    const reservation = await storage.getActiveReservationForUser(riderId(req));
-    return res.json(reservation ?? null);
+    const reservations = await storage.getActiveReservations(riderId(req));
+    return res.json(reservations);
   });
 }

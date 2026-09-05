@@ -362,12 +362,13 @@ export interface IFeedbackStorage {
 }
 
 export interface IReservationStorage {
-  // Product rule: a rider may hold at most ONE active reservation at a time
-  // (across any bike) — see createReservation's implementation for the
-  // atomic enforcement. Returns an error string on any precondition failure
-  // (bike unavailable, rider already has an active ride/reservation).
+  // Product rule (2026-09): a rider's active reservations and active rides
+  // share one combined budget — MAX_ACTIVE_RIDES_PER_USER (shared/geo.ts),
+  // currently 2. See createReservation's implementation for the atomic
+  // enforcement. Returns an error string on any precondition failure (bike
+  // unavailable, rider already at the combined reservation+ride cap).
   createReservation(input: { bikeId: string; userId: string }): Promise<{ reservation: Reservation } | { error: string }>;
-  getActiveReservationForUser(userId: string): Promise<Reservation | undefined>;
+  getActiveReservations(userId: string): Promise<Reservation[]>;
   getActiveReservationForBike(bikeId: string): Promise<Reservation | undefined>;
   // Owner-only cancel; returns an error string if the reservation doesn't
   // exist, isn't active, or belongs to a different user.

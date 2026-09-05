@@ -119,11 +119,22 @@ async function createRideRaceGuardIndexes() {
 }
 
 // Same belt-and-suspenders idea for reservations: server/storage/reservation.ts
-// serialises "one active reservation per bike" and "one active reservation per
-// rider" (product decision: a rider may hold at most one booking at a time)
-// with SELECT ... FOR UPDATE inside a transaction, but a future code path
-// that bypasses that guard must still not be able to create a second active
-// row for the same bike or rider. Idempotent and cheap on a healthy DB.
+// serialises "one active reservation per bike" (SELECT ... FOR UPDATE on the
+// bike row) with a DB-level backstop below, so a future code path that
+// bypasses that guard still cannot create a second active row for the same
+// bike. Idempotent and cheap on a healthy DB.
+//
+// The per-RIDER cap is no longer "exactly one" (product decision, 2026-09:
+// a reservation and an active ride now share the same MAX_ACTIVE_RIDES_PER_USER
+// budget, shared/geo.ts) — a rider may hold up to that many active reservation
+// rows at once, so the old strict unique index on (user_id) is dropped rather
+// than replaced. There's no slot column on reservations (unlike rides'
+// active_slot) to build a replacement unique index on: the cap is a plain
+// COUNT check inside createReservation's transaction, made race-free by the
+// same per-user pg_advisory_xact_lock(hashtext(user_id)) startRide (ride.ts)
+// already takes — the two paths serialise against each other for the same
+// rider. idx_reservations_user_status (shared/schema.ts) already covers the
+// query pattern that index existed for, so nothing needs to replace it.
 async function createReservationRaceGuardIndexes() {
   await pool.query(`
     UPDATE reservations SET status = 'cancelled'
@@ -132,19 +143,13 @@ async function createReservationRaceGuardIndexes() {
       WHERE status = 'active' ORDER BY bike_id, created_at DESC, id DESC
     )
   `);
-  await pool.query(`
-    UPDATE reservations SET status = 'cancelled'
-    WHERE status = 'active' AND id NOT IN (
-      SELECT DISTINCT ON (user_id) id FROM reservations
-      WHERE status = 'active' ORDER BY user_id, created_at DESC, id DESC
-    )
-  `);
   await pool.query(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_reservations_active_bike ON reservations (bike_id) WHERE status = 'active';`,
   );
-  await pool.query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_reservations_active_user ON reservations (user_id) WHERE status = 'active';`,
-  );
+  // Replaced by the app-level count check above when the shared reservation
+  // budget shipped — drop the old "exactly one active reservation per rider"
+  // index if it still exists.
+  await pool.query(`DROP INDEX IF EXISTS idx_reservations_active_user;`);
 }
 
 // Audit HIGH #16: phone/email have no DB-level uniqueness guarantee today —

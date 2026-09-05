@@ -1,7 +1,7 @@
 import { bikes, reservations } from "@shared/schema";
 import type { Reservation, Bike } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
-import { RESERVATION_TTL_MS } from "@shared/geo";
+import { RESERVATION_TTL_MS, MAX_ACTIVE_RIDES_PER_USER } from "@shared/geo";
 import { db } from "../db/bootstrap";
 import { log } from "../logger";
 import { getLockGateway } from "../omni/gateway";
@@ -27,23 +27,28 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
           }
           lockImei = bike.lockImei;
 
-          // Product rule (explicit user decision): ONE active reservation at a
-          // time, across any bike. Read-then-check inside the tx is enough to
-          // be race-free against a SECOND createReservation for the same user
-          // only because idx_reservations_active_user (bootstrap.ts) backs it
-          // at the DB level too — a racing insert would hit a unique-violation
-          // and land in the catch below instead of silently succeeding twice.
-          const existingForUser = (await tx.select().from(reservations)
-            .where(sql`${reservations.userId} = ${userId} AND ${reservations.status} = 'active'`)
-            .limit(1))[0] as Reservation | undefined;
-          if (existingForUser) {
-            return { error: "У вас уже есть активная бронь — отмените её или дождитесь истечения" };
-          }
+          // Product rule (2026-09): active reservations and active rides share
+          // one combined budget, MAX_ACTIVE_RIDES_PER_USER (shared/geo.ts) — a
+          // rider may hold that many bikes total, in any mix of "booked" and
+          // "riding". There may be zero, one, or (once this ships) two existing
+          // reservation rows to lock, so a plain FOR UPDATE on `reservations`
+          // can't serialise this the way the per-bike check above does — take
+          // the SAME per-user advisory lock startRide (ride.ts) takes before
+          // its own count check, so a reservation attempt and a ride-start
+          // attempt for the same rider can never both observe "1 used, 1 free"
+          // and both proceed past the combined cap.
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${userId}))`);
+          const existingForUser = await tx.select().from(reservations)
+            .where(sql`${reservations.userId} = ${userId} AND ${reservations.status} = 'active'`) as Reservation[];
           const activeRide = await tx.execute(
-            sql`SELECT id FROM rides WHERE user_id = ${userId} AND status = 'active' LIMIT 1`,
+            sql`SELECT id FROM rides WHERE user_id = ${userId} AND status = 'active'`,
           );
-          if (activeRide.rows.length > 0) {
-            return { error: "У вас уже есть активная поездка" };
+          if (existingForUser.length + activeRide.rows.length >= MAX_ACTIVE_RIDES_PER_USER) {
+            return {
+              error: MAX_ACTIVE_RIDES_PER_USER === 1
+                ? "У вас уже есть активная бронь или поездка"
+                : `У вас уже максимум активных бронирований и поездок (${MAX_ACTIVE_RIDES_PER_USER}) — отмените бронь, дождитесь её истечения или завершите поездку`,
+            };
           }
 
           const now = Date.now();
@@ -65,20 +70,21 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
         }
         return result;
       } catch (err) {
-        // idx_reservations_active_bike / idx_reservations_active_user
-        // (bootstrap.ts) are the DB-level backstop for the same race the
-        // FOR UPDATE lock above already closes in the normal case.
+        // idx_reservations_active_bike (bootstrap.ts) is the DB-level backstop
+        // for the same per-bike race the FOR UPDATE lock above already closes
+        // in the normal case. The per-user combined cap has no DB-level unique
+        // index behind it (no slot column on reservations) — it relies solely
+        // on the advisory lock above for race-freedom.
         if (this.isUniqueViolation(err)) {
-          return { error: "Не удалось создать бронь — велосипед уже забронирован или у вас уже есть активная бронь" };
+          return { error: "Не удалось создать бронь — велосипед уже забронирован" };
         }
         throw err;
       }
     }
 
-    async getActiveReservationForUser(userId: string): Promise<Reservation | undefined> {
+    async getActiveReservations(userId: string): Promise<Reservation[]> {
       return (await db.select().from(reservations)
-        .where(sql`${reservations.userId} = ${userId} AND ${reservations.status} = 'active'`)
-        .limit(1))[0] as Reservation | undefined;
+        .where(sql`${reservations.userId} = ${userId} AND ${reservations.status} = 'active'`)) as Reservation[];
     }
 
     async getActiveReservationForBike(bikeId: string): Promise<Reservation | undefined> {

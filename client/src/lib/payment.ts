@@ -14,7 +14,8 @@ export interface TbankConfigResponse {
 // T-Bank card (active + RebillId) so the rental flow can offer a one-tap charge.
 export const PAYMENT_METHODS_KEY = ["/api/payment-methods"] as const;
 
-// React Query key for the rider's own active reservation ("бронь"), shared
-// between the rental modal (booking button) and the map page (timer banner)
-// so both stay in sync via the same cache entry.
+// React Query key for the rider's own active reservations ("брони", up to
+// MAX_ACTIVE_RIDES_PER_USER — shared/geo.ts), shared between the rental modal
+// (booking button) and the map page (timer banners) so both stay in sync via
+// the same cache entry. Resolves to Reservation[], never a single object.
 export const RESERVATION_ACTIVE_KEY = ["/api/reservations/active"] as const;

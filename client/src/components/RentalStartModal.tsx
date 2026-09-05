@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { TARIFFS } from "@shared/geo";
+import { TARIFFS, MAX_ACTIVE_RIDES_PER_USER } from "@shared/geo";
 import type { Tariff } from "@shared/geo";
 import type { Ride } from "@shared/schema";
 import {
@@ -105,17 +105,23 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
     setIdemKey(crypto.randomUUID());
   }, [open, tariff, selectedMethodId]);
 
-  // The rider's own active reservation ("бронь"), if any — used to gate the
-  // "Бронь" button per the one-reservation-at-a-time product rule (a rider who
-  // already holds a reservation elsewhere must cancel it or let it expire
-  // before booking a different bike; re-booking the SAME bike is redundant).
-  const activeReservationQ = useQuery<Reservation | null>({
+  // The rider's own active reservations ("брони") AND active rides — both
+  // draw from the same combined MAX_ACTIVE_RIDES_PER_USER budget (shared/geo.ts,
+  // 2026-09 product decision), so the "Бронь" button must be gated on the
+  // total, not just on reservations. Re-booking the SAME bike the rider
+  // already has reserved is still redundant regardless of the total.
+  const activeReservationQ = useQuery<Reservation[]>({
     queryKey: RESERVATION_ACTIVE_KEY,
     enabled: open,
   });
-  const activeReservation = activeReservationQ.data ?? null;
-  const hasReservationElsewhere = !!activeReservation && activeReservation.bikeId !== bike?.id;
-  const hasReservationForThisBike = !!activeReservation && activeReservation.bikeId === bike?.id;
+  const activeRidesQ = useQuery<Ride[]>({
+    queryKey: ["/api/rides/active"],
+    enabled: open,
+  });
+  const activeReservations = activeReservationQ.data ?? [];
+  const activeRidesCount = activeRidesQ.data?.length ?? 0;
+  const hasReservationForThisBike = activeReservations.some((r) => r.bikeId === bike?.id);
+  const atCombinedCap = activeReservations.length + activeRidesCount >= MAX_ACTIVE_RIDES_PER_USER;
 
   // Pay-then-start: create a T-Bank payment for the selected tariff and send the
   // rider to T-Bank's hosted form. The ride only starts after the payment is
@@ -252,7 +258,7 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
   const canPay = !!bike && (bike.status === "available" || hasReservationForThisBike)
     && paymentsConfigured && !submitting;
   const canBook = !!bike && bike.status === "available"
-    && !hasReservationElsewhere && !hasReservationForThisBike && !bookMut.isPending;
+    && !atCombinedCap && !hasReservationForThisBike && !bookMut.isPending;
   const canStartTestRide = canStartTest && !!bike
     && (bike.status === "available" || hasReservationForThisBike) && !testMut.isPending;
 
@@ -388,12 +394,12 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
           </div>
         )}
 
-        {/* Reservation conflict note: booking THIS bike is blocked while the rider
-            holds an active reservation somewhere else. */}
-        {hasReservationElsewhere && (
+        {/* Reservation/ride cap note: booking THIS bike is blocked once the rider
+            is at the combined MAX_ACTIVE_RIDES_PER_USER budget (shared/geo.ts). */}
+        {atCombinedCap && !hasReservationForThisBike && (
           <div className="rounded-md bg-muted/60 text-muted-foreground text-xs p-2.5 flex items-start gap-1.5" data-testid="rental-reservation-conflict">
             <CalendarClock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <span>У вас уже есть активная бронь другого велосипеда. Отмените её или дождитесь истечения, чтобы забронировать этот.</span>
+            <span>У вас уже максимум активных бронирований и поездок ({MAX_ACTIVE_RIDES_PER_USER}). Отмените бронь, дождитесь её истечения или завершите поездку, чтобы забронировать этот велосипед.</span>
           </div>
         )}
 
@@ -452,8 +458,8 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
             title={
               hasReservationForThisBike
                 ? "Велосипед уже забронирован вами"
-                : hasReservationElsewhere
-                ? "У вас уже есть активная бронь другого велосипеда"
+                : atCombinedCap
+                ? `У вас уже максимум активных бронирований и поездок (${MAX_ACTIVE_RIDES_PER_USER})`
                 : undefined
             }
           >
