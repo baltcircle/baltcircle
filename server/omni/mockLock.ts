@@ -148,6 +148,18 @@ export class MockLock {
     this.write(this.packet("W0", [code]));
   }
 
+  /**
+   * L0 — unlock result echo. Genuinely unprompted here (the harness never
+   * arms a pending unlock through this class), which is exactly the shape
+   * server.test.ts needs to exercise onUnsolicitedUnlockEcho (audit:
+   * lock-open-while-available, 2026-09): a late echo the server has no
+   * pending unlock tracked for. `at` is epoch seconds on the wire (§1.3.9);
+   * defaults to "now" like the other send* helpers.
+   */
+  sendUnlockResult(success: boolean, opts: { userId?: string; at?: number } = {}): void {
+    this.write(this.packet("L0", [success ? 0 : 1, opts.userId ?? "", Math.floor((opts.at ?? Date.now()) / 1000)]));
+  }
+
   disconnect(): void {
     this.socket?.destroy();
     this.socket = null;

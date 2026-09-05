@@ -20,6 +20,7 @@ import { registerPendingPause, clearPendingPause } from "../omni/pause-registry"
 import { registerPendingEnd, clearPendingEnd } from "../omni/pending-end-registry";
 import { log } from "../logger";
 import { db, pool } from "../db/bootstrap";
+import { isLockReportedClosed } from "./bike";
 import { rideEvents } from "./events";
 import type { RideEventReason } from "./events";
 import type { Constructor } from "./mixin";
@@ -245,7 +246,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       this: {
         invalidateBikesCache(opts?: { silent?: boolean }): void;
         isUniqueViolation(err: unknown): boolean;
-        abortUnstartedRide(rideId: number, opts: { refundKopecks: number }): Promise<void>;
+        abortUnstartedRide(rideId: number, opts: { refundKopecks: number; lockImei?: string | null }): Promise<void>;
       },
       { bikeId, userId, tariff, prepaid, isTest }: { bikeId: string; userId: string; tariff: string; prepaid?: boolean; isTest?: boolean },
     ) {
@@ -506,7 +507,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             log(`startRide: unlock failed imei=${lockImei} ride=${result.id}: ${(err as Error).message}`);
           }
           if (!unlocked) {
-            await this.abortUnstartedRide(result.id, { refundKopecks: !prepaid ? costKopecks : 0 });
+            await this.abortUnstartedRide(result.id, { refundKopecks: !prepaid ? costKopecks : 0, lockImei });
             return { error: "Замок не отвечает — выберите другой велосипед или попробуйте через минуту" };
           }
           // Best-effort: enable live GPS tracking (D1) for the duration of the
@@ -544,16 +545,38 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
     // explicit `this: {...}` structural parameter type (same rule as
     // optStr/isUniqueViolation in base.ts — a private member can't satisfy a
     // plain object type from outside the declaring method's own signature).
+    // Audit: lock-open-while-available (2026-09). abortUnstartedRide already
+    // ran because startRide's own unlock attempt was declared failed (a 15s
+    // timeout, a rejected/errored command) — but OMNI locks can still send a
+    // genuine late positive echo seconds later on a fresh TCP session
+    // (production incident: BC-001, ride 1292, 08:44:18 timeout -> 08:44:59
+    // late "success:true" echo). If that happens, the lock IS physically
+    // open, so this must not free the bike back to "available" and must not
+    // silently discard the fact — reusing isLockReportedClosed (the same
+    // fail-closed locks.last_lock_state read adminUpdateBike/ticket.ts's
+    // "available" transition already gates on) catches the (rarer) case
+    // where the echo lands before this function runs. The far more common
+    // timing observed in production — the echo lands well AFTER this commits
+    // — is instead caught by onUnsolicitedUnlockEcho ->
+    // reconcileUnattendedOpenLock (server/omni/server.ts + storage/bike.ts).
     async abortUnstartedRide(
-      this: { invalidateBikesCache(opts?: { silent?: boolean }): void },
+      this: {
+        invalidateBikesCache(opts?: { silent?: boolean }): void;
+        createLockOpenUnattendedAlert(bikeId: string, at: number): Promise<unknown>;
+      },
       rideId: number,
-      opts: { refundKopecks: number },
+      opts: { refundKopecks: number; lockImei?: string | null },
     ) {
+      const lockClosed = await isLockReportedClosed(opts.lockImei);
       const outcome = await db.transaction(async (tx) => {
         const ride = (await tx.select().from(rides).where(eq(rides.id, rideId)).for("update").limit(1))[0] as Ride | undefined;
         if (!ride || ride.status !== "active") return null;
         await tx.update(rides).set({ status: "cancelled", endedAt: Date.now(), activeSlot: null } as any).where(eq(rides.id, rideId));
-        await tx.update(bikes).set({ status: "available", updatedAt: Date.now() } as any).where(eq(bikes.id, ride.bikeId));
+        await tx.update(bikes).set((
+          lockClosed
+            ? { status: "available", updatedAt: Date.now() }
+            : { status: "maintenance", maintenanceReason: "auto:lock_open_unconfirmed", updatedAt: Date.now() }
+        ) as any).where(eq(bikes.id, ride.bikeId));
         if (opts.refundKopecks > 0) {
           await tx.execute(sql`UPDATE wallet SET balance = balance + ${opts.refundKopecks} WHERE user_id = ${ride.userId}`);
           await tx.insert(payments).values({
@@ -566,6 +589,9 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       if (outcome) {
         this.invalidateBikesCache();
         rideEvents.emit(outcome.userId, "end" as RideEventReason);
+        if (!lockClosed) {
+          this.createLockOpenUnattendedAlert(outcome.bikeId, Date.now()).catch(() => {});
+        }
       }
     }
 
@@ -681,6 +707,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         }): Promise<{ order: PaymentOrder; created: boolean }>;
         updateRidePaymentOrder(id: number, patch: Partial<PaymentOrder>): Promise<PaymentOrder | undefined>;
         createOverageChargeFailedAlert(bikeId: string, rideId: number, userId: string, amountKopecks: number, reason: string, at: number): Promise<unknown>;
+        createLockOpenUnattendedAlert(bikeId: string, at: number): Promise<unknown>;
         getUser(id: string): Promise<User | undefined>;
       },
       rideId: number,
@@ -709,8 +736,8 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         tx,
       ): Promise<
         | { error: string }
-        | { ride: Ride; overageKopecks: number; extraMinutes: number; lockImei: string | null; wentOffline: false }
-        | { ride: Ride; overageKopecks: number; extraMinutes: number; lockImei: string | null; wentOffline: true; battery: number }
+        | { ride: Ride; overageKopecks: number; extraMinutes: number; lockImei: string | null; wentOffline: false; lockOpenUnconfirmed: boolean }
+        | { ride: Ride; overageKopecks: number; extraMinutes: number; lockImei: string | null; wentOffline: true; battery: number; lockOpenUnconfirmed: boolean }
         | undefined
       > => {
         // `.for("update")` locks the ride row for the duration of this tx (audit
@@ -852,9 +879,21 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         // never issues a lock command either way.
         const finalBattery = bike?.battery ?? null;
         const wentOffline = finalBattery != null && finalBattery <= LOW_BATTERY_AUTO_OFFLINE_THRESHOLD;
+        // Audit: lock-open-while-available (2026-09). The geofence branch
+        // above (bike?.lockImei && !opts?.skipGeofence) already fetched a
+        // fresh lockRow, but only on that branch — the admin force-end path
+        // (opts.skipGeofence: true, POST /api/admin/rides/:id/end) skips it
+        // entirely and is exactly the path that bypassed physical-closure
+        // confirmation in production. Re-checked here, unconditionally,
+        // regardless of skipGeofence or wentOffline: a bike whose lock is
+        // still reporting open must never re-enter the rental pool just
+        // because the ride itself ended normally.
+        const lockOpenUnconfirmed = !(await isLockReportedClosed(bike?.lockImei));
         await tx.update(bikes).set({
-          status: wentOffline ? "offline" : "available",
-          ...(wentOffline ? { maintenanceReason: "auto:low_battery" } : {}),
+          status: lockOpenUnconfirmed ? "maintenance" : (wentOffline ? "offline" : "available"),
+          ...(lockOpenUnconfirmed
+            ? { maintenanceReason: "auto:lock_open_unconfirmed" }
+            : (wentOffline ? { maintenanceReason: "auto:low_battery" } : {})),
           lat: finalLat, lng: finalLng,
           lastSeen: endedAt, idleHours: 0, parkingId: parkingMatch?.id ?? null,
         } as any).where(eq(bikes.id, r.bikeId));
@@ -892,6 +931,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           overageKopecks,
           extraMinutes,
           lockImei: bike?.lockImei ?? null,
+          lockOpenUnconfirmed,
           ...(wentOffline ? { wentOffline: true as const, battery: finalBattery! } : { wentOffline: false as const }),
         };
       });
@@ -905,6 +945,14 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       // Best-effort, mirrors the OMNI-telemetry auto-offline alert
       // (server/omni/store.ts) — same dashboard card, same dedup, just a
       // different trigger point (ride end instead of an idle heartbeat).
+      // Audit: lock-open-while-available. Bike was diverted to "maintenance"
+      // above instead of available/offline — fire the same critical alert
+      // the reconciliation path (bike.ts's reconcileUnattendedOpenLock) uses,
+      // so this route into the same broken state is equally visible to
+      // operators, dedup-safe if both somehow ever fire for the same bike.
+      if (result.lockOpenUnconfirmed) {
+        this.createLockOpenUnattendedAlert(result.ride.bikeId, Date.now()).catch(() => {});
+      }
       if (result.wentOffline) {
         this.createLowBatteryOfflineAlert(result.ride.bikeId, result.battery, Date.now())
           .catch(() => {});
@@ -939,7 +987,8 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         try {
           const gateway = getLockGateway();
           const sent = gateway?.syncGpsTrackingForStatus(
-            result.lockImei, result.ride.bikeId, result.wentOffline ? "offline" : "available",
+            result.lockImei, result.ride.bikeId,
+            result.lockOpenUnconfirmed ? "maintenance" : (result.wentOffline ? "offline" : "available"),
           );
           if (!sent) log(`endRide: failed to sync GPS tracking imei=${result.lockImei} ride=${result.ride.id}`);
         } catch (err) {

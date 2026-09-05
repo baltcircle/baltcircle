@@ -385,7 +385,7 @@ export type Alert = typeof alerts.$inferSelect;
 // "illegal movement" alarms with no reset auto-transition a bike to "lost"
 // (server/omni/theft-registry.ts + store.ts) — distinct from the raw
 // per-report "movement_alarm" above, which fires on every single alarm.
-export const ALERT_KINDS = ["movement_alarm", "low_battery", "fall", "overage_charge_failed", "theft"] as const;
+export const ALERT_KINDS = ["movement_alarm", "low_battery", "fall", "overage_charge_failed", "theft", "lock_open_unattended"] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
 export type UnassignedLock = typeof unassignedLocks.$inferSelect;
 

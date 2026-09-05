@@ -224,6 +224,13 @@ export interface IBikeStorage {
    * single long-running transaction/lock. Returns rows actually deleted.
    */
   purgeOldTelemetry(opts?: { maxBatches?: number; batchSize?: number }): Promise<number>;
+  /**
+   * Audit: lock-open-while-available. Atomically diverts a bike still shown
+   * "available" to "maintenance" when its bound lock's late/unsolicited
+   * unlock echo reveals it is actually physically open. No-op if the bike is
+   * no longer "available" by the time this runs. See server/storage/bike.ts.
+   */
+  reconcileUnattendedOpenLock(imei: string, at: number): Promise<void>;
 }
 
 export interface ILockStorage {
@@ -244,6 +251,8 @@ export interface IAlertStorage {
   createLowBatteryOfflineAlert(bikeId: string, battery: number, at: number): Promise<Alert | null>;
   /** Best-effort, plain insert (NO dedup) — see server/storage/alert.ts for details. */
   createOverageChargeFailedAlert(bikeId: string, rideId: number, userId: string, amountKopecks: number, reason: string, at: number): Promise<Alert | null>;
+  /** Best-effort, dedup-on-insert. See server/storage/alert.ts for details. */
+  createLockOpenUnattendedAlert(bikeId: string, at: number): Promise<Alert | null>;
   listAlerts(opts?: { includeAcknowledged?: boolean }): Promise<Alert[]>;
   acknowledgeAlert(id: number, by: string): Promise<Alert | undefined>;
 }
