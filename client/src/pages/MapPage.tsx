@@ -14,7 +14,7 @@ import { DrawerMenu } from "@/components/DrawerMenu";
 import { IosInstallSheet } from "@/components/IosInstallSheet";
 import { PushOptInSheet } from "@/components/PushOptInSheet";
 import { markIosInstallHintShown, shouldAutoShowIosInstallHint, isStandalone } from "@/lib/pwa";
-import { getPushState, resyncPushSubscription } from "@/lib/push";
+import { getPushState, resyncPushSubscription, closeRideExpiryNotifications } from "@/lib/push";
 import { markPushOptInShown, shouldAutoShowPushOptIn } from "@/lib/push-optin";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
@@ -426,6 +426,9 @@ export function MapPage() {
       pendingEndRideId.current = null;
       clearEndLockCloseTimer();
       setAwaitingEndLockCloseRideId((cur) => (cur === pendingId ? null : cur));
+      // Асинхронная ветка завершения: карточку дедлайна снимаем здесь, потому
+      // что onSuccess отработал ещё до settlement и до неё не дошёл.
+      closeRideExpiryNotifications(pendingId);
     }
   }, [activeRides]);
   useEffect(() => () => clearEndLockCloseTimer(), []);
@@ -469,6 +472,8 @@ export function MapPage() {
       }
       clearEndLockCloseTimer();
       setAwaitingEndLockCloseRideId((cur) => (cur === rideId ? null : cur));
+      // Поездки больше нет — снимаем висящее предупреждение о её дедлайне.
+      closeRideExpiryNotifications(rideId);
       queryClient.invalidateQueries({ queryKey: ACTIVE_RIDES_KEY });
       queryClient.invalidateQueries({ queryKey: ["/api/rides"] });
       queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
@@ -605,6 +610,9 @@ export function MapPage() {
     },
     onSuccess: (result) => {
       if (result.kind === "wallet") {
+        // Дедлайн уехал вперёд: старое «осталось 5 минут» врёт, а нового push
+        // с тем же тегом, который бы его перезаписал, до нового порога не будет.
+        closeRideExpiryNotifications(result.ride.id);
         queryClient.setQueryData<Ride[]>(ACTIVE_RIDES_KEY, (old) => patchActiveRide(old, result.ride));
         queryClient.invalidateQueries({ queryKey: ACTIVE_RIDES_KEY });
         queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
@@ -613,6 +621,7 @@ export function MapPage() {
         return;
       }
       if (result.data.status === "paid") {
+        if (result.data.rideId != null) closeRideExpiryNotifications(result.data.rideId);
         queryClient.invalidateQueries({ queryKey: ACTIVE_RIDES_KEY });
         queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
         toast.toast({ title: "Аренда продлена" });

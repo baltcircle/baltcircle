@@ -30,7 +30,23 @@ self.addEventListener("push", (event) => {
     },
   };
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  // Событие могло сделать неверными уже показанные карточки: поездку завершил
+  // оператор — предупреждение «Начался овертайм» больше не правда, но своим
+  // тегом новый push его не перезапишет. Снимаем такие явно, до показа, чтобы
+  // пользователь не увидел на экране блокировки два противоречащих сообщения.
+  const closeTags = Array.isArray(payload.data && payload.data.closeTags)
+    ? payload.data.closeTags.filter((t) => typeof t === "string" && t)
+    : [];
+
+  event.waitUntil((async () => {
+    for (const tag of closeTags) {
+      try {
+        const shown = await self.registration.getNotifications({ tag });
+        for (const n of shown) n.close();
+      } catch { /* noop — показать новое важнее, чем убрать старое */ }
+    }
+    await self.registration.showNotification(title, options);
+  })());
 });
 
 self.addEventListener("notificationclick", (event) => {

@@ -35,6 +35,7 @@ import {
 } from "./../payments/tbank-handlers";
 import { log } from "./../index";
 import { sendToUserAsync } from "./../push";
+import { rideExpiryTag } from "@shared/ride-expiry";
 import {
   riderId, isStaffSession, canManageRide, actorName, clientIp,
   requireRole, requireAuth, requireRoleWhenConfigured,
@@ -335,7 +336,9 @@ export function registerRideRoutes(app: Express): void {
         body: "Оператор завершил вашу поездку. Подробности в истории.",
         url: "/rides",
         tag: `ride:${rideId}`,
-        data: { kind: "ride-ended-by-operator", rideId },
+        // Поездки больше нет — предупреждение о её дедлайне обязано уйти с
+        // экрана блокировки вместе с ней.
+        data: { kind: "ride-ended-by-operator", rideId, closeTags: [rideExpiryTag(rideId)] },
       });
     }
     res.json(r);
