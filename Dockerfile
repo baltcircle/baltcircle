@@ -19,6 +19,12 @@ WORKDIR /app
 COPY . .
 ARG VITE_YANDEX_MAPS_API_KEY=""
 ENV VITE_YANDEX_MAPS_API_KEY=$VITE_YANDEX_MAPS_API_KEY
+# Идентификатор сборки для клиентской проверки обновлений (vite.config.ts).
+# .git в .dockerignore, поэтому sha приходит снаружи — из деплой-workflow.
+# Пусто -> vite подставит время сборки: тоже работает, но даёт новый id даже
+# при пересборке одного и того же коммита.
+ARG BUILD_ID=""
+ENV BUILD_ID=$BUILD_ID
 # Cache Vite build output — only rebuilds changed files
 RUN --mount=type=cache,target=/app/node_modules/.cache \
     npm run build

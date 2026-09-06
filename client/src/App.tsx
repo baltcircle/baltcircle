@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
 import { AppShell } from "@/components/AppShell";
+import { UpdateBanner } from "@/components/UpdateBanner";
 import { AdminGuard } from "@/components/AdminGuard";
 import { MapPage } from "@/pages/MapPage";
 import { RentPage } from "@/pages/RentPage";
@@ -416,6 +417,9 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <Toaster />
+          {/* Внутри QueryClientProvider: баннер спрашивает про активную поездку,
+              чтобы не перезагружать приложение молча во время аренды. */}
+          <UpdateBanner />
           <Router>
             <AppShell>
               <AppRouter />

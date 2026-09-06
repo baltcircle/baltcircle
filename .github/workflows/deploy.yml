@@ -276,6 +276,10 @@ jobs:
           DOCKER_BUILDKIT: "1"
           COMPOSE_DOCKER_CLI_BUILD: "1"
           VITE_YANDEX_MAPS_API_KEY: ${{ secrets.VITE_YANDEX_MAPS_API_KEY }}
+          # Клиентская проверка обновлений сравнивает вшитый id с /version.json.
+          # .git в .dockerignore, поэтому sha передаётся сборке явно — иначе
+          # каждая пересборка того же коммита выглядела бы как новая версия.
+          BUILD_ID: ${{ github.sha }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SMS_PROVIDER: ${{ secrets.SMS_PROVIDER }}
           SMSRU_API_ID: ${{ secrets.SMSRU_API_ID }}
