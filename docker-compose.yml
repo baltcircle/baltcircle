@@ -9,6 +9,9 @@ services:
         # Read from the host env at build time (set by the deploy workflow from
         # the GitHub Actions secret). Empty -> app falls back to the demo map.
         VITE_YANDEX_MAPS_API_KEY: ${VITE_YANDEX_MAPS_API_KEY:-}
+        # Коммит, из которого собран клиент: попадает в бандл и в /version.json,
+        # по нему приложение понимает, что вышла новая версия.
+        BUILD_ID: ${BUILD_ID:-}
     container_name: baltcircle-mvp
     restart: unless-stopped
     # Audit (scalability): json-file driver has no size cap by default, and
