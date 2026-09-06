@@ -298,6 +298,10 @@ export interface IRideStorage {
   listRides(opts?: { userId?: string; limit?: number }): Promise<RideWithFeedback[]>;
   listAdminRides(opts?: { limit?: number; offset?: number }): Promise<AdminRide[]>;
   countRides(): Promise<number>;
+  // Sweep entry point (server/index.ts interval) — pushes the «10 минут»,
+  // «5 минут» and «овертайм» warnings for active rides whose paid window is
+  // ending. `now` is injectable for tests. Returns how many were dispatched.
+  notifyRidesNearingExpiry(now?: number): Promise<number>;
 }
 
 export interface IWalletStorage {

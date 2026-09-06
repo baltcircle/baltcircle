@@ -290,6 +290,23 @@ app.use((req, res, next) => {
   const reservationSweepTimer = setInterval(runReservationSweep, RESERVATION_SWEEP_INTERVAL_MS);
   shutdownTasks.push(() => { clearTimeout(initialReservationSweepTimer); clearInterval(reservationSweepTimer); });
 
+  // Paid-window warnings («10 минут» / «5 минут» / «начался овертайм»). Same
+  // minute cadence as the reservation sweep — a warning is only useful within
+  // a minute of its threshold, and the query is index-backed
+  // (idx_rides_status_paid_until) over active rides only.
+  const runRideExpirySweep = () => {
+    void storage.notifyRidesNearingExpiry()
+      .then((sent) => {
+        if (sent > 0) logger.info({ sent }, "ride expiry warnings pushed");
+      })
+      .catch((err) => logger.error({ err }, "ride expiry sweep failed"));
+  };
+  const RIDE_EXPIRY_SWEEP_INTERVAL_MS = 60 * 1000;
+  // Offset from the reservation sweep so the two don't contend on the same tick.
+  const initialRideExpiryTimer = setTimeout(runRideExpirySweep, 20_000);
+  const rideExpiryTimer = setInterval(runRideExpirySweep, RIDE_EXPIRY_SWEEP_INTERVAL_MS);
+  shutdownTasks.push(() => { clearTimeout(initialRideExpiryTimer); clearInterval(rideExpiryTimer); });
+
   // Audit (scalability): bike_telemetry (lock heartbeat/GPS check-ins) had no
   // retention policy and grows without bound as the fleet and ping rate grow
   // — unlike ride_points (permanent per-ride track), it's disposable noise
