@@ -283,7 +283,6 @@ describe("storage.expireOverdueReservations", () => {
   it("flips overdue active reservations to expired and frees their bikes", async () => {
     const { tx, calls } = makeTx([], [
       { rows: [{ id: 1, bike_id: "BC-01" }, { id: 2, bike_id: "BC-02" }] }, // overdue SELECT
-      { rows: [] }, // UPDATE reservations
       { rows: [] }, // UPDATE bikes for BC-01
       { rows: [] }, // UPDATE bikes for BC-02
     ]);
@@ -292,7 +291,7 @@ describe("storage.expireOverdueReservations", () => {
     const count = await storage.expireOverdueReservations();
 
     expect(count).toBe(2);
-    expect(calls.execute.some((q) => q.includes("UPDATE reservations SET status = 'expired'"))).toBe(true);
+    expect(calls.updateSets).toContainEqual({ status: "expired" });
     expect(calls.execute.filter((q) => q.includes("UPDATE bikes SET status = 'available'")).length).toBe(2);
     // У bikes нет колонки updated_at: запрос с ней Postgres роняет целиком,
     // и брони перестают истекать вообще. Мок SQL не исполняет, поэтому
@@ -303,7 +302,6 @@ describe("storage.expireOverdueReservations", () => {
   it("syncs D1 GPS tracking to the available (120s) interval for every freed bike (bike-status lifecycle spec, 2026-09)", async () => {
     const { tx } = makeTx([], [
       { rows: [{ id: 1, bike_id: "BC-01" }, { id: 2, bike_id: "BC-02" }] }, // overdue SELECT
-      { rows: [] }, // UPDATE reservations
       { rows: [{ lock_imei: "861234567890123" }] }, // UPDATE bikes for BC-01
       { rows: [] }, // UPDATE bikes for BC-02 — didn't match (already claimed), no lock_imei row
     ]);
@@ -353,7 +351,6 @@ describe("storage.expireOverdueReservations", () => {
     const { tx } = makeTx([], [
       { rows: [{ id: 1, bike_id: "BC-01" }] },
       { rows: [] },
-      { rows: [] },
     ]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
     dbMock.execute.mockRejectedValue(new Error('column "nope" does not exist'));
@@ -361,6 +358,19 @@ describe("storage.expireOverdueReservations", () => {
     const count = await storage.expireOverdueReservations();
 
     expect(count).toBe(1);
+  });
+
+  it("still runs the orphaned-reserved pass when the expiry pass throws", async () => {
+    // Обратный проход — независимая страховка. Раньше первый проход
+    // пробрасывал ошибку и уносил её с собой; ровно так один сломанный
+    // запрос обездвиживал оба механизма разом.
+    dbMock.transaction.mockRejectedValue(new Error("deadlock detected"));
+    dbMock.execute.mockResolvedValue({ rows: [{ id: "BC-001", lock_imei: null }] });
+
+    const count = await storage.expireOverdueReservations();
+
+    expect(count).toBe(0);
+    expect(dbMock.execute).toHaveBeenCalledTimes(1);
   });
 
   it("leaves a freshly reserved bike alone (отсечка по возрасту последней брони)", async () => {

@@ -8,6 +8,12 @@ import { RESERVATION_BIT_WARN_2MIN } from "@shared/reservation-expiry";
 const selectRows = vi.hoisted(() => ({ value: [] as unknown[] }));
 const executeMock = vi.hoisted(() => vi.fn());
 const txExecuteMock = vi.hoisted(() => vi.fn());
+// tx.update(...).set(...).where(...) — аннулирование броней идёт через билдер
+// drizzle, а не сырым SQL: массив в sql-шаблоне разворачивается в ANY(($1,$2)),
+// который Postgres отвергает.
+const txUpdateMock = vi.hoisted(() => vi.fn(() => ({
+  set: () => ({ where: async () => undefined }),
+})));
 const sendToUserAsyncMock = vi.hoisted(() => vi.fn());
 
 const dbMock = vi.hoisted(() => ({
@@ -17,8 +23,10 @@ const dbMock = vi.hoisted(() => ({
     })),
   })),
   execute: executeMock,
-  transaction: vi.fn(async (fn: (tx: { execute: typeof txExecuteMock }) => Promise<void>) => {
-    await fn({ execute: txExecuteMock });
+  transaction: vi.fn(async (fn: (tx: {
+    execute: typeof txExecuteMock; update: typeof txUpdateMock;
+  }) => Promise<void>) => {
+    await fn({ execute: txExecuteMock, update: txUpdateMock });
   }),
   insert: vi.fn(),
 }));
@@ -55,6 +63,7 @@ beforeEach(() => {
   executeMock.mockResolvedValue({ rows: [{ id: 7 }] });
   txExecuteMock.mockReset();
   txExecuteMock.mockResolvedValue({ rows: [] });
+  txUpdateMock.mockClear();
   sendToUserAsyncMock.mockReset();
 });
 
@@ -115,7 +124,6 @@ describe("expireOverdueReservations", () => {
     // заменяется, а не ложится второй.
     txExecuteMock
       .mockResolvedValueOnce({ rows: [{ id: 7, bike_id: "BC-014", user_id: "user-1" }] }) // SELECT ... FOR UPDATE
-      .mockResolvedValueOnce({ rows: [] })                                                // UPDATE reservations
       .mockResolvedValueOnce({ rows: [{ lock_imei: null }] });                            // UPDATE bikes
 
     await expect(storage.expireOverdueReservations()).resolves.toBe(1);
@@ -135,10 +143,12 @@ describe("expireOverdueReservations", () => {
 
   it("не шлёт push, если транзакция упала", async () => {
     // Откатившееся аннулирование не должно оставить райдера с уведомлением о
-    // снятой брони, которая на самом деле жива.
+    // снятой брони, которая на самом деле жива. Наружу ошибка больше не
+    // пробрасывается — обратный проход не должен зависеть от падения первого,
+    // — поэтому проверяем именно молчание пушей, а не выброшенное исключение.
     txExecuteMock.mockRejectedValue(new Error("serialization failure"));
 
-    await expect(storage.expireOverdueReservations()).rejects.toThrow();
+    await expect(storage.expireOverdueReservations()).resolves.toBe(0);
     expect(sendToUserAsyncMock).not.toHaveBeenCalled();
   });
 });
