@@ -203,21 +203,32 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
       // /api/admin/bikes/:id: он пишет bikes.status напрямую, ничего не зная о
       // бронях (обе стороны согласуются отдельно, см. adminUpdateBike).
       //
-      // Порог по updated_at убирает любую гонку с createReservation: тот ставит
-      // статус и вставляет бронь ОДНОЙ транзакцией, но легальный "reserved"
-      // всё равно живёт не дольше TTL брони, так что всё старше просто не может
-      // быть законным.
+      // Отсечка по возрасту последней брони, а не по времени самого статуса: у
+      // bikes нет колонки updated_at, а "когда стал reserved" ниоткуда больше
+      // не читается. Велосипед освобождается, только если по нему нет ни одной
+      // брони моложе TTL — ни активной, ни только что закрытой. Это оставляет
+      // запас любому нормальному обороту брони, который прямо сейчас в
+      // процессе, и попадает только в статус, за которым уже давно ничего нет.
+      // Изолирован от первого прохода: обратный — страховка от рассинхрона, и
+      // его падение не должно уносить с собой истечение броней, которое к тому
+      // моменту уже закоммичено и по которому ещё не разосланы пуши.
       const orphanCutoff = now - RESERVATION_TTL_MS;
-      const orphaned = await db.execute(
-        sql`UPDATE bikes SET status = 'available', updated_at = ${now}
-            WHERE status = 'reserved'
-              AND (updated_at IS NULL OR updated_at <= ${orphanCutoff})
-              AND NOT EXISTS (
-                SELECT 1 FROM reservations r WHERE r.bike_id = bikes.id AND r.status = 'active'
-              )
-            RETURNING id, lock_imei`,
-      );
-      const orphanedRows = orphaned.rows as { id: string; lock_imei: string | null }[];
+      let orphanedRows: { id: string; lock_imei: string | null }[] = [];
+      try {
+        const orphaned = await db.execute(
+          sql`UPDATE bikes SET status = 'available'
+              WHERE status = 'reserved'
+                AND NOT EXISTS (
+                  SELECT 1 FROM reservations r
+                  WHERE r.bike_id = bikes.id
+                    AND (r.status = 'active' OR r.created_at > ${orphanCutoff})
+                )
+              RETURNING id, lock_imei`,
+        );
+        orphanedRows = orphaned.rows as { id: string; lock_imei: string | null }[];
+      } catch (err) {
+        log(`[reservations] orphaned-reserved pass failed: ${(err as Error)?.message ?? "?"}`, "reservations");
+      }
       if (orphanedRows.length > 0) {
         log(`[reservations] freed ${orphanedRows.length} orphaned reserved bike(s): ${orphanedRows.map((r) => r.id).join(", ")}`, "reservations");
         for (const r of orphanedRows) {

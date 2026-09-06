@@ -343,9 +343,25 @@ describe("storage.expireOverdueReservations", () => {
     void q;
   });
 
-  it("leaves a freshly reserved bike alone (race with createReservation)", async () => {
-    // Порог по updated_at: легальный "reserved" не живёт дольше TTL брони,
-    // поэтому запрос обязан отсекать всё, что моложе.
+  it("still expires reservations when the orphaned-reserved pass fails", async () => {
+    // Обратный проход — страховка. Его падение не должно уносить с собой пуши
+    // по броням, которые первый проход уже закоммитил.
+    const { tx } = makeTx([], [
+      { rows: [{ id: 1, bike_id: "BC-01" }] },
+      { rows: [] },
+      { rows: [] },
+    ]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    dbMock.execute.mockRejectedValue(new Error('column "nope" does not exist'));
+
+    const count = await storage.expireOverdueReservations();
+
+    expect(count).toBe(1);
+  });
+
+  it("leaves a freshly reserved bike alone (отсечка по возрасту последней брони)", async () => {
+    // У bikes нет updated_at, поэтому «свежесть» статуса определяется через
+    // брони: запрос обязан щадить велосипед, по которому есть бронь моложе TTL.
     const { tx } = makeTx([], [{ rows: [] }]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
     dbMock.execute.mockResolvedValue({ rows: [] });
@@ -354,8 +370,10 @@ describe("storage.expireOverdueReservations", () => {
 
     const chunks = (dbMock.execute.mock.calls[0][0] as any).queryChunks
       .map((c: any) => (typeof c === "string" ? c : c?.value?.join?.("") ?? "")).join("");
-    expect(chunks).toContain("updated_at");
     expect(chunks).toContain("NOT EXISTS");
+    expect(chunks).toContain("r.created_at >");
+    // Колонки updated_at у bikes не существует — запрос с ней падает целиком.
+    expect(chunks).not.toContain("updated_at");
   });
 });
 
