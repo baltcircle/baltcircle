@@ -304,6 +304,9 @@ export interface IRideStorage {
   // «5 минут» and «овертайм» warnings for active rides whose paid window is
   // ending. `now` is injectable for tests. Returns how many were dispatched.
   notifyRidesNearingExpiry(now?: number): Promise<number>;
+  // Тот же тик sweep — предупреждения об исчерпании бесплатной паузы
+  // («осталось 2 мин.» и «бесплатное время истекло») для стоящих на паузе.
+  notifyPausedRidesNearingGraceEnd(now?: number): Promise<number>;
 }
 
 export interface IWalletStorage {
@@ -383,6 +386,8 @@ export interface IReservationStorage {
   // reservations to "expired" and frees the underlying bike back to
   // "available". Returns how many rows were expired (for logging).
   expireOverdueReservations(): Promise<number>;
+  /** Предупреждение «бронь скоро истечёт». Возвращает число отправленных push. */
+  notifyReservationsNearingExpiry(now?: number): Promise<number>;
 }
 
 // Facade composing every domain interface. `import { storage }` continues to

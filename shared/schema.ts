@@ -351,6 +351,10 @@ export const reservations = pgTable("reservations", {
   expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
   status: text("status").notNull().default("active"), // active | claimed | expired | cancelled
   claimedRideId: integer("claimed_ride_id").references(() => rides.id),
+  // Bitmask of the hold-expiry warnings already pushed: 1 = "осталось 2 минуты".
+  // No "notifiedFor" companion here — unlike a ride's paidUntilAt, a
+  // reservation's expiresAt never moves, so the mask can't go stale.
+  notifiedMask: integer("notified_mask").notNull().default(0),
 }, (t) => [
   index("idx_reservations_bike").on(t.bikeId),
   index("idx_reservations_user_status").on(t.userId, t.status),
@@ -745,6 +749,14 @@ export const rides = pgTable("rides", {
   // having to remember this one.
   expiryNotifiedMask: integer("expiry_notified_mask").notNull().default(0),
   expiryNotifiedFor: bigint("expiry_notified_for", { mode: "number" }),
+  // Bitmask of the free-pause warnings already pushed for the CURRENT pause:
+  //   1 = "осталось 2 минуты бесплатной паузы", 2 = "бесплатная пауза кончилась".
+  // Valid only for the pausedAt recorded in pauseNotifiedFor — same staleness
+  // trick as expiryNotifiedFor above: the budget is cumulative across the whole
+  // ride, so a second pause must not inherit the first pause's mask and go
+  // silent, and resume/pause paths don't have to remember to clear anything.
+  pauseNotifiedMask: integer("pause_notified_mask").notNull().default(0),
+  pauseNotifiedFor: bigint("pause_notified_for", { mode: "number" }),
   // The parking the bike was standing in when this ride started (copied from
   // bikes.parking_id at start time). Used by the 5-minute cancel-with-refund
   // rule: eligible only while the bike is still at this same parking.
@@ -771,6 +783,9 @@ export const rides = pgTable("rides", {
   // Backs the reservation-expiry / overage-notification sweep's scan for
   // active rides without a full table scan.
   index("idx_rides_status_paid_until").on(t.status, t.paidUntilAt),
+  // Backs the free-pause warning sweep: only a handful of rides are paused at
+  // any moment, and a partial index keeps that scan off the full active set.
+  index("idx_rides_paused").on(t.pausedAt).where(sql`${t.status} = 'active' AND ${t.pausedAt} IS NOT NULL`),
 ]);
 export type Ride = typeof rides.$inferSelect;
 export const insertRideSchema = createInsertSchema(rides);

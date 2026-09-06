@@ -13,6 +13,7 @@ import { pendingPauseCreditMs } from "@shared/pause";
 import {
   nextExpiryNotice, effectiveMask, rideExpiryTag, EXPIRY_WARN_10MIN_MS,
 } from "@shared/ride-expiry";
+import { nextPauseNotice, effectivePauseMask, pauseNoticeTag } from "@shared/pause-expiry";
 import { sendToUserAsync } from "../push";
 import {
   getTbankConfig, tbankInitSavedCardCharge, tbankCharge, tbankInitSbpCharge, tbankChargeQr,
@@ -1420,6 +1421,60 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           // ride id, so two simultaneous rentals never overwrite each other.
           tag: rideExpiryTag(ride.id),
           data: { kind: "ride-expiry", rideId: ride.id, bikeId: ride.bikeId, stage: notice.stage },
+        });
+        sent += 1;
+      }
+      return sent;
+    }
+
+    async notifyPausedRidesNearingGraceEnd(now: number = Date.now()): Promise<number> {
+      // Партиальный индекс idx_rides_paused держит этот скан на горстке
+      // реально приостановленных поездок, а не на всех активных.
+      let rows: Ride[];
+      try {
+        rows = (await db.select().from(rides).where(and(
+          eq(rides.status, "active"),
+          sql`${rides.pausedAt} IS NOT NULL`,
+        ))) as Ride[];
+      } catch (err) {
+        log(`[pause-expiry] sweep query failed: ${(err as Error)?.message ?? "?"}`, "rides");
+        throw err;
+      }
+
+      let sent = 0;
+      for (const ride of rows) {
+        const notice = nextPauseNotice(ride, ride.bikeId, now);
+        if (!notice) continue;
+
+        const priorMask = effectivePauseMask(ride);
+        let claimed: { rows: unknown[] };
+        try {
+          // Тот же claim-then-send, что и у предупреждений об аренде: два
+          // инстанса за одним тиком не должны отправить один push дважды, а
+          // возобновлённая за это время поездка — вообще ничего.
+          claimed = await db.execute(sql`
+            UPDATE rides
+            SET pause_notified_mask = ${notice.nextMask},
+                pause_notified_for = ${ride.pausedAt}
+            WHERE id = ${ride.id}
+              AND status = 'active'
+              AND paused_at = ${ride.pausedAt}
+              AND (pause_notified_for IS DISTINCT FROM ${ride.pausedAt}
+                   OR pause_notified_mask = ${priorMask})
+            RETURNING id
+          `);
+        } catch (err) {
+          log(`[pause-expiry] claim failed ride=${ride.id}: ${(err as Error)?.message ?? "?"}`, "rides");
+          continue;
+        }
+        if (claimed.rows.length === 0) continue;
+
+        sendToUserAsync(ride.userId, {
+          title: notice.title,
+          body: notice.body,
+          url: "/",
+          tag: pauseNoticeTag(ride.id),
+          data: { kind: "ride-pause", rideId: ride.id, bikeId: ride.bikeId, stage: notice.stage },
         });
         sent += 1;
       }

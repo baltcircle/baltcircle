@@ -1,12 +1,16 @@
 import { bikes, reservations } from "@shared/schema";
 import type { Reservation, Bike } from "@shared/schema";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { RESERVATION_TTL_MS, MAX_ACTIVE_RIDES_PER_USER } from "@shared/geo";
 import { db } from "../db/bootstrap";
 import { log } from "../logger";
 import { getLockGateway } from "../omni/gateway";
 import type { Constructor } from "./mixin";
 import type { IReservationStorage } from "./interfaces";
+import { sendToUserAsync } from "../push";
+import {
+  nextReservationNotice, reservationExpiredTexts, reservationTag, RESERVATION_WARN_MS,
+} from "@shared/reservation-expiry";
 
 export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
   return class extends Base implements IReservationStorage {
@@ -137,13 +141,14 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
       // still stuck "reserved" (or vice versa).
       const now = Date.now();
       let expiredCount = 0;
+      let expired: { id: number; bike_id: string; user_id: string }[] = [];
       const freedLocks: { bikeId: string; lockImei: string | null }[] = [];
       try {
         await db.transaction(async (tx) => {
           const overdue = await tx.execute(
-            sql`SELECT id, bike_id FROM reservations WHERE status = 'active' AND expires_at <= ${now} FOR UPDATE`,
+            sql`SELECT id, bike_id, user_id FROM reservations WHERE status = 'active' AND expires_at <= ${now} FOR UPDATE`,
           );
-          const rows = overdue.rows as { id: number; bike_id: string }[];
+          const rows = overdue.rows as { id: number; bike_id: string; user_id: string }[];
           if (rows.length === 0) return;
           const ids = rows.map((r) => r.id);
           await tx.execute(sql`UPDATE reservations SET status = 'expired' WHERE id = ANY(${ids})`);
@@ -156,6 +161,7 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
             }
           }
           expiredCount = rows.length;
+          expired = rows;
         });
       } catch (err) {
         log(`[reservations] sweep failed: ${(err as Error)?.message ?? "?"}`, "reservations");
@@ -168,8 +174,68 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
         for (const { bikeId, lockImei } of freedLocks) {
           if (lockImei) getLockGateway()?.syncGpsTrackingForStatus(lockImei, bikeId, "available");
         }
+        // Только после коммита: уведомить о снятии брони, которая ещё могла бы
+        // откатиться, — значит соврать. Тег тот же, что у предупреждения
+        // «осталось 2 мин.», поэтому карточка заменяется, а не ложится сверху.
+        for (const r of expired) {
+          sendToUserAsync(r.user_id, {
+            ...reservationExpiredTexts(r.bike_id),
+            url: "/",
+            tag: reservationTag(r.id),
+            data: { kind: "reservation-expired", reservationId: r.id, bikeId: r.bike_id },
+          });
+        }
       }
       return expiredCount;
+    }
+
+    async notifyReservationsNearingExpiry(now: number = Date.now()): Promise<number> {
+      // Индекс idx_reservations_active_expires покрывает этот скан целиком.
+      let rows: Reservation[];
+      try {
+        rows = (await db.select().from(reservations).where(and(
+          eq(reservations.status, "active"),
+          sql`${reservations.expiresAt} <= ${now + RESERVATION_WARN_MS}`,
+          sql`${reservations.expiresAt} > ${now}`,
+        ))) as Reservation[];
+      } catch (err) {
+        log(`[reservations] warn sweep query failed: ${(err as Error)?.message ?? "?"}`, "reservations");
+        throw err;
+      }
+
+      let sent = 0;
+      for (const r of rows) {
+        const notice = nextReservationNotice(r, r.bikeId, now);
+        if (!notice) continue;
+
+        let claimed: { rows: unknown[] };
+        try {
+          // Claim-then-send: бронь могла быть отменена или превращена в поездку
+          // между выборкой и отправкой — тогда предупреждение уже неуместно.
+          claimed = await db.execute(sql`
+            UPDATE reservations
+            SET notified_mask = ${notice.nextMask}
+            WHERE id = ${r.id}
+              AND status = 'active'
+              AND notified_mask = ${r.notifiedMask}
+            RETURNING id
+          `);
+        } catch (err) {
+          log(`[reservations] warn claim failed id=${r.id}: ${(err as Error)?.message ?? "?"}`, "reservations");
+          continue;
+        }
+        if (claimed.rows.length === 0) continue;
+
+        sendToUserAsync(r.userId, {
+          title: notice.title,
+          body: notice.body,
+          url: "/",
+          tag: reservationTag(r.id),
+          data: { kind: "reservation-expiring", reservationId: r.id, bikeId: r.bikeId },
+        });
+        sent += 1;
+      }
+      return sent;
     }
   };
 }

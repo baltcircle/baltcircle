@@ -6,6 +6,8 @@
 import { apiRequest } from "./queryClient";
 import { isIos, isStandalone } from "./pwa";
 import { rideExpiryTag } from "@shared/ride-expiry";
+import { pauseNoticeTag } from "@shared/pause-expiry";
+import { reservationTag } from "@shared/reservation-expiry";
 
 export type PushState =
   | "unsupported"          // браузер вообще без Push API
@@ -219,4 +221,22 @@ export async function closeNotificationsByTag(tags: string[]): Promise<void> {
 /** Снимает висящие предупреждения о дедлайне конкретной поездки. */
 export function closeRideExpiryNotifications(rideId: number): void {
   void closeNotificationsByTag([rideExpiryTag(rideId)]);
+}
+
+/**
+ * Снимает всё, что относится к поездке: и дедлайн аренды, и бесплатную паузу.
+ * Для завершения поездки — обе темы разом перестают быть правдой.
+ */
+export function closeRideNotifications(rideId: number): void {
+  void closeNotificationsByTag([rideExpiryTag(rideId), pauseNoticeTag(rideId)]);
+}
+
+/** Снимает предупреждение об исчерпании бесплатной паузы (поездка продолжена). */
+export function closePauseNotifications(rideId: number): void {
+  void closeNotificationsByTag([pauseNoticeTag(rideId)]);
+}
+
+/** Снимает карточку брони — отменена вручную или превращена в аренду. */
+export function closeReservationNotifications(reservationId: number): void {
+  void closeNotificationsByTag([reservationTag(reservationId)]);
 }

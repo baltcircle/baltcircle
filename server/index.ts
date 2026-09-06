@@ -279,6 +279,13 @@ app.use((req, res, next) => {
   // (reservation -> "expired", bike -> "available") atomically in one
   // transaction; this timer is just the scheduler.
   const runReservationSweep = () => {
+    // Предупреждение «осталось 2 минуты» идёт ПЕРЕД аннулированием: иначе
+    // бронь, дожившая ровно до этого тика, получила бы обе карточки разом.
+    void storage.notifyReservationsNearingExpiry()
+      .then((sent) => {
+        if (sent > 0) logger.info({ sent }, "reservation expiry warnings pushed");
+      })
+      .catch((err) => logger.error({ err }, "reservation warn sweep failed"));
     void storage.expireOverdueReservations()
       .then((count) => {
         if (count > 0) logger.info({ count }, "expired overdue reservations");
@@ -300,6 +307,13 @@ app.use((req, res, next) => {
         if (sent > 0) logger.info({ sent }, "ride expiry warnings pushed");
       })
       .catch((err) => logger.error({ err }, "ride expiry sweep failed"));
+    // Свободная пауза тикает по тем же минутам — отдельный таймер только
+    // добавил бы второй источник дрейфа при той же нагрузке на БД.
+    void storage.notifyPausedRidesNearingGraceEnd()
+      .then((sent) => {
+        if (sent > 0) logger.info({ sent }, "free-pause warnings pushed");
+      })
+      .catch((err) => logger.error({ err }, "pause grace sweep failed"));
   };
   const RIDE_EXPIRY_SWEEP_INTERVAL_MS = 60 * 1000;
   // Offset from the reservation sweep so the two don't contend on the same tick.
