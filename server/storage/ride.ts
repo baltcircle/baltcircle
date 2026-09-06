@@ -11,7 +11,7 @@ import {
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
 import { pendingPauseCreditMs } from "@shared/pause";
 import {
-  nextExpiryNotice, effectiveMask, EXPIRY_WARN_10MIN_MS,
+  nextExpiryNotice, effectiveMask, rideExpiryTag, EXPIRY_WARN_10MIN_MS,
 } from "@shared/ride-expiry";
 import { sendToUserAsync } from "../push";
 import {
@@ -1416,8 +1416,9 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           body: notice.body,
           url: "/",
           // Same tag for all three stages: a fresher warning replaces the
-          // previous one instead of stacking three cards in the shade.
-          tag: `ride:${ride.id}:expiry`,
+          // previous one instead of stacking three cards in the shade. Keyed by
+          // ride id, so two simultaneous rentals never overwrite each other.
+          tag: rideExpiryTag(ride.id),
           data: { kind: "ride-expiry", rideId: ride.id, bikeId: ride.bikeId, stage: notice.stage },
         });
         sent += 1;

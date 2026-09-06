@@ -5,6 +5,7 @@
 
 import { apiRequest } from "./queryClient";
 import { isIos, isStandalone } from "./pwa";
+import { rideExpiryTag } from "@shared/ride-expiry";
 
 export type PushState =
   | "unsupported"          // браузер вообще без Push API
@@ -188,4 +189,34 @@ export function pushStateLabel(state: PushState): string {
     case "unsupported":          return "Не поддерживаются браузером";
     default:                     return "";
   }
+}
+
+/**
+ * Убирает уже показанные уведомления с указанными тегами.
+ *
+ * Нужно там, где событие сделало предупреждение неверным: поездка завершена
+ * или продлена, а карточка «Начался овертайм» продолжает висеть на экране
+ * блокировки — push её не перезапишет, потому что нового push уже не будет.
+ *
+ * Никогда не бросает: это косметика поверх основного действия, и упасть на ней
+ * значило бы уронить завершение поездки.
+ */
+export async function closeNotificationsByTag(tags: string[]): Promise<void> {
+  if (tags.length === 0) return;
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) return;
+    await Promise.all(tags.map(async (tag) => {
+      const shown = await reg.getNotifications({ tag });
+      for (const n of shown) n.close();
+    }));
+  } catch {
+    // Firefox без прав, приватный режим, SW ещё не активен — не наша беда.
+  }
+}
+
+/** Снимает висящие предупреждения о дедлайне конкретной поездки. */
+export function closeRideExpiryNotifications(rideId: number): void {
+  void closeNotificationsByTag([rideExpiryTag(rideId)]);
 }
