@@ -10,7 +10,11 @@ import type { PaymentMethod, PublicPaymentMethod } from "@shared/schema";
 // instead of returning the raw DB row. `hasRebillId`/`hasAccountToken` give
 // the client the same information it actually uses.
 export function toPublicPaymentMethod(m: PaymentMethod): PublicPaymentMethod {
-  const { rebillId, accountToken, rebillIdHash, accountTokenHash, customerKey, ...safe } = m;
+  // bankMemberId — идентификатор банка плательщика: не секрет, но чисто
+  // серверная корреляционная материя для ChargeQr, клиенту не нужна.
+  const {
+    rebillId, accountToken, rebillIdHash, accountTokenHash, customerKey, bankMemberId, ...safe
+  } = m;
   return { ...safe, hasRebillId: !!rebillId, hasAccountToken: !!accountToken };
 }
 

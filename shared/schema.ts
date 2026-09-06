@@ -1053,6 +1053,11 @@ export const paymentMethods = pgTable("payment_methods", {
   // at-rest treatment as rebillId (audit HIGH #9).
   accountToken: text("account_token"),
   accountTokenHash: text("account_token_hash"), // blind index, mirrors rebillIdHash
+  // Идентификатор банка плательщика (BankMemberId), выданный при привязке счёта.
+  // ChargeQr требует его, когда привязка сделана в СТОРОННЕМ банке, а не в
+  // Т-Банке — без него списание с такого счёта отклоняется. Не секрет: это
+  // идентификатор банка, а не плательщика.
+  bankMemberId: text("bank_member_id"),
   // ----- Init+Recurrent verification-payment binding (the primary path) -----
   purpose: text("purpose"),                  // "card_binding" for the Init verification payment; null otherwise
   orderId: text("order_id"),                 // our Init OrderId, echoed back in notifications to correlate
@@ -1089,7 +1094,7 @@ export type PaymentMethod = typeof paymentMethods.$inferSelect;
 // carry the only signal the frontend ever actually needs from those fields.
 export type PublicPaymentMethod = Omit<
   PaymentMethod,
-  "rebillId" | "accountToken" | "rebillIdHash" | "accountTokenHash" | "customerKey"
+  "rebillId" | "accountToken" | "rebillIdHash" | "accountTokenHash" | "customerKey" | "bankMemberId"
 > & { hasRebillId: boolean; hasAccountToken: boolean };
 
 // Link a payment method. Only the type is client-supplied; the label/status are

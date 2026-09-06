@@ -279,6 +279,9 @@ export async function handleSbpBindingNotification(
   const status = typeof body.Status === "string" ? body.Status : "";
   const accountToken = typeof body.AccountToken === "string" ? body.AccountToken : "";
   const bankName = typeof body.BankMemberName === "string" ? body.BankMemberName.trim() : "";
+  // Нужен для последующих ChargeQr по счёту в стороннем банке. Приходит один
+  // раз — вместе с AccountToken, поэтому сохраняем сразу.
+  const bankMemberId = typeof body.BankMemberId === "string" ? body.BankMemberId.trim() : "";
   const success = body.Success === false ? false : undefined;
 
   const outcome = classifyAccountBinding({ status, accountToken, success });
@@ -286,6 +289,7 @@ export async function handleSbpBindingNotification(
     await storage.updatePaymentMethod(method.id, {
       status: "active",
       accountToken: accountToken || method.accountToken,
+      bankMemberId: bankMemberId || method.bankMemberId,
       label: bankName ? `СБП · ${bankName}` : "СБП",
       lastErrorCode: null,
       lastErrorMessage: null,

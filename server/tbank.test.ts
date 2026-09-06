@@ -4,8 +4,10 @@ import {
   classifyInitBinding,
   classifyRidePayment,
   computeToken,
+  tbankChargeQr,
   tbankInitRidePayment,
   tbankInitSavedCardCharge,
+  tbankInitSbpCharge,
   tbankRefundVerificationCharge,
   verifyNotificationToken,
 } from "./tbank";
@@ -218,5 +220,74 @@ describe("fiscalized T-Bank requests", () => {
         },
       },
     });
+  });
+});
+
+// ChargeQr требует BankMemberId, когда счёт привязан в стороннем банке. Пустое
+// или отсутствующее значение нельзя слать как пустую строку: она попала бы в
+// подпись и вернула бы код 204 вместо списания.
+describe("СБП: ChargeQr и BankMemberId", () => {
+  async function capture(fn: () => Promise<unknown>): Promise<Record<string, unknown>> {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return { json: async () => ({ Success: true, Status: "CONFIRMED" }) };
+    }));
+    await fn();
+    return body;
+  }
+
+  it("передаёт BankMemberId и подписывает его вместе с остальными полями", async () => {
+    const body = await capture(() => tbankChargeQr(cfg, {
+      paymentId: "payment-1",
+      accountToken: "account-token-1",
+      bankMemberId: "100000000004",
+    }));
+
+    expect(body).toMatchObject({
+      PaymentId: "payment-1",
+      AccountToken: "account-token-1",
+      BankMemberId: "100000000004",
+    });
+    const { Token, ...scalars } = body;
+    expect(computeToken(scalars, cfg.password)).toBe(Token);
+  });
+
+  it("опускает поле целиком, когда банк неизвестен", async () => {
+    const body = await capture(() => tbankChargeQr(cfg, {
+      paymentId: "payment-1",
+      accountToken: "account-token-1",
+    }));
+
+    expect(body).not.toHaveProperty("BankMemberId");
+    const { Token, ...scalars } = body;
+    expect(computeToken(scalars, cfg.password)).toBe(Token);
+  });
+
+  it("не шлёт пустую строку вместо отсутствующего банка", async () => {
+    const body = await capture(() => tbankChargeQr(cfg, {
+      paymentId: "payment-1",
+      accountToken: "account-token-1",
+      bankMemberId: "   ",
+    }));
+
+    expect(body).not.toHaveProperty("BankMemberId");
+  });
+
+  it("Init рекуррентного СБП-платежа держит DATA вне подписи", async () => {
+    // DATA — вложенный объект: он уходит в теле, но в токен не попадает, иначе
+    // терминал ответит 204 на каждое списание.
+    const body = await capture(() => tbankInitSbpCharge(cfg, {
+      orderId: "TRSQ-test",
+      amountKopecks: 35000,
+      description: "Аренда велосипеда BC-3",
+      customerKey: "rider-3",
+      notificationUrl: "https://app.test/notify",
+    }));
+
+    expect(body).toMatchObject({ Recurrent: "Y", DATA: { QR: "true" } });
+    const { Token, DATA, ...scalars } = body;
+    expect(computeToken(scalars, cfg.password)).toBe(Token);
+    expect(DATA).toBeDefined();
   });
 });

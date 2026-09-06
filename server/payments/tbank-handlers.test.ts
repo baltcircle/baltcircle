@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { PaymentOrder, WalletTopupOrder } from "@shared/schema";
+import type { PaymentMethod, PaymentOrder, WalletTopupOrder } from "@shared/schema";
 
 // The handlers under test touch the DB via the `storage` singleton and fire push
 // notifications; both are mocked so these run as pure unit tests with no live
@@ -72,6 +72,7 @@ import {
   handleTbankNotification,
   handleAddCardNotification,
   handleInitBindingNotification,
+  handleSbpBindingNotification,
   refundVerificationCharge,
   bindViaVerificationPayment,
   extractLast4FromLabel,
@@ -1025,5 +1026,68 @@ describe("tbankErrorBody (audit LOW: rider-facing error allowlist)", () => {
   it("prefers Details over the generic fallback when Message is absent, for an allowlisted code", () => {
     const body = tbankErrorBody({ ErrorCode: "1091", Details: "Превышен лимит операций по карте" });
     expect(body).toEqual({ error: "Превышен лимит операций по карте", code: "1091", message: undefined, details: "Превышен лимит операций по карте" });
+  });
+});
+
+// СБП: BankMemberId приходит один раз — вместе с AccountToken в нотификации о
+// привязке. Не сохранить его здесь значит потерять навсегда: последующие
+// ChargeQr по счёту в стороннем банке будут отклоняться.
+describe("handleSbpBindingNotification: BankMemberId", () => {
+  function pendingSbp(over: Partial<PaymentMethod> = {}): PaymentMethod {
+    return {
+      id: 5, userId: "rider-1", type: "sbp", label: "СБП", status: "pending",
+      provider: "tbank", customerKey: "rider-1", cardId: null,
+      rebillId: null, rebillIdHash: null, requestKey: "req-1",
+      accountToken: null, accountTokenHash: null, bankMemberId: null,
+      purpose: "sbp_binding", orderId: "TRSB-1", paymentId: null, paymentUrl: null,
+      ...over,
+    } as PaymentMethod;
+  }
+
+  it("сохраняет BankMemberId вместе с токеном при активации", async () => {
+    storageMock.updatePaymentMethod.mockResolvedValue(undefined);
+
+    await handleSbpBindingNotification(pendingSbp(), {
+      Status: "ACTIVE",
+      AccountToken: "account-token-1",
+      BankMemberId: "100000000004",
+      BankMemberName: "Сбербанк",
+    });
+
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(5, expect.objectContaining({
+      status: "active",
+      accountToken: "account-token-1",
+      bankMemberId: "100000000004",
+      label: "СБП · Сбербанк",
+    }));
+  });
+
+  it("не затирает уже известный BankMemberId пустым значением", async () => {
+    // Повторная нотификация без поля не должна обесценить сохранённое ранее.
+    storageMock.updatePaymentMethod.mockResolvedValue(undefined);
+
+    await handleSbpBindingNotification(pendingSbp({ bankMemberId: "100000000004" }), {
+      Status: "ACTIVE",
+      AccountToken: "account-token-1",
+    });
+
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(5, expect.objectContaining({
+      bankMemberId: "100000000004",
+    }));
+  });
+
+  it("не активирует привязку без AccountToken", async () => {
+    // Счёт в статусе ACTIVE, но без токена нечем делать ChargeQr — это ещё не
+    // рабочий способ оплаты.
+    storageMock.updatePaymentMethod.mockResolvedValue(undefined);
+
+    await handleSbpBindingNotification(pendingSbp(), {
+      Status: "ACTIVE",
+      BankMemberId: "100000000004",
+    });
+
+    const activated = storageMock.updatePaymentMethod.mock.calls
+      .some(([, patch]) => (patch as { status?: string }).status === "active");
+    expect(activated).toBe(false);
   });
 });

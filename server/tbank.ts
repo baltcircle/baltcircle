@@ -1041,6 +1041,11 @@ export interface ChargeQrInput {
   paymentId: string;
   // The stored SBP account token issued when the rider's account was bound.
   accountToken: string;
+  // Идентификатор банка плательщика, полученный при привязке счёта. По спеке
+  // ChargeQr он обязателен, когда счёт привязан в стороннем банке; для счёта в
+  // Т-Банке — необязателен. Отправляем, когда знаем, и опускаем поле целиком,
+  // когда нет: пустая строка попала бы в подпись и дала бы код 204.
+  bankMemberId?: string;
 }
 
 // Debit a bound SBP account via /ChargeQr using PaymentId + AccountToken. No
@@ -1053,9 +1058,11 @@ export async function tbankChargeQr(
   cfg: TbankConfig,
   input: ChargeQrInput,
 ): Promise<TbankResponse> {
+  const bankMemberId = input.bankMemberId?.trim();
   return signedPost(cfg, "/ChargeQr", {
     PaymentId: input.paymentId,
     AccountToken: input.accountToken,
+    ...(bankMemberId ? { BankMemberId: bankMemberId } : {}),
   });
 }
 
@@ -1107,19 +1114,22 @@ export function extractQrPayload(resp: TbankResponse): string {
 }
 
 // Map a T-Bank AddAccountQr binding state/notification to our lifecycle. The
-// account is "active" once the acquirer reports ACTIVE (with an AccountToken);
-// it is "failed" on INACTIVE or an explicit terminal rejection; everything else
-// (NEW/PROCESSING) is still in flight. Mirrors classifyCardBinding so the
-// notification webhook and the state poller agree on each status.
+// account is "active" only once we hold an AccountToken: it is the СБП analogue
+// of a card RebillId and the sole thing ChargeQr can debit. Status=ACTIVE
+// without a token is therefore NOT active — активировав такой способ оплаты, мы
+// показали бы райдеру рабочий «СБП» в списке и получили бы отказ на первом же
+// списании. Такой случай остаётся pending: токен принесёт следующая нотификация
+// или GetAddAccountQrState. "failed" — на INACTIVE или явном терминальном
+// отказе. Mirrors classifyCardBinding so the notification webhook and the state
+// poller agree on each status.
 export function classifyAccountBinding(args: {
   status?: string;
   accountToken?: string;
   success?: boolean;
 }): CardBindingOutcome {
   const status = (args.status || "").trim().toUpperCase();
-  if (status === "ACTIVE" || (args.accountToken && args.accountToken.length > 0)) {
-    return "active";
-  }
+  const hasToken = !!args.accountToken && args.accountToken.trim().length > 0;
+  if (hasToken) return "active";
   if (args.success === false || status === "INACTIVE" || FAILED_BINDING_STATUSES.includes(status)) {
     return "failed";
   }
