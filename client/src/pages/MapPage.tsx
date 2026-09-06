@@ -11,6 +11,8 @@ import { RentalStartModal } from "@/components/RentalStartModal";
 import { AuthModal } from "@/components/AuthModal";
 import { QrScanModal } from "@/components/QrScanModal";
 import { DrawerMenu } from "@/components/DrawerMenu";
+import { IosInstallSheet } from "@/components/IosInstallSheet";
+import { markIosInstallHintShown, shouldAutoShowIosInstallHint } from "@/lib/pwa";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
@@ -300,6 +302,26 @@ export function MapPage() {
       window.removeEventListener("pageshow", onReturn);
     };
   }, [hasActiveRide]);
+
+  // ── Подсказка «установите на экран Домой» ───────────────────────
+  // Начало аренды — единственный момент, когда уведомления реально нужны
+  // (окончание оплаченного времени, списания), а на iOS подписаться на push
+  // можно только из PWA на экране «Домой». Ключ — id самой свежей поездки:
+  // возврат с overlay-страницы или редирект с оплаты перемонтируют страницу,
+  // но повторного показа в той же аренде быть не должно. На всё остальное
+  // (Android, desktop, уже установленная PWA) shouldAutoShow… вернёт false.
+  const [installHintOpen, setInstallHintOpen] = useState(false);
+  const newestRideId = useMemo(
+    () => activeRides.reduce<number | null>((max, r) => (max === null || r.id > max ? r.id : max), null),
+    [activeRides],
+  );
+  useEffect(() => {
+    if (newestRideId === null) return;
+    const key = String(newestRideId);
+    if (!shouldAutoShowIosInstallHint(key)) return;
+    markIosInstallHintShown(key);
+    setInstallHintOpen(true);
+  }, [newestRideId]);
 
   // true пока ждём регистрацию, чтобы после неё открыть QR-скан (goRent) —
   // раньше сюда же кодировался флаг "multi", но выделенного multi-режима
@@ -754,6 +776,8 @@ export function MapPage() {
 
       {/* Drawer menu */}
       <DrawerMenu open={drawerOpen} onClose={() => setDrawerOpen(false)} mountedOpen={drawerMountedOpen.current} instantTick={drawerInstantTick} />
+
+      <IosInstallSheet open={installHintOpen} onOpenChange={setInstallHintOpen} auto />
 
       <AuthModal
         open={regOpen}

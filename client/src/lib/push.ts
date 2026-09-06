@@ -4,6 +4,7 @@
 // Поддержка iOS Safari — только когда PWA установлена (standalone).
 
 import { apiRequest } from "./queryClient";
+import { isIos, isStandalone } from "./pwa";
 
 export type PushState =
   | "unsupported"          // браузер вообще без Push API
@@ -14,22 +15,6 @@ export type PushState =
   | "default";             // разрешение ещё не спрашивали
 
 const SW_URL = "/sw.js";
-
-function isIos(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const ua = navigator.userAgent || "";
-  // iPad с iPadOS 13+ маскируется под Mac — проверяем touch.
-  const iPadOsMac = ua.includes("Macintosh") && "ontouchend" in document;
-  return /iPad|iPhone|iPod/.test(ua) || iPadOsMac;
-}
-
-function isStandalone(): boolean {
-  if (typeof window === "undefined") return false;
-  const mm = window.matchMedia?.("(display-mode: standalone)").matches;
-  // iOS-специфичное свойство.
-  const iosStandalone = (window.navigator as { standalone?: boolean }).standalone === true;
-  return !!(mm || iosStandalone);
-}
 
 export function isPushSupported(): boolean {
   return (
