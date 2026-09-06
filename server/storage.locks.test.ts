@@ -39,6 +39,7 @@ const dbMock = vi.hoisted(() => ({
   insert: vi.fn(),
   update: vi.fn(),
   delete: vi.fn(),
+  execute: vi.fn(),
 }));
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 
@@ -80,6 +81,9 @@ beforeEach(() => {
       where: () => chain,
       orderBy: () => chain,
       limit: () => Promise.resolve(rows),
+      // Запросы без .limit() (listParkings) awaitятся напрямую.
+      then: (resolve: (v: unknown[]) => unknown, reject?: (e: unknown) => unknown) =>
+        Promise.resolve(rows).then(resolve, reject),
     };
     return chain;
   });
@@ -247,6 +251,66 @@ describe("adminUpdateBike lock binding", () => {
     expect(setSpy).toHaveBeenCalledWith(
       expect.objectContaining({ lockImei: other, lockOnline: false, lockLastSeen: null }),
     );
+  });
+});
+
+// Статус велосипеда и строка брони — две половины одного состояния, и до
+// сих пор операторский PATCH менял только первую. Итог: велосипед, оставленный
+// в "reserved" вручную, не мог стартовать ни у кого (предъявить активную бронь
+// некому), а бронь, пережившая уход велосипеда из "reserved", молча занимала
+// слот райдера из общего лимита.
+function sqlText(chunk: unknown): string {
+  const chunks = (chunk as { queryChunks?: unknown[] })?.queryChunks;
+  if (!Array.isArray(chunks)) return String(chunk ?? "");
+  return chunks.map((c: any) => (typeof c === "string" ? c : Array.isArray(c?.value) ? c.value.join("") : "")).join("");
+}
+
+describe("adminUpdateBike: согласование с бронями", () => {
+  beforeEach(() => {
+    dbMock.execute.mockReset();
+    dbMock.execute.mockResolvedValue({ rows: [] });
+  });
+
+  it("отклоняет ручную установку «Забронирован»", async () => {
+    selectResults = [[bikeRow()]];
+
+    const result = await storage.adminUpdateBike("BC-01", { status: "reserved" });
+
+    expect(result).toMatchObject({ error: expect.stringContaining("бронью райдера") });
+    expect(dbMock.update).not.toHaveBeenCalled();
+  });
+
+  it("отклоняет ручную установку «В аренде»", async () => {
+    selectResults = [[bikeRow()]];
+
+    const result = await storage.adminUpdateBike("BC-01", { status: "rented" });
+
+    expect(result).toMatchObject({ error: expect.stringContaining("стартом поездки") });
+    expect(dbMock.update).not.toHaveBeenCalled();
+  });
+
+  it("снимает активную бронь, когда велосипед уводят из «Забронирован»", async () => {
+    const reserved = bikeRow({ status: "reserved" });
+    // Третий select — пересчёт парковки (listParkings) внутри того же PATCH.
+    selectResults = [[reserved], [], [bikeRow({ status: "maintenance" })]];
+    // По этому пути в db.execute ходит не только отмена брони (пересчёт
+    // парковки тоже) — отвечаем строкой брони только на её собственный запрос.
+    dbMock.execute.mockImplementation(async (c: any) => (
+      sqlText(c).includes("UPDATE reservations") ? { rows: [{ id: 42, user_id: "rider-1" }] } : { rows: [] }
+    ));
+
+    await storage.adminUpdateBike("BC-01", { status: "maintenance" });
+
+    const q = dbMock.execute.mock.calls.map(([c]) => sqlText(c)).join(" ");
+    expect(q).toContain("UPDATE reservations SET status = 'cancelled'");
+  });
+
+  it("не трогает брони, когда статус в патче не меняется", async () => {
+    selectResults = [[bikeRow({ status: "reserved" })], [bikeRow({ status: "reserved" })]];
+
+    await storage.adminUpdateBike("BC-01", { notes: "потерялся трос" });
+
+    expect(dbMock.execute).not.toHaveBeenCalled();
   });
 });
 

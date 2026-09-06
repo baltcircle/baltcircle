@@ -314,6 +314,16 @@ export const BIKE_STATUSES = [
 ] as const;
 export type BikeStatus = (typeof BIKE_STATUSES)[number];
 
+// Статусы, которые оператор вправе выставить руками. "reserved" и "rented" в
+// список не входят: они осмысленны только вместе с подпирающей их строкой
+// reservations/rides, и выставленные вручную выводят велосипед из оборота
+// насовсем — предъявить активную бронь на него уже некому. Снятие с линии
+// делается через maintenance/storage/offline. См. adminUpdateBike, который
+// отклоняет их и на сервере.
+export const OPERATOR_ASSIGNABLE_BIKE_STATUSES: readonly BikeStatus[] = [
+  "available", "maintenance", "offline", "storage", "lost", "archived",
+];
+
 // Statuses a bike must NOT be in to be rentable from the public app/map.
 export const RENTABLE_STATUSES: readonly BikeStatus[] = ["available", "reserved"];
 

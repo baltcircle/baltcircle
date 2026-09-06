@@ -382,9 +382,16 @@ export interface IReservationStorage {
   // Owner-only cancel; returns an error string if the reservation doesn't
   // exist, isn't active, or belongs to a different user.
   cancelReservation(id: number, userId: string): Promise<{ ok: true } | { error: string }>;
+  // Operator-side cancel: drops every active reservation on a bike, pushes the
+  // holder a «Бронь отменена» card and returns the rows it cancelled. Used
+  // where a bike's status is changed outside the reservation system
+  // (adminUpdateBike, archiveBike) — the bike itself is left to the caller.
+  cancelActiveReservationsForBike(bikeId: string): Promise<{ id: number; userId: string }[]>;
   // Sweep entry point (server/index.ts interval) — flips overdue "active"
   // reservations to "expired" and frees the underlying bike back to
-  // "available". Returns how many rows were expired (for logging).
+  // "available", and (second pass) frees any bike left "reserved" with no
+  // active reservation behind it. Returns how many rows were expired (for
+  // logging); orphaned bikes are logged separately.
   expireOverdueReservations(): Promise<number>;
   /** Предупреждение «бронь скоро истечёт». Возвращает число отправленных push. */
   notifyReservationsNearingExpiry(now?: number): Promise<number>;

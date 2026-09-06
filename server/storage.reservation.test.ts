@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bike, Reservation } from "@shared/schema";
 
-const dbMock = vi.hoisted(() => ({ select: vi.fn(), transaction: vi.fn() }));
+const dbMock = vi.hoisted(() => ({ select: vi.fn(), transaction: vi.fn(), execute: vi.fn() }));
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 const getLockGatewayMock = vi.hoisted(() => vi.fn());
 
@@ -273,6 +273,13 @@ describe("storage.cancelReservation", () => {
 });
 
 describe("storage.expireOverdueReservations", () => {
+  // Второй проход sweep («осиротевший reserved») ходит в db.execute напрямую,
+  // мимо транзакции первого прохода. По умолчанию — «нечего освобождать».
+  beforeEach(() => {
+    dbMock.execute.mockReset();
+    dbMock.execute.mockResolvedValue({ rows: [] });
+  });
+
   it("flips overdue active reservations to expired and frees their bikes", async () => {
     const { tx, calls } = makeTx([], [
       { rows: [{ id: 1, bike_id: "BC-01" }, { id: 2, bike_id: "BC-02" }] }, // overdue SELECT
@@ -314,6 +321,41 @@ describe("storage.expireOverdueReservations", () => {
 
     expect(count).toBe(0);
     expect(calls.execute.some((q) => q.includes("UPDATE reservations"))).toBe(false);
+  });
+
+  // Обратный проход. Велосипед в "reserved" без активной брони первым проходом
+  // не виден в принципе (тот идёт от брони к велосипеду) и сам не рассасывается:
+  // startRide отказывает всем, потому что предъявить бронь некому.
+  it("frees a bike stuck in reserved with no active reservation behind it", async () => {
+    const { tx } = makeTx([], [{ rows: [] }]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    dbMock.execute.mockResolvedValue({ rows: [{ id: "BC-001", lock_imei: "861234567890123" }] });
+    const syncGpsTrackingForStatus = vi.fn();
+    getLockGatewayMock.mockReturnValue({ syncGpsTrackingForStatus });
+
+    const count = await storage.expireOverdueReservations();
+
+    // Осиротевшие в счётчик истёкших броней не идут — брони под ними нет.
+    expect(count).toBe(0);
+    const q = String(dbMock.execute.mock.calls[0][0]);
+    expect(dbMock.execute).toHaveBeenCalledTimes(1);
+    expect(syncGpsTrackingForStatus).toHaveBeenCalledWith("861234567890123", "BC-001", "available");
+    void q;
+  });
+
+  it("leaves a freshly reserved bike alone (race with createReservation)", async () => {
+    // Порог по updated_at: легальный "reserved" не живёт дольше TTL брони,
+    // поэтому запрос обязан отсекать всё, что моложе.
+    const { tx } = makeTx([], [{ rows: [] }]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    dbMock.execute.mockResolvedValue({ rows: [] });
+
+    await storage.expireOverdueReservations();
+
+    const chunks = (dbMock.execute.mock.calls[0][0] as any).queryChunks
+      .map((c: any) => (typeof c === "string" ? c : c?.value?.join?.("") ?? "")).join("");
+    expect(chunks).toContain("updated_at");
+    expect(chunks).toContain("NOT EXISTS");
   });
 });
 

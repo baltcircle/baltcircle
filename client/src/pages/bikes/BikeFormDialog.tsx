@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { Bike, BikeStatus } from "@shared/schema";
-import { BIKE_STATUSES } from "@shared/schema";
+import { BIKE_STATUSES, OPERATOR_ASSIGNABLE_BIKE_STATUSES } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { errorMessage } from "@/lib/error-message";
 import { useToast } from "@/hooks/use-toast";
@@ -169,7 +169,11 @@ export function BikeFormDialog({
               <Select value={form.status} onValueChange={(v) => setForm((f) => ({ ...f, status: v as BikeStatus }))}>
                 <SelectTrigger data-testid="select-bike-status"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {BIKE_STATUSES.map((s) => (
+                  {/* Текущий статус остаётся в списке, даже если он системный
+                      («Забронирован»/«В аренде»): иначе Select у такого
+                      велосипеда показал бы пустое поле и первое же сохранение
+                      формы молча увело бы его в другой статус. */}
+                  {BIKE_STATUSES.filter((s) => OPERATOR_ASSIGNABLE_BIKE_STATUSES.includes(s) || s === form.status).map((s) => (
                     <SelectItem key={s} value={s} data-testid={`status-option-${s}`}>{STATUS_LABEL[s]}</SelectItem>
                   ))}
                 </SelectContent>
