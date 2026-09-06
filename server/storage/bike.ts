@@ -598,10 +598,10 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       at: number,
     ): Promise<void> {
       const result = await pool.query<{ id: string }>(
-        `UPDATE bikes SET status = 'maintenance', maintenance_reason = 'auto:lock_open_unattended', updated_at = $2
+        `UPDATE bikes SET status = 'maintenance', maintenance_reason = 'auto:lock_open_unattended'
          WHERE lock_imei = $1 AND status = 'available'
          RETURNING id`,
-        [imei, at],
+        [imei],
       );
       const bikeId = result.rows[0]?.id;
       if (!bikeId) return;

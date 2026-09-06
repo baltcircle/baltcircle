@@ -63,7 +63,7 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
             expiresAt: now + RESERVATION_TTL_MS,
             status: "active",
           } as any).returning())[0] as Reservation;
-          await tx.update(bikes).set({ status: "reserved", updatedAt: now } as any).where(eq(bikes.id, bikeId));
+          await tx.update(bikes).set({ status: "reserved" } as any).where(eq(bikes.id, bikeId));
           return { reservation: row };
         });
         if (!("error" in result)) {
@@ -141,7 +141,7 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
         // "reserved" for THIS reservation's bike — a claimed reservation
         // (bike now "rented") must never be touched by a cancel that raced
         // in after the ride already started.
-        const freed = await tx.update(bikes).set({ status: "available", updatedAt: Date.now() } as any)
+        const freed = await tx.update(bikes).set({ status: "available" } as any)
           .where(sql`${bikes.id} = ${row.bikeId} AND ${bikes.status} = 'reserved'`)
           .returning({ lockImei: bikes.lockImei });
         if (freed.length > 0) {
@@ -181,7 +181,7 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
           await tx.execute(sql`UPDATE reservations SET status = 'expired' WHERE id = ANY(${ids})`);
           for (const r of rows) {
             const freed = await tx.execute(
-              sql`UPDATE bikes SET status = 'available', updated_at = ${now} WHERE id = ${r.bike_id} AND status = 'reserved' RETURNING lock_imei`,
+              sql`UPDATE bikes SET status = 'available' WHERE id = ${r.bike_id} AND status = 'reserved' RETURNING lock_imei`,
             );
             if (freed.rows.length > 0) {
               freedLocks.push({ bikeId: r.bike_id, lockImei: (freed.rows[0] as { lock_imei: string | null }).lock_imei });

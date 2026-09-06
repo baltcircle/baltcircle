@@ -474,7 +474,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
               activeSlot,
             }).returning())[0] as Ride;
             await tx.update(bikes).set({
-              status: "rented", updatedAt: Date.now(),
+              status: "rented",
               lat: startLat, lng: startLng, parkingId: startParkingMatch.id,
             } as any).where(eq(bikes.id, bikeId));
             // Seed the append-only points table with the start point so the live
@@ -598,8 +598,8 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         await tx.update(rides).set({ status: "cancelled", endedAt: Date.now(), activeSlot: null } as any).where(eq(rides.id, rideId));
         await tx.update(bikes).set((
           lockClosed
-            ? { status: "available", updatedAt: Date.now() }
-            : { status: "maintenance", maintenanceReason: "auto:lock_open_unconfirmed", updatedAt: Date.now() }
+            ? { status: "available" }
+            : { status: "maintenance", maintenanceReason: "auto:lock_open_unconfirmed" }
         ) as any).where(eq(bikes.id, ride.bikeId));
         if (opts.refundKopecks > 0) {
           await tx.execute(sql`UPDATE wallet SET balance = balance + ${opts.refundKopecks} WHERE user_id = ${ride.userId}`);

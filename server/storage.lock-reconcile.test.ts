@@ -36,7 +36,10 @@ describe("reconcileUnattendedOpenLock (audit: lock-open-while-available, 2026-09
     expect(sqlText).toContain("SET status = 'maintenance'");
     expect(sqlText).toContain("maintenance_reason = 'auto:lock_open_unattended'");
     expect(sqlText).toContain("WHERE lock_imei = $1 AND status = 'available'");
-    expect(params).toEqual(["861234567890123", 1000]);
+    // `at` в запрос не идёт: у bikes нет колонки updated_at, и попытка её
+    // записать роняла весь UPDATE. Метка времени нужна только алерту ниже.
+    expect(params).toEqual(["861234567890123"]);
+    expect(sqlText).not.toContain("updated_at");
     expect(cacheSpy).toHaveBeenCalledTimes(1);
     expect(alertSpy).toHaveBeenCalledWith("BC-01", 1000);
   });

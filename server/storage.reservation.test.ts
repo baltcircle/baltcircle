@@ -294,6 +294,10 @@ describe("storage.expireOverdueReservations", () => {
     expect(count).toBe(2);
     expect(calls.execute.some((q) => q.includes("UPDATE reservations SET status = 'expired'"))).toBe(true);
     expect(calls.execute.filter((q) => q.includes("UPDATE bikes SET status = 'available'")).length).toBe(2);
+    // У bikes нет колонки updated_at: запрос с ней Postgres роняет целиком,
+    // и брони перестают истекать вообще. Мок SQL не исполняет, поэтому
+    // единственная защита от повторения — проверка текста запроса.
+    expect(calls.execute.some((q) => q.includes("updated_at"))).toBe(false);
   });
 
   it("syncs D1 GPS tracking to the available (120s) interval for every freed bike (bike-status lifecycle spec, 2026-09)", async () => {
