@@ -6,10 +6,13 @@ import {
   findNearestParkingWithinRadius, findNearestParkingWithinRadiusFromRealCoords,
   LOCK_GPS_LIVE_MS, PAUSE_ARM_TTL_MS, END_ARM_TTL_MS,
   RIDE_END_AWAITING_LOCK_GPS_ERROR, MAX_ACCEPTABLE_HDOP, END_GEOFENCE_SMOOTHING_SAMPLES,
-  LOW_BATTERY_AUTO_OFFLINE_THRESHOLD, MAX_ACTIVE_RIDES_PER_USER,
+  LOW_BATTERY_AUTO_OFFLINE_THRESHOLD, MAX_ACTIVE_RIDES_PER_USER, PAUSE_FREE_GRACE_MS,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
 import { pendingPauseCreditMs } from "@shared/pause";
+import {
+  nextExpiryNotice, effectiveMask, EXPIRY_WARN_10MIN_MS,
+} from "@shared/ride-expiry";
 import { sendToUserAsync } from "../push";
 import {
   getTbankConfig, tbankInitSavedCardCharge, tbankCharge, tbankInitSbpCharge, tbankChargeQr,
@@ -1333,6 +1336,76 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
 
     async countRides() {
       return (await db.select({ c: count() }).from(rides))[0].c;
+    }
+
+    // Sweep entry point (server/index.ts interval): push "10 минут до конца",
+    // "5 минут до конца" and "начался овертайм" to riders whose paid window is
+    // running out. Returns how many notifications were actually dispatched.
+    //
+    // Claim-then-send: the mask is written FIRST, under a conditional UPDATE
+    // that also re-checks paid_until_at, and the push only goes out if that
+    // UPDATE claimed the row. A crash between the two loses a notification;
+    // the reverse order would duplicate one on every retry, and a duplicated
+    // "овертайм" push is far worse than a missed "10 минут".
+    async notifyRidesNearingExpiry(now: number = Date.now()): Promise<number> {
+      // The horizon adds the pause grace on top of the widest threshold: a ride
+      // paused within the free grace has its effective deadline pushed back by
+      // up to PAUSE_FREE_GRACE_MS, so its raw paid_until_at can already sit
+      // inside the 10-minute window while the rider still has more time left.
+      // Fetching it lets nextExpiryNotice() decide on the accurate deadline.
+      const horizon = now + EXPIRY_WARN_10MIN_MS + PAUSE_FREE_GRACE_MS;
+      let rows: Ride[];
+      try {
+        rows = (await db.select().from(rides).where(and(
+          eq(rides.status, "active"),
+          sql`${rides.paidUntilAt} IS NOT NULL`,
+          sql`${rides.paidUntilAt} <= ${horizon}`,
+        ))) as Ride[];
+      } catch (err) {
+        log(`[ride-expiry] sweep query failed: ${(err as Error)?.message ?? "?"}`, "rides");
+        throw err;
+      }
+
+      let sent = 0;
+      for (const ride of rows) {
+        const notice = nextExpiryNotice(ride, ride.bikeId, now);
+        if (!notice) continue;
+
+        const priorMask = effectiveMask(ride);
+        let claimed: { rows: unknown[] };
+        try {
+          claimed = await db.execute(sql`
+            UPDATE rides
+            SET expiry_notified_mask = ${notice.nextMask},
+                expiry_notified_for = ${ride.paidUntilAt},
+                overage_notified_at = ${notice.stage === "overtime" ? sql`${now}` : sql`overage_notified_at`}
+            WHERE id = ${ride.id}
+              AND status = 'active'
+              AND paid_until_at = ${ride.paidUntilAt}
+              AND (expiry_notified_for IS DISTINCT FROM ${ride.paidUntilAt}
+                   OR expiry_notified_mask = ${priorMask})
+            RETURNING id
+          `);
+        } catch (err) {
+          // One bad row must not abort the whole sweep — the next tick retries.
+          log(`[ride-expiry] claim failed ride=${ride.id}: ${(err as Error)?.message ?? "?"}`, "rides");
+          continue;
+        }
+        // Lost the race (ride ended, extended, or already notified) — skip.
+        if (claimed.rows.length === 0) continue;
+
+        sendToUserAsync(ride.userId, {
+          title: notice.title,
+          body: notice.body,
+          url: "/",
+          // Same tag for all three stages: a fresher warning replaces the
+          // previous one instead of stacking three cards in the shade.
+          tag: `ride:${ride.id}:expiry`,
+          data: { kind: "ride-expiry", rideId: ride.id, bikeId: ride.bikeId, stage: notice.stage },
+        });
+        sent += 1;
+      }
+      return sent;
     }
   };
 }

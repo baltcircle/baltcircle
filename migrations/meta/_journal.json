@@ -92,6 +92,13 @@
       "when": 1788520718489,
       "tag": "0012_windy_fallen_one",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1788691550455,
+      "tag": "0013_chemical_magdalene",
+      "breakpoints": true
     }
   ]
 }

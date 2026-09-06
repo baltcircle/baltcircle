@@ -731,8 +731,20 @@ export const rides = pgTable("rides", {
   // only the grace-adjusted extension to paidUntilAt does.
   totalPausedMs: integer("total_paused_ms").notNull().default(0),
   // Set once we've pushed the "paid time is over, per-minute billing started"
-  // notification, so the overage sweep never double-sends it.
+  // notification, so the overage sweep never double-sends it. Ops-visibility
+  // mirror of bit 4 in expiryNotifiedMask below, which is the actual guard.
   overageNotifiedAt: bigint("overage_notified_at", { mode: "number" }),
+  // Bitmask of the paid-window warnings already pushed for this ride:
+  //   1 = "10 минут до конца", 2 = "5 минут до конца", 4 = "начался овертайм".
+  // Valid ONLY for the paidUntilAt value recorded in expiryNotifiedFor: any
+  // extension (/rides/:id/extend, or the pause free-grace credit applied on
+  // resume) moves paidUntilAt, which invalidates the mask, so an extended ride
+  // correctly gets a fresh set of warnings for its new deadline instead of
+  // staying silent forever. Deliberately not reset by the extend path itself —
+  // deriving staleness from paidUntilAt keeps every writer of that column from
+  // having to remember this one.
+  expiryNotifiedMask: integer("expiry_notified_mask").notNull().default(0),
+  expiryNotifiedFor: bigint("expiry_notified_for", { mode: "number" }),
   // The parking the bike was standing in when this ride started (copied from
   // bikes.parking_id at start time). Used by the 5-minute cancel-with-refund
   // rule: eligible only while the bike is still at this same parking.
