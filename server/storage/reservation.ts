@@ -1,6 +1,6 @@
 import { bikes, reservations } from "@shared/schema";
 import type { Reservation, Bike } from "@shared/schema";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { RESERVATION_TTL_MS, MAX_ACTIVE_RIDES_PER_USER } from "@shared/geo";
 import { db } from "../db/bootstrap";
 import { log } from "../logger";
@@ -178,7 +178,12 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
           const rows = overdue.rows as { id: number; bike_id: string; user_id: string }[];
           if (rows.length === 0) return;
           const ids = rows.map((r) => r.id);
-          await tx.execute(sql`UPDATE reservations SET status = 'expired' WHERE id = ANY(${ids})`);
+          // Через билдер, а не сырым ANY(${ids}): массив в sql-шаблоне drizzle
+          // разворачивает в список параметров, и получается ANY(($1, $2)) —
+          // конструктор строки вместо массива, который Postgres отвергает
+          // («op ANY/ALL (array) requires array on right side»). Запрос падал
+          // на каждом тике, унося с собой всю транзакцию sweep.
+          await tx.update(reservations).set({ status: "expired" } as any).where(inArray(reservations.id, ids));
           for (const r of rows) {
             const freed = await tx.execute(
               sql`UPDATE bikes SET status = 'available' WHERE id = ${r.bike_id} AND status = 'reserved' RETURNING lock_imei`,
@@ -191,8 +196,11 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
           expired = rows;
         });
       } catch (err) {
-        log(`[reservations] sweep failed: ${(err as Error)?.message ?? "?"}`, "reservations");
-        throw err;
+        // Не пробрасываем: обратный проход ниже — независимая страховка от
+        // рассинхрона, и падение первого прохода не должно её отменять.
+        log(`[reservations] expiry pass failed: ${(err as Error)?.message ?? "?"}`, "reservations");
+        expiredCount = 0;
+        expired = [];
       }
       // Второй, обратный проход: велосипед в статусе "reserved", под которым
       // НЕТ активной брони. Первый проход идёт от брони к велосипеду и такой
