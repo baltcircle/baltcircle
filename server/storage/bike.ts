@@ -251,12 +251,27 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
         syncLockRegistryBinding(imei: string, bikeId: string | null): Promise<void>;
         forgetUnassignedLock(imei: string): Promise<void>;
         recalculateBikeParking(bike: Pick<Bike, "id" | "lat" | "lng">): Promise<void>;
+        cancelActiveReservationsForBike(bikeId: string): Promise<{ id: number; userId: string }[]>;
       },
       id: string,
       patch: AdminUpdateBikeInput,
     ) {
       const existing = await this.getBike(id);
       if (!existing) return { error: "Велосипед не найден" };
+
+      // "reserved" и "rented" принадлежат системе брони и аренды: они
+      // осмысленны только вместе со строкой reservations/rides, которая их
+      // подпирает. Выставленные вручную, они выводят велосипед из оборота
+      // насовсем — startRide требует предъявить активную бронь (или отдаёт
+      // «Велосипед находиться в аренде»), а предъявить её некому. Оператор
+      // снимает велосипед с линии через maintenance/storage/offline.
+      if (patch.status === "reserved" || patch.status === "rented") {
+        return {
+          error: patch.status === "reserved"
+            ? "Статус «Забронирован» ставится только бронью райдера — используйте «Сервис» или «На складе»"
+            : "Статус «В аренде» ставится только стартом поездки — используйте «Сервис» или «На складе»",
+        };
+      }
 
       // Block entering "available" while the lock is open. Checked against the
       // PATCH's own lockImei when a lock swap is part of the same request — a
@@ -334,6 +349,14 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
         if (this.isUniqueViolation(err)) return { error: LOCK_TAKEN };
         throw err;
       }
+      // Велосипед увели из "reserved" — бронь под ним больше ничего не держит.
+      // Оставить её "active" значит запереть слот райдера из общего лимита
+      // (MAX_ACTIVE_RIDES_PER_USER) на брони, которую он даже не увидит:
+      // велосипед ему уже не показывается, отменить нечего. Райдеру уходит
+      // «Бронь отменена».
+      if (existing.status === "reserved" && patch.status !== undefined) {
+        await this.cancelActiveReservationsForBike(workingId);
+      }
       // A manual transition into the rental pool uses the lock's current position,
       // not the operator-selected parking. This deliberately overwrites any
       // parkingId supplied in the same PATCH; the regular parking picker remains
@@ -382,6 +405,7 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       this: {
         getBike(id: string): Promise<Bike | undefined>;
         invalidateBikesCache(opts?: { silent?: boolean }): void;
+        cancelActiveReservationsForBike(bikeId: string): Promise<{ id: number; userId: string }[]>;
       },
       id: string,
     ) {
@@ -389,6 +413,9 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
       if (!existing) return { error: "Велосипед не найден" };
       if (existing.status === "rented") return { error: "Нельзя архивировать велосипед во время активной аренды" };
       await db.update(bikes).set({ status: "archived" } as any).where(eq(bikes.id, id));
+      // Архив прячет велосипед отовсюду, включая карту его же держателя, —
+      // бронь на нём стала неотменяемой изнутри и занимает слот райдера.
+      if (existing.status === "reserved") await this.cancelActiveReservationsForBike(id);
       this.invalidateBikesCache();
       return { bike: (await this.getBike(id))! };
     }

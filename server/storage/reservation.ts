@@ -97,6 +97,33 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
         .limit(1))[0] as Reservation | undefined;
     }
 
+    // Снять все активные брони на велосипед — операторская сторона, без
+    // проверки владельца. Нужна там, где статус велосипеда меняют в обход
+    // системы брони (adminUpdateBike, archiveBike): бронь, пережившая уход
+    // велосипеда из "reserved", занимает слот райдера из общего лимита
+    // MAX_ACTIVE_RIDES_PER_USER и не даёт забронировать другой велосипед, а
+    // сам велосипед райдеру уже не показывается — отменить её вручную он не
+    // может. Велосипед здесь НЕ трогаем: его статус задаёт вызывающий.
+    async cancelActiveReservationsForBike(bikeId: string): Promise<{ id: number; userId: string }[]> {
+      const cancelled = await db.execute(
+        sql`UPDATE reservations SET status = 'cancelled'
+            WHERE bike_id = ${bikeId} AND status = 'active'
+            RETURNING id, user_id`,
+      );
+      const rows = cancelled.rows as { id: number; user_id: string }[];
+      if (rows.length === 0) return [];
+      log(`[reservations] cancelled ${rows.length} reservation(s) on ${bikeId} after an operator status change`, "reservations");
+      for (const r of rows) {
+        sendToUserAsync(r.user_id, {
+          ...reservationExpiredTexts(bikeId),
+          url: "/",
+          tag: reservationTag(r.id),
+          data: { kind: "reservation-expired", reservationId: r.id, bikeId },
+        });
+      }
+      return rows.map((r) => ({ id: r.id, userId: r.user_id }));
+    }
+
     async cancelReservation(
       this: { invalidateBikesCache(opts?: { silent?: boolean }): void },
       id: number,
@@ -167,13 +194,46 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
         log(`[reservations] sweep failed: ${(err as Error)?.message ?? "?"}`, "reservations");
         throw err;
       }
-      if (expiredCount > 0) {
+      // Второй, обратный проход: велосипед в статусе "reserved", под которым
+      // НЕТ активной брони. Первый проход идёт от брони к велосипеду и такой
+      // случай не видит в принципе, а сам по себе он не рассасывается: startRide
+      // отказывает всем («Велосипед забронирован — подождите»), потому что
+      // предъявить активную бронь не может никто, и велосипед выпадает из
+      // оборота навсегда. Живой источник рассинхрона — операторский PATCH
+      // /api/admin/bikes/:id: он пишет bikes.status напрямую, ничего не зная о
+      // бронях (обе стороны согласуются отдельно, см. adminUpdateBike).
+      //
+      // Порог по updated_at убирает любую гонку с createReservation: тот ставит
+      // статус и вставляет бронь ОДНОЙ транзакцией, но легальный "reserved"
+      // всё равно живёт не дольше TTL брони, так что всё старше просто не может
+      // быть законным.
+      const orphanCutoff = now - RESERVATION_TTL_MS;
+      const orphaned = await db.execute(
+        sql`UPDATE bikes SET status = 'available', updated_at = ${now}
+            WHERE status = 'reserved'
+              AND (updated_at IS NULL OR updated_at <= ${orphanCutoff})
+              AND NOT EXISTS (
+                SELECT 1 FROM reservations r WHERE r.bike_id = bikes.id AND r.status = 'active'
+              )
+            RETURNING id, lock_imei`,
+      );
+      const orphanedRows = orphaned.rows as { id: string; lock_imei: string | null }[];
+      if (orphanedRows.length > 0) {
+        log(`[reservations] freed ${orphanedRows.length} orphaned reserved bike(s): ${orphanedRows.map((r) => r.id).join(", ")}`, "reservations");
+        for (const r of orphanedRows) {
+          freedLocks.push({ bikeId: r.id, lockImei: r.lock_imei });
+        }
+      }
+
+      if (expiredCount > 0 || orphanedRows.length > 0) {
         (this as unknown as { invalidateBikesCache(opts?: { silent?: boolean }): void }).invalidateBikesCache({ silent: true });
         // GPS-interval sync (bike-status lifecycle spec, 2026-09): back to
         // "available" cadence for every bike this sweep freed.
         for (const { bikeId, lockImei } of freedLocks) {
           if (lockImei) getLockGateway()?.syncGpsTrackingForStatus(lockImei, bikeId, "available");
         }
+        // Пуш — только по реально истёкшим броням: у осиротевшего "reserved"
+        // адресата нет по определению.
         // Только после коммита: уведомить о снятии брони, которая ещё могла бы
         // откатиться, — значит соврать. Тег тот же, что у предупреждения
         // «осталось 2 мин.», поэтому карточка заменяется, а не ложится сверху.

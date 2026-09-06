@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bike, Parking, Ride } from "@shared/schema";
 
-const dbMock = vi.hoisted(() => ({ select: vi.fn(), update: vi.fn(), transaction: vi.fn() }));
+// db.execute: уход велосипеда из "reserved" теперь снимает активную бронь под
+// ним (adminUpdateBike), и этот запрос идёт мимо drizzle-билдера.
+const dbMock = vi.hoisted(() => ({
+  select: vi.fn(), update: vi.fn(), transaction: vi.fn(),
+  execute: vi.fn(async () => ({ rows: [] })),
+}));
 const poolMock = vi.hoisted(() => ({ query: vi.fn() }));
 
 vi.mock("./db/bootstrap", () => ({
