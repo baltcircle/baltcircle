@@ -178,11 +178,16 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
         {/* Divider */}
         <div className="mx-4 mt-3 mb-2 h-px bg-sidebar-foreground/15" />
 
-        {/* Nav items — паддинг снизу с учётом safe-area, чтобы последний
-         * пункт не уходил под панель Safari / home-indicator. */}
+        {/* Nav items — когда закреплённого низа нет (не iOS), safe-area отступ
+         * держит сам список, иначе последний пункт уйдёт под панель
+         * браузера / home-indicator. */}
         <nav
           className="flex-1 overflow-y-auto px-4"
-          style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 1.5rem)" }}
+          style={{
+            paddingBottom: showInstallEntry
+              ? "0.5rem"
+              : "max(env(safe-area-inset-bottom, 0px), 1.5rem)",
+          }}
         >
           <MenuItem
             href="/payment-methods"
@@ -204,15 +209,24 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
           {isStaff && (
             <MenuItem href="/admin"         icon={Shield}      label="Операторская"    />
           )}
+        </nav>
 
-          {/* Только iPhone/iPad в обычном Safari: в установленной PWA и на
-             Android пункт бессмыслен и только вводит в заблуждение. */}
-          {showInstallEntry && (
+        {/* Закреплённый низ панели: не уезжает со скроллом списка и поднят
+         * над плавающей адресной строкой Safari / home-indicator: сама панель
+         * тянется до bottom:0, поэтому отступ даётся через safe-area-inset-bottom
+         * с гарантированным минимумом для браузеров без выреза. */}
+        {showInstallEntry && (
+          <div
+            className="shrink-0 border-t border-sidebar-foreground/15 px-4 pt-2"
+            style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 1rem)" }}
+          >
+            {/* Только iPhone/iPad в обычном Safari: в установленной PWA и на
+               Android пункт бессмыслен и только вводит в заблуждение. */}
             <button
               type="button"
               data-testid="button-drawer-install-pwa"
               onClick={() => setInstallOpen(true)}
-              className="mt-1 flex w-full items-center gap-4 rounded-xl px-2 py-3 text-left text-sidebar-foreground transition-colors hover:bg-black/10"
+              className="flex w-full items-center gap-4 rounded-xl px-2 py-3 text-left text-sidebar-foreground transition-colors hover:bg-black/10"
             >
               <Smartphone className="w-5 h-5 text-primary shrink-0" strokeWidth={2.25} />
               <span className="min-w-0 flex-1">
@@ -220,8 +234,8 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
                 <span className="block text-xs text-sidebar-foreground/70">На экран «Домой» — для уведомлений</span>
               </span>
             </button>
-          )}
-        </nav>
+          </div>
+        )}
       </div>
       <AuthModal open={registrationOpen} onOpenChange={setRegistrationOpen} />
       <IosInstallSheet open={installOpen} onOpenChange={setInstallOpen} />

@@ -38,6 +38,21 @@ describe("Интеграция подсказки", () => {
     expect(drawer).toContain("<IosInstallSheet");
   });
 
+  it("пункт закреплён внизу панели над адресной строкой Safari", () => {
+    // Внутри прокручиваемого <nav> пункт уезжал бы со скроллом и попадал под
+    // плавающую панель Safari — должен быть отдельным блоком после </nav>.
+    const navEnd = drawer.indexOf("</nav>");
+    const entry = drawer.indexOf('data-testid="button-drawer-install-pwa"');
+    expect(navEnd).toBeGreaterThan(-1);
+    expect(entry).toBeGreaterThan(navEnd);
+    expect(drawer).toMatch(/paddingBottom: "max\(env\(safe-area-inset-bottom, 0px\), 1rem\)"/);
+  });
+
+  it("без закреплённого низа safe-area отступ остаётся у списка", () => {
+    expect(drawer).toMatch(/paddingBottom: showInstallEntry/);
+    expect(drawer).toMatch(/"max\(env\(safe-area-inset-bottom, 0px\), 1\.5rem\)"/);
+  });
+
   it("ручное открытие из меню не использует гейт авто-показа", () => {
     expect(drawer).not.toContain("shouldAutoShowIosInstallHint");
     expect(drawer).not.toMatch(/<IosInstallSheet[^>]*\sauto\b/);
