@@ -283,7 +283,9 @@ export interface IRideStorage {
   // Audit F-07: the current active ride on a bike, if any — used by the admin
   // manual-unlock endpoint to avoid opening a bike mid-ride for another rider.
   getActiveRideForBike(bikeId: string): Promise<Ride | undefined>;
-  startRide(input: { bikeId: string; userId: string; tariff: string; prepaid?: boolean }): Promise<Ride | { error: string }>;
+  // isTest/durationMs are the operator-only test-ride path (POST
+  // /api/rides/start-test); durationMs is ignored unless isTest is set.
+  startRide(input: { bikeId: string; userId: string; tariff: string; prepaid?: boolean; isTest?: boolean; durationMs?: number }): Promise<Ride | { error: string }>;
   appendRidePoint(rideId: number, x: number, y: number): Promise<Ride | undefined>;
   insertBikeTelemetry(bikeId: string, x: number, y: number, t: number): Promise<void>;
   getBikeTelemetry(bikeId: string, fromT: number, toT: number): Promise<[number, number, number][]>;

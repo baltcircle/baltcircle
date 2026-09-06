@@ -121,3 +121,49 @@ describe("nextExpiryNotice: пауза и короткие тарифы", () => 
     expect(nextExpiryNotice(ride({ paidUntilAt: null }), "BC-01", NOW)).toBeNull();
   });
 });
+
+// Пресеты длительности тестовой поездки (RentalStartModal.TEST_MINUTE_PRESETS)
+// продают конкретное обещание оператору: «16 минут — все три уведомления».
+// Обещание держится порогом windowMs, поэтому его надо проверять здесь.
+describe("пресеты тестовой поездки дают обещанные уведомления", () => {
+  /** Стадии, которые реально придут за поездку длиной windowMinutes. */
+  function stagesFor(windowMinutes: number): string[] {
+    const startedAt = NOW;
+    const paidUntilAt = startedAt + windowMinutes * MIN;
+    let mask = 0;
+    const seen: string[] = [];
+    // Идём минутными шагами, как sweep, и на минуту дальше дедлайна.
+    for (let t = startedAt; t <= paidUntilAt + MIN; t += MIN) {
+      const n = nextExpiryNotice(
+        ride({ startedAt, paidUntilAt, expiryNotifiedMask: mask, expiryNotifiedFor: paidUntilAt }),
+        "BC-01",
+        t,
+      );
+      if (n) {
+        seen.push(n.stage);
+        mask = n.nextMask;
+      }
+    }
+    return seen;
+  }
+
+  it("2 минуты — только овертайм", () => {
+    expect(stagesFor(2)).toEqual(["overtime"]);
+  });
+
+  it("5 минут — только овертайм: окно не длиннее ни одного порога", () => {
+    expect(stagesFor(5)).toEqual(["overtime"]);
+  });
+
+  it("7 минут — «за 5» и овертайм", () => {
+    expect(stagesFor(7)).toEqual(["warn5", "overtime"]);
+  });
+
+  it("16 минут — все три", () => {
+    expect(stagesFor(16)).toEqual(["warn10", "warn5", "overtime"]);
+  });
+
+  it("30 минут — все три", () => {
+    expect(stagesFor(30)).toEqual(["warn10", "warn5", "overtime"]);
+  });
+});

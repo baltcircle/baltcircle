@@ -12,7 +12,10 @@ import { AuthModal } from "@/components/AuthModal";
 import { QrScanModal } from "@/components/QrScanModal";
 import { DrawerMenu } from "@/components/DrawerMenu";
 import { IosInstallSheet } from "@/components/IosInstallSheet";
-import { markIosInstallHintShown, shouldAutoShowIosInstallHint } from "@/lib/pwa";
+import { PushOptInSheet } from "@/components/PushOptInSheet";
+import { markIosInstallHintShown, shouldAutoShowIosInstallHint, isStandalone } from "@/lib/pwa";
+import { getPushState, resyncPushSubscription } from "@/lib/push";
+import { markPushOptInShown, shouldAutoShowPushOptIn } from "@/lib/push-optin";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
@@ -322,6 +325,33 @@ export function MapPage() {
     markIosInstallHintShown(key);
     setInstallHintOpen(true);
   }, [newestRideId]);
+
+  // ── Предложение включить уведомления ───────────────────────
+  // Включить их «по умолчанию» нельзя: разрешение даёт только сам
+  // пользователь, и на iOS — строго в ответ на жест. Зато можно спросить
+  // сразу после установки на экран «Домой» — тогда один тап, и всё.
+  //
+  // Только standalone и только для зарегистрированного: в обычном Safari
+  // на iOS подписаться всё равно нельзя, а /api/push/subscribe требует
+  // сессии — спросить раньше значит сжечь единственный системный запрос
+  // впустую. Параллельно тихо чиним подписку тем, кто уже разрешил:
+  // переустановка иконки на iOS выдаёт новый endpoint, старый мёртв.
+  const [pushOptInOpen, setPushOptInOpen] = useState(false);
+  useEffect(() => {
+    if (!isRegistered) return;
+    if (!isStandalone()) return;
+    let cancelled = false;
+    (async () => {
+      await resyncPushSubscription();
+      if (cancelled) return;
+      const state = await getPushState().catch(() => null);
+      if (cancelled || state === null) return;
+      if (!shouldAutoShowPushOptIn(state)) return;
+      markPushOptInShown();
+      setPushOptInOpen(true);
+    })();
+    return () => { cancelled = true; };
+  }, [isRegistered]);
 
   // true пока ждём регистрацию, чтобы после неё открыть QR-скан (goRent) —
   // раньше сюда же кодировался флаг "multi", но выделенного multi-режима
@@ -778,6 +808,8 @@ export function MapPage() {
       <DrawerMenu open={drawerOpen} onClose={() => setDrawerOpen(false)} mountedOpen={drawerMountedOpen.current} instantTick={drawerInstantTick} />
 
       <IosInstallSheet open={installHintOpen} onOpenChange={setInstallHintOpen} auto />
+
+      <PushOptInSheet open={pushOptInOpen} onOpenChange={setPushOptInOpen} />
 
       <AuthModal
         open={regOpen}

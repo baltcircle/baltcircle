@@ -117,6 +117,53 @@ export async function subscribePush(): Promise<PushState> {
   return "granted-subscribed";
 }
 
+/**
+ * Молчаливая синхронизация подписки при старте приложения.
+ *
+ * Зачем: подписка живёт в браузере, а не на сервере. На iOS удаление
+ * иконки с экрана «Домой» убивает endpoint, повторная установка даёт новый —
+ * без ре-синка сервер будет шлать в мёртвый endpoint, а пользователь — считать
+ * уведомления включёнными. requestPermission() ЗДЕСЬ НЕ ВЫЗЫВАЕТСЯ: работает
+ * только когда разрешение уже выдано, поэтому жест пользователя не нужен и никакого
+ * системного окна не всплывает.
+ *
+ * Никогда не бросает: вызывается фоново при старте — отвалившийся ре-синк
+ * не должен ни ронять рендер, ни показывать ошибку.
+ */
+export async function resyncPushSubscription(): Promise<void> {
+  try {
+    if (!isPushSupported()) return;
+    if (isIos() && !isStandalone()) return;
+    if (Notification.permission !== "granted") return;
+
+    let reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) reg = (await registerServiceWorker()) ?? undefined;
+    if (!reg) return;
+    await navigator.serviceWorker.ready;
+
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      // Разрешение есть, подписки нет (переустановка PWA / чистка данных) —
+      // восстанавливаем без единого вопроса к пользователю.
+      const vapidKey = await fetchVapidKey();
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidKey),
+      });
+    }
+
+    const json = sub.toJSON();
+    await apiRequest("POST", "/api/push/subscribe", {
+      endpoint: sub.endpoint,
+      keys: { p256dh: json.keys?.p256dh ?? "", auth: json.keys?.auth ?? "" },
+      userAgent: navigator.userAgent,
+    });
+  } catch {
+    // Нет сети, не авторизован, push не настроен на сервере — повторим при
+    // следующем запуске.
+  }
+}
+
 export async function unsubscribePush(): Promise<PushState> {
   if (!isPushSupported()) return "unsupported";
   const reg = await navigator.serviceWorker.getRegistration();
