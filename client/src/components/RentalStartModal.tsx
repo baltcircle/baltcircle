@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cleanErr } from "@/lib/api-error";
 import type { Bike, PublicPaymentMethod, Reservation } from "@shared/schema";
+import { TEST_RIDE_MIN_MINUTES, TEST_RIDE_MAX_MINUTES } from "@shared/schema";
 import {
   TBANK_CONFIG_KEY, PAYMENT_METHODS_KEY, RESERVATION_ACTIVE_KEY, type TbankConfigResponse,
 } from "@/lib/payment";
@@ -27,6 +28,20 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   bike: Bike | null;
 }
+
+/**
+ * Пресеты длительности тестовой поездки (operator/admin). Подобраны под
+ * проверку пушей окончания аренды: порог не шлётся, если оплаченное окно
+ * не длиннее самого порога. Ожидаемый набор стадий для каждого значения
+ * закреплён тестами в shared/ride-expiry.test.ts.
+ */
+const TEST_MINUTE_PRESETS: { minutes: number; hint: string }[] = [
+  { minutes: 2, hint: "Только овертайм через 2 мин — быстрый прогон" },
+  { minutes: 5, hint: "Только овертайм через 5 мин: окно не длиннее порогов" },
+  { minutes: 7, hint: "«За 5 минут» через 2 мин и овертайм через 7 мин" },
+  { minutes: 16, hint: "Все три: «за 10» через 6 мин, «за 5» через 11, овертайм через 16" },
+  { minutes: 30, hint: "Все три, с запасом на проверку паузы и продления" },
+];
 
 interface RideInitResponse {
   orderId: string;
@@ -232,16 +247,35 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
   // server-side; this client-side gate is UX only, never the real guard).
   const { isOperator, isAdmin } = useCurrentUser();
   const canStartTest = isOperator || isAdmin;
+  // Длительность тестовой поездки в минутах. Пустая строка = окно выбранного
+  // тарифа. Пресеты подобраны под проверку пушей окончания: 16 мин — все три
+  // порога (T-10, T-5, овертайм), 11 — два последних, 6 — только овертайм.
+  const [testMinutes, setTestMinutes] = useState<string>("");
+  const parsedTestMinutes = testMinutes.trim() === "" ? null : Number(testMinutes);
+  const testMinutesValid =
+    parsedTestMinutes === null ||
+    (Number.isInteger(parsedTestMinutes)
+      && parsedTestMinutes >= TEST_RIDE_MIN_MINUTES
+      && parsedTestMinutes <= TEST_RIDE_MAX_MINUTES);
   const testMut = useMutation<Ride, Error, void>({
     mutationFn: async () => {
       if (!bike) throw new Error("Велосипед не выбран");
-      const res = await apiRequest("POST", "/api/rides/start-test", { bikeId: bike.id, tariff });
+      const res = await apiRequest("POST", "/api/rides/start-test", {
+        bikeId: bike.id,
+        tariff,
+        ...(parsedTestMinutes !== null ? { durationMinutes: parsedTestMinutes } : {}),
+      });
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
       queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
-      toast.toast({ title: "Тестовая поездка начата", description: "Оплата не производится." });
+      toast.toast({
+        title: "Тестовая поездка начата",
+        description: parsedTestMinutes !== null
+          ? `Оплата не производится. Оплаченное окно — ${parsedTestMinutes} мин.`
+          : "Оплата не производится.",
+      });
       onOpenChange(false);
       navigate("/rent");
     },
@@ -260,7 +294,8 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
   const canBook = !!bike && bike.status === "available"
     && !atCombinedCap && !hasReservationForThisBike && !bookMut.isPending;
   const canStartTestRide = canStartTest && !!bike
-    && (bike.status === "available" || hasReservationForThisBike) && !testMut.isPending;
+    && (bike.status === "available" || hasReservationForThisBike) && !testMut.isPending
+    && testMinutesValid;
 
   function onPrimary() {
     if (useSavedCard) chargeMut.mutate();
@@ -414,23 +449,70 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
         {/* Operator/admin-only: full real ride lifecycle, cost forced to 0
             server-side, excluded from rider/staff ride-history feeds. */}
         {canStartTest && (
-          <Button
-            type="button"
-            variant="secondary"
-            className="w-full"
-            disabled={!canStartTestRide}
-            onClick={() => testMut.mutate()}
-            data-testid="button-start-test-ride"
-          >
-            {testMut.isPending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <>
-                <FlaskConical className="w-4 h-4 mr-1.5 shrink-0" />
-                <span className="truncate">Тестовая поездка (бесплатно)</span>
-              </>
+          <div className="space-y-2 rounded-xl border border-dashed border-card-border p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] uppercase tracking-widest text-muted-foreground">Длительность теста</span>
+              <span className="text-[11px] text-muted-foreground">{TEST_RIDE_MIN_MINUTES}–{TEST_RIDE_MAX_MINUTES} мин</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {TEST_MINUTE_PRESETS.map((preset) => {
+                const active = parsedTestMinutes === preset.minutes;
+                return (
+                  <button
+                    key={preset.minutes}
+                    type="button"
+                    onClick={() => setTestMinutes(active ? "" : String(preset.minutes))}
+                    title={preset.hint}
+                    data-testid={`button-test-minutes-${preset.minutes}`}
+                    className={`rounded-lg border px-2.5 py-1 text-xs transition-colors hover-elevate ${
+                      active ? "border-primary bg-primary/10 text-primary" : "border-card-border text-muted-foreground"
+                    }`}
+                  >
+                    {preset.minutes} мин
+                  </button>
+                );
+              })}
+            </div>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={TEST_RIDE_MIN_MINUTES}
+              max={TEST_RIDE_MAX_MINUTES}
+              step={1}
+              value={testMinutes}
+              onChange={(e) => setTestMinutes(e.target.value)}
+              placeholder="По тарифу"
+              aria-label="Длительность тестовой поездки в минутах"
+              data-testid="input-test-minutes"
+              className={`w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary ${
+                testMinutesValid ? "border-card-border" : "border-destructive"
+              }`}
+            />
+            {!testMinutesValid && (
+              <div className="text-[11px] text-destructive" data-testid="text-test-minutes-error">
+                Целое число от {TEST_RIDE_MIN_MINUTES} до {TEST_RIDE_MAX_MINUTES} минут.
+              </div>
             )}
-          </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full"
+              disabled={!canStartTestRide}
+              onClick={() => testMut.mutate()}
+              data-testid="button-start-test-ride"
+            >
+              {testMut.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <FlaskConical className="w-4 h-4 mr-1.5 shrink-0" />
+                  <span className="truncate">
+                    Тестовая поездка (бесплатно){parsedTestMinutes !== null && testMinutesValid ? ` — ${parsedTestMinutes} мин` : ""}
+                  </span>
+                </>
+              )}
+            </Button>
+          </div>
         )}
 
         <DialogFooter className="flex-row gap-2">

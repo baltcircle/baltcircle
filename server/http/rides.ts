@@ -156,6 +156,8 @@ export function registerRideRoutes(app: Express): void {
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     const r = await storage.startRide({
       bikeId: parsed.data.bikeId, userId: riderId(req), tariff: parsed.data.tariff, isTest: true,
+      // Only ever set on this route: startRide ignores durationMs unless isTest.
+      durationMs: parsed.data.durationMinutes != null ? parsed.data.durationMinutes * 60_000 : undefined,
     });
     if ("error" in r) return res.status(400).json(r);
     res.json(r);

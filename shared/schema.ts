@@ -857,9 +857,19 @@ export type CreateRideFeedbackInput = z.infer<typeof createRideFeedbackSchema>;
 // POST /api/rides/start-test body (operator/admin only, requireRole-enforced
 // server-side). Same tariff enum as /api/rides/start — the tariff only
 // determines duration bookkeeping; cost is always forced to 0 server-side.
+//
+// durationMinutes (optional): overrides the tariff's paid window for this ride
+// only, so staff can reproduce deadline behaviour (expiry pushes, overage
+// billing, auto-extension) in minutes instead of waiting out a real hour.
+// Bounded to 1..240 — 0 would put paidUntilAt at the start instant and an
+// unbounded value would let a test ride hold a bike indefinitely. Ignored
+// entirely outside the test path (see storage.startRide).
+export const TEST_RIDE_MIN_MINUTES = 1;
+export const TEST_RIDE_MAX_MINUTES = 240;
 export const startTestRideSchema = z.object({
   bikeId: z.string(),
   tariff: z.enum(["h1", "h2", "h3", "m1"]),
+  durationMinutes: z.number().int().min(TEST_RIDE_MIN_MINUTES).max(TEST_RIDE_MAX_MINUTES).optional(),
 });
 export type StartTestRideInput = z.infer<typeof startTestRideSchema>;
 

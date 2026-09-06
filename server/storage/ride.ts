@@ -251,7 +251,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         isUniqueViolation(err: unknown): boolean;
         abortUnstartedRide(rideId: number, opts: { refundKopecks: number; lockImei?: string | null }): Promise<void>;
       },
-      { bikeId, userId, tariff, prepaid, isTest }: { bikeId: string; userId: string; tariff: string; prepaid?: boolean; isTest?: boolean },
+      { bikeId, userId, tariff, prepaid, isTest, durationMs }: { bikeId: string; userId: string; tariff: string; prepaid?: boolean; isTest?: boolean; durationMs?: number },
     ) {
       // Hourly, prepaid model: the rider picks an hourly tariff (h1/h2/h3) and
       // pays its full price UP FRONT. The ride's cost is fixed to the tariff
@@ -277,6 +277,23 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       // which tariff duration was picked for testing.
       const tariffDef = TARIFFS.find((t) => t.id === tariff);
       const costKopecks = isTest ? 0 : (tariffDef ? tariffPriceKopecks(tariffDef) : 0);
+
+      // Paid-window length. durationMs is a TEST-ONLY override (validated to
+      // 1..240 minutes by startTestRideSchema) so staff can exercise deadline
+      // behaviour — expiry pushes, overage billing — in minutes instead of
+      // waiting out a real hour. Deliberately gated on isTest here rather than
+      // trusted from the caller: a future non-test call site that passes it by
+      // mistake must not be able to sell a rider an arbitrary window.
+      // totalTariffHours stays integer-hours (Postgres INTEGER column) and
+      // totalTariffMs carries the real length — tariffLabelForRide() already
+      // renders sub-hour totals in minutes, so a 15-minute test ride reads
+      // "15 минут" everywhere without extra formatting work.
+      const windowMs = isTest && durationMs != null && durationMs > 0
+        ? durationMs
+        : tariffDurationMs(tariff);
+      const windowHours = isTest && durationMs != null && durationMs > 0
+        ? Math.floor(windowMs / (60 * 60 * 1000))
+        : (tariffDef?.durationHours ?? 0);
 
       // Atomic: re-check the bike/rider state and claim the bike inside ONE
       // transaction. A bare SELECT inside a transaction does NOT lock the row
@@ -437,13 +454,13 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             // uses the just-computed geofence match (freshest available signal)
             // rather than the bike's possibly-stale stored parkingId, for the
             // 5-minute cancel-with-refund rule (audit: must still be at the SAME parking).
-            const paidUntilAt = startedAt + tariffDurationMs(tariff);
+            const paidUntilAt = startedAt + windowMs;
             const row = (await tx.insert(rides).values({
               bikeId, userId, startedAt,
               startLat, startLng,
               track: JSON.stringify(track), distanceM: 0, cost: costKopecks, tariff, status: "active",
-              totalTariffHours: tariffDef?.durationHours ?? 0,
-              totalTariffMs: tariffDurationMs(tariff),
+              totalTariffHours: windowHours,
+              totalTariffMs: windowMs,
               paidUntilAt, startParkingId: startParkingMatch.id,
               // The per-bike isTestBike flag was removed (no more designated
               // test units) — isTest is now set solely from the isTest param
