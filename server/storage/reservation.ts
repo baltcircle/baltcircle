@@ -260,6 +260,37 @@ export function ReservationMixin<TBase extends Constructor>(Base: TBase) {
       return expiredCount;
     }
 
+    // Диагностика застрявшего статуса, admin-only. Смотреть на статус
+    // велосипеда снаружи бесполезно: "reserved" одинаково выглядит и как живая
+    // бронь, и как осиротевший статус, и как бронь, которую sweep почему-то не
+    // считает просроченной. Отдаём сырые строки обеих сторон, чтобы различить
+    // эти случаи, не заходя в базу руками.
+    async diagnoseBikeReservationState(bikeId: string): Promise<{
+      now: number;
+      bike: Record<string, unknown> | null;
+      reservations: Record<string, unknown>[];
+      rides: Record<string, unknown>[];
+    }> {
+      const bike = await db.execute(
+        sql`SELECT id, status, battery, lock_imei, lock_online, lock_last_seen, parking_id, maintenance_reason
+            FROM bikes WHERE id = ${bikeId}`,
+      );
+      const res = await db.execute(
+        sql`SELECT id, user_id, status, created_at, expires_at, claimed_ride_id, notified_mask
+            FROM reservations WHERE bike_id = ${bikeId} ORDER BY id DESC LIMIT 10`,
+      );
+      const rid = await db.execute(
+        sql`SELECT id, user_id, status, started_at, ended_at FROM rides
+            WHERE bike_id = ${bikeId} ORDER BY id DESC LIMIT 5`,
+      );
+      return {
+        now: Date.now(),
+        bike: (bike.rows[0] as Record<string, unknown>) ?? null,
+        reservations: res.rows as Record<string, unknown>[],
+        rides: rid.rows as Record<string, unknown>[],
+      };
+    }
+
     async notifyReservationsNearingExpiry(now: number = Date.now()): Promise<number> {
       // Индекс idx_reservations_active_expires покрывает этот скан целиком.
       let rows: Reservation[];
