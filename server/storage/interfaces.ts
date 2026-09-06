@@ -387,6 +387,13 @@ export interface IReservationStorage {
   // where a bike's status is changed outside the reservation system
   // (adminUpdateBike, archiveBike) — the bike itself is left to the caller.
   cancelActiveReservationsForBike(bikeId: string): Promise<{ id: number; userId: string }[]>;
+  /** Сырые строки велосипеда, его броней и поездок — диагностика застрявшего статуса. */
+  diagnoseBikeReservationState(bikeId: string): Promise<{
+    now: number;
+    bike: Record<string, unknown> | null;
+    reservations: Record<string, unknown>[];
+    rides: Record<string, unknown>[];
+  }>;
   // Sweep entry point (server/index.ts interval) — flips overdue "active"
   // reservations to "expired" and frees the underlying bike back to
   // "available", and (second pass) frees any bike left "reserved" with no

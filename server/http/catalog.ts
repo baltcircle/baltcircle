@@ -460,5 +460,19 @@ export function registerCatalogRoutes(app: Express): void {
     }
     res.json(result);
   });
+  // Диагностика застрявшего статуса велосипеда, admin-only. Снаружи "reserved"
+  // одинаково выглядит и как живая бронь, и как осиротевший статус, и как
+  // бронь, которую sweep не считает просроченной, — различить их можно только
+  // по сырым строкам обеих сторон.
+  app.get("/api/admin/bikes/:id/reservation-state", requireRole("admin"), async (req, res) => {
+    res.json(await storage.diagnoseBikeReservationState(String(req.params.id)));
+  });
+  // Внеочередной прогон sweep броней. Тот же код, что крутится раз в минуту,
+  // просто без ожидания тика — нужен, чтобы проверить эффект фикса сразу после
+  // деплоя. Идемпотентен: повторный вызов на чистом парке ничего не делает.
+  app.post("/api/admin/reservations/sweep", requireRole("admin"), async (_req, res) => {
+    const expired = await storage.expireOverdueReservations();
+    res.json({ expired });
+  });
   app.get("/api/zones", async (_req, res) => res.json(await storage.listZones()));
 }
