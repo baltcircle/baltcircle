@@ -138,6 +138,48 @@ export function registerPaymentRoutes(app: Express): void {
     res.json(getTbankDiagnostics());
   });
 
+  // Admin-only СБП probe. Привязка счёта по СБП — отдельный продукт на
+  // терминале, и когда он не подключён, AddAccountQr отвечает Success=false.
+  // Райдеру этот текст не показывается (tbankErrorBody прячет не адресованные
+  // ему коды), поэтому «СБП не работает» со стороны продукта выглядит как
+  // молчание. Проба дёргает реальный AddAccountQr и возвращает СЫРОЙ ответ
+  // терминала: один запрос отвечает, подключён продукт или нет.
+  //
+  // Побочных эффектов нет: pending-строка не создаётся, привязка без
+  // подтверждения в банке плательщика сама истекает.
+  app.get("/api/payments/tbank/sbp-probe", requireRole("admin"), async (_req, res) => {
+    const cfg = getTbankConfig();
+    if (!cfg) return res.status(503).json({ configured: false, error: "T-Bank не настроен" });
+
+    try {
+      const resp = await tbankAddAccountQr(cfg, {
+        customerKey: "probe",
+        description: "Проверка доступности привязки счёта СБП",
+        dataType: "PAYLOAD",
+      });
+      const payload = extractQrPayload(resp);
+      res.json({
+        configured: true,
+        sbpAvailable: resp.Success === true && payload.length > 0,
+        success: resp.Success === true,
+        errorCode: typeof resp.ErrorCode === "string" ? resp.ErrorCode : null,
+        message: typeof resp.Message === "string" ? resp.Message : null,
+        details: typeof resp.Details === "string" ? resp.Details : null,
+        requestKey: typeof resp.RequestKey === "string" ? resp.RequestKey : null,
+        // Сам payload — рабочая ссылка на привязку чужого счёта, поэтому
+        // наружу отдаём только факт его наличия и длину.
+        hasPayload: payload.length > 0,
+        payloadLength: payload.length,
+      });
+    } catch (err) {
+      res.status(502).json({
+        configured: true,
+        sbpAvailable: false,
+        error: errMessage(err) ?? "Запрос к T-Bank не удался",
+      });
+    }
+  });
+
   // Start a card binding for the current registered rider. Calls AddCard with
   // CustomerKey = user.id and returns the PaymentURL the client opens. A pending
   // payment-method row is created so the UI can show "привязывается…" until the
@@ -346,12 +388,14 @@ export function registerPaymentRoutes(app: Express): void {
     const status = typeof resp.Status === "string" ? resp.Status : "";
     const accountToken = typeof resp.AccountToken === "string" ? resp.AccountToken : "";
     const bankName = typeof resp.BankMemberName === "string" ? resp.BankMemberName.trim() : "";
+    const bankMemberId = typeof resp.BankMemberId === "string" ? resp.BankMemberId.trim() : "";
     const outcome = classifyAccountBinding({ status, accountToken });
 
     if (outcome === "active") {
       const updated = await storage.updatePaymentMethod(method.id, {
         status: "active",
         accountToken: accountToken || method.accountToken,
+        bankMemberId: bankMemberId || method.bankMemberId,
         label: bankName ? `СБП · ${bankName}` : "СБП",
         lastErrorCode: null,
         lastErrorMessage: null,
@@ -667,7 +711,10 @@ export function registerPaymentRoutes(app: Express): void {
       // or PaymentId + AccountToken (SBP).
       const charge = kind === "card"
         ? await tbankCharge(cfg, { paymentId, rebillId: card!.rebillId! })
-        : await tbankChargeQr(cfg, { paymentId, accountToken: sbp!.accountToken! });
+        : await tbankChargeQr(cfg, {
+            paymentId, accountToken: sbp!.accountToken!,
+            bankMemberId: sbp!.bankMemberId ?? undefined,
+          });
       const status = typeof charge.Status === "string" ? charge.Status : "";
       const outcome = classifyRidePayment({ status, success: charge.Success === false ? false : undefined });
 
@@ -841,7 +888,10 @@ export function registerPaymentRoutes(app: Express): void {
 
       const charge = kind === "card"
         ? await tbankCharge(cfg, { paymentId, rebillId: card!.rebillId! })
-        : await tbankChargeQr(cfg, { paymentId, accountToken: sbp!.accountToken! });
+        : await tbankChargeQr(cfg, {
+            paymentId, accountToken: sbp!.accountToken!,
+            bankMemberId: sbp!.bankMemberId ?? undefined,
+          });
       const status = typeof charge.Status === "string" ? charge.Status : "";
       const outcome = classifyRidePayment({ status, success: charge.Success === false ? false : undefined });
 

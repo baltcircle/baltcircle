@@ -1,0 +1,1 @@
+ALTER TABLE "payment_methods" ADD COLUMN "bank_member_id" text;

@@ -144,7 +144,10 @@ export async function chargeRideOverageAsync(
 
     const charge = kind === "card"
       ? await tbankCharge(cfg, { paymentId, rebillId: method.rebillId! })
-      : await tbankChargeQr(cfg, { paymentId, accountToken: method.accountToken! });
+      : await tbankChargeQr(cfg, {
+          paymentId, accountToken: method.accountToken!,
+          bankMemberId: method.bankMemberId ?? undefined,
+        });
     const status = typeof charge.Status === "string" ? charge.Status : "";
     const outcome = classifyRidePayment({ status, success: charge.Success === false ? false : undefined });
 
