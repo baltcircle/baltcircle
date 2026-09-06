@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { CalendarClock, X, Loader2 } from "lucide-react";
 import type { Reservation } from "@shared/schema";
 
@@ -33,13 +33,29 @@ interface ReservationBannerProps {
   onCancel: () => void;
   cancelling: boolean;
   onExpire: () => void;
+  /**
+   * Нажатие по баннеру — центрирует карту на забронированном велосипеде.
+   * Кнопка отмены брони остаётся самостоятельным действием и фокус не вызывает.
+   */
+  onFocusBike?: () => void;
 }
 
-export function ReservationBanner({ reservation, onCancel, cancelling, onExpire }: ReservationBannerProps) {
+const NON_FOCUS_SELECTOR = 'button, a, input, [role="button"], [data-no-map-focus]';
+
+export function ReservationBanner({ reservation, onCancel, cancelling, onExpire, onFocusBike }: ReservationBannerProps) {
+  const handleBannerClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (!onFocusBike) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.(NON_FOCUS_SELECTOR)) return;
+    if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
+    onFocusBike();
+  };
+
   return (
     <div
       className="rounded-2xl bg-card/95 text-card-foreground backdrop-blur-sm shadow-xl px-4 py-3"
       data-testid="home-reservation-banner"
+      onClick={handleBannerClick}
     >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex items-center gap-2">

@@ -1,10 +1,10 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
 
 import type { Bike, MapObject, Parking, PublicPaymentMethod, Ride } from "@shared/schema";
 import type { Tariff } from "@shared/geo";
-import { MAX_ACTIVE_RIDES_PER_USER } from "@shared/geo";
+import { MAX_ACTIVE_RIDES_PER_USER, mapToReal } from "@shared/geo";
 import { PAYMENT_METHODS_KEY } from "@/lib/payment";
 import { MapLibreMap } from "@/components/MapLibreMap";
 import { RentalStartModal } from "@/components/RentalStartModal";
@@ -31,6 +31,14 @@ import { ScanAndPaymentBanner } from "./map/ScanAndPaymentBanner";
 import { ReservationBanner } from "./map/ReservationBanner";
 
 const ACTIVE_RIDES_KEY = ["/api/rides/active"] as const;
+
+// Карта во время аренды больше не «прилипает» к геопозиции (followUser выключен),
+// поэтому точка отсчёта возвращается одним фокусом после паузы в действиях пользователя.
+const IDLE_FOCUS_MS = 10_000;
+// Явный фокус (клик по карточке/баннеру, переключение аренды, возврат в
+// приложение) приводит карту к предсказуемому масштабу; автофокус по бездействию
+// зум не трогает (centerZoom = null).
+const EXPLICIT_FOCUS_ZOOM = 15;
 
 function patchActiveRide(old: Ride[] | undefined, updated: Ride): Ride[] {
   return (old ?? []).map((r) => (r.id === updated.id ? updated : r));
@@ -77,6 +85,8 @@ export function MapPage() {
   const onSelectSlot = (slot: 1 | 2) => {
     const target = activeRides.find((r) => r.activeSlot === slot);
     if (target) setFocusedRideId(target.id);
+    // Фокус карты следует за сменой bikeId в эффекте ниже — отдельный вызов
+    // здесь не нужен и привёл бы к двойному flyTo.
   };
   // Bike id shown on each switcher button in the card header, keyed by the
   // ride's stable slot (not array position) — lets the switcher read the
@@ -182,6 +192,114 @@ export function MapPage() {
     () => new Set<string>([...Array.from(myActiveBikeIds), ...Array.from(myReservationBikeIds)]),
     [myActiveBikeIds, myReservationBikeIds]
   );
+
+  // ── Фокус карты ──────────────────────────────────────────────────
+  // Раньше карта во время аренды жёстко следила за GPS (followUser), и
+  // пользователь не мог свободно двигать её: каждый GPS-tick возвращал видовой
+  // порт назад. Теперь центр карты — явное состояние страницы, которое
+  // меняется только по осознанным событиям (геокнопка, клик по карточке/баннеру,
+  // смена сфокусированной поездки, возврат в приложение, 10с бездействия).
+  // Новые координаты велосипеда двигают его метку, но не видовой порт.
+  // MapLibreMap реагирует на СМЕНУ ССЫЛКИ center — всегда кладём новый массив,
+  // чтобы повторный фокус на те же координаты тоже срабатывал.
+  const [mapCenter, setMapCenter] = useState<[number, number] | null>(null);
+  const [mapCenterZoom, setMapCenterZoom] = useState<number | null | undefined>(undefined);
+
+  // Геокнопка работает как раньше (зум 14): useGeolocation отдаёт НОВЫЙ массив
+  // на каждый клик, поэтому эффект не схлопывается при повторном нажатии.
+  useEffect(() => {
+    if (!geoCenter) return;
+    setMapCenter(geoCenter);
+    setMapCenterZoom(14);
+  }, [geoCenter]);
+
+  const bikesById = useMemo(() => {
+    const m = new Map<string, Bike>();
+    for (const b of bikesQ.data ?? []) m.set(b.id, b);
+    return m;
+  }, [bikesQ.data]);
+
+  // zoom: null — не трогать масштаб пользователя. Возвращает false, если велосипед
+  // ещё не загружен/без валидных координат — вызывающий код тогда просто не
+  // помечает первичный фокус выполненным и повторит его после загрузки данных.
+  const focusBike = useCallback((bikeId: string | null | undefined, zoom: number | null = null) => {
+    if (!bikeId) return false;
+    const b = bikesById.get(bikeId);
+    if (!b || !Number.isFinite(b.lat) || !Number.isFinite(b.lng)) return false;
+    const [lat, lng] = mapToReal(b.lng, b.lat);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+    setMapCenter([lat, lng]);
+    setMapCenterZoom(zoom);
+    return true;
+  }, [bikesById]);
+
+  // Глобальные слушатели ниже подписываются один раз за аренду и читают
+  // актуальную сфокусированную поездку через ref — иначе каждый refetch
+  // велосипедов перевешивал бы события и сбрасывал таймер бездействия.
+  const focusCurrentRideRef = useRef<(zoom?: number | null) => void>(() => {});
+  useEffect(() => {
+    focusCurrentRideRef.current = (zoom: number | null = null) => {
+      focusBike(focusedRide?.bikeId, zoom);
+    };
+  }, [focusBike, focusedRide?.bikeId]);
+
+  // Первичный фокус на велосипеде текущей поездки: при открытии страницы,
+  // старте аренды и при переключении слота (меняется bikeId). ref-гард держит
+  // ровно один фокус на велосипед — обновления /api/bikes (fleet stream) не должны
+  // возвращать карту пока пользователь сам её двигает.
+  const focusedOnceBikeRef = useRef<string | null>(null);
+  useEffect(() => {
+    const bikeId = focusedRide?.bikeId ?? null;
+    if (!bikeId) {
+      focusedOnceBikeRef.current = null;
+      return;
+    }
+    if (focusedOnceBikeRef.current === bikeId) return;
+    if (focusBike(bikeId, EXPLICIT_FOCUS_ZOOM)) focusedOnceBikeRef.current = bikeId;
+  }, [focusedRide?.bikeId, focusBike]);
+
+  // Возврат в приложение (разблокировка телефона, переключение вкладки, BFCache)
+  // + автофокус после IDLE_FOCUS_MS бездействия. Всё снимается при unmount и когда
+  // активных поездок нет — без аренды карта никуда сама не двигается.
+  const hasActiveRide = activeRides.length > 0;
+  useEffect(() => {
+    if (!hasActiveRide) return;
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    const arm = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        focusCurrentRideRef.current?.(null);
+        arm(); // после автофокуса отсчёт начинается заново
+      }, IDLE_FOCUS_MS);
+    };
+    const onActivity = () => arm();
+    const onReturn = () => {
+      if (document.visibilityState !== "visible") return;
+      focusCurrentRideRef.current?.(EXPLICIT_FOCUS_ZOOM);
+      arm();
+    };
+
+    const activityEvents = ["pointerdown", "pointerup", "wheel", "touchstart", "touchmove", "keydown", "scroll"] as const;
+    for (const ev of activityEvents) {
+      document.addEventListener(ev, onActivity, { passive: true, capture: true });
+    }
+    document.addEventListener("visibilitychange", onReturn);
+    window.addEventListener("focus", onReturn);
+    window.addEventListener("pageshow", onReturn);
+    arm();
+
+    return () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      for (const ev of activityEvents) {
+        document.removeEventListener(ev, onActivity, { capture: true } as EventListenerOptions);
+      }
+      document.removeEventListener("visibilitychange", onReturn);
+      window.removeEventListener("focus", onReturn);
+      window.removeEventListener("pageshow", onReturn);
+    };
+  }, [hasActiveRide]);
 
   // true пока ждём регистрацию, чтобы после неё открыть QR-скан (goRent) —
   // раньше сюда же кодировался флаг "multi", но выделенного multi-режима
@@ -531,8 +649,11 @@ export function MapPage() {
           ride={displayRide}
           height="100%"
           showLabels={false}
-          center={geoCenter}
-          followUser={activeRides.length > 0}
+          center={mapCenter}
+          centerZoom={mapCenterZoom}
+          // Слежение за GPS выключено: во время аренды карта должна оставаться
+          // там, куда её увёл пользователь; точку отсчёта возвращает явный фокус выше.
+          followUser={false}
           onUserLocation={(lat, lng) => {
             lastPosRef.current = { lat, lng };
             // Телефон физически может быть только у одного велосипеда — шлём
@@ -595,6 +716,7 @@ export function MapPage() {
             onCancel={() => cancelReservation(r.id)}
             cancelling={cancelling}
             onExpire={() => onReservationExpire(r.id)}
+            onFocusBike={() => focusBike(r.bikeId, EXPLICIT_FOCUS_ZOOM)}
           />
         ))}
         {focusedRide ? (
@@ -618,6 +740,7 @@ export function MapPage() {
             activeSlot={(focusedRide.activeSlot as 1 | 2) ?? 1}
             onSelectSlot={onSelectSlot}
             slotBikeIds={slotBikeIds}
+            onFocusBike={() => focusBike(focusedRide.bikeId, EXPLICIT_FOCUS_ZOOM)}
           />
         ) : (
           <ScanAndPaymentBanner
