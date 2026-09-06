@@ -3,6 +3,7 @@ import type { Reservation } from "@shared/schema";
 import { apiRequest, errorMessage, queryClient } from "@/lib/queryClient";
 import { RESERVATION_ACTIVE_KEY } from "@/lib/payment";
 import { useToast } from "@/hooks/use-toast";
+import { closeReservationNotifications } from "@/lib/push";
 
 /**
  * Баннеры активных броней («Начать аренду» → «Бронь»). Единственный источник
@@ -29,7 +30,10 @@ export function useReservationBanner(isRegistered: boolean) {
       const res = await apiRequest("POST", `/api/reservations/${id}/cancel`);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
+      // Отменил сам — предупреждение «осталось 2 мин.» уже неактуально, а
+      // серверного push об аннулировании по этой брони не будет.
+      closeReservationNotifications(id);
       queryClient.invalidateQueries({ queryKey: RESERVATION_ACTIVE_KEY });
       queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
       toast.toast({ title: "Бронь отменена" });

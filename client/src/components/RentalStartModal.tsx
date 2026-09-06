@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { closeReservationNotifications } from "@/lib/push";
 import { cleanErr } from "@/lib/api-error";
 import type { Bike, PublicPaymentMethod, Reservation } from "@shared/schema";
 import { TEST_RIDE_MIN_MINUTES, TEST_RIDE_MAX_MINUTES } from "@shared/schema";
@@ -134,6 +135,13 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
     enabled: open,
   });
   const activeReservations = activeReservationQ.data ?? [];
+  // Бронь этого велосипеда, которую списывает старт аренды: её карточка
+  // «осталось 2 мин.» после успешного старта уже не про что — серверного push
+  // об аннулировании тут не будет, бронь уходит в статус claimed.
+  const claimedReservationId = activeReservations.find((r) => r.bikeId === bike?.id)?.id ?? null;
+  const dropClaimedReservationCard = () => {
+    if (claimedReservationId !== null) closeReservationNotifications(claimedReservationId);
+  };
   const activeRidesCount = activeRidesQ.data?.length ?? 0;
   const hasReservationForThisBike = activeReservations.some((r) => r.bikeId === bike?.id);
   const atCombinedCap = activeReservations.length + activeRidesCount >= MAX_ACTIVE_RIDES_PER_USER;
@@ -156,6 +164,7 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
         // Rare replay case: this idempotency key already resolved to a paid
         // order (e.g. rider hit Back after paying, then re-submitted). Don't
         // redirect to a stale/expired T-Bank URL — route straight into the ride.
+        dropClaimedReservationCard();
         queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
         onOpenChange(false);
         navigate("/rent");
@@ -206,6 +215,7 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
       if (data.status === "paid") {
+        dropClaimedReservationCard();
         toast.toast({ title: "Оплачено", description: "Аренда началась." });
         onOpenChange(false);
         navigate("/rent");
@@ -268,6 +278,7 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
       return res.json();
     },
     onSuccess: () => {
+      dropClaimedReservationCard();
       queryClient.invalidateQueries({ queryKey: ["/api/rides/active"] });
       queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
       toast.toast({
