@@ -1,6 +1,8 @@
-import { LifeBuoy, Wallet, Route, ShieldCheck, Shield, ChevronRight, Bike } from "lucide-react";
+import { LifeBuoy, Wallet, Route, ShieldCheck, Shield, ChevronRight, Bike, Smartphone } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { AuthModal } from "@/components/AuthModal";
+import { IosInstallSheet } from "@/components/IosInstallSheet";
+import { canInstallIosPwa } from "@/lib/pwa";
 import { Link } from "wouter";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useQuery } from "@tanstack/react-query";
@@ -49,6 +51,10 @@ function MenuItem({
 export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0 }: Props) {
   const { user, isStaff, isRegistered } = useCurrentUser();
   const [registrationOpen, setRegistrationOpen] = useState(false);
+  const [installOpen, setInstallOpen] = useState(false);
+  // Считаем один раз на маунт: userAgent и display-mode не меняются в течение
+  // сессии, а в установленной PWA пункт не нужен вовсе.
+  const [showInstallEntry] = useState(canInstallIosPwa);
 
   // Если меню восстановлено открытым на первом рендере — первый кадр без
   // transition (панель сразу на месте, без slide-in), потом включаем transition
@@ -198,9 +204,27 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
           {isStaff && (
             <MenuItem href="/admin"         icon={Shield}      label="Операторская"    />
           )}
+
+          {/* Только iPhone/iPad в обычном Safari: в установленной PWA и на
+             Android пункт бессмыслен и только вводит в заблуждение. */}
+          {showInstallEntry && (
+            <button
+              type="button"
+              data-testid="button-drawer-install-pwa"
+              onClick={() => setInstallOpen(true)}
+              className="mt-1 flex w-full items-center gap-4 rounded-xl px-2 py-3 text-left text-sidebar-foreground transition-colors hover:bg-black/10"
+            >
+              <Smartphone className="w-5 h-5 text-primary shrink-0" strokeWidth={2.25} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-base text-sidebar-foreground">Установить приложение</span>
+                <span className="block text-xs text-sidebar-foreground/70">На экран «Домой» — для уведомлений</span>
+              </span>
+            </button>
+          )}
         </nav>
       </div>
       <AuthModal open={registrationOpen} onOpenChange={setRegistrationOpen} />
+      <IosInstallSheet open={installOpen} onOpenChange={setInstallOpen} />
     </>
   );
 }
