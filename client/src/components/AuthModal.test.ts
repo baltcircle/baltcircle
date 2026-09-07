@@ -104,3 +104,24 @@ describe("AuthModal agreement acceptance", () => {
     expect(source).toContain("/api/auth/register-complete");
   });
 });
+
+describe("AuthModal: экран входа", () => {
+  it("описание шага входа скрыто визуально, но остаётся для скринридера", () => {
+    // Radix связывает диалог с описанием через aria-describedby: выкинуть узел
+    // из DOM — значит потерять подпись и получить предупреждение в консоли.
+    expect(source).toContain('<DialogDescription className={step === "phone" ? "sr-only" : undefined}>');
+  });
+
+  it("поле телефона без рамки, по центру и с доступным именем вместо лейбла", () => {
+    expect(source).toContain('aria-label="Номер телефона"');
+    expect(source).not.toContain('<Label htmlFor="auth-phone">');
+    expect(source).toContain("border-0 bg-transparent");
+    expect(source).toContain("text-center");
+  });
+
+  it("на шаге входа заголовок по центру и без иконки", () => {
+    expect(source).toContain('step === "phone" ? "justify-center text-center" : ""');
+    expect(source).toContain('const icon = step === "code" ? <ShieldCheck');
+    expect(source).not.toContain("<Phone ");
+  });
+});

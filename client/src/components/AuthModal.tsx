@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH } from "@/lib/otp";
-import { Phone, ShieldCheck, UserPlus, ArrowLeft } from "lucide-react";
+import { ShieldCheck, UserPlus, ArrowLeft } from "lucide-react";
 
 interface Props {
   open: boolean;
@@ -345,7 +345,10 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
   }
 
   const title = step === "phone" ? "Вход" : step === "code" ? "Подтверждение номера" : "Регистрация";
-  const icon = step === "phone" ? <Phone className="w-5 h-5" /> : step === "code" ? <ShieldCheck className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />;
+  // Первый экран — одно поле и одна кнопка, объяснять там нечего, поэтому он
+  // идёт без иконки и с заголовком по центру. Дальше шаги требуют пояснений
+  // (куда ушла SMS, что осталось заполнить), и там шапка обычная.
+  const icon = step === "code" ? <ShieldCheck className="w-5 h-5" /> : step === "profile" ? <UserPlus className="w-5 h-5" /> : null;
   const description =
     step === "phone"
       ? "Укажите номер телефона. Мы отправим SMS с кодом подтверждения."
@@ -357,32 +360,45 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="dialog-auth" className="rounded-2xl sm:rounded-2xl">
         <DialogHeader>
-          <DialogTitle className="font-display font-light flex items-center gap-2">
+          <DialogTitle
+            className={`font-display font-light flex items-center gap-2 ${
+              step === "phone" ? "justify-center text-center" : ""
+            }`}
+          >
             {icon}
             {title}
           </DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
+          {/* На первом шаге описание скрыто визуально, но остаётся в DOM:
+              Radix требует его для aria-describedby, иначе диалог теряет
+              подпись для скринридера и роняет предупреждение. */}
+          <DialogDescription className={step === "phone" ? "sr-only" : undefined}>
+            {description}
+          </DialogDescription>
         </DialogHeader>
 
         {step === "phone" && (
           <form onSubmit={submitPhone} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="auth-phone">Номер телефона</Label>
-              <div className="flex items-center border rounded-md overflow-hidden focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-0">
-                <span className="px-3 py-2 bg-muted text-muted-foreground text-sm select-none border-r">+7</span>
-                <input
-                  id="auth-phone"
-                  type="tel"
-                  inputMode="numeric"
-                  value={phoneDigits}
-                  onChange={(e) => setPhoneDigits(normalizePhoneDigits(e.target.value))}
-                  placeholder="900 000-00-00"
-                  autoComplete="tel-national"
-                  autoFocus
-                  data-testid="input-auth-phone"
-                  className="flex-1 px-3 py-2 text-sm bg-background outline-none"
-                />
-              </div>
+            {/* Поле без рамки и по центру: на этом экране оно единственное, и
+                рамка вокруг него ничего не разделяет. Ширина задана в ch по
+                самому длинному значению («900 000-00-00»), иначе центрированный
+                текст прыгал бы при каждой введённой цифре. */}
+            <div className="flex items-center justify-center gap-2 py-2">
+              <label htmlFor="auth-phone" className="text-2xl text-muted-foreground select-none">
+                +7
+              </label>
+              <input
+                id="auth-phone"
+                type="tel"
+                inputMode="numeric"
+                value={phoneDigits}
+                onChange={(e) => setPhoneDigits(normalizePhoneDigits(e.target.value))}
+                placeholder="900 000-00-00"
+                aria-label="Номер телефона"
+                autoComplete="tel-national"
+                autoFocus
+                data-testid="input-auth-phone"
+                className="w-[13ch] border-0 bg-transparent p-0 text-2xl tabular-nums text-center outline-none focus:outline-none placeholder:text-muted-foreground/40"
+              />
             </div>
 
             {error && (
