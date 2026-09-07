@@ -1,4 +1,5 @@
-import { AlertCircle, CheckCircle2, ExternalLink, Loader2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertCircle, CheckCircle2, ExternalLink, Loader2, QrCode, X } from "lucide-react";
 import { BikeQr } from "@/components/BikeQr";
 import type { SbpBank } from "@shared/sbp";
 import { SbpBankPicker } from "./SbpBankPicker";
@@ -10,11 +11,13 @@ import { type SbpBinding, isOpenablePayload } from "./binding-utils";
 // binding against its BankId, so the acquirer answers with that bank's deeplink
 // and the rider goes straight into the bank app.
 //
-// Step 2 is the authorisation wait. With a bank chosen we lead with "Открыть
-// в <банк>" and keep the QR below (the deeplink can fail if the app isn't
-// installed, and a desktop rider needs the QR anyway). Without a bank it is the
-// original generic-QR screen. The parent polls the binding status and flips
-// `binding.status` to "active"/"failed", which this modal reflects.
+// Step 2 is the authorisation wait. With a bank chosen the rider is already
+// being handed to that bank's app, so the screen stays on the deeplink and the
+// QR is only rendered on request — a QR shown next to it would be a second,
+// contradictory instruction for the same binding. Without a bank (the explicit
+// "показать QR" path, and the only path on desktop) the QR is the screen. The
+// parent polls the binding status and flips `binding.status` to
+// "active"/"failed", which this modal reflects.
 //
 // The payload is a bank deeplink/URL rendered locally as a QR (no network), so
 // the account credential never leaves the rider's device path.
@@ -42,6 +45,12 @@ export function SbpBindModal({
   onClose: () => void;
 }) {
   const canOpen = binding !== null && isOpenablePayload(binding.payload);
+  // Держим QR скрытым, пока райдер не попросит: с выбранным банком его ведёт
+  // deeplink. Сбрасываем на каждую новую привязку — иначе раскрытый QR от
+  // предыдущей попытки останется на экране следующей.
+  const [qrRevealed, setQrRevealed] = useState(false);
+  useEffect(() => setQrRevealed(false), [binding?.payload]);
+  const showQr = binding !== null && (!binding.bankName || qrRevealed);
 
   return (
     <div
@@ -114,7 +123,7 @@ export function SbpBindModal({
             <div className="flex flex-col items-center">
               <p className="text-sm text-gray-500 dark:text-zinc-400 text-center mb-4">
                 {binding.bankName
-                  ? `Подтвердите привязку в приложении «${binding.bankName}». Если оно не открылось — нажмите кнопку ниже или отсканируйте QR.`
+                  ? `Подтвердите привязку в приложении «${binding.bankName}». Если оно не открылось — нажмите кнопку ниже.`
                   : "Отсканируйте QR камерой или приложением банка, а на этом телефоне — нажмите «Открыть в банке»."}
               </p>
 
@@ -131,9 +140,21 @@ export function SbpBindModal({
                 </a>
               )}
 
-              <div className="rounded-2xl bg-white p-3 border border-gray-200" data-testid="sbp-qr">
-                <BikeQr value={binding.payload} size={220} />
-              </div>
+              {showQr ? (
+                <div className="rounded-2xl bg-white p-3 border border-gray-200" data-testid="sbp-qr">
+                  <BikeQr value={binding.payload} size={220} />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setQrRevealed(true)}
+                  data-testid="button-sbp-reveal-qr"
+                  className="w-full inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-gray-200 dark:border-zinc-700 text-sm font-medium text-gray-600 dark:text-zinc-300 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+                >
+                  <QrCode className="w-4 h-4" />
+                  Показать QR-код
+                </button>
+              )}
 
               {canOpen && !binding.bankName && (
                 <a

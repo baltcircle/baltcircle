@@ -235,3 +235,27 @@ describe("СБП: кнопка ведёт в список банков, а не 
     );
   });
 });
+
+describe("СБП: QR только по явной просьбе", () => {
+  const modalSource = readFileSync(
+    resolve(process.cwd(), "client/src/pages/payment-methods/SbpBindModal.tsx"),
+    "utf8",
+  );
+
+  it("с выбранным банком QR скрыт за кнопкой", () => {
+    // Райдера уже уводит deeplink; QR рядом с ним — вторая, противоречащая
+    // инструкция для той же привязки.
+    expect(modalSource).toContain("const showQr = binding !== null && (!binding.bankName || qrRevealed);");
+    expect(modalSource).toContain('data-testid="button-sbp-reveal-qr"');
+  });
+
+  it("без банка QR остаётся основным экраном", () => {
+    // QR-путь выбирают явной кнопкой, и на десктопе он единственный рабочий:
+    // showQr должен быть истинным именно при отсутствии bankName.
+    expect(modalSource).toMatch(/showQr\s*=\s*binding !== null && \(!binding\.bankName/);
+  });
+
+  it("раскрытый QR не переезжает на следующую попытку", () => {
+    expect(modalSource).toContain("useEffect(() => setQrRevealed(false), [binding?.payload]);");
+  });
+});
