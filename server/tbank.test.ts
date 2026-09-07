@@ -369,6 +369,38 @@ describe("GetQrBankList и BankId в AddAccountQr", () => {
 });
 
 describe("normalizeSbpBanks", () => {
+  it("читает форму, которую отдаёт боевой терминал (BankLogo)", () => {
+    // Зафиксировано с прод-пробы sbp-banks-probe: логотип приезжает в BankLogo,
+    // а не в LogoURL из первой версии парсера, из-за чего список рендерился
+    // без иконок и без единой ошибки.
+    const banks = normalizeSbpBanks({
+      Success: true,
+      ErrorCode: "0",
+      BankList: [
+        {
+          BankId: "29c56d73-9646-4589-bd1f-8ce12dcfa0b3",
+          NspkBankId: "100000000111",
+          BankName: "Сбербанк",
+          BankLogo: "https://sub.nspk.ru/proxyapp/logo/bank100000000111.png",
+          BankOrder: 1,
+        },
+        {
+          BankId: "208a3c2c-556a-45df-a0e9-bfc875a0b6c9",
+          NspkBankId: "100000000004",
+          BankName: "Т-Банк",
+          BankLogo: "https://sub.nspk.ru/proxyapp/logo/bank100000000004.png",
+          BankOrder: 2,
+        },
+      ],
+    } as never);
+
+    expect(banks).toHaveLength(2);
+    expect(banks.every((b) => typeof b.logoUrl === "string")).toBe(true);
+    expect(banks.find((b) => b.name === "Сбербанк")?.logoUrl).toBe(
+      "https://sub.nspk.ru/proxyapp/logo/bank100000000111.png",
+    );
+  });
+
   it("читает документированную форму ответа", () => {
     const banks = normalizeSbpBanks({
       Success: true,
