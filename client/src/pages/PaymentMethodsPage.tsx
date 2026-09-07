@@ -15,6 +15,7 @@ import visaLogo from "@/assets/payment-icons/visa.svg";
 import mastercardLogo from "@/assets/payment-icons/mastercard.svg";
 import mirLogo from "@/assets/payment-icons/mir.svg";
 import sbpLogo from "@/assets/payment-icons/sbp.svg";
+import type { SbpBank } from "@shared/sbp";
 import {
   type SbpBinding,
   partitionPendingBindings,
@@ -24,11 +25,16 @@ import {
   statusLabel,
   methodError,
   cleanErr,
+  detectSbpDeviceType,
+  fetchSbpBanks,
+  startSbpBinding,
+  isOpenablePayload,
 } from "./payment-methods/binding-utils";
 import { TbankBindModal } from "./payment-methods/TbankBindModal";
 import { SbpBindModal } from "./payment-methods/SbpBindModal";
 
 const METHODS_KEY = ["/api/payment-methods"];
+const SBP_BANKS_KEY = ["/api/payments/tbank/sbp-banks"];
 const PENDING_POLL_INTERVAL_MS = 3_000;
 const ACCEPTED_PAYMENT_METHODS = [
   { src: visaLogo, alt: "Visa" },
@@ -42,6 +48,9 @@ export function PaymentMethodsPage() {
   const { isRegistered, isLoading: userLoading } = useCurrentUser();
   const [redirecting, setRedirecting] = useState(false);
   const [sbpBinding, setSbpBinding] = useState<SbpBinding | null>(null);
+  // Открыта ли модалка СБП. Шаг выбора банка идёт до того, как появится
+  // binding, поэтому видимость хранится отдельно от самого binding.
+  const [sbpModalOpen, setSbpModalOpen] = useState(false);
   // Модальный iframe привязки карты: url — hosted-форма T-Bank, methodId — созданная
   // pending-запись для polling. null — модалка закрыта.
   const [tbankBind, setTbankBind] = useState<{ methodId: number; url: string } | null>(null);
@@ -121,14 +130,39 @@ export function PaymentMethodsPage() {
   // refresh-bind-sbp until the method activates (or fails). If the SBP-recurrent product isn't
   // activated on the terminal, the backend relays T-Bank's message and we show
   // it via cleanErr — no crash.
+
+  // Список банков-участников СБП. Грузится только когда модалка открыта:
+  // это подписанный запрос к эквайреру, а не данные страницы. Ошибка не
+  // блокирует привязку — пикер показывает запасной путь через QR.
+  const banksQ = useQuery<SbpBank[]>({
+    queryKey: SBP_BANKS_KEY,
+    queryFn: () => fetchSbpBanks(detectSbpDeviceType()),
+    enabled: sbpModalOpen && tbankConfigured,
+    staleTime: 30 * 60 * 1_000,
+    retry: false,
+  });
+
   const bindSbpMut = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/payments/tbank/bind-sbp");
-      return (await res.json()) as { methodId: number; requestKey: string | null; qrPayload: string };
+    mutationFn: async (bank: SbpBank | null) => {
+      const data = await startSbpBinding(bank?.id);
+      return { data, bank };
     },
-    onSuccess: (data) => {
+    onSuccess: ({ data, bank }) => {
       queryClient.invalidateQueries({ queryKey: METHODS_KEY });
-      setSbpBinding({ methodId: data.methodId, payload: data.qrPayload, status: "waiting" });
+      setSbpBinding({
+        methodId: data.methodId,
+        payload: data.qrPayload,
+        status: "waiting",
+        ...(bank ? { bankName: bank.name } : {}),
+      });
+      // Райдер выбрал банк — значит payload это его deeplink, и тап по банку
+      // должен вести в приложение, а не к QR. Переход только на тач-
+      // устройствах: в десктопном браузере банковской схемы нет и попытка
+      // дала бы ошибку вместо QR. Модалка остаётся под переходом: если
+      // приложения нет, райдер вернётся на кнопку и QR.
+      if (bank && isOpenablePayload(data.qrPayload) && detectSbpDeviceType() === "mobile") {
+        window.location.assign(data.qrPayload);
+      }
     },
     onError: (e: Error) =>
       toast.toast({ title: "Не удалось привязать счёт СБП", description: cleanErr(e), variant: "destructive" }),
@@ -306,11 +340,22 @@ export function PaymentMethodsPage() {
       });
       return;
     }
-    bindSbpMut.mutate();
+    setSbpBinding(null);
+    setSbpModalOpen(true);
+  };
+
+  const closeSbpModal = () => {
+    setSbpModalOpen(false);
+    setSbpBinding(null);
+    bindSbpMut.reset();
   };
 
   const cardBusy = redirecting || bindCardMut.isPending;
   const sbpBusy = bindSbpMut.isPending;
+  // "" — запасной QR-путь (без банка); null — ничего не запущено.
+  const startingBankId = bindSbpMut.isPending
+    ? (bindSbpMut.variables?.id ?? "")
+    : null;
 
   return (
     <OverlayShell title="Способы оплаты">
@@ -451,7 +496,7 @@ export function PaymentMethodsPage() {
                   : "Добавить счёт СБП"}
               </p>
               <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">
-                {sbpBusy ? "Готовим QR…" : "Оплата по СБП — привязка без карты"}
+                {sbpBusy ? "Открываем банк…" : "Оплата по СБП — привязка без карты"}
               </p>
             </div>
             {!sbpBusy && (
@@ -461,10 +506,17 @@ export function PaymentMethodsPage() {
         </div>
       </div>
 
-      {sbpBinding && (
+      {sbpModalOpen && (
         <SbpBindModal
           binding={sbpBinding}
-          onClose={() => setSbpBinding(null)}
+          banks={banksQ.data ?? []}
+          banksLoading={banksQ.isLoading}
+          banksFailed={banksQ.isError}
+          startingBankId={startingBankId}
+          starting={bindSbpMut.isPending}
+          onPickBank={(bank) => bindSbpMut.mutate(bank)}
+          onUseQr={() => bindSbpMut.mutate(null)}
+          onClose={closeSbpModal}
         />
       )}
 
