@@ -24,8 +24,9 @@ import {
   tbankAddAccountQr, tbankGetAddAccountQrState, tbankRemoveCard,
   generateSbpBindOrderId, extractQrPayload, classifyAccountBinding,
   tbankInitSbpCharge, tbankChargeQr, generateSbpRideChargeOrderId,
-  generateExtendRideOrderId,
+  generateExtendRideOrderId, tbankGetQrBankList, normalizeSbpBanks,
 } from "./../tbank";
+import { type SbpBank, isValidSbpBankId } from "@shared/sbp";
 import {
   startRideForPaidOrder, extendRideForPaidOrder, tbankErrorBody, handleTbankNotification,
   bindingErrorPatch, bindViaVerificationPayment,
@@ -55,6 +56,28 @@ export function readIdempotencyKey(req: Request): { key: string } | { error: str
   if (!key) return { error: "Отсутствует заголовок Idempotency-Key" };
   if (key.length > IDEMPOTENCY_KEY_MAX_LEN) return { error: "Некорректный Idempotency-Key" };
   return { key };
+}
+
+// In-process cache of the СБП member list, keyed by device class. The registry
+// is shared by every rider and changes on the order of weeks, so a short TTL is
+// enough to collapse the burst of identical calls that opening the payment
+// sheet would otherwise produce. Deliberately per-process: it is a latency
+// optimisation, not state — a restart or a second instance just refetches.
+const SBP_BANKS_CACHE_TTL_MS = 30 * 60 * 1_000;
+const sbpBanksCache = new Map<string, { banks: SbpBank[]; expiresAt: number }>();
+
+function readCachedSbpBanks(deviceType: string): SbpBank[] | null {
+  const hit = sbpBanksCache.get(deviceType);
+  if (!hit) return null;
+  if (hit.expiresAt <= Date.now()) {
+    sbpBanksCache.delete(deviceType);
+    return null;
+  }
+  return hit.banks;
+}
+
+function writeCachedSbpBanks(deviceType: string, banks: SbpBank[]): void {
+  sbpBanksCache.set(deviceType, { banks, expiresAt: Date.now() + SBP_BANKS_CACHE_TTL_MS });
 }
 
 export function registerPaymentRoutes(app: Express): void {
@@ -284,6 +307,68 @@ export function registerPaymentRoutes(app: Express): void {
     await bindViaVerificationPayment(cfg, user.id, res, user.email, user.phone);
   });
 
+  // СБП member banks for the binding picker. Tapping a bank must open THAT
+  // bank's app, which requires passing its BankId to AddAccountQr — so the list
+  // has to come from the acquirer, not from a hardcoded table.
+  //
+  // Cached process-wide: the member registry changes on the order of weeks, the
+  // list is identical for every rider, and without a cache each open of the
+  // payment sheet would be one more signed call to the acquirer. Rider-scoped
+  // (requireAuth) because it is only ever needed inside the binding flow.
+  //
+  // Deliberately NOT behind paymentLimiter: that budget is 20 calls per IP per
+  // 5 minutes and exists to bound payment INITIATION. Behind carrier NAT a few
+  // riders merely opening the payment sheet would spend it and lock everyone on
+  // that IP out of actually binding. This route creates nothing, is read-only,
+  // and answers from the process cache almost always.
+  app.get("/api/payments/tbank/sbp-banks", requireAuth, async (req, res) => {
+    const cfg = getTbankConfig();
+    if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
+
+    const deviceType = req.query.device === "desktop" ? "desktop" : "mobile";
+    const cached = readCachedSbpBanks(deviceType);
+    if (cached) return res.json({ banks: cached });
+
+    try {
+      const resp = await tbankGetQrBankList(cfg, { scenarioType: "sub", deviceType });
+      if (!resp.Success) return res.status(502).json(tbankErrorBody(resp));
+      const banks = normalizeSbpBanks(resp);
+      // An empty list is not cached: it means either a transient acquirer answer
+      // or a response shape normalizeSbpBanks does not recognise, and caching it
+      // would pin the picker to the QR fallback for the whole cache window.
+      if (banks.length > 0) writeCachedSbpBanks(deviceType, banks);
+      res.json({ banks });
+    } catch (err) {
+      res.status(502).json({ error: errMessage(err) ?? "Не удалось получить список банков." });
+    }
+  });
+
+  // Admin-only raw view of GetQrBankList. T-Bank documents the request but not
+  // the response body, so this is how we verify what the terminal actually
+  // returns (and what normalizeSbpBanks made of it) without guessing from logs.
+  app.get("/api/payments/tbank/sbp-banks-probe", requireRole("admin"), async (req, res) => {
+    const cfg = getTbankConfig();
+    if (!cfg) return res.status(503).json({ configured: false, error: "T-Bank не настроен" });
+
+    const deviceType = req.query.device === "desktop" ? "desktop" : "mobile";
+    try {
+      const resp = await tbankGetQrBankList(cfg, { scenarioType: "sub", deviceType });
+      res.json({
+        configured: true,
+        deviceType,
+        success: resp.Success === true,
+        errorCode: typeof resp.ErrorCode === "string" ? resp.ErrorCode : null,
+        message: typeof resp.Message === "string" ? resp.Message : null,
+        details: typeof resp.Details === "string" ? resp.Details : null,
+        normalizedCount: normalizeSbpBanks(resp).length,
+        normalizedSample: normalizeSbpBanks(resp).slice(0, 5),
+        raw: resp,
+      });
+    } catch (err) {
+      res.status(502).json({ configured: true, error: errMessage(err) ?? "Запрос к T-Bank не удался" });
+    }
+  });
+
   // Start an SBP ACCOUNT binding via AddAccountQr. Unlike a card, the rider binds
   // their bank account once and future ride tariffs are charged via ChargeQr with
   // the returned AccountToken (SBP's analogue of a card RebillId). AddAccountQr
@@ -303,6 +388,15 @@ export function registerPaymentRoutes(app: Express): void {
     const cfg = getTbankConfig();
     if (!cfg) return res.status(503).json({ error: "Платежи настраиваются. Попробуйте позже." });
 
+    // Optional bank chosen in the picker. Validated against the opaque-token
+    // shape before it can reach a signed acquirer request; an unknown or
+    // malformed value degrades to the generic QR rather than being forwarded.
+    const bankIdRaw = (req.body as { bankId?: unknown } | undefined)?.bankId;
+    if (bankIdRaw !== undefined && bankIdRaw !== null && !isValidSbpBankId(bankIdRaw)) {
+      return res.status(400).json({ error: "Некорректный банк" });
+    }
+    const bankId = isValidSbpBankId(bankIdRaw) ? bankIdRaw : undefined;
+
     // Correlates this binding to exactly one pending row; <= 50 chars.
     const orderId = generateSbpBindOrderId();
 
@@ -311,6 +405,7 @@ export function registerPaymentRoutes(app: Express): void {
         customerKey: user.id,
         description: "Привязка счёта СБП для оплаты поездок",
         dataType: "PAYLOAD",
+        bankId,
       });
       // Success=false covers the "product not activated on terminal" case: we
       // relay the acquirer's own message so the UI explains it, no crash.
@@ -333,6 +428,9 @@ export function registerPaymentRoutes(app: Express): void {
         methodId: method.id,
         requestKey: typeof resp.RequestKey === "string" ? resp.RequestKey : null,
         qrPayload,
+        // Echoed so the modal knows whether the payload is that bank's deeplink
+        // (open it directly) or the generic QR (render it).
+        bankId: bankId ?? null,
       });
     } catch (err) {
       const message = errMessage(err);

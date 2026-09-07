@@ -17,6 +17,12 @@
 
 import { createHash, randomInt, timingSafeEqual } from "node:crypto";
 
+import {
+  type SbpBank,
+  isSafeBankLogoUrl,
+  isValidSbpBankId,
+  sortSbpBanks,
+} from "@shared/sbp";
 import { logger } from "./logger";
 
 // Structured logger (audit L6). We import from ./logger, NOT ./index, because
@@ -969,6 +975,11 @@ export interface AddAccountQrInput {
   // returns a base64 QR image. We request PAYLOAD and render the QR client-side
   // so we can also offer an "open in bank" deeplink button on mobile.
   dataType?: "PAYLOAD" | "IMAGE";
+  // BankId of a СБП member picked by the rider (from GetQrBankList). When set,
+  // `Data` comes back as that bank's deeplink instead of the generic payload,
+  // so tapping a bank in the picker opens that app directly. Only valid
+  // together with DataType=PAYLOAD per the T-Bank spec.
+  bankId?: string;
 }
 
 // Initiate an SBP account binding. Returns a RequestKey (to poll the state) and
@@ -979,14 +990,108 @@ export async function tbankAddAccountQr(
   cfg: TbankConfig,
   input: AddAccountQrInput,
 ): Promise<TbankResponse> {
+  const dataType = input.dataType ?? "PAYLOAD";
   return signedPost(cfg, "/AddAccountQr", {
     // Description is shown in the rider's bank app; DataType selects PAYLOAD vs
     // IMAGE. The binding is correlated to the rider via our own pending row keyed
     // by the returned RequestKey. (CustomerKey is not a documented AddAccountQr
     // field — sending it would break the token, the same code 204 trap.)
     Description: input.description,
-    DataType: input.dataType ?? "PAYLOAD",
+    DataType: dataType,
+    // pruneEmpty drops this when absent, keeping the signed set === the sent
+    // set. BankId only carries a deeplink for PAYLOAD; with IMAGE it would be
+    // signed but meaningless, so it is not sent then.
+    BankId: dataType === "PAYLOAD" ? input.bankId : undefined,
   });
+}
+
+export interface QrBankListInput {
+  // "sub" is the account-binding list (our case); "qr" is one-off payment.
+  scenarioType?: "qr" | "sub";
+  // T-Bank returns a device-specific list: a desktop browser cannot follow a
+  // bank deeplink, so its list is the QR-oriented one.
+  deviceType: "desktop" | "mobile";
+  deviceOs?: string;
+}
+
+// Fetch the СБП member banks for the account-binding picker. Device is a nested
+// object and therefore takes no part in the token (same rule as Receipt/DATA),
+// while ScenarioType is a scalar and is signed exactly as sent.
+export async function tbankGetQrBankList(
+  cfg: TbankConfig,
+  input: QrBankListInput,
+): Promise<TbankResponse> {
+  return signedPost(cfg, "/GetQrBankList", {
+    ScenarioType: input.scenarioType ?? "sub",
+    PaymentMethod: "SBP",
+    Device: {
+      Type: input.deviceType,
+      // Free-form per the spec, capped at 255. Only ever a coarse UA family.
+      ...(input.deviceOs ? { Os: input.deviceOs.slice(0, 255) } : {}),
+    },
+  });
+}
+
+// Pull the bank list out of a GetQrBankList response.
+//
+// T-Bank documents the request but not the response body, and different
+// acquirer builds have shipped the array under different keys with differently
+// named item fields. Rather than hard-code one guess and ship a picker that
+// silently renders empty, walk the response for the first array of objects that
+// look like banks and read each item tolerantly. An unrecognised shape yields
+// [] and the caller falls back to the plain QR flow.
+export function normalizeSbpBanks(resp: TbankResponse): SbpBank[] {
+  const container = resp as unknown as Record<string, unknown>;
+  const array = findBankArray(container, 0);
+  if (!array) return [];
+
+  const banks: SbpBank[] = [];
+  const seen = new Set<string>();
+  for (const entry of array) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const item = entry as Record<string, unknown>;
+    const id = firstString(item, ["BankId", "bankId", "MemberId", "memberId", "Id", "id"]);
+    const name = firstString(item, ["BankName", "bankName", "MemberName", "memberName", "Name", "name"]);
+    if (!isValidSbpBankId(id) || !name) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const logoUrl = firstString(item, ["LogoURL", "LogoUrl", "logoUrl", "logoURL", "Logo", "logo", "IconURL", "iconUrl"]);
+    banks.push({
+      id,
+      name: name.slice(0, 120),
+      ...(isSafeBankLogoUrl(logoUrl) ? { logoUrl } : {}),
+    });
+  }
+  return sortSbpBanks(banks);
+}
+
+// Depth-limited search for the member array. Depth 3 covers every documented
+// nesting (root, root.Data, root.Data.BankList) without walking a hostile or
+// pathological response indefinitely.
+function findBankArray(node: Record<string, unknown>, depth: number): unknown[] | null {
+  if (depth > 3) return null;
+  const nested: Record<string, unknown>[] = [];
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "Token") continue;
+    if (Array.isArray(value)) {
+      if (value.some((item) => typeof item === "object" && item !== null)) return value;
+      continue;
+    }
+    if (typeof value === "object" && value !== null) nested.push(value as Record<string, unknown>);
+  }
+  for (const child of nested) {
+    const found = findBankArray(child, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+function firstString(item: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = item[key];
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  return undefined;
 }
 
 // Poll the state of an SBP account binding started with AddAccountQr. Accepts

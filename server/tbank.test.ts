@@ -4,11 +4,14 @@ import {
   classifyInitBinding,
   classifyRidePayment,
   computeToken,
+  tbankAddAccountQr,
   tbankChargeQr,
+  tbankGetQrBankList,
   tbankInitRidePayment,
   tbankInitSavedCardCharge,
   tbankInitSbpCharge,
   tbankRefundVerificationCharge,
+  normalizeSbpBanks,
   verifyNotificationToken,
 } from "./tbank";
 import type { TbankConfig } from "./tbank";
@@ -289,5 +292,163 @@ describe("СБП: ChargeQr и BankMemberId", () => {
     const { Token, DATA, ...scalars } = body;
     expect(computeToken(scalars, cfg.password)).toBe(Token);
     expect(DATA).toBeDefined();
+  });
+});
+
+describe("GetQrBankList и BankId в AddAccountQr", () => {
+  async function capture(
+    fn: () => Promise<unknown>,
+    response: Record<string, unknown> = { Success: true },
+  ): Promise<{ url: string; body: Record<string, unknown> }> {
+    let url = "";
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", vi.fn(async (calledUrl: string, init?: RequestInit) => {
+      url = String(calledUrl);
+      body = JSON.parse(String(init?.body));
+      return { json: async () => response };
+    }));
+    await fn();
+    return { url, body };
+  }
+
+  it("запрашивает сценарий привязки счёта и держит Device вне подписи", async () => {
+    // Device — вложенный объект: уходит в теле, но не в токене. Ровно та же
+    // граница, что у DATA/Receipt; нарушение даёт код 204 на каждый запрос.
+    const { url, body } = await capture(() => tbankGetQrBankList(cfg, {
+      deviceType: "mobile",
+      deviceOs: "iOS 18",
+    }));
+
+    expect(url).toBe("https://tbank.test/v2/GetQrBankList");
+    expect(body).toMatchObject({
+      ScenarioType: "sub",
+      PaymentMethod: "SBP",
+      Device: { Type: "mobile", Os: "iOS 18" },
+    });
+    const { Token, Device, ...scalars } = body;
+    expect(computeToken(scalars, cfg.password)).toBe(Token);
+    expect(Device).toBeDefined();
+  });
+
+  it("подписывает BankId вместе с остальными полями AddAccountQr", async () => {
+    const { body } = await capture(() => tbankAddAccountQr(cfg, {
+      customerKey: "rider-1",
+      description: "Привязка счёта СБП",
+      bankId: "100000000004",
+    }));
+
+    expect(body).toMatchObject({ DataType: "PAYLOAD", BankId: "100000000004" });
+    const { Token, ...scalars } = body;
+    expect(computeToken(scalars, cfg.password)).toBe(Token);
+  });
+
+  it("не шлёт BankId, когда банк не выбран", async () => {
+    const { body } = await capture(() => tbankAddAccountQr(cfg, {
+      customerKey: "rider-1",
+      description: "Привязка счёта СБП",
+    }));
+
+    expect(body).not.toHaveProperty("BankId");
+    const { Token, ...scalars } = body;
+    expect(computeToken(scalars, cfg.password)).toBe(Token);
+  });
+
+  it("не шлёт BankId вместе с DataType=IMAGE", async () => {
+    // Deeplink возвращается только для PAYLOAD. С IMAGE поле было бы подписано
+    // и отправлено впустую.
+    const { body } = await capture(() => tbankAddAccountQr(cfg, {
+      customerKey: "rider-1",
+      description: "Привязка счёта СБП",
+      dataType: "IMAGE",
+      bankId: "100000000004",
+    }));
+
+    expect(body).toMatchObject({ DataType: "IMAGE" });
+    expect(body).not.toHaveProperty("BankId");
+  });
+});
+
+describe("normalizeSbpBanks", () => {
+  it("читает документированную форму ответа", () => {
+    const banks = normalizeSbpBanks({
+      Success: true,
+      BankList: [
+        { BankId: "100000000004", BankName: "Т-Банк", LogoURL: "https://cdn.test/t.svg" },
+        { BankId: "100000000111", BankName: "Сбербанк" },
+      ],
+    } as never);
+
+    expect(banks).toEqual([
+      { id: "100000000004", name: "Т-Банк", logoUrl: "https://cdn.test/t.svg" },
+      { id: "100000000111", name: "Сбербанк" },
+    ]);
+  });
+
+  it("читает вложенную форму с MemberId/MemberName", () => {
+    // Ответ GetQrBankList не описан в документации T-Bank, и разные сборки
+    // эквайринга отдавали список под разными ключами. Парсер обязан пережить
+    // и такую форму, иначе пикер молча окажется пустым.
+    const banks = normalizeSbpBanks({
+      Success: true,
+      Data: { Members: [{ MemberId: "100000000004", MemberName: "Т-Банк" }] },
+    } as never);
+
+    expect(banks).toEqual([{ id: "100000000004", name: "Т-Банк" }]);
+  });
+
+  it("возвращает пустой список на нераспознанной форме", () => {
+    expect(normalizeSbpBanks({ Success: true } as never)).toEqual([]);
+    expect(normalizeSbpBanks({ Success: false, ErrorCode: "3001" } as never)).toEqual([]);
+  });
+
+  it("отбрасывает элементы без id/имени и дубликаты", () => {
+    const banks = normalizeSbpBanks({
+      Success: true,
+      BankList: [
+        { BankId: "100000000004", BankName: "Т-Банк" },
+        { BankId: "100000000004", BankName: "Т-Банк (дубль)" },
+        { BankId: "100000000005" },
+        { BankName: "Без id" },
+        "мусор",
+      ],
+    } as never);
+
+    expect(banks).toEqual([{ id: "100000000004", name: "Т-Банк" }]);
+  });
+
+  it("не пропускает id, который нельзя отдать эквайреру, и небезопасный логотип", () => {
+    // id уходит в подписанный запрос, а logoUrl — прямо в src картинки.
+    const banks = normalizeSbpBanks({
+      Success: true,
+      BankList: [
+        { BankId: "плохой id", BankName: "Банк 1" },
+        { BankId: "100000000004", BankName: "Банк 2", LogoURL: "javascript:alert(1)" },
+        { BankId: "100000000005", BankName: "Банк 3", LogoURL: "http://cdn.test/x.svg" },
+      ],
+    } as never);
+
+    expect(banks).toEqual([
+      { id: "100000000004", name: "Банк 2" },
+      { id: "100000000005", name: "Банк 3" },
+    ]);
+  });
+
+  it("поднимает массовые банки наверх, сохраняя порядок эквайрера внутри групп", () => {
+    const banks = normalizeSbpBanks({
+      Success: true,
+      BankList: [
+        { BankId: "1", BankName: "Банк Зета" },
+        { BankId: "2", BankName: "Сбербанк" },
+        { BankId: "3", BankName: "АО Альфа-Банк" },
+        { BankId: "4", BankName: "Т-Банк" },
+      ],
+    } as never);
+
+    expect(banks.map((b) => b.name)).toEqual([
+      "Т-Банк",
+      "Сбербанк",
+      "АО Альфа-Банк",
+      "Банк Зета",
+    ]);
   });
 });

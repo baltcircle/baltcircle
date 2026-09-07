@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PublicPaymentMethod } from "@shared/schema";
 import {
+  detectSbpDeviceType,
+  isOpenablePayload,
   partitionPendingBindings,
   visiblePaymentMethods,
 } from "./payment-methods/binding-utils";
@@ -179,5 +181,57 @@ describe("PaymentMethodsPage binding controls", () => {
 
     expect(pollable).toEqual([freshPendingCard]);
     expect(timedOut).toEqual([]);
+  });
+});
+
+describe("СБП: выбор банка", () => {
+  it("считает открываемым и https, и банковскую схему", () => {
+    expect(isOpenablePayload("https://qr.nspk.ru/AS1A0000")).toBe(true);
+    expect(isOpenablePayload("bank100000000004://qr/AS1A0000")).toBe(true);
+    expect(isOpenablePayload("  https://qr.nspk.ru/AS1A0000  ")).toBe(true);
+  });
+
+  it("не считает открываемой сырую строку СБП", () => {
+    // Такой payload годится только для QR: попытка отдать его браузеру как
+    // ссылку кончится ошибкой навигации вместо перехода в банк.
+    expect(isOpenablePayload("AS1A0000ABCD")).toBe(false);
+    expect(isOpenablePayload("")).toBe(false);
+  });
+
+  it("вне браузера считает устройство мобильным", () => {
+    // SSR/тесты: список для мобильного устройства — безопасное умолчание,
+    // deeplink из него всё равно открывается только по явному тапу.
+    expect(detectSbpDeviceType()).toBe("mobile");
+  });
+});
+
+describe("СБП: кнопка ведёт в список банков, а не сразу в QR", () => {
+  it("тап по «Добавить счёт СБП» открывает модалку до вызова эквайрера", () => {
+    // Регрессия исходного поведения: кнопка сразу дёргала bind-sbp и показывала
+    // QR. Теперь она только открывает модалку — привязка стартует уже после
+    // выбора банка, иначе deeplink выбранного банка получить неоткуда.
+    const handler = pageSource.slice(
+      pageSource.indexOf("const handleAddSbp = () => {"),
+      pageSource.indexOf("const closeSbpModal = () => {"),
+    );
+    expect(handler).toContain("setSbpModalOpen(true)");
+    expect(handler).not.toContain("bindSbpMut.mutate(");
+  });
+
+  it("модалка открыта по своему флагу, а не по наличию binding", () => {
+    // Шаг выбора банка идёт до появления binding: привязка модалки к
+    // `sbpBinding && (` вернула бы старый порядок «сначала QR».
+    expect(pageSource).toContain("{sbpModalOpen && (");
+    expect(pageSource).not.toContain("{sbpBinding && (");
+  });
+
+  it("автопереход в приложение банка — только по явному выбору и только на телефоне", () => {
+    const onSuccess = pageSource.slice(
+      pageSource.indexOf("onSuccess: ({ data, bank }) => {"),
+      pageSource.indexOf("onError: (e: Error) =>\n      toast.toast({ title: \"Не удалось привязать счёт СБП\""),
+    );
+    expect(onSuccess).toContain(
+      'if (bank && isOpenablePayload(data.qrPayload) && detectSbpDeviceType() === "mobile")',
+    );
   });
 });

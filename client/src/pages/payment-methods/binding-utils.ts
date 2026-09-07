@@ -1,4 +1,5 @@
 import type { PublicPaymentMethod } from "@shared/schema";
+import type { SbpBank, SbpDeviceType } from "@shared/sbp";
 import { apiRequest } from "@/lib/queryClient";
 
 // Live state for an in-progress SBP account binding. `payload` is the QR/
@@ -11,6 +12,33 @@ export interface SbpBinding {
   payload: string;
   status: "waiting" | "active" | "failed";
   error?: string;
+  // Set when the rider picked a bank: the payload is then that bank's deeplink
+  // rather than the generic QR, and the modal leads with "Открыть в <банк>".
+  bankName?: string;
+}
+
+// Device class for GetQrBankList. A desktop browser cannot follow a bank
+// deeplink, and T-Bank returns a different member list for each class, so the
+// distinction is the acquirer's, not ours. Coarse on purpose: touch + a narrow
+// viewport is the signal that a bank app can be opened on this device.
+export function detectSbpDeviceType(): SbpDeviceType {
+  if (typeof window === "undefined") return "mobile";
+  const coarse = typeof window.matchMedia === "function"
+    && window.matchMedia("(pointer: coarse)").matches;
+  return coarse || window.innerWidth < 768 ? "mobile" : "desktop";
+}
+
+export async function fetchSbpBanks(device: SbpDeviceType): Promise<SbpBank[]> {
+  const res = await apiRequest("GET", `/api/payments/tbank/sbp-banks?device=${device}`);
+  const data = (await res.json()) as { banks?: SbpBank[] };
+  return Array.isArray(data.banks) ? data.banks : [];
+}
+
+// A payload is openable when it is a URL the browser can hand off — https for
+// the universal-link form, or a bank's own scheme for the deeplink form.
+// Everything else (a raw СБП string) is QR-only.
+export function isOpenablePayload(payload: string): boolean {
+  return /^(https?:|[a-z][a-z0-9+.-]*:)/i.test(payload.trim());
 }
 
 export interface PendingBindingState {
@@ -75,6 +103,25 @@ export function partitionPendingBindings(
     else pollable.push(method);
   }
   return { pollable, timedOut };
+}
+
+export interface StartSbpBindingResult {
+  methodId: number;
+  requestKey: string | null;
+  qrPayload: string;
+  bankId: string | null;
+}
+
+// Start the binding, optionally against a chosen bank. Without bankId the
+// acquirer returns the generic СБП payload (the pre-existing QR flow); with it,
+// `qrPayload` is that bank's deeplink.
+export async function startSbpBinding(bankId?: string): Promise<StartSbpBindingResult> {
+  const res = await apiRequest(
+    "POST",
+    "/api/payments/tbank/bind-sbp",
+    bankId ? { bankId } : undefined,
+  );
+  return (await res.json()) as StartSbpBindingResult;
 }
 
 export async function refreshPendingMethod(method: PublicPaymentMethod): Promise<PublicPaymentMethod | null> {
