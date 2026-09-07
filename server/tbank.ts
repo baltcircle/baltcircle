@@ -1055,7 +1055,22 @@ export function normalizeSbpBanks(resp: TbankResponse): SbpBank[] {
     if (!isValidSbpBankId(id) || !name) continue;
     if (seen.has(id)) continue;
     seen.add(id);
-    const logoUrl = firstString(item, ["LogoURL", "LogoUrl", "logoUrl", "logoURL", "Logo", "logo", "IconURL", "iconUrl"]);
+    // BankLogo is what the live terminal actually returns (an https URL on
+    // sub.nspk.ru); the rest are defensive aliases kept because the response
+    // body of GetQrBankList is undocumented and may differ per terminal.
+    const logoUrl = firstString(item, [
+      "BankLogo",
+      "bankLogo",
+      "BankLogoURL",
+      "LogoURL",
+      "LogoUrl",
+      "logoUrl",
+      "logoURL",
+      "Logo",
+      "logo",
+      "IconURL",
+      "iconUrl",
+    ]);
     banks.push({
       id,
       name: name.slice(0, 120),

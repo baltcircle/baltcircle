@@ -22,6 +22,9 @@ function BankLogo({ bank }: { bank: SbpBank }) {
       src={bank.logoUrl}
       alt=""
       loading="lazy"
+      decoding="async"
+      width={36}
+      height={36}
       referrerPolicy="no-referrer"
       onError={() => setBroken(true)}
       className="w-9 h-9 rounded-full object-contain bg-white border border-gray-200 shrink-0"
