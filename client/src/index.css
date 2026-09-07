@@ -327,13 +327,19 @@
 }
 
 @layer utilities {
-  /* Маскировка OTP точками. Держим правило в CSS, а не в inline-стиле React:
-   * нестандартное свойство надёжнее задавать таблицей стилей, и здесь же
-   * лечится случай автозаполнения, где текст перекрашивается браузером. */
+  /* Маскировка OTP. -webkit-text-security оказался ненадёжен: на устройстве
+   * пользователя точки не появились ни inline-стилем, ни классом. Поэтому сам
+   * текст делаем прозрачным (включая случай автозаполнения, где браузер
+   * перекрашивает его своим -webkit-text-fill-color), а точки рисует
+   * отдельный слой в разметке — это работает в любом движке. Каретку
+   * возвращаем явно, иначе она пропадёт вместе с текстом. */
   .otp-masked,
-  .otp-masked:-webkit-autofill {
-    -webkit-text-security: disc;
-    text-security: disc;
+  .otp-masked:-webkit-autofill,
+  .otp-masked:-webkit-autofill:hover,
+  .otp-masked:-webkit-autofill:focus {
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    caret-color: hsl(var(--foreground));
   }
 
   .text-balance { text-wrap: balance; }

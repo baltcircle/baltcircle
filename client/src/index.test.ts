@@ -14,9 +14,12 @@ describe("index.css: автозаполнение и маскировка OTP", 
     expect(css).toContain("caret-color: hsl(var(--foreground));");
   });
 
-  it("маскирует OTP точками, в том числе у автозаполненного поля", () => {
+  it("прячет символы OTP, в том числе у автозаполненного поля", () => {
+    // -webkit-text-security на устройстве не сработал, поэтому текст просто
+    // делается прозрачным, а точки рисует отдельный слой в разметке.
     expect(css).toContain(".otp-masked,");
     expect(css).toContain(".otp-masked:-webkit-autofill");
-    expect(css).toContain("-webkit-text-security: disc;");
+    expect(css).toContain("-webkit-text-fill-color: transparent;");
+    expect(css).toContain("color: transparent;");
   });
 });
