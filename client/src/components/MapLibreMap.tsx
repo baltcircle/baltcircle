@@ -264,10 +264,40 @@ export function MapLibreMap({
     });
     ro.observe(el);
 
+    // Restores from the background do not always change the container box, so
+    // ResizeObserver may never fire — yet the canvas can come back sized for a
+    // stale viewport and render short of the bottom edge. Re-measuring on every
+    // restore is cheap (maplibre no-ops when the size is unchanged) and covers
+    // the deeplink round-trip through a bank app.
+    const resizeTimers = new Set<ReturnType<typeof setTimeout>>();
+    const onRestore = () => {
+      if (document.visibilityState !== "visible") return;
+      const resize = () => {
+        if (mapRef.current) mapRef.current.resize();
+        else boot();
+      };
+      resize();
+      for (const delay of [150, 400, 900]) {
+        const t = setTimeout(() => {
+          resizeTimers.delete(t);
+          resize();
+        }, delay);
+        resizeTimers.add(t);
+      }
+    };
+    window.addEventListener("pageshow", onRestore);
+    window.addEventListener("focus", onRestore);
+    document.addEventListener("visibilitychange", onRestore);
+
     boot();
 
     return () => {
       cancelled = true;
+      resizeTimers.forEach(clearTimeout);
+      resizeTimers.clear();
+      window.removeEventListener("pageshow", onRestore);
+      window.removeEventListener("focus", onRestore);
+      document.removeEventListener("visibilitychange", onRestore);
       ro.disconnect();
       readyRef.current = false;
       for (const m of markersRef.current) { try { m.remove(); } catch { /* ignore */ } }
