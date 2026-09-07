@@ -105,11 +105,12 @@ describe("AuthModal agreement acceptance", () => {
   });
 });
 
-describe("AuthModal: экран входа", () => {
-  it("описание шага входа скрыто визуально, но остаётся для скринридера", () => {
+describe("AuthModal: экраны телефона и кода", () => {
+  it("описания обоих шагов скрыты визуально, но остаются для скринридера", () => {
     // Radix связывает диалог с описанием через aria-describedby: выкинуть узел
     // из DOM — значит потерять подпись и получить предупреждение в консоли.
-    expect(source).toContain('<DialogDescription className={step === "phone" ? "sr-only" : undefined}>');
+    expect(source).toContain('const bareStep = step === "phone" || step === "code";');
+    expect(source).toContain('<DialogDescription className={bareStep ? "sr-only" : undefined}>');
   });
 
   it("поле телефона без рамки, по центру и с доступным именем вместо лейбла", () => {
@@ -119,9 +120,38 @@ describe("AuthModal: экран входа", () => {
     expect(source).toContain("text-center");
   });
 
-  it("на шаге входа заголовок по центру и без иконки", () => {
-    expect(source).toContain('step === "phone" ? "justify-center text-center" : ""');
-    expect(source).toContain('const icon = step === "code" ? <ShieldCheck');
+  it("на шагах телефона и кода заголовок по центру и без иконки", () => {
+    expect(source).toContain('bareStep ? "justify-center text-center" : ""');
+    expect(source).toContain('const icon = step === "profile" ? <UserPlus');
     expect(source).not.toContain("<Phone ");
+    expect(source).not.toContain("<ShieldCheck");
+  });
+
+  it("заголовки шагов сформулированы как действие", () => {
+    expect(source).toContain('step === "phone" ? "Введите номер телефона" : step === "code" ? "Введите код"');
+  });
+
+  it("поле кода без рамки, крупное и с маскировкой символов", () => {
+    expect(source).not.toContain('<Label htmlFor="auth-code">');
+    expect(source).toContain('aria-label="Код из SMS"');
+    expect(source).toContain('WebkitTextSecurity: "disc"');
+    // type остаётся текстовым: с password iOS не подставляет код из SMS.
+    expect(source).toContain('autoComplete="one-time-code"');
+    expect(source).toMatch(/id="auth-code"[\s\S]*?type="text"/);
+    expect(source).toContain("border-0 bg-transparent p-0 pl-[0.4em] text-center font-mono text-2xl");
+  });
+
+  it("статус SMS-провайдера не показывается пользователю", () => {
+    expect(source).not.toContain("SMS отправлено, статус");
+    expect(source).not.toContain('data-testid="text-sms-status"');
+  });
+
+  it("кнопки шага кода идут столбцом во всю ширину", () => {
+    const codeStep = source.slice(source.indexOf('{step === "code" && ('), source.indexOf('{step === "profile" && ('));
+    expect(codeStep).toContain('<DialogFooter className="flex-col gap-2 sm:flex-col">');
+    expect(codeStep.indexOf('data-testid="button-verify-otp"')).toBeLessThan(
+      codeStep.indexOf('data-testid="button-auth-back"'),
+    );
+    expect(codeStep.match(/className="w-full"/g)?.length).toBe(2);
   });
 });

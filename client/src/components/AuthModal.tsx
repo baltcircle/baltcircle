@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH } from "@/lib/otp";
-import { ShieldCheck, UserPlus, ArrowLeft } from "lucide-react";
+import { UserPlus, ArrowLeft } from "lucide-react";
 
 interface Props {
   open: boolean;
@@ -109,7 +109,6 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
   const [verifiedPhone, setVerifiedPhone] = useState("");
   // Provider delivery status returned by the start step (e.g. "queued"), shown
   // subtly so the rider knows the SMS was accepted. Absent in dev fallback.
-  const [providerStatus, setProviderStatus] = useState<string | null>(null);
   const [resendIn, setResendIn] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -182,7 +181,6 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
       setConsent(false);
       setError(null);
       setVerifiedPhone("");
-      setProviderStatus(null);
       setResendIn(0);
     }
   }, [open]);
@@ -213,7 +211,6 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
     },
     onSuccess: (data) => {
       setVerifiedPhone(data.phone);
-      setProviderStatus(data.providerStatus ?? null);
       setResendIn(data.resendInSec ?? 60);
       setStep("code");
       setError(null);
@@ -344,11 +341,13 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
     onOpenChange(false);
   }
 
-  const title = step === "phone" ? "Вход" : step === "code" ? "Подтверждение номера" : "Регистрация";
-  // Первый экран — одно поле и одна кнопка, объяснять там нечего, поэтому он
-  // идёт без иконки и с заголовком по центру. Дальше шаги требуют пояснений
-  // (куда ушла SMS, что осталось заполнить), и там шапка обычная.
-  const icon = step === "code" ? <ShieldCheck className="w-5 h-5" /> : step === "profile" ? <UserPlus className="w-5 h-5" /> : null;
+  const title =
+    step === "phone" ? "Введите номер телефона" : step === "code" ? "Введите код" : "Регистрация";
+  // Шаги телефона и кода — одно поле и одна кнопка, заголовок говорит всё:
+  // идут без иконки и с заголовком по центру. Регистрация собирает несколько
+  // полей и согласия, там шапка обычная.
+  const bareStep = step === "phone" || step === "code";
+  const icon = step === "profile" ? <UserPlus className="w-5 h-5" /> : null;
   const description =
     step === "phone"
       ? "Укажите номер телефона. Мы отправим SMS с кодом подтверждения."
@@ -362,7 +361,7 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
         <DialogHeader>
           <DialogTitle
             className={`font-display font-light flex items-center gap-2 ${
-              step === "phone" ? "justify-center text-center" : ""
+              bareStep ? "justify-center text-center" : ""
             }`}
           >
             {icon}
@@ -371,7 +370,7 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
           {/* На первом шаге описание скрыто визуально, но остаётся в DOM:
               Radix требует его для aria-describedby, иначе диалог теряет
               подпись для скринридера и роняет предупреждение. */}
-          <DialogDescription className={step === "phone" ? "sr-only" : undefined}>
+          <DialogDescription className={bareStep ? "sr-only" : undefined}>
             {description}
           </DialogDescription>
         </DialogHeader>
@@ -438,8 +437,13 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
 
         {step === "code" && (
           <form onSubmit={submitCode} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="auth-code">Код из SMS</Label>
+            {/* Тот же приём, что и на шаге телефона: рамка вокруг единственного
+                поля ничего не разделяет. Цифры маскируются через text-security,
+                а не type="password", иначе теряется автоподстановка кода из SMS
+                (`one-time-code` работает только с текстовым полем). Трекинг
+                добавляет отступ справа от последнего символа — компенсируем
+                равным отступом слева, иначе строка съезжает от центра. */}
+            <div className="flex items-center justify-center py-2">
               <Input
                 id="auth-code"
                 type="text"
@@ -448,18 +452,13 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
                 maxLength={OTP_CODE_LENGTH}
                 value={code}
                 onChange={(e) => setCode(sanitizeOtpInput(e.target.value))}
-                placeholder="123456"
+                aria-label="Код из SMS"
                 autoFocus
-                className="font-mono tracking-[0.5em] text-center text-lg"
+                style={{ WebkitTextSecurity: "disc", textSecurity: "disc" } as React.CSSProperties}
+                className="h-auto w-[7ch] border-0 bg-transparent p-0 pl-[0.4em] text-center font-mono text-2xl tracking-[0.4em] shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
                 data-testid="input-auth-code"
               />
             </div>
-
-            {providerStatus && (
-              <p className="text-xs text-muted-foreground" data-testid="text-sms-status">
-                SMS отправлено, статус: {providerStatus}
-              </p>
-            )}
 
             <div className="text-xs text-muted-foreground">
               {resendIn > 0 ? (
@@ -485,10 +484,19 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
               </p>
             )}
 
-            <DialogFooter className="gap-2 sm:gap-2">
+            <DialogFooter className="flex-col gap-2 sm:flex-col">
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={verifyMut.isPending || !isCompleteOtp(code)}
+                data-testid="button-verify-otp"
+              >
+                {verifyMut.isPending ? "Проверка…" : "Подтвердить"}
+              </Button>
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
+                className="w-full"
                 onClick={() => {
                   setStep("phone");
                   setError(null);
@@ -496,13 +504,6 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
                 data-testid="button-auth-back"
               >
                 <ArrowLeft className="w-4 h-4 mr-1" /> Назад
-              </Button>
-              <Button
-                type="submit"
-                disabled={verifyMut.isPending || !isCompleteOtp(code)}
-                data-testid="button-verify-otp"
-              >
-                {verifyMut.isPending ? "Проверка…" : "Подтвердить"}
               </Button>
             </DialogFooter>
           </form>
