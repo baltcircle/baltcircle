@@ -134,11 +134,14 @@ describe("AuthModal: экраны телефона и кода", () => {
   it("поле кода без рамки, крупное и с маскировкой символов", () => {
     expect(source).not.toContain('<Label htmlFor="auth-code">');
     expect(source).toContain('aria-label="Код из SMS"');
-    expect(source).toContain('WebkitTextSecurity: "disc"');
+    expect(source).toContain("otp-masked");
     // type остаётся текстовым: с password iOS не подставляет код из SMS.
     expect(source).toContain('autoComplete="one-time-code"');
     expect(source).toMatch(/id="auth-code"[\s\S]*?type="text"/);
-    expect(source).toContain("border-0 bg-transparent p-0 pl-[0.4em] text-center font-mono text-2xl");
+    // Ширина только w-full: фиксированная в ch обрезала шестизначный код,
+    // потому что трекинг добавляет к каждому символу лишние 0.4em.
+    expect(source).toContain("h-auto w-full border-0 bg-transparent p-0 pl-[0.4em] text-center font-mono text-2xl");
+    expect(source).not.toContain("w-[7ch]");
   });
 
   it("статус SMS-провайдера не показывается пользователю", () => {

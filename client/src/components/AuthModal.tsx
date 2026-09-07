@@ -454,8 +454,7 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
                 onChange={(e) => setCode(sanitizeOtpInput(e.target.value))}
                 aria-label="Код из SMS"
                 autoFocus
-                style={{ WebkitTextSecurity: "disc", textSecurity: "disc" } as React.CSSProperties}
-                className="h-auto w-[7ch] border-0 bg-transparent p-0 pl-[0.4em] text-center font-mono text-2xl tracking-[0.4em] shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                className="otp-masked h-auto w-full border-0 bg-transparent p-0 pl-[0.4em] text-center font-mono text-2xl tracking-[0.4em] shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
                 data-testid="input-auth-code"
               />
             </div>
