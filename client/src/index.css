@@ -309,7 +309,33 @@
 }
 
 /* Custom utility helpers */
+@layer base {
+  /* Chrome/WebKit заливают автозаполненное поле собственным жёлтым фоном и
+   * перекрашивают текст — на тёмной карточке входа это выглядит как чужой
+   * блок. Фон нельзя переопределить обычным background-color: браузерный
+   * стиль сильнее. Рабочий приём — увести анимацию background-color в
+   * бесконечность (браузер применяет свой фон через переход, которого мы
+   * никогда не дожидаемся) и явно задать цвет текста и каретки. */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  input:-webkit-autofill:active {
+    -webkit-text-fill-color: hsl(var(--foreground));
+    caret-color: hsl(var(--foreground));
+    transition: background-color 100000s ease-in-out 0s;
+  }
+}
+
 @layer utilities {
+  /* Маскировка OTP точками. Держим правило в CSS, а не в inline-стиле React:
+   * нестандартное свойство надёжнее задавать таблицей стилей, и здесь же
+   * лечится случай автозаполнения, где текст перекрашивается браузером. */
+  .otp-masked,
+  .otp-masked:-webkit-autofill {
+    -webkit-text-security: disc;
+    text-security: disc;
+  }
+
   .text-balance { text-wrap: balance; }
   .text-pretty { text-wrap: pretty; }
 
