@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH } from "@/lib/otp";
-import { UserPlus, ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
 interface Props {
   open: boolean;
@@ -346,8 +346,6 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
   // Шаги телефона и кода — одно поле и одна кнопка, заголовок говорит всё:
   // идут без иконки и с заголовком по центру. Регистрация собирает несколько
   // полей и согласия, там шапка обычная.
-  const bareStep = step === "phone" || step === "code";
-  const icon = step === "profile" ? <UserPlus className="w-5 h-5" /> : null;
   const description =
     step === "phone"
       ? "Укажите номер телефона. Мы отправим SMS с кодом подтверждения."
@@ -359,20 +357,11 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="dialog-auth" className="rounded-2xl sm:rounded-2xl">
         <DialogHeader>
-          <DialogTitle
-            className={`font-display font-light flex items-center gap-2 ${
-              bareStep ? "justify-center text-center" : ""
-            }`}
-          >
-            {icon}
-            {title}
-          </DialogTitle>
-          {/* На первом шаге описание скрыто визуально, но остаётся в DOM:
-              Radix требует его для aria-describedby, иначе диалог теряет
-              подпись для скринридера и роняет предупреждение. */}
-          <DialogDescription className={bareStep ? "sr-only" : undefined}>
-            {description}
-          </DialogDescription>
+          <DialogTitle className="font-display font-light text-center">{title}</DialogTitle>
+          {/* Описание скрыто визуально, но остаётся в DOM: Radix требует его
+              для aria-describedby, иначе диалог теряет подпись для
+              скринридера и роняет предупреждение. */}
+          <DialogDescription className="sr-only">{description}</DialogDescription>
         </DialogHeader>
 
         {step === "phone" && (
@@ -443,7 +432,7 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
                 (`one-time-code` работает только с текстовым полем). Трекинг
                 добавляет отступ справа от последнего символа — компенсируем
                 равным отступом слева, иначе строка съезжает от центра. */}
-            <div className="flex items-center justify-center py-2">
+            <div className="relative flex items-center justify-center py-2">
               <Input
                 id="auth-code"
                 type="text"
@@ -457,6 +446,13 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
                 className="otp-masked h-auto w-full border-0 bg-transparent p-0 pl-[0.4em] text-center font-mono text-2xl tracking-[0.4em] shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
                 data-testid="input-auth-code"
               />
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 flex items-center justify-center pl-[0.4em] font-mono text-2xl tracking-[0.4em] text-foreground"
+                data-testid="text-auth-code-mask"
+              >
+                {"•".repeat(code.length)}
+              </span>
             </div>
 
             <div className="text-xs text-muted-foreground">
@@ -510,28 +506,32 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
 
         {step === "profile" && (
           <form onSubmit={submitProfile} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="auth-name">Имя</Label>
+            {/* Поля без рамок и подписей: подсказки внутри поля объясняют, что
+                вводить, а рамки на этой карточке разделяли бы два поля подряд
+                сильнее, чем нужно. Имена для скринридера перенесены в
+                aria-label вместо удалённых лейблов. */}
+            <div className="space-y-2">
               <Input
                 id="auth-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Ваше имя"
+                aria-label="Имя"
                 autoComplete="name"
                 autoFocus
                 data-testid="input-auth-name"
+                className="h-auto border-0 bg-transparent px-0 py-2 text-center text-lg shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="auth-email">Почта</Label>
               <Input
                 id="auth-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
+                aria-label="Почта"
                 autoComplete="email"
                 data-testid="input-auth-email"
+                className="h-auto border-0 bg-transparent px-0 py-2 text-center text-lg shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
               />
             </div>
 

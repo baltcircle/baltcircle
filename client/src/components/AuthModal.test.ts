@@ -109,8 +109,7 @@ describe("AuthModal: экраны телефона и кода", () => {
   it("описания обоих шагов скрыты визуально, но остаются для скринридера", () => {
     // Radix связывает диалог с описанием через aria-describedby: выкинуть узел
     // из DOM — значит потерять подпись и получить предупреждение в консоли.
-    expect(source).toContain('const bareStep = step === "phone" || step === "code";');
-    expect(source).toContain('<DialogDescription className={bareStep ? "sr-only" : undefined}>');
+    expect(source).toContain('<DialogDescription className="sr-only">{description}</DialogDescription>');
   });
 
   it("поле телефона без рамки, по центру и с доступным именем вместо лейбла", () => {
@@ -121,10 +120,10 @@ describe("AuthModal: экраны телефона и кода", () => {
   });
 
   it("на шагах телефона и кода заголовок по центру и без иконки", () => {
-    expect(source).toContain('bareStep ? "justify-center text-center" : ""');
-    expect(source).toContain('const icon = step === "profile" ? <UserPlus');
+    expect(source).toContain('<DialogTitle className="font-display font-light text-center">');
     expect(source).not.toContain("<Phone ");
     expect(source).not.toContain("<ShieldCheck");
+    expect(source).not.toContain("<UserPlus");
   });
 
   it("заголовки шагов сформулированы как действие", () => {
@@ -135,6 +134,10 @@ describe("AuthModal: экраны телефона и кода", () => {
     expect(source).not.toContain('<Label htmlFor="auth-code">');
     expect(source).toContain('aria-label="Код из SMS"');
     expect(source).toContain("otp-masked");
+    // Точки рисует отдельный слой: маскировка средствами браузера
+    // (-webkit-text-security) на устройстве пользователя не сработала.
+    expect(source).toContain('data-testid="text-auth-code-mask"');
+    expect(source).toContain('{"•".repeat(code.length)}');
     // type остаётся текстовым: с password iOS не подставляет код из SMS.
     expect(source).toContain('autoComplete="one-time-code"');
     expect(source).toMatch(/id="auth-code"[\s\S]*?type="text"/);
@@ -156,5 +159,23 @@ describe("AuthModal: экраны телефона и кода", () => {
       codeStep.indexOf('data-testid="button-auth-back"'),
     );
     expect(codeStep.match(/className="w-full"/g)?.length).toBe(2);
+  });
+});
+
+describe("AuthModal: экран регистрации", () => {
+  it("поля имени и почты без рамок, по центру и с доступными именами", () => {
+    expect(source).not.toContain('<Label htmlFor="auth-name">');
+    expect(source).not.toContain('<Label htmlFor="auth-email">');
+    expect(source).toContain('aria-label="Имя"');
+    expect(source).toContain('aria-label="Почта"');
+    const profileStep = source.slice(source.indexOf('{step === "profile" && ('));
+    const bare = profileStep.match(
+      /className="h-auto border-0 bg-transparent px-0 py-2 text-center text-lg shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"/g,
+    );
+    expect(bare?.length).toBe(2);
+  });
+
+  it("лейбл согласия остаётся — там кликабельный текст, а не подпись поля", () => {
+    expect(source).toContain('<Label htmlFor="consent"');
   });
 });
