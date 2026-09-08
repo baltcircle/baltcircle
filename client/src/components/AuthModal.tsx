@@ -369,7 +369,7 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
                 рамка вокруг него ничего не разделяет. Ширина задана в ch по
                 самому длинному значению («900 000-00-00»), иначе центрированный
                 текст прыгал бы при каждой введённой цифре. */}
-            <div className="flex items-center justify-center gap-2 py-2">
+            <div className="flex items-center justify-center gap-0.5 py-2">
               <label htmlFor="auth-phone" className="text-2xl text-muted-foreground select-none">
                 +7
               </label>
@@ -384,7 +384,7 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
                 autoComplete="tel-national"
                 autoFocus
                 data-testid="input-auth-phone"
-                className="w-[14ch] border-0 bg-transparent p-0 text-2xl tabular-nums text-center outline-none focus:outline-none placeholder:text-muted-foreground/40"
+                className="w-[13ch] border-0 bg-transparent p-0 text-2xl tabular-nums text-center outline-none focus:outline-none placeholder:text-muted-foreground/40"
               />
             </div>
 

@@ -28,6 +28,7 @@ export function SettingsPage() {
   const { pushState, pushOn, pushBusy, pushDisabled, togglePush } = usePushToggle();
   const [phoneModalOpen, setPhoneModalOpen] = useState(false);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailModalMode, setEmailModalMode] = useState<"change" | "verify">("change");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -115,7 +116,8 @@ export function SettingsPage() {
           onSaveName={() => saveMut.mutate({ name: name.trim() })}
           user={user}
           onOpenPhoneModal={() => setPhoneModalOpen(true)}
-          onOpenEmailModal={() => setEmailModalOpen(true)}
+          onOpenEmailModal={() => { setEmailModalMode("change"); setEmailModalOpen(true); }}
+          onOpenEmailVerifyModal={() => { setEmailModalMode("verify"); setEmailModalOpen(true); }}
         />
 
         {/* Push notifications */}
@@ -163,7 +165,12 @@ export function SettingsPage() {
       </div>
 
       <PhoneChangeModal open={phoneModalOpen} onOpenChange={setPhoneModalOpen} />
-      <EmailChangeModal open={emailModalOpen} onOpenChange={setEmailModalOpen} />
+      <EmailChangeModal
+        open={emailModalOpen}
+        onOpenChange={setEmailModalOpen}
+        mode={emailModalMode}
+        currentEmail={user?.email ?? null}
+      />
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent data-testid="dialog-delete-account">
           <AlertDialogHeader>
