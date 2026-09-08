@@ -53,3 +53,13 @@ describe("Профиль: подтверждение почты", () => {
     expect(modal).toContain("queryClient.invalidateQueries({ queryKey: CURRENT_USER_KEY });");
   });
 });
+
+describe("Настройки: согласие на обработку данных", () => {
+  it("в профиль не выводится — оно живёт в «Информации»", () => {
+    // Текст согласия и дата принятия доступны в /safety и /legal; строка в
+    // настройках дублировала их и занимала место у кнопок аккаунта.
+    expect(settings).not.toContain("Согласие на обработку данных принято");
+    expect(settings).not.toContain("consentAcceptedAt");
+    expect(settings).not.toContain("consentVersion");
+  });
+});
