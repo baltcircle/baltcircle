@@ -21,5 +21,8 @@ describe("index.css: автозаполнение и маскировка OTP", 
     expect(css).toContain(".otp-masked:-webkit-autofill");
     expect(css).toContain("-webkit-text-fill-color: transparent;");
     expect(css).toContain("color: transparent;");
+    // Каретка скрыта вместе с текстом: иначе она прыгала бы по невидимым
+    // цифрам поверх кружков-индикаторов.
+    expect(css).toContain("caret-color: transparent;");
   });
 });

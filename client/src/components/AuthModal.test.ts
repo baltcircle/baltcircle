@@ -126,20 +126,25 @@ describe("AuthModal: экраны телефона и кода", () => {
     expect(source).toContain('step === "phone" ? "Введите номер телефона" : step === "code" ? "Введите код"');
   });
 
-  it("поле кода без рамки, крупное и с маскировкой символов", () => {
+  it("поле кода показывает кружки: пустые до ввода, залитые по мере набора", () => {
     expect(source).not.toContain('<Label htmlFor="auth-code">');
     expect(source).toContain('aria-label="Код из SMS"');
     expect(source).toContain("otp-masked");
-    // Точки рисует отдельный слой: маскировка средствами браузера
-    // (-webkit-text-security) на устройстве пользователя не сработала.
+    // Кружков ровно столько, сколько цифр в коде, и рисуются они всегда —
+    // раньше слой показывал точки только по факту ввода, и пустое поле
+    // выглядело сломанным.
     expect(source).toContain('data-testid="text-auth-code-mask"');
-    expect(source).toContain('{"•".repeat(code.length)}');
+    expect(source).toContain("Array.from({ length: OTP_CODE_LENGTH }, (_, i) => (");
+    expect(source).toContain("i < code.length");
+    expect(source).toContain('"border-foreground bg-foreground"');
+    expect(source).toContain('"border-muted-foreground/50 bg-transparent"');
+    expect(source).not.toContain('{"•".repeat(code.length)}');
+    // Поле — прозрачный слой поверх кружков: один настоящий input, тап по
+    // любому кружку его фокусирует.
+    expect(source).toContain("otp-masked absolute inset-0 h-full w-full");
     // type остаётся текстовым: с password iOS не подставляет код из SMS.
     expect(source).toContain('autoComplete="one-time-code"');
     expect(source).toMatch(/id="auth-code"[\s\S]*?type="text"/);
-    // Ширина только w-full: фиксированная в ch обрезала шестизначный код,
-    // потому что трекинг добавляет к каждому символу лишние 0.4em.
-    expect(source).toContain("h-auto w-full border-0 bg-transparent p-0 pl-[0.4em] text-center font-mono text-2xl");
     expect(source).not.toContain("w-[7ch]");
   });
 

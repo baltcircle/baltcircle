@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH, OTP_CODE_MESSAGE } from "@/lib/otp";
 import { applyPhoneInput, formatPhoneDigits, normalizePhoneDigits } from "@/lib/phone";
 import { ArrowLeft } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface Props {
   open: boolean;
@@ -424,13 +425,14 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
 
         {step === "code" && (
           <form onSubmit={submitCode} className="space-y-4">
-            {/* Тот же приём, что и на шаге телефона: рамка вокруг единственного
-                поля ничего не разделяет. Цифры маскируются через text-security,
-                а не type="password", иначе теряется автоподстановка кода из SMS
-                (`one-time-code` работает только с текстовым полем). Трекинг
-                добавляет отступ справа от последнего символа — компенсируем
-                равным отступом слева, иначе строка съезжает от центра. */}
-            <div className="relative flex items-center justify-center py-2">
+            {/* Индикатор кода: OTP_CODE_LENGTH кружков, пустые до ввода и
+                залитые по мере набора. Само поле лежит прозрачным слоем поверх
+                всей области — так остаётся один настоящий input с
+                autoComplete="one-time-code" (автоподстановка кода из SMS живёт
+                только на текстовом поле, поэтому не type="password"), а тап в
+                любое место кружков фокусирует его. Цифры скрыты цветом, а не
+                -webkit-text-security: на устройстве оно не срабатывает. */}
+            <div className="relative flex items-center justify-center py-4">
               <Input
                 id="auth-code"
                 type="text"
@@ -441,16 +443,22 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
                 onChange={(e) => setCode(sanitizeOtpInput(e.target.value))}
                 aria-label="Код из SMS"
                 autoFocus
-                className="otp-masked h-auto w-full border-0 bg-transparent p-0 pl-[0.4em] text-center font-mono text-2xl tracking-[0.4em] shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                className="otp-masked absolute inset-0 h-full w-full border-0 bg-transparent p-0 text-center text-2xl shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
                 data-testid="input-auth-code"
               />
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 flex items-center justify-center pl-[0.4em] font-mono text-2xl tracking-[0.4em] text-foreground"
-                data-testid="text-auth-code-mask"
-              >
-                {"•".repeat(code.length)}
-              </span>
+              <div aria-hidden="true" className="pointer-events-none flex items-center gap-5" data-testid="text-auth-code-mask">
+                {Array.from({ length: OTP_CODE_LENGTH }, (_, i) => (
+                  <span
+                    key={i}
+                    className={cn(
+                      "h-3.5 w-3.5 rounded-full border-2 transition-colors",
+                      i < code.length
+                        ? "border-foreground bg-foreground"
+                        : "border-muted-foreground/50 bg-transparent",
+                    )}
+                  />
+                ))}
+              </div>
             </div>
 
             <div className="text-xs text-muted-foreground">
