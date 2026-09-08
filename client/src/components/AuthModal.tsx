@@ -12,10 +12,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH, OTP_CODE_MESSAGE } from "@/lib/otp";
+import { isCompleteOtp, OTP_CODE_MESSAGE } from "@/lib/otp";
 import { applyPhoneInput, formatPhoneDigits, normalizePhoneDigits } from "@/lib/phone";
 import { ArrowLeft } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { OtpCodeField } from "@/components/OtpCodeField";
 
 interface Props {
   open: boolean;
@@ -425,41 +425,15 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
 
         {step === "code" && (
           <form onSubmit={submitCode} className="space-y-4">
-            {/* Индикатор кода: OTP_CODE_LENGTH кружков, пустые до ввода и
-                залитые по мере набора. Само поле лежит прозрачным слоем поверх
-                всей области — так остаётся один настоящий input с
-                autoComplete="one-time-code" (автоподстановка кода из SMS живёт
-                только на текстовом поле, поэтому не type="password"), а тап в
-                любое место кружков фокусирует его. Цифры скрыты цветом, а не
-                -webkit-text-security: на устройстве оно не срабатывает. */}
-            <div className="relative flex items-center justify-center py-4">
-              <Input
-                id="auth-code"
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={OTP_CODE_LENGTH}
-                value={code}
-                onChange={(e) => setCode(sanitizeOtpInput(e.target.value))}
-                aria-label="Код из SMS"
-                autoFocus
-                className="otp-masked absolute inset-0 h-full w-full border-0 bg-transparent p-0 text-center text-2xl shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-                data-testid="input-auth-code"
-              />
-              <div aria-hidden="true" className="pointer-events-none flex items-center gap-5" data-testid="text-auth-code-mask">
-                {Array.from({ length: OTP_CODE_LENGTH }, (_, i) => (
-                  <span
-                    key={i}
-                    className={cn(
-                      "h-3.5 w-3.5 rounded-full border-2 transition-colors",
-                      i < code.length
-                        ? "border-foreground bg-foreground"
-                        : "border-muted-foreground/50 bg-transparent",
-                    )}
-                  />
-                ))}
-              </div>
-            </div>
+            <OtpCodeField
+              id="auth-code"
+              value={code}
+              onChange={setCode}
+              label="Код из SMS"
+              autoFocus
+              inputTestId="input-auth-code"
+              maskTestId="text-auth-code-mask"
+            />
 
             <div className="text-xs text-muted-foreground">
               {resendIn > 0 ? (

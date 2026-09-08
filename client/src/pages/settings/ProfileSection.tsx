@@ -3,7 +3,7 @@ import type { User as UserType } from "@shared/schema";
 
 export function ProfileSection({
   isRegistered, editingName, setEditingName, name, setName, onSaveName,
-  user, onOpenPhoneModal, onOpenEmailModal, onOpenEmailVerifyModal,
+  user, onOpenPhoneModal, onOpenEmailModal,
 }: {
   isRegistered: boolean;
   editingName: boolean;
@@ -14,11 +14,11 @@ export function ProfileSection({
   user: UserType | null | undefined;
   onOpenPhoneModal: () => void;
   onOpenEmailModal: () => void;
-  onOpenEmailVerifyModal: () => void;
 }) {
   // Почту указывают при регистрации без подтверждения, поэтому адрес может
-  // быть заполнен, а emailVerifiedAt — пустым. Подпись ведёт сразу к вводу
-  // кода на этот же адрес; смена почты остаётся на самой строке.
+  // быть заполнен, а emailVerifiedAt — пустым. Подпись только сообщает об
+  // этом; окно выбирает сама строка почты — подтверждение для
+  // неподтверждённой, смена для подтверждённой.
   const needsEmailVerification = !!user?.email && !user?.emailVerifiedAt;
   return (
     <div className="rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800 shrink-0">
@@ -60,30 +60,21 @@ export function ProfileSection({
         <button
           type="button"
           onClick={onOpenEmailModal}
-          className="w-full px-4 pt-3 pb-1 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors"
+          className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors"
         >
-          <div className="text-left">
-            <p className="text-base font-semibold text-gray-900 dark:text-white">{user?.email ?? "—"}</p>
-            <p className="text-xs mt-0.5 text-gray-400 dark:text-zinc-500">Email</p>
-          </div>
+          <span className="text-left">
+            <span className="block text-base font-semibold text-gray-900 dark:text-white">{user?.email ?? "—"}</span>
+            <span className="block text-xs mt-0.5 text-gray-400 dark:text-zinc-500">Email</span>
+            {/* Подпись — просто текст внутри строки: отдельной кнопки больше
+                нет, окно выбирает сама строка. */}
+            {needsEmailVerification && (
+              <span className="block text-xs mt-1 font-medium text-red-500" data-testid="text-verify-email">
+                Подтвердите почту
+              </span>
+            )}
+          </span>
           <ChevronRight className="w-4 h-4 text-gray-400 dark:text-zinc-500 shrink-0" />
         </button>
-
-        {/* Отдельная кнопка, а не элемент внутри строки: вложенная кнопка в
-            кнопке — невалидная разметка, и клик по подписи всё равно открывал
-            бы смену почты. */}
-        {needsEmailVerification ? (
-          <button
-            type="button"
-            onClick={onOpenEmailVerifyModal}
-            className="w-full px-4 pb-3 text-left text-xs font-medium text-red-500 underline underline-offset-2 hover:text-red-600"
-            data-testid="button-verify-email"
-          >
-            Подтвердите почту
-          </button>
-        ) : (
-          <div className="pb-2" />
-        )}
       </div>
     </div>
   );

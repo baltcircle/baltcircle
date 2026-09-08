@@ -116,8 +116,12 @@ export function SettingsPage() {
           onSaveName={() => saveMut.mutate({ name: name.trim() })}
           user={user}
           onOpenPhoneModal={() => setPhoneModalOpen(true)}
-          onOpenEmailModal={() => { setEmailModalMode("change"); setEmailModalOpen(true); }}
-          onOpenEmailVerifyModal={() => { setEmailModalMode("verify"); setEmailModalOpen(true); }}
+          onOpenEmailModal={() => {
+            // Неподтверждённую почту сначала подтверждают (адрес там же можно
+            // исправить), подтверждённую — меняют.
+            setEmailModalMode(user?.email && !user?.emailVerifiedAt ? "verify" : "change");
+            setEmailModalOpen(true);
+          }}
         />
 
         {/* Push notifications */}
