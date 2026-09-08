@@ -59,31 +59,27 @@ describe("AuthModal agreement acceptance", () => {
     // The shared DialogContent only rounds corners at the sm: breakpoint
     // and above, so on mobile (the common case for riders) the auth window
     // had square corners. Override to a consistent radius everywhere.
-    expect(source).toContain('data-testid="dialog-auth" className="rounded-2xl sm:rounded-2xl"');
+    expect(source).toContain('data-testid="dialog-auth"');
+    expect(source).toContain('className="rounded-2xl sm:rounded-2xl"');
   });
 
-  it("strips an autofilled leading country-code digit from the phone field", () => {
-    // Password managers/autofill often insert the full number including the
-    // country code (7 or 8), but the code is already fixed as a separate
-    // "+7" prefix in the UI. Naively slicing to 10 digits would drop the
-    // trailing digit instead of the leading country-code digit, producing a
-    // wrong number. normalizePhoneDigits() must strip a leading 7/8 when
-    // exactly 11 digits were pasted/autofilled.
-    expect(source).toContain("function normalizePhoneDigits(raw: string): string {");
-    expect(source).toMatch(/digits\.length === 11 && \(digits\[0\] === "7" \|\| digits\[0\] === "8"\)/);
-    expect(source).toContain("onChange={(e) => setPhoneDigits(normalizePhoneDigits(e.target.value))}");
+  it("не закрывается по клику мимо карточки", () => {
+    // Диалог висит поверх карты, вокруг него много пустого места: случайный
+    // тап посреди ввода номера или кода обнулял бы форму. Закрытие оставлено
+    // только на явные действия — крестик, кнопка «Закрыть», Escape.
+    expect(source).toContain("onInteractOutside={(event) => event.preventDefault()}");
+  });
 
-    function normalizePhoneDigits(raw: string): string {
-      const digits = raw.replace(/\D/g, "");
-      if (digits.length === 11 && (digits[0] === "7" || digits[0] === "8")) {
-        return digits.slice(1);
-      }
-      return digits.slice(0, 10);
-    }
-    expect(normalizePhoneDigits("89114765700")).toBe("9114765700");
-    expect(normalizePhoneDigits("+79114765700")).toBe("9114765700");
-    expect(normalizePhoneDigits("9114765700")).toBe("9114765700");
-    expect(normalizePhoneDigits("891147657001234")).toBe("8911476570");
+  it("телефон вводится и хранится цифрами, а показывается с разделителями", () => {
+    // Автозаполнение подставляет номер вместе с кодом страны, а "+7" в UI —
+    // отдельный фиксированный префикс. Нормализация и форматирование вынесены
+    // в @/lib/phone (там же юнит-тесты), компонент обязан их использовать, а не
+    // складывать разделители в состояние.
+    expect(source).toContain('from "@/lib/phone"');
+    expect(source).toContain("value={formatPhoneDigits(phoneDigits)}");
+    expect(source).toContain("onChange={(e) => setPhoneDigits(applyPhoneInput(e.target.value, phoneDigits))}");
+    expect(source).toContain('const phone = phoneDigits ? "+7" + phoneDigits : "";');
+    expect(source).not.toMatch(/function normalizePhoneDigits/);
   });
 
   it("shows a single phone-entry step first, without a manual login/register toggle", () => {

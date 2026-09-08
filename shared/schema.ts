@@ -1,4 +1,5 @@
 import { pgTable, text, integer, bigint, doublePrecision, boolean, serial, numeric, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { OTP_CODE_REGEX, OTP_CODE_MESSAGE } from "./otp";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -116,7 +117,7 @@ export const otpVerifySchema = z.object({
   code: z
     .string({ required_error: "Введите код из SMS" })
     .trim()
-    .regex(/^\d{6}$/, "Код состоит из 6 цифр"),
+    .regex(OTP_CODE_REGEX, OTP_CODE_MESSAGE),
 });
 export type OtpVerifyInput = z.infer<typeof otpVerifySchema>;
 
@@ -173,7 +174,7 @@ export const phoneChangeVerifySchema = z.object({
   code: z
     .string({ required_error: "Введите код из SMS" })
     .trim()
-    .regex(/^\d{6}$/, "Код состоит из 6 цифр"),
+    .regex(OTP_CODE_REGEX, OTP_CODE_MESSAGE),
 });
 export type PhoneChangeVerifyInput = z.infer<typeof phoneChangeVerifySchema>;
 
@@ -209,7 +210,7 @@ export const emailChangeVerifySchema = z.object({
   code: z
     .string({ required_error: "Введите код из письма" })
     .trim()
-    .regex(/^\d{6}$/, "Код состоит из 6 цифр"),
+    .regex(OTP_CODE_REGEX, OTP_CODE_MESSAGE),
 });
 export type EmailChangeVerifyInput = z.infer<typeof emailChangeVerifySchema>;
 
