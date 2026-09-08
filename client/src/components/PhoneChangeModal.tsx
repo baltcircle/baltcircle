@@ -7,11 +7,11 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH, OTP_CODE_MESSAGE } from "@/lib/otp";
-import { Smartphone, ShieldCheck, ArrowLeft } from "lucide-react";
+import { isCompleteOtp, OTP_CODE_MESSAGE } from "@/lib/otp";
+import { OtpCodeField } from "@/components/OtpCodeField";
+import { formatPhoneDigits, applyPhoneInput, normalizePhoneDigits } from "@/lib/phone";
+import { ArrowLeft } from "lucide-react";
 
 interface Props {
   open: boolean;
@@ -26,7 +26,7 @@ type StartResponse = { phone: string; resendInSec: number; devCode?: string };
 export function PhoneChangeModal({ open, onOpenChange }: Props) {
   const toast = useToast();
   const [step, setStep] = useState<"phone" | "code">("phone");
-  const [phone, setPhone] = useState("");
+  const [phoneDigits, setPhoneDigits] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -38,7 +38,7 @@ export function PhoneChangeModal({ open, onOpenChange }: Props) {
   useEffect(() => {
     if (open) {
       setStep("phone");
-      setPhone("");
+      setPhoneDigits("");
       setCode("");
       setError(null);
       setTargetPhone("");
@@ -66,7 +66,7 @@ export function PhoneChangeModal({ open, onOpenChange }: Props) {
 
   const startMut = useMutation<StartResponse, Error, void>({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/users/me/phone/start", { phone: phone.trim() });
+      const res = await apiRequest("POST", "/api/users/me/phone/start", { phone: `+7${phoneDigits}` });
       return res.json();
     },
     onSuccess: (data) => {
@@ -107,8 +107,7 @@ export function PhoneChangeModal({ open, onOpenChange }: Props) {
 
   function submitPhone(e: React.FormEvent) {
     e.preventDefault();
-    const digits = phone.replace(/\D/g, "");
-    if (digits.length < 10) return setError("Введите корректный номер телефона");
+    if (normalizePhoneDigits(phoneDigits).length < 10) return setError("Введите корректный номер телефона");
     setError(null);
     startMut.mutate();
   }
@@ -128,13 +127,21 @@ export function PhoneChangeModal({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="dialog-phone-change">
+      {/* Клик мимо карточки не закрывает окно: набранный номер или код
+          обнулялись бы от случайного тапа. Остаются крестик, «Закрыть» и Escape. */}
+      <DialogContent
+        data-testid="dialog-phone-change"
+        className="rounded-2xl sm:rounded-2xl"
+        onInteractOutside={(event) => event.preventDefault()}
+      >
         <DialogHeader>
-          <DialogTitle className="font-display font-light flex items-center gap-2">
-            {step === "phone" ? <Smartphone className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
-            {step === "phone" ? "Смена номера телефона" : "Подтверждение номера"}
+          {/* Как в окне входа: на каждом шаге одно поле и одна кнопка, всё
+              нужное сказано заголовком, поэтому иконка и пояснение убраны.
+              Описание остаётся в DOM — Radix требует его для aria-describedby. */}
+          <DialogTitle className="font-display font-light text-center">
+            {step === "phone" ? "Сменить номер телефона" : "Введите код"}
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="sr-only">
             {step === "phone"
               ? "Укажите новый номер телефона. Мы отправим SMS с кодом подтверждения на него."
               : `Введите код из SMS, отправленного на ${targetPhone}.`}
@@ -143,17 +150,22 @@ export function PhoneChangeModal({ open, onOpenChange }: Props) {
 
         {step === "phone" ? (
           <form onSubmit={submitPhone} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="phone-change-input">Новый номер телефона</Label>
-              <Input
+            <div className="flex items-center justify-center gap-0.5 py-2">
+              <label htmlFor="phone-change-input" className="text-2xl text-muted-foreground select-none">
+                +7
+              </label>
+              <input
                 id="phone-change-input"
                 type="tel"
-                inputMode="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="+7 900 000-00-00"
-                autoComplete="tel"
+                inputMode="numeric"
+                value={formatPhoneDigits(phoneDigits)}
+                onChange={(e) => setPhoneDigits(applyPhoneInput(e.target.value, phoneDigits))}
+                placeholder="900 000-00-00"
+                aria-label="Новый номер телефона"
+                autoComplete="tel-national"
+                autoFocus
                 data-testid="input-new-phone"
+                className="w-[13ch] border-0 bg-transparent p-0 text-2xl tabular-nums text-center outline-none focus:outline-none placeholder:text-muted-foreground/40"
               />
             </div>
 
@@ -161,32 +173,32 @@ export function PhoneChangeModal({ open, onOpenChange }: Props) {
               <p className="text-sm text-destructive" data-testid="text-phone-change-error">{error}</p>
             )}
 
-            <DialogFooter className="gap-2 sm:gap-2">
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} data-testid="button-phone-change-close">
-                Закрыть
-              </Button>
-              <Button type="submit" disabled={startMut.isPending} data-testid="button-phone-change-send">
+            <DialogFooter className="flex-col gap-2 sm:flex-col sm:gap-2 sm:space-x-0">
+              <Button type="submit" className="w-full" disabled={startMut.isPending} data-testid="button-phone-change-send">
                 {startMut.isPending ? "Отправка…" : "Получить код"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={() => onOpenChange(false)}
+                data-testid="button-phone-change-close"
+              >
+                Закрыть
               </Button>
             </DialogFooter>
           </form>
         ) : (
           <form onSubmit={submitCode} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="phone-change-code">Код из SMS</Label>
-              <Input
-                id="phone-change-code"
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={OTP_CODE_LENGTH}
-                value={code}
-                onChange={(e) => setCode(sanitizeOtpInput(e.target.value))}
-                placeholder={"0".repeat(OTP_CODE_LENGTH)}
-                className="font-mono tracking-[0.5em] text-center text-lg"
-                data-testid="input-phone-change-code"
-              />
-            </div>
+            <OtpCodeField
+              id="phone-change-code"
+              value={code}
+              onChange={setCode}
+              label="Код из SMS"
+              autoFocus
+              inputTestId="input-phone-change-code"
+              maskTestId="text-phone-change-code-mask"
+            />
 
             <div className="text-xs text-muted-foreground">
               {resendIn > 0 ? (
@@ -208,17 +220,23 @@ export function PhoneChangeModal({ open, onOpenChange }: Props) {
               <p className="text-sm text-destructive" data-testid="text-phone-change-error">{error}</p>
             )}
 
-            <DialogFooter className="gap-2 sm:gap-2">
+            <DialogFooter className="flex-col gap-2 sm:flex-col sm:gap-2 sm:space-x-0">
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={verifyMut.isPending || !isCompleteOtp(code)}
+                data-testid="button-phone-change-verify"
+              >
+                {verifyMut.isPending ? "Проверка…" : "Подтвердить"}
+              </Button>
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
+                className="w-full"
                 onClick={() => { setStep("phone"); setError(null); }}
                 data-testid="button-phone-change-back"
               >
                 <ArrowLeft className="w-4 h-4 mr-1" /> Назад
-              </Button>
-              <Button type="submit" disabled={verifyMut.isPending || !isCompleteOtp(code)} data-testid="button-phone-change-verify">
-                {verifyMut.isPending ? "Проверка…" : "Подтвердить"}
               </Button>
             </DialogFooter>
           </form>

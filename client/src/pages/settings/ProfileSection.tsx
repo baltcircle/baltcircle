@@ -64,14 +64,16 @@ export function ProfileSection({
         >
           <span className="text-left">
             <span className="block text-base font-semibold text-gray-900 dark:text-white">{user?.email ?? "—"}</span>
-            <span className="block text-xs mt-0.5 text-gray-400 dark:text-zinc-500">Email</span>
-            {/* Подпись — просто текст внутри строки: отдельной кнопки больше
-                нет, окно выбирает сама строка. */}
-            {needsEmailVerification && (
-              <span className="block text-xs mt-1 font-medium text-red-500" data-testid="text-verify-email">
-                Подтвердите почту
-              </span>
-            )}
+            {/* Подпись — просто текст в строке подписи, без своей строки:
+                окно открывает сама строка почты. */}
+            <span className="block text-xs mt-0.5 text-gray-400 dark:text-zinc-500">
+              Email
+              {needsEmailVerification && (
+                <span className="ml-2 font-medium text-red-500" data-testid="text-verify-email">
+                  Подтвердите почту
+                </span>
+              )}
+            </span>
           </span>
           <ChevronRight className="w-4 h-4 text-gray-400 dark:text-zinc-500 shrink-0" />
         </button>

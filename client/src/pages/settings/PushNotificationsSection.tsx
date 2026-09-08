@@ -12,8 +12,7 @@ export function PushNotificationsSection({
 }) {
   return (
     <div className="rounded-2xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 overflow-hidden shrink-0">
-      <p className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-widest text-gray-400 dark:text-zinc-500">Уведомления</p>
-      <div className="px-4 py-3 flex items-center justify-between gap-3">
+      <div className="px-4 py-3.5 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <Bell className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
           <div className="min-w-0">

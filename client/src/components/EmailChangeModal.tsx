@@ -142,7 +142,13 @@ export function EmailChangeModal({ open, onOpenChange, mode = "change", currentE
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="dialog-email-change">
+      {/* Клик мимо карточки не закрывает окно: адрес или код обнулялись бы от
+          случайного тапа. Остаются крестик, «Закрыть» и Escape. */}
+      <DialogContent
+        data-testid="dialog-email-change"
+        className="rounded-2xl sm:rounded-2xl"
+        onInteractOutside={(event) => event.preventDefault()}
+      >
         <DialogHeader>
           {step === "email" ? (
             <>
