@@ -7,12 +7,10 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { isCompleteOtp, OTP_CODE_MESSAGE } from "@/lib/otp";
 import { OtpCodeField } from "@/components/OtpCodeField";
-import { Mail, ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
 interface Props {
   open: boolean;
@@ -152,11 +150,13 @@ export function EmailChangeModal({ open, onOpenChange, mode = "change", currentE
         <DialogHeader>
           {step === "email" ? (
             <>
-              <DialogTitle className="font-display font-light flex items-center gap-2">
-                <Mail className="w-5 h-5" />
-                {verifyOnly ? "Подтверждение почты" : "Смена email"}
+              {/* Оба шага как в окне входа: одно поле, одна кнопка, всё нужное
+                  сказано заголовком. Пояснение остаётся в DOM — Radix требует
+                  его для aria-describedby. */}
+              <DialogTitle className="font-display font-light text-center">
+                {verifyOnly ? "Подтвердить почту" : "Сменить почту"}
               </DialogTitle>
-              <DialogDescription>
+              <DialogDescription className="sr-only">
                 {verifyOnly
                   ? "Отправим письмо с кодом на указанный адрес. Если при регистрации ошиблись — исправьте, почта поменяется вместе с подтверждением."
                   : "Укажите новый email. Мы отправим на него письмо с кодом подтверждения."}
@@ -177,17 +177,22 @@ export function EmailChangeModal({ open, onOpenChange, mode = "change", currentE
 
         {step === "email" ? (
           <form onSubmit={submitEmail} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="email-change-input">{verifyOnly ? "Почта" : "Новый email"}</Label>
-              <Input
+            {/* Поле без рамки и по центру: оно на экране единственное. Размер
+                меньше, чем у номера телефона, — адрес длиннее и с рамкой в
+                одну строку не помещался бы. */}
+            <div className="py-2">
+              <input
                 id="email-change-input"
                 type="email"
                 inputMode="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
+                aria-label={verifyOnly ? "Почта" : "Новый email"}
                 autoComplete="email"
+                autoFocus
                 data-testid="input-new-email"
+                className="w-full border-0 bg-transparent p-0 text-xl text-center outline-none focus:outline-none placeholder:text-muted-foreground/40"
               />
             </div>
 
@@ -195,12 +200,18 @@ export function EmailChangeModal({ open, onOpenChange, mode = "change", currentE
               <p className="text-sm text-destructive" data-testid="text-email-change-error">{error}</p>
             )}
 
-            <DialogFooter className="gap-2 sm:gap-2">
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} data-testid="button-email-change-close">
-                Закрыть
+            <DialogFooter className="flex-col gap-2 sm:flex-col sm:gap-2 sm:space-x-0">
+              <Button type="submit" className="w-full" disabled={startMut.isPending} data-testid="button-email-change-send">
+                {startMut.isPending ? "Отправка…" : "Получить код"}
               </Button>
-              <Button type="submit" disabled={startMut.isPending} data-testid="button-email-change-send">
-                {startMut.isPending ? "Отправка…" : verifyOnly ? "Отправить код" : "Получить код"}
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={() => onOpenChange(false)}
+                data-testid="button-email-change-close"
+              >
+                Закрыть
               </Button>
             </DialogFooter>
           </form>
