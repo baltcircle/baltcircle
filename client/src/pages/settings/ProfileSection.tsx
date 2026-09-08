@@ -64,10 +64,7 @@ export function ProfileSection({
         >
           <div className="text-left">
             <p className="text-base font-semibold text-gray-900 dark:text-white">{user?.email ?? "—"}</p>
-            <p className="text-xs mt-0.5">
-              <span className="text-gray-400 dark:text-zinc-500">Email</span>
-              {user?.emailVerifiedAt && <span className="text-green-500 ml-1">· Подтверждён</span>}
-            </p>
+            <p className="text-xs mt-0.5 text-gray-400 dark:text-zinc-500">Email</p>
           </div>
           <ChevronRight className="w-4 h-4 text-gray-400 dark:text-zinc-500 shrink-0" />
         </button>

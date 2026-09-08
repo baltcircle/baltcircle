@@ -17,8 +17,9 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   // "verify" — подтверждение уже указанной почты (её вводили при регистрации,
-  // без подтверждения): адрес подставлен и не редактируется, менять его здесь
-  // нельзя, иначе это была бы смена почты под видом подтверждения.
+  // без подтверждения): адрес подставлен в поле, но остаётся редактируемым —
+  // при регистрации могли ошибиться, и тогда код уйдёт на исправленный адрес,
+  // а подтверждение заодно поменяет почту в профиле.
   mode?: "change" | "verify";
   currentEmail?: string | null;
 }
@@ -149,7 +150,7 @@ export function EmailChangeModal({ open, onOpenChange, mode = "change", currentE
           <DialogDescription>
             {step === "email"
               ? verifyOnly
-                ? `Отправим письмо с кодом на ${currentEmail}. Чтобы указать другой адрес, откройте смену почты.`
+                ? "Отправим письмо с кодом на указанный адрес. Если при регистрации ошиблись — исправьте, почта поменяется вместе с подтверждением."
                 : "Укажите новый email. Мы отправим на него письмо с кодом подтверждения."
               : `Введите код из письма, отправленного на ${targetEmail}.`}
           </DialogDescription>
@@ -158,7 +159,7 @@ export function EmailChangeModal({ open, onOpenChange, mode = "change", currentE
         {step === "email" ? (
           <form onSubmit={submitEmail} className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="email-change-input">{verifyOnly ? "Ваша почта" : "Новый email"}</Label>
+              <Label htmlFor="email-change-input">{verifyOnly ? "Почта" : "Новый email"}</Label>
               <Input
                 id="email-change-input"
                 type="email"
@@ -167,8 +168,6 @@ export function EmailChangeModal({ open, onOpenChange, mode = "change", currentE
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
                 autoComplete="email"
-                readOnly={verifyOnly}
-                className={verifyOnly ? "text-muted-foreground" : undefined}
                 data-testid="input-new-email"
               />
             </div>

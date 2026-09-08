@@ -35,12 +35,20 @@ describe("Профиль: подтверждение почты", () => {
     expect(settings).toContain("currentEmail={user?.email ?? null}");
   });
 
-  it("в режиме подтверждения адрес подставлен и не редактируется", () => {
-    // Иначе подтверждение превратилось бы в скрытую смену почты.
+  it("в режиме подтверждения адрес подставлен, но остаётся редактируемым", () => {
+    // При регистрации могли ошибиться в почте: код должен уйти на исправленный
+    // адрес, а подтверждение — заодно поменять почту в профиле.
     expect(modal).toContain('const verifyOnly = mode === "verify" && !!currentEmail;');
     expect(modal).toContain("setEmail(verifyOnly ? currentEmail! : \"\");");
-    expect(modal).toContain("readOnly={verifyOnly}");
+    expect(modal).not.toContain("readOnly");
     expect(modal).toContain("Подтверждение почты");
+  });
+
+  it("статус подтверждения не выводится отдельной подписью", () => {
+    // Единственный индикатор — красная подпись у неподтверждённой почты;
+    // зелёная отметка у подтверждённой только шумела.
+    expect(profile).not.toContain("Подтверждён");
+    expect(profile).not.toContain("text-green-500");
   });
 
   it("после подтверждения список пользователей перечитывается — подпись исчезает", () => {
