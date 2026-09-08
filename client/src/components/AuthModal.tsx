@@ -12,7 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH } from "@/lib/otp";
+import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH, OTP_CODE_MESSAGE } from "@/lib/otp";
+import { applyPhoneInput, formatPhoneDigits, normalizePhoneDigits } from "@/lib/phone";
 import { ArrowLeft } from "lucide-react";
 
 interface Props {
@@ -67,17 +68,6 @@ function isLegalPath(pathname: string): boolean {
 // целиком, вместе с кодом страны (7 или 8) — а у нас он уже зафиксирован
 // отдельным префиксом "+7" в UI. Без нормализации простое отсечение до
 // 10 цифр обрезало бы последнюю цифру вместо ведущей "7"/"8", давая неверный
-// номер. Если после очистки от нецифр получилось ровно 11 цифр и начинается с
-// "7" или "8" (либо "+79114765700", либо "89114765700") — это весь российский
-// номер целиком вместе с кодом страны — отбрасываем ведущую цифру.
-function normalizePhoneDigits(raw: string): string {
-  const digits = raw.replace(/\D/g, "");
-  if (digits.length === 11 && (digits[0] === "7" || digits[0] === "8")) {
-    return digits.slice(1);
-  }
-  return digits.slice(0, 10);
-}
-
 // Client-side mirrors of the server validation so riders get instant
 // feedback. The server re-validates and is the source of truth.
 function validatePhone(phone: string): string | null {
@@ -153,7 +143,7 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
         setStep(savedStep === "profile" ? "profile" : "phone");
         setName(savedName);
         setEmail(savedEmail);
-        setPhoneDigits(savedPhone);
+        setPhoneDigits(normalizePhoneDigits(savedPhone));
       } catch {
         /* ignore */
       }
@@ -300,7 +290,7 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
 
   function submitCode(e: React.FormEvent) {
     e.preventDefault();
-    if (!isCompleteOtp(code)) return setError("Код состоит из 6 цифр");
+    if (!isCompleteOtp(code)) return setError(OTP_CODE_MESSAGE);
     setError(null);
     verifyMut.mutate();
   }
@@ -355,7 +345,15 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="dialog-auth" className="rounded-2xl sm:rounded-2xl">
+      {/* Клик мимо карточки диалог не закрывает: на карте вокруг него много
+          свободного места, и случайный тап посреди ввода номера или кода
+          обнулял бы форму. Закрыть можно крестиком, кнопкой «Закрыть» и
+          Escape — намеренные действия. */}
+      <DialogContent
+        data-testid="dialog-auth"
+        className="rounded-2xl sm:rounded-2xl"
+        onInteractOutside={(event) => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle className="font-display font-light text-center">{title}</DialogTitle>
           {/* Описание скрыто визуально, но остаётся в DOM: Radix требует его
@@ -378,14 +376,14 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
                 id="auth-phone"
                 type="tel"
                 inputMode="numeric"
-                value={phoneDigits}
-                onChange={(e) => setPhoneDigits(normalizePhoneDigits(e.target.value))}
+                value={formatPhoneDigits(phoneDigits)}
+                onChange={(e) => setPhoneDigits(applyPhoneInput(e.target.value, phoneDigits))}
                 placeholder="900 000-00-00"
                 aria-label="Номер телефона"
                 autoComplete="tel-national"
                 autoFocus
                 data-testid="input-auth-phone"
-                className="w-[13ch] border-0 bg-transparent p-0 text-2xl tabular-nums text-center outline-none focus:outline-none placeholder:text-muted-foreground/40"
+                className="w-[14ch] border-0 bg-transparent p-0 text-2xl tabular-nums text-center outline-none focus:outline-none placeholder:text-muted-foreground/40"
               />
             </div>
 

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH } from "@/lib/otp";
+import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH, OTP_CODE_MESSAGE } from "@/lib/otp";
 import { Smartphone, ShieldCheck, ArrowLeft } from "lucide-react";
 
 interface Props {
@@ -115,7 +115,7 @@ export function PhoneChangeModal({ open, onOpenChange }: Props) {
 
   function submitCode(e: React.FormEvent) {
     e.preventDefault();
-    if (!isCompleteOtp(code)) return setError("Код состоит из 6 цифр");
+    if (!isCompleteOtp(code)) return setError(OTP_CODE_MESSAGE);
     setError(null);
     verifyMut.mutate();
   }

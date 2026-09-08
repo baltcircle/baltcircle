@@ -3,6 +3,7 @@ import {
 } from "@shared/schema";
 import type { User, UserRole, OtpRequest, PhoneChangeRequest, EmailChangeRequest, OauthIdentity, OauthProvider } from "@shared/schema";
 import { CONSENT_VERSION } from "@shared/schema";
+import { OTP_CODE_LENGTH } from "@shared/otp";
 import { randomUUID, createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import { eq, and, lt, isNull, desc } from "drizzle-orm";
 import { db } from "../db/bootstrap";
@@ -35,9 +36,10 @@ function hashOtp(phone: string, code: string): string {
 }
 
 function generateOtp(): string {
-  // 6-digit numeric code (000000–999999) — matches the SMS copy and UI input.
-  // Zero-padded so every code is exactly six digits (audit M6).
-  return String(randomInt(0, 1_000_000)).padStart(6, "0");
+  // Длина берётся из shared/otp.ts — там же её читают zod-схемы и UI, иначе
+  // сервер и валидация разъезжаются. Ведущие нули сохраняем: код всегда ровно
+  // OTP_CODE_LENGTH цифр (audit M6).
+  return String(randomInt(0, 10 ** OTP_CODE_LENGTH)).padStart(OTP_CODE_LENGTH, "0");
 }
 
 function safeEqualHex(a: string, b: string): boolean {

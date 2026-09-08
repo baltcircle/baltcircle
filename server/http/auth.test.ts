@@ -137,7 +137,7 @@ describe("POST /api/auth/otp/start", () => {
   });
 
   it("dispatches an SMS and returns resend timing on success", async () => {
-    storageMock.startOtp.mockResolvedValue({ ok: true, phone: "+79991234567", code: "123456", resendInSec: 60 });
+    storageMock.startOtp.mockResolvedValue({ ok: true, phone: "+79991234567", code: "1234", resendInSec: 60 });
     smsMock.sendOtpSms.mockResolvedValue({ provider: "sigmasms", providerMessageId: "sms-1", providerStatus: "queued" });
     const { post } = routeApp();
     const res = response();
@@ -156,7 +156,7 @@ describe("POST /api/auth/otp/start", () => {
   });
 
   it("echoes the dev code only when the SMS layer flags devEcho", async () => {
-    storageMock.startOtp.mockResolvedValue({ ok: true, phone: "+79991234567", code: "654321", resendInSec: 60 });
+    storageMock.startOtp.mockResolvedValue({ ok: true, phone: "+79991234567", code: "6543", resendInSec: 60 });
     smsMock.sendOtpSms.mockResolvedValue({ provider: "dev", devEcho: true });
     const { post } = routeApp();
     const res = response();
@@ -166,7 +166,7 @@ describe("POST /api/auth/otp/start", () => {
       res,
     );
 
-    expect((res.body as any).devCode).toBe("654321");
+    expect((res.body as any).devCode).toBe("6543");
   });
 
   it("maps a resend-lock error from storage to 429", async () => {
@@ -184,7 +184,7 @@ describe("POST /api/auth/otp/start", () => {
   });
 
   it("returns 502 without leaking rider state when SMS dispatch throws", async () => {
-    storageMock.startOtp.mockResolvedValue({ ok: true, phone: "+79991234567", code: "123456", resendInSec: 60 });
+    storageMock.startOtp.mockResolvedValue({ ok: true, phone: "+79991234567", code: "1234", resendInSec: 60 });
     smsMock.sendOtpSms.mockRejectedValue(new Error("provider down"));
     const { post } = routeApp();
     const res = response();
@@ -216,7 +216,7 @@ describe("POST /api/auth/otp/verify", () => {
     storageMock.verifyOtp.mockResolvedValue({ status: "login", user: { id: "user-1", name: "Иван", phone: "+79991234567", role: "rider" } });
     const { post } = routeApp();
     const res = response();
-    const req = request({ body: { phone: "+79991234567", code: "123456" } });
+    const req = request({ body: { phone: "+79991234567", code: "1234" } });
 
     await post.get("/api/auth/otp/verify")!(req, res);
 
@@ -231,7 +231,7 @@ describe("POST /api/auth/otp/verify", () => {
     const res = response();
     // Simulate an attacker-fixed pre-auth session carrying unrelated data —
     // it must be gone by the time the rider is logged in.
-    const req = request({ body: { phone: "+79991234567", code: "123456" }, session: { attackerPlanted: "evil" } });
+    const req = request({ body: { phone: "+79991234567", code: "1234" }, session: { attackerPlanted: "evil" } });
     const regenerateSpy = vi.spyOn(req.session, "regenerate");
 
     await post.get("/api/auth/otp/verify")!(req, res);
@@ -246,7 +246,7 @@ describe("POST /api/auth/otp/verify", () => {
     storageMock.verifyOtp.mockResolvedValue({ error: "Неверный код. Осталось попыток: 4" });
     const { post } = routeApp();
     const res = response();
-    const req = request({ body: { phone: "+79991234567", code: "000000" } });
+    const req = request({ body: { phone: "+79991234567", code: "0000" } });
 
     await post.get("/api/auth/otp/verify")!(req, res);
 
@@ -258,7 +258,7 @@ describe("POST /api/auth/otp/verify", () => {
     storageMock.verifyOtp.mockResolvedValue({ status: "register", phone: "+79991234567" });
     const { post } = routeApp();
     const res = response();
-    const req = request({ body: { phone: "+79991234567", code: "123456" } });
+    const req = request({ body: { phone: "+79991234567", code: "1234" } });
 
     await post.get("/api/auth/otp/verify")!(req, res);
 
@@ -451,7 +451,7 @@ describe("Phone change flow", () => {
   });
 
   it("/phone/start sends an SMS to the new number", async () => {
-    storageMock.startPhoneChange.mockResolvedValue({ ok: true, phone: "+79997654321", code: "111111", resendInSec: 60 });
+    storageMock.startPhoneChange.mockResolvedValue({ ok: true, phone: "+79997654321", code: "1111", resendInSec: 60 });
     smsMock.sendOtpSms.mockResolvedValue({ provider: "sigmasms" });
     const { post } = routeApp();
     const res = response();
@@ -469,7 +469,7 @@ describe("Phone change flow", () => {
     const res = response();
 
     await post.get("/api/users/me/phone/verify")!(
-      request({ session: {}, body: { code: "111111" } }),
+      request({ session: {}, body: { code: "1111" } }),
       res,
     );
 
@@ -483,7 +483,7 @@ describe("Phone change flow", () => {
     const res = response();
 
     await post.get("/api/users/me/phone/verify")!(
-      request({ session: { userId: "user-1" }, body: { code: "111111" } }),
+      request({ session: { userId: "user-1" }, body: { code: "1111" } }),
       res,
     );
 
@@ -523,7 +523,7 @@ describe("Email change flow", () => {
     const res = response();
 
     await post.get("/api/users/me/email/verify")!(
-      request({ session: { userId: "user-1" }, body: { code: "222222" } }),
+      request({ session: { userId: "user-1" }, body: { code: "2222" } }),
       res,
     );
 
