@@ -136,13 +136,6 @@ export function SettingsPage() {
         {/* Theme */}
         <ThemeSection mode={mode} setMode={setMode} />
 
-        {/* Consent */}
-        {isRegistered && user?.consentAcceptedAt && (
-          <p className="text-xs text-gray-400 dark:text-zinc-500 px-1 shrink-0">
-            Согласие на обработку данных принято{user.consentVersion ? ` · версия ${user.consentVersion}` : ""}.
-          </p>
-        )}
-
         {isRegistered && (
           <div className="mt-5 shrink-0">
             <button
