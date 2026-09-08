@@ -339,7 +339,9 @@
   .otp-masked:-webkit-autofill:focus {
     color: transparent;
     -webkit-text-fill-color: transparent;
-    caret-color: hsl(var(--foreground));
+    /* Каретка тоже скрыта: она бы прыгала по невидимым цифрам поверх
+       кружков. Индикатор заполнения и есть обратная связь о вводе. */
+    caret-color: transparent;
   }
 
   .text-balance { text-wrap: balance; }
