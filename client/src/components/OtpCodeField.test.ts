@@ -44,6 +44,18 @@ describe("EmailChangeModal: шаг кода", () => {
     expect(email).not.toContain("<ShieldCheck");
   });
 
+  it("шаг адреса тоже минималистичен: заголовок по центру, поле без рамки", () => {
+    expect(email).toContain('{verifyOnly ? "Подтвердить почту" : "Сменить почту"}');
+    expect(email).toContain("w-full border-0 bg-transparent p-0 text-xl text-center");
+    expect(email).not.toContain('<Label htmlFor="email-change-input">');
+    expect(email).not.toContain("<Mail");
+    // Обе кнопки столбцом, действие сверху.
+    expect(email.match(/<DialogFooter className="flex-col gap-2 sm:flex-col sm:gap-2 sm:space-x-0">/g) ?? [])
+      .toHaveLength(2);
+    expect(email.indexOf('data-testid="button-email-change-send"'))
+      .toBeLessThan(email.indexOf('data-testid="button-email-change-close"'));
+  });
+
   it("кнопки идут столбцом во всю ширину, подтверждение первым", () => {
     const footer = email.slice(email.indexOf('data-testid="button-email-change-verify"'));
     expect(email).toContain('<DialogFooter className="flex-col gap-2 sm:flex-col sm:gap-2 sm:space-x-0">');

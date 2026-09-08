@@ -38,7 +38,7 @@ describe("Профиль: подтверждение почты", () => {
     expect(modal).toContain('const verifyOnly = mode === "verify" && !!currentEmail;');
     expect(modal).toContain("setEmail(verifyOnly ? currentEmail! : \"\");");
     expect(modal).not.toContain("readOnly");
-    expect(modal).toContain("Подтверждение почты");
+    expect(modal).toContain('{verifyOnly ? "Подтвердить почту" : "Сменить почту"}');
   });
 
   it("статус подтверждения не выводится отдельной подписью", () => {
