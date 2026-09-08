@@ -12,25 +12,22 @@ describe("Профиль: подтверждение почты", () => {
     // быть заполнен, а emailVerifiedAt — пустым. Пустая почта подписи не даёт:
     // подтверждать нечего.
     expect(profile).toContain("const needsEmailVerification = !!user?.email && !user?.emailVerifiedAt;");
-    expect(profile).toContain("{needsEmailVerification ? (");
+    expect(profile).toContain("{needsEmailVerification && (");
     expect(profile).toContain("Подтвердите почту");
-    expect(profile).toContain('data-testid="button-verify-email"');
+    expect(profile).toContain('data-testid="text-verify-email"');
     expect(profile).toContain("text-red-500");
   });
 
-  it("подпись — отдельная кнопка, а не элемент внутри строки почты", () => {
-    // <button> внутри <button> — невалидная разметка, и клик по подписи
-    // открывал бы смену почты вместо подтверждения.
+  it("подпись — текст внутри строки, а не отдельная кнопка", () => {
+    // Нажимают на саму почту; <button> внутри <button> к тому же невалиден.
     const emailBlock = profile.slice(profile.indexOf("{/* Email */}"));
-    expect(emailBlock.indexOf("onClick={onOpenEmailModal}")).toBeLessThan(
-      emailBlock.indexOf("onClick={onOpenEmailVerifyModal}"),
-    );
-    expect(emailBlock).toMatch(/<\/button>[\s\S]*?onClick=\{onOpenEmailVerifyModal\}/);
+    expect(emailBlock).not.toContain("onOpenEmailVerifyModal");
+    expect(emailBlock.match(/<button/g) ?? []).toHaveLength(1);
+    expect(emailBlock).toMatch(/data-testid="text-verify-email"[\s\S]*?<\/button>/);
   });
 
-  it("подпись открывает подтверждение, а строка почты — смену", () => {
-    expect(settings).toContain('setEmailModalMode("change"); setEmailModalOpen(true);');
-    expect(settings).toContain('setEmailModalMode("verify"); setEmailModalOpen(true);');
+  it("строка почты сама выбирает окно: подтверждение или смена", () => {
+    expect(settings).toContain('setEmailModalMode(user?.email && !user?.emailVerifiedAt ? "verify" : "change");');
     expect(settings).toContain("mode={emailModalMode}");
     expect(settings).toContain("currentEmail={user?.email ?? null}");
   });

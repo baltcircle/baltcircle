@@ -126,26 +126,15 @@ describe("AuthModal: экраны телефона и кода", () => {
     expect(source).toContain('step === "phone" ? "Введите номер телефона" : step === "code" ? "Введите код"');
   });
 
-  it("поле кода показывает кружки: пустые до ввода, залитые по мере набора", () => {
+  it("поле кода вынесено в общий компонент, а не продублировано", () => {
+    // Тот же ввод кода нужен в подтверждении почты и смене телефона: копия
+    // разметки разъезжалась бы при следующей правке.
+    expect(source).toContain('import { OtpCodeField } from "@/components/OtpCodeField";');
+    expect(source).toContain('<OtpCodeField');
+    expect(source).toContain('id="auth-code"');
+    expect(source).toContain('label="Код из SMS"');
+    expect(source).toContain('inputTestId="input-auth-code"');
     expect(source).not.toContain('<Label htmlFor="auth-code">');
-    expect(source).toContain('aria-label="Код из SMS"');
-    expect(source).toContain("otp-masked");
-    // Кружков ровно столько, сколько цифр в коде, и рисуются они всегда —
-    // раньше слой показывал точки только по факту ввода, и пустое поле
-    // выглядело сломанным.
-    expect(source).toContain('data-testid="text-auth-code-mask"');
-    expect(source).toContain("Array.from({ length: OTP_CODE_LENGTH }, (_, i) => (");
-    expect(source).toContain("i < code.length");
-    expect(source).toContain('"border-foreground bg-foreground"');
-    expect(source).toContain('"border-muted-foreground/50 bg-transparent"');
-    expect(source).not.toContain('{"•".repeat(code.length)}');
-    // Поле — прозрачный слой поверх кружков: один настоящий input, тап по
-    // любому кружку его фокусирует.
-    expect(source).toContain("otp-masked absolute inset-0 h-full w-full");
-    // type остаётся текстовым: с password iOS не подставляет код из SMS.
-    expect(source).toContain('autoComplete="one-time-code"');
-    expect(source).toMatch(/id="auth-code"[\s\S]*?type="text"/);
-    expect(source).not.toContain("w-[7ch]");
   });
 
   it("статус SMS-провайдера не показывается пользователю", () => {

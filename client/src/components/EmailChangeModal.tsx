@@ -10,8 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { sanitizeOtpInput, isCompleteOtp, OTP_CODE_LENGTH, OTP_CODE_MESSAGE } from "@/lib/otp";
-import { Mail, ShieldCheck, ArrowLeft } from "lucide-react";
+import { isCompleteOtp, OTP_CODE_MESSAGE } from "@/lib/otp";
+import { OtpCodeField } from "@/components/OtpCodeField";
+import { Mail, ArrowLeft } from "lucide-react";
 
 interface Props {
   open: boolean;
@@ -143,17 +144,29 @@ export function EmailChangeModal({ open, onOpenChange, mode = "change", currentE
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="dialog-email-change">
         <DialogHeader>
-          <DialogTitle className="font-display font-light flex items-center gap-2">
-            {step === "email" ? <Mail className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
-            {step === "email" ? (verifyOnly ? "Подтверждение почты" : "Смена email") : "Подтверждение email"}
-          </DialogTitle>
-          <DialogDescription>
-            {step === "email"
-              ? verifyOnly
-                ? "Отправим письмо с кодом на указанный адрес. Если при регистрации ошиблись — исправьте, почта поменяется вместе с подтверждением."
-                : "Укажите новый email. Мы отправим на него письмо с кодом подтверждения."
-              : `Введите код из письма, отправленного на ${targetEmail}.`}
-          </DialogDescription>
+          {step === "email" ? (
+            <>
+              <DialogTitle className="font-display font-light flex items-center gap-2">
+                <Mail className="w-5 h-5" />
+                {verifyOnly ? "Подтверждение почты" : "Смена email"}
+              </DialogTitle>
+              <DialogDescription>
+                {verifyOnly
+                  ? "Отправим письмо с кодом на указанный адрес. Если при регистрации ошиблись — исправьте, почта поменяется вместе с подтверждением."
+                  : "Укажите новый email. Мы отправим на него письмо с кодом подтверждения."}
+              </DialogDescription>
+            </>
+          ) : (
+            <>
+              {/* Шаг кода оформлен как в окне входа: заголовок по центру,
+                  пояснение скрыто, поле — кружки. Адрес письма уже показан на
+                  предыдущем шаге, повторять его незачем. */}
+              <DialogTitle className="font-display font-light text-center">Введите код</DialogTitle>
+              <DialogDescription className="sr-only">
+                {`Введите код из письма, отправленного на ${targetEmail}.`}
+              </DialogDescription>
+            </>
+          )}
         </DialogHeader>
 
         {step === "email" ? (
@@ -187,21 +200,15 @@ export function EmailChangeModal({ open, onOpenChange, mode = "change", currentE
           </form>
         ) : (
           <form onSubmit={submitCode} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="email-change-code">Код из письма</Label>
-              <Input
-                id="email-change-code"
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={OTP_CODE_LENGTH}
-                value={code}
-                onChange={(e) => setCode(sanitizeOtpInput(e.target.value))}
-                placeholder={"0".repeat(OTP_CODE_LENGTH)}
-                className="font-mono tracking-[0.5em] text-center text-lg"
-                data-testid="input-email-change-code"
-              />
-            </div>
+            <OtpCodeField
+              id="email-change-code"
+              value={code}
+              onChange={setCode}
+              label="Код из письма"
+              autoFocus
+              inputTestId="input-email-change-code"
+              maskTestId="text-email-change-code-mask"
+            />
 
             <div className="text-xs text-muted-foreground">
               {resendIn > 0 ? (
@@ -223,17 +230,23 @@ export function EmailChangeModal({ open, onOpenChange, mode = "change", currentE
               <p className="text-sm text-destructive" data-testid="text-email-change-error">{error}</p>
             )}
 
-            <DialogFooter className="gap-2 sm:gap-2">
+            <DialogFooter className="flex-col gap-2 sm:flex-col sm:gap-2 sm:space-x-0">
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={verifyMut.isPending || !isCompleteOtp(code)}
+                data-testid="button-email-change-verify"
+              >
+                {verifyMut.isPending ? "Проверка…" : "Подтвердить"}
+              </Button>
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
+                className="w-full"
                 onClick={() => { setStep("email"); setError(null); }}
                 data-testid="button-email-change-back"
               >
                 <ArrowLeft className="w-4 h-4 mr-1" /> Назад
-              </Button>
-              <Button type="submit" disabled={verifyMut.isPending || !isCompleteOtp(code)} data-testid="button-email-change-verify">
-                {verifyMut.isPending ? "Проверка…" : "Подтвердить"}
               </Button>
             </DialogFooter>
           </form>
