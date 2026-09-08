@@ -16,6 +16,11 @@ import { Mail, ShieldCheck, ArrowLeft } from "lucide-react";
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  // "verify" — подтверждение уже указанной почты (её вводили при регистрации,
+  // без подтверждения): адрес подставлен и не редактируется, менять его здесь
+  // нельзя, иначе это была бы смена почты под видом подтверждения.
+  mode?: "change" | "verify";
+  currentEmail?: string | null;
 }
 
 type StartResponse = { email: string; resendInSec: number; devCode?: string };
@@ -24,7 +29,7 @@ type StartResponse = { email: string; resendInSec: number; devCode?: string };
 // target email, we send a code via RuSender, and only after the code is
 // verified do we write the new email + mark it verified. Email is never
 // changed through the profile PATCH endpoint.
-export function EmailChangeModal({ open, onOpenChange }: Props) {
+export function EmailChangeModal({ open, onOpenChange, mode = "change", currentEmail }: Props) {
   const toast = useToast();
   const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
@@ -36,16 +41,19 @@ export function EmailChangeModal({ open, onOpenChange }: Props) {
   const [resendIn, setResendIn] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const verifyOnly = mode === "verify" && !!currentEmail;
+
   useEffect(() => {
     if (open) {
       setStep("email");
-      setEmail("");
+      setEmail(verifyOnly ? currentEmail! : "");
       setCode("");
       setError(null);
       setTargetEmail("");
       setResendIn(0);
     }
-  }, [open]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, verifyOnly, currentEmail]);
 
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -98,7 +106,10 @@ export function EmailChangeModal({ open, onOpenChange }: Props) {
     onSuccess: (user) => {
       queryClient.setQueryData(CURRENT_USER_KEY, user);
       queryClient.invalidateQueries({ queryKey: CURRENT_USER_KEY });
-      toast.toast({ title: "Email подтверждён", description: `Новый email: ${user.email ?? ""}` });
+      toast.toast({
+        title: "Почта подтверждена",
+        description: verifyOnly ? (user.email ?? "") : `Новый email: ${user.email ?? ""}`,
+      });
       onOpenChange(false);
     },
     onError: (err) => {
@@ -133,11 +144,13 @@ export function EmailChangeModal({ open, onOpenChange }: Props) {
         <DialogHeader>
           <DialogTitle className="font-display font-light flex items-center gap-2">
             {step === "email" ? <Mail className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
-            {step === "email" ? "Смена email" : "Подтверждение email"}
+            {step === "email" ? (verifyOnly ? "Подтверждение почты" : "Смена email") : "Подтверждение email"}
           </DialogTitle>
           <DialogDescription>
             {step === "email"
-              ? "Укажите новый email. Мы отправим на него письмо с кодом подтверждения."
+              ? verifyOnly
+                ? `Отправим письмо с кодом на ${currentEmail}. Чтобы указать другой адрес, откройте смену почты.`
+                : "Укажите новый email. Мы отправим на него письмо с кодом подтверждения."
               : `Введите код из письма, отправленного на ${targetEmail}.`}
           </DialogDescription>
         </DialogHeader>
@@ -145,7 +158,7 @@ export function EmailChangeModal({ open, onOpenChange }: Props) {
         {step === "email" ? (
           <form onSubmit={submitEmail} className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="email-change-input">Новый email</Label>
+              <Label htmlFor="email-change-input">{verifyOnly ? "Ваша почта" : "Новый email"}</Label>
               <Input
                 id="email-change-input"
                 type="email"
@@ -154,6 +167,8 @@ export function EmailChangeModal({ open, onOpenChange }: Props) {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
                 autoComplete="email"
+                readOnly={verifyOnly}
+                className={verifyOnly ? "text-muted-foreground" : undefined}
                 data-testid="input-new-email"
               />
             </div>
@@ -167,7 +182,7 @@ export function EmailChangeModal({ open, onOpenChange }: Props) {
                 Закрыть
               </Button>
               <Button type="submit" disabled={startMut.isPending} data-testid="button-email-change-send">
-                {startMut.isPending ? "Отправка…" : "Получить код"}
+                {startMut.isPending ? "Отправка…" : verifyOnly ? "Отправить код" : "Получить код"}
               </Button>
             </DialogFooter>
           </form>
@@ -183,7 +198,7 @@ export function EmailChangeModal({ open, onOpenChange }: Props) {
                 maxLength={OTP_CODE_LENGTH}
                 value={code}
                 onChange={(e) => setCode(sanitizeOtpInput(e.target.value))}
-                placeholder="123456"
+                placeholder={"0".repeat(OTP_CODE_LENGTH)}
                 className="font-mono tracking-[0.5em] text-center text-lg"
                 data-testid="input-email-change-code"
               />

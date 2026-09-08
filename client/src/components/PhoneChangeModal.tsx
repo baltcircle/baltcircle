@@ -182,7 +182,7 @@ export function PhoneChangeModal({ open, onOpenChange }: Props) {
                 maxLength={OTP_CODE_LENGTH}
                 value={code}
                 onChange={(e) => setCode(sanitizeOtpInput(e.target.value))}
-                placeholder="123456"
+                placeholder={"0".repeat(OTP_CODE_LENGTH)}
                 className="font-mono tracking-[0.5em] text-center text-lg"
                 data-testid="input-phone-change-code"
               />
