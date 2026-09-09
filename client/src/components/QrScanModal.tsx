@@ -497,15 +497,17 @@ export function QrScanModal({
             extra height, no viewport-resize dance to keep everything visible).
             Always mounted; `translate-y-full` parks it below the viewport
             while scanning and `translate-y-0` brings it up over the camera.
-            Staggered against the bottom control bar's own backdrop below so
-            the two read as one continuous sweep instead of two separate
-            moves: opening (sliding up) this panel waits `delay-100` so the
-            bottom bar leads; closing (sliding down) it moves first with no
-            delay so it leads instead. */}
+            Relayed against the bottom control bar's own backdrop below with
+            zero overlap (each segment is `duration-150`, so one fully
+            finishes before the other starts) so the two moves read as one
+            continuous sweep: opening (sliding up), this panel is the second
+            leg and waits the full `delay-150` for the bottom bar to finish
+            first; closing (sliding down), it's the first leg and moves
+            immediately with no delay, handing off to the bottom bar after. */}
         <div
           className={cn(
-            "absolute inset-0 flex flex-col items-center bg-neutral-900 px-4 transition-transform duration-300 ease-out",
-            view === "manual" ? "translate-y-0 delay-100" : "translate-y-full delay-0 pointer-events-none",
+            "absolute inset-0 flex flex-col items-center bg-neutral-900 px-4 transition-transform duration-150 ease-out",
+            view === "manual" ? "translate-y-0 delay-150" : "translate-y-full delay-0 pointer-events-none",
           )}
           aria-hidden={view !== "manual"}
         >
@@ -601,15 +603,18 @@ export function QrScanModal({
           paddingTop: "1rem",
         }}
       >
-        {/* Staggered against the manual panel above: opening (sliding up)
-            this backdrop leads with no delay so the bottom bar lifts first;
-            closing (sliding down) it waits `delay-100` so the manual panel
-            leads instead — together the two moves read as one continuous
-            sweep rather than simultaneous, disconnected ones. */}
+        {/* Relayed against the manual panel above with zero overlap (each
+            segment is `duration-150`, matching the panel's own): opening
+            (sliding up), this backdrop is the first leg and moves
+            immediately with no delay, handing off to the manual panel once
+            it's done; closing (sliding down), it's the second leg and waits
+            the full `delay-150` for the manual panel to finish first —
+            together the two read as a single continuous sweep instead of
+            two things moving at once. */}
         <div
           className={cn(
-            "absolute inset-0 bg-neutral-900 transition-transform duration-300 ease-out pointer-events-none",
-            view === "manual" ? "translate-y-0 delay-0" : "translate-y-full delay-100",
+            "absolute inset-0 bg-neutral-900 transition-transform duration-150 ease-out pointer-events-none",
+            view === "manual" ? "translate-y-0 delay-0" : "translate-y-full delay-150",
           )}
           aria-hidden="true"
         />
