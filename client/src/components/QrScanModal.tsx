@@ -504,18 +504,20 @@ export function QrScanModal({
           )}
           aria-hidden={view !== "manual"}
         >
-          {/* Input block sits low in the space above the keypad, right next
-              to it, instead of floating at mid-height. Its own max-width is
-              deliberately a touch wider than the keypad's below. */}
-          <div className="flex-1 flex flex-col items-center justify-end gap-2 w-full min-h-0 pb-3">
+          {/* Input block sits low in the space above the keypad. The keypad
+              is now shorter (rectangular keys, not square), so the freed
+              vertical room pushes this block further down than before;
+              `pb-8` adds a clear, deliberate gap above the keypad on top of
+              that. Its own max-width stays wider than the keypad's below. */}
+          <div className="flex-1 flex flex-col items-center justify-end gap-2 w-full min-h-0 pb-8">
             <div
-              className="flex items-center w-full max-w-[24rem] rounded-2xl border-2 border-primary bg-black overflow-hidden"
+              className="flex items-center justify-center w-full max-w-[24rem] rounded-2xl border-2 border-primary bg-black overflow-hidden py-3.5"
               data-testid="input-bike-code"
             >
-              <span className="px-4 py-3.5 text-primary text-xl font-mono select-none">
+              <span className="text-primary text-xl font-mono select-none">
                 BC-
               </span>
-              <span className="flex-1 min-w-0 py-3.5 pr-4 text-xl font-mono text-white tracking-wider">
+              <span className="text-xl font-mono text-white tracking-wider">
                 {digits || <span className="text-white/30">014</span>}
                 <span
                   className="inline-block w-[2px] h-5 ml-0.5 bg-white/70 align-middle animate-pulse"
@@ -530,16 +532,18 @@ export function QrScanModal({
             )}
           </div>
 
-          {/* 3x4 keypad, adaptive to screen width (capped so it doesn't
-              balloon on tablets): backspace bottom-left (under 7), 0
-              bottom-middle (under 8), confirm/enter bottom-right (under 9). */}
-          <div className="shrink-0 grid grid-cols-3 gap-3 w-full max-w-[22rem] pb-4">
+          {/* 3x4 keypad, adaptive to screen width but ~25% narrower than
+              before (max-w-[16.5rem] vs the prior 22rem) and rectangular
+              rather than square keys (fixed h-12 instead of aspect-square):
+              backspace bottom-left (under 7), 0 bottom-middle (under 8),
+              confirm/enter bottom-right (under 9). Rounding is kept. */}
+          <div className="shrink-0 grid grid-cols-3 gap-3 w-full max-w-[16.5rem] pb-4">
             {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
               <button
                 key={d}
                 type="button"
                 onClick={() => appendDigit(d)}
-                className="aspect-square rounded-2xl bg-white/10 text-white text-2xl font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
+                className="h-12 rounded-2xl bg-white/10 text-white text-xl font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
                 data-testid={`button-keypad-${d}`}
               >
                 {d}
@@ -549,15 +553,15 @@ export function QrScanModal({
               type="button"
               onClick={backspaceDigit}
               aria-label="Удалить последнюю цифру"
-              className="aspect-square rounded-2xl bg-white/10 text-white flex items-center justify-center hover:bg-white/20 active:bg-white/25 transition-colors"
+              className="h-12 rounded-2xl bg-white/10 text-white flex items-center justify-center hover:bg-white/20 active:bg-white/25 transition-colors"
               data-testid="button-keypad-backspace"
             >
-              <Delete className="w-6 h-6" />
+              <Delete className="w-5 h-5" />
             </button>
             <button
               type="button"
               onClick={() => appendDigit("0")}
-              className="aspect-square rounded-2xl bg-white/10 text-white text-2xl font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
+              className="h-12 rounded-2xl bg-white/10 text-white text-xl font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
               data-testid="button-keypad-0"
             >
               0
@@ -566,10 +570,10 @@ export function QrScanModal({
               type="button"
               onClick={confirmCode}
               aria-label="Подтвердить код"
-              className="aspect-square rounded-2xl bg-primary text-primary-foreground flex items-center justify-center hover:opacity-90 active:opacity-80 transition-opacity"
+              className="h-12 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center hover:opacity-90 active:opacity-80 transition-opacity"
               data-testid="button-keypad-confirm"
             >
-              <Check className="w-7 h-7" />
+              <Check className="w-6 h-6" />
             </button>
           </div>
         </div>
@@ -578,7 +582,10 @@ export function QrScanModal({
       {/* Bottom controls: switch to manual entry, toggle the flashlight.
           No transform/lift needed here anymore — the manual view has its
           own keypad instead of the OS keyboard, so nothing ever resizes or
-          overlays this row. */}
+          overlays this row. The naплыв (slide-up/slide-down) backdrop from
+          the manual panel above extends into this row too, so the button
+          row's background lifts in sync — the buttons themselves never
+          move, only what's behind them. */}
       <div
         className="relative z-10 shrink-0 flex items-center justify-center gap-14"
         style={{
@@ -586,6 +593,13 @@ export function QrScanModal({
           paddingTop: "1rem",
         }}
       >
+        <div
+          className={cn(
+            "absolute inset-0 bg-neutral-900 transition-transform duration-300 ease-out pointer-events-none",
+            view === "manual" ? "translate-y-0" : "translate-y-full",
+          )}
+          aria-hidden="true"
+        />
         <button
           type="button"
           onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
