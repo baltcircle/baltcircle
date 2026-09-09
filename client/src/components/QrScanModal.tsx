@@ -493,18 +493,17 @@ export function QrScanModal({
           extra height, no viewport-resize dance to keep everything visible). */}
       {view === "manual" && (
         <div className="relative flex-1 flex flex-col items-center px-8">
-          {/* Input block is centered within the space above the keypad, so
-              it lands in the middle of the screen; the compact keypad below
-              it takes only the height it needs. */}
-          <div className="flex-1 flex flex-col items-center justify-center gap-3 w-full max-w-[15.5rem] min-h-0">
+          {/* Input block sits low in the space above the keypad, right next
+              to it, instead of floating at mid-height. */}
+          <div className="flex-1 flex flex-col items-center justify-end gap-2 w-full max-w-[15.5rem] min-h-0 pb-3">
             <div
               className="flex items-center w-full rounded-2xl border-2 border-white/80 bg-black overflow-hidden"
               data-testid="input-bike-code"
             >
-              <span className="px-4 py-3 text-white/50 text-base font-mono select-none border-r border-white/20">
+              <span className="px-3 py-2 text-white/50 text-base font-mono select-none">
                 BC-
               </span>
-              <span className="flex-1 min-w-0 px-3 py-3 text-base font-mono text-white tracking-wider">
+              <span className="flex-1 min-w-0 py-2 pr-3 text-base font-mono text-white tracking-wider">
                 {digits || <span className="text-white/30">014</span>}
                 <span
                   className="inline-block w-[2px] h-4 ml-0.5 bg-white/70 align-middle animate-pulse"
