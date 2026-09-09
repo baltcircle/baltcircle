@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Bike } from "@shared/schema";
 import { BrowserQRCodeReader, type IScannerControls } from "@zxing/browser";
 import { Button } from "@/components/ui/button";
-import { X, Keyboard, Flashlight, CameraOff, Loader2 } from "lucide-react";
+import { X, Keyboard, Flashlight, CameraOff, Loader2, Delete } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { extractBikeCode, classifyBikeForScan } from "./qr-scan-utils";
@@ -98,9 +98,10 @@ export function QrScanModal({
 
   // Manual entry only ever needs the digits — the "BC-" prefix is fixed and
   // shown as a non-editable adornment (same pattern as the +7 phone prefix in
-  // AuthModal), so a rider can't mistype or omit it.
+  // AuthModal), so a rider can't mistype or omit it. Entirely driven by our
+  // own numeric keypad below (see MAX_CODE_DIGITS) — there is no real
+  // text input to focus, so the OS never shows its own keyboard here.
   const [digits, setDigits] = useState("");
-  const codeInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   // Когда браузер вернул NotAllowedError — показываем более полезную
@@ -313,34 +314,6 @@ export function QrScanModal({
     return () => stopCamera();
   }, [open, startCamera, stopCamera]);
 
-  // Track how much the on-screen keyboard eats into the viewport, so the
-  // content+controls block below can slide up by exactly that amount (the
-  // keyboard overlays the modal like any native control — the modal itself
-  // never resizes).
-  const [keyboardInset, setKeyboardInset] = useState(0);
-  useEffect(() => {
-    if (!open) {
-      setKeyboardInset(0);
-      return;
-    }
-    const vv = typeof window !== "undefined" ? window.visualViewport : undefined;
-    if (!vv) return;
-    const update = () => {
-      setKeyboardInset(Math.max(0, window.innerHeight - vv.height));
-      // Belt-and-suspenders: snap back any scroll the keyboard's own
-      // "reveal the focused field" heuristic tried to apply to the page
-      // pinned behind this fixed overlay.
-      window.scrollTo(0, 0);
-    };
-    update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
-    };
-  }, [open]);
-
   // Escape closes like any other full-screen overlay in the app; the page
   // behind it is pinned (fixed, not just overflow-hidden) while open so iOS
   // Safari can't "scroll the whole overlay" to bring the focused manual-entry
@@ -383,16 +356,6 @@ export function QrScanModal({
     };
   }, [open, onOpenChange]);
 
-  // Focus the manual-entry input ourselves (instead of the native `autoFocus`
-  // attribute) so we can pass `preventScroll: true` — this stops the browser
-  // from scrolling the focused element into view, which is what made the code
-  // input window scroll on open instead of staying put while the keyboard
-  // rises beneath it.
-  useEffect(() => {
-    if (view !== "manual") return;
-    codeInputRef.current?.focus({ preventScroll: true });
-  }, [view]);
-
   const toggleTorch = useCallback(async () => {
     const track = streamRef.current?.getVideoTracks()[0];
     if (!track || !torchSupported) return;
@@ -413,6 +376,19 @@ export function QrScanModal({
       return;
     }
     void resolveCode(`BC-${raw}`);
+  };
+
+  // Custom numeric keypad — replaces the OS keyboard entirely for manual
+  // entry, so height/appearance stay fully under our control (no autofill
+  // suggestion row, no Safari accessory toolbar with prev/next/done).
+  const MAX_CODE_DIGITS = 5;
+  const appendDigit = (d: string) => {
+    setDigits((prev) => (prev.length >= MAX_CODE_DIGITS ? prev : prev + d));
+    setError(null);
+  };
+  const backspaceDigit = () => {
+    setDigits((prev) => prev.slice(0, -1));
+    setError(null);
   };
 
   if (!open) return null;
@@ -511,50 +487,86 @@ export function QrScanModal({
         </div>
       )}
 
-      {/* Manual view: BC-prefixed code entry, no decorative artwork or helper copy. */}
+      {/* Manual view: BC-prefixed code entry via our own numeric keypad —
+          no real <input> is ever focused, so the OS never raises its own
+          keyboard (and with it, no autofill row / accessory toolbar eating
+          extra height, no viewport-resize dance to keep everything visible). */}
       {view === "manual" && (
-        <div className="relative flex-1 flex flex-col items-center justify-center px-8 gap-3">
-          <div className="flex items-center w-full max-w-xs rounded-2xl border-2 border-white/80 bg-black overflow-hidden focus-within:border-primary">
-            <span className="px-4 py-4 text-white/50 text-base font-mono select-none border-r border-white/20">
-              BC-
-            </span>
-            <input
-              ref={codeInputRef}
-              value={digits}
-              onChange={(e) => { setDigits(e.target.value.replace(/\D/g, "").slice(0, 5)); setError(null); }}
-              onKeyDown={(e) => { if (e.key === "Enter") confirmCode(); }}
-              placeholder="014"
-              inputMode="numeric"
-              className="flex-1 min-w-0 px-3 py-4 text-base bg-transparent outline-none font-mono text-white placeholder:text-white/30"
+        <div className="relative flex-1 flex flex-col items-center justify-center px-8 gap-6">
+          <div className="flex flex-col items-center gap-3 w-full max-w-xs">
+            <div
+              className="flex items-center w-full rounded-2xl border-2 border-white/80 bg-black overflow-hidden"
               data-testid="input-bike-code"
-            />
-          </div>
-          <Button
-            type="button"
-            onClick={confirmCode}
-            className="w-full max-w-xs"
-            data-testid="button-confirm-bike-code"
-          >
-            ОК
-          </Button>
-          {error && (
-            <div className="text-xs text-red-400 text-center" data-testid="qr-scan-error">
-              {error}
+            >
+              <span className="px-4 py-4 text-white/50 text-base font-mono select-none border-r border-white/20">
+                BC-
+              </span>
+              <span className="flex-1 min-w-0 px-3 py-4 text-base font-mono text-white tracking-wider">
+                {digits || <span className="text-white/30">014</span>}
+                <span
+                  className="inline-block w-[2px] h-4 ml-0.5 bg-white/70 align-middle animate-pulse"
+                  aria-hidden="true"
+                />
+              </span>
             </div>
-          )}
+            <Button
+              type="button"
+              onClick={confirmCode}
+              className="w-full"
+              data-testid="button-confirm-bike-code"
+            >
+              ОК
+            </Button>
+            {error && (
+              <div className="text-xs text-red-400 text-center" data-testid="qr-scan-error">
+                {error}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-3 gap-3 w-full max-w-xs">
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => appendDigit(d)}
+                className="h-14 rounded-xl bg-white/10 text-white text-xl font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
+                data-testid={`button-keypad-${d}`}
+              >
+                {d}
+              </button>
+            ))}
+            <div aria-hidden="true" />
+            <button
+              type="button"
+              onClick={() => appendDigit("0")}
+              className="h-14 rounded-xl bg-white/10 text-white text-xl font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
+              data-testid="button-keypad-0"
+            >
+              0
+            </button>
+            <button
+              type="button"
+              onClick={backspaceDigit}
+              aria-label="Удалить последнюю цифру"
+              className="h-14 rounded-xl bg-white/10 text-white flex items-center justify-center hover:bg-white/20 active:bg-white/25 transition-colors"
+              data-testid="button-keypad-backspace"
+            >
+              <Delete className="w-6 h-6" />
+            </button>
+          </div>
         </div>
       )}
 
       {/* Bottom controls: switch to manual entry, toggle the flashlight.
-          This row alone rises above the keyboard by exactly its height —
-          the input/OK button above stays fixed, so nothing ends up hidden
-          behind the keyboard and the input never moves. */}
+          No transform/lift needed here anymore — the manual view has its
+          own keypad instead of the OS keyboard, so nothing ever resizes or
+          overlays this row. */}
       <div
-        className="relative z-10 shrink-0 flex items-center justify-center gap-14 transition-transform duration-300 ease-out"
+        className="relative z-10 shrink-0 flex items-center justify-center gap-14"
         style={{
           paddingBottom: "calc(env(safe-area-inset-bottom) + 2rem)",
           paddingTop: "1rem",
-          transform: view === "manual" && keyboardInset > 0 ? `translateY(-${keyboardInset}px)` : "translateY(0)",
         }}
       >
         <button
@@ -567,21 +579,17 @@ export function QrScanModal({
               glyph: arrow above it while scanning (tapping brings the code
               entry up), arrow below once manual entry is open (tapping
               sends it back down to the camera). */}
-          <DirectionChevron
-            direction="up"
-            className={cn(
-              "w-4 h-3.5 text-white/70 transition-opacity duration-200",
-              view === "scan" ? "opacity-100" : "opacity-0",
-            )}
-          />
+          {view === "scan" ? (
+            <DirectionChevron direction="up" className="w-4 h-3.5 text-white/70" />
+          ) : (
+            <span className="w-4 h-3.5" aria-hidden="true" />
+          )}
           <Keyboard className="w-6 h-6" />
-          <DirectionChevron
-            direction="down"
-            className={cn(
-              "w-4 h-3.5 text-white/70 transition-opacity duration-200",
-              view === "manual" ? "opacity-100" : "opacity-0",
-            )}
-          />
+          {view === "manual" ? (
+            <DirectionChevron direction="down" className="w-4 h-3.5 text-white/70" />
+          ) : (
+            <span className="w-4 h-3.5" aria-hidden="true" />
+          )}
         </button>
         <button
           type="button"
