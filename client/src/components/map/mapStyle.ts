@@ -1,4 +1,4 @@
-import maplibregl from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
 
 // maplibre-gl is bundled by Vite, so its web-worker is emitted same-origin and
