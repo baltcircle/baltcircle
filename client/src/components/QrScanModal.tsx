@@ -2,10 +2,32 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Bike } from "@shared/schema";
 import { BrowserQRCodeReader, type IScannerControls } from "@zxing/browser";
 import { Button } from "@/components/ui/button";
-import { X, Keyboard, Flashlight, CameraOff, Loader2, ChevronUp, ChevronDown } from "lucide-react";
+import { X, Keyboard, Flashlight, CameraOff, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { extractBikeCode, classifyBikeForScan } from "./qr-scan-utils";
+
+// Direction hint drawn inside the keyboard button. Deliberately not a
+// lucide chevron: this angle is much wider/blunter (obtuse, ~132° instead
+// of lucide's fixed 90°) and the stroke is thicker, per design feedback —
+// lucide's icon set has no prop to reshape the angle, only to resize it.
+function DirectionChevron({ direction, className }: { direction: "up" | "down"; className?: string }) {
+  const points = direction === "up" ? "3 12 12 8 21 12" : "3 9 12 13 21 9";
+  return (
+    <svg
+      viewBox="0 0 24 21"
+      className={className}
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={4}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points={points} />
+    </svg>
+  );
+}
 
 interface Props {
   open: boolean;
@@ -291,11 +313,10 @@ export function QrScanModal({
     return () => stopCamera();
   }, [open, startCamera, stopCamera]);
 
-  // Track how much the on-screen keyboard eats into the viewport. The
-  // modal's own height is shrunk by exactly this much (see the container's
-  // style below) so the fixed-height box never extends behind the keyboard
-  // — that's what previously let iOS pan/scroll the extra offscreen space
-  // and let the bottom controls overlap the code input once nudged up.
+  // Track how much the on-screen keyboard eats into the viewport, so the
+  // content+controls block below can slide up by exactly that amount (the
+  // keyboard overlays the modal like any native control — the modal itself
+  // never resizes).
   const [keyboardInset, setKeyboardInset] = useState(0);
   useEffect(() => {
     if (!open) {
@@ -332,6 +353,15 @@ export function QrScanModal({
       if (e.key === "Escape") onOpenChange(false);
     };
     document.addEventListener("keydown", onKeyDown);
+    // Belt-and-suspenders on top of `overflow: hidden` + `position: fixed`:
+    // iOS Safari can still rubber-band/pan the visual viewport around inside
+    // a fixed-position box via touch drag, even with the page "pinned" below.
+    // Blocking touchmove outright while the modal is open is what actually
+    // stops that residual scroll — it doesn't affect tapping or typing.
+    const onTouchMove = (e: TouchEvent) => {
+      e.preventDefault();
+    };
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
     const { body, documentElement: html } = document;
     const prev = {
       bodyOverflow: body.style.overflow,
@@ -345,6 +375,7 @@ export function QrScanModal({
     html.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("touchmove", onTouchMove);
       body.style.overflow = prev.bodyOverflow;
       body.style.position = prev.bodyPosition;
       body.style.width = prev.bodyWidth;
@@ -389,7 +420,7 @@ export function QrScanModal({
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col bg-black overscroll-none"
-      style={{ height: keyboardInset > 0 ? `calc(100% - ${keyboardInset}px)` : "100%" }}
+      style={{ touchAction: "none" }}
       data-testid="dialog-qr-scan"
       role="dialog"
       aria-modal="true"
@@ -439,9 +470,21 @@ export function QrScanModal({
         </h1>
       </div>
 
-      {/* Scan view: full-screen camera behind a viewfinder frame. */}
+      {/* Content + bottom controls move together as one block when the
+          keyboard opens, instead of the modal itself resizing — the keyboard
+          simply overlays on top, like any native overlay, while this block
+          slides up by exactly the keyboard's height so nothing ends up
+          hidden behind it. Moving both pieces as a single unit keeps their
+          relative spacing intact, so the buttons can never drift into the
+          input/OK button above them. */}
+      <div
+        className="relative z-10 flex-1 flex flex-col min-h-0 transition-transform duration-300 ease-out"
+        style={{
+          transform: view === "manual" && keyboardInset > 0 ? `translateY(-${keyboardInset}px)` : "translateY(0)",
+        }}
+      >
       {view === "scan" && (
-        <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-10">
+        <div className="relative flex-1 flex flex-col items-center justify-center px-10">
           <div className="relative aspect-square w-full max-w-[280px]">
             <div className="absolute inset-0 rounded-3xl border-2 border-white/90" />
             {cameraState === "loading" && (
@@ -478,7 +521,7 @@ export function QrScanModal({
 
       {/* Manual view: BC-prefixed code entry, no decorative artwork or helper copy. */}
       {view === "manual" && (
-        <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-8 gap-3">
+        <div className="relative flex-1 flex flex-col items-center justify-center px-8 gap-3">
           <div className="flex items-center w-full max-w-xs rounded-2xl border-2 border-white/80 bg-black overflow-hidden focus-within:border-primary">
             <span className="px-4 py-4 text-white/50 text-base font-mono select-none border-r border-white/20">
               BC-
@@ -510,13 +553,9 @@ export function QrScanModal({
         </div>
       )}
 
-      {/* Bottom controls: switch to manual entry, toggle the flashlight.
-          The row itself never moves — the modal's own height now shrinks to
-          the visible area above the keyboard (see the container style above),
-          so normal flex layout keeps this row above the keyboard without any
-          overlap with the code input/OK button centered above it. */}
+      {/* Bottom controls: switch to manual entry, toggle the flashlight. */}
       <div
-        className="relative z-10 shrink-0 flex items-center justify-center gap-20"
+        className="relative shrink-0 flex items-center justify-center gap-20"
         style={{
           paddingBottom: "calc(env(safe-area-inset-bottom) + 2rem)",
           paddingTop: "1rem",
@@ -525,29 +564,27 @@ export function QrScanModal({
         <button
           type="button"
           onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
-          className="flex flex-col items-center justify-center w-28 h-28 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors gap-1.5"
+          className="flex flex-col items-center justify-center w-28 h-28 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors gap-0.5"
           data-testid="button-toggle-manual-entry"
         >
           {/* Direction hint, drawn inside the button next to the keyboard
               glyph (like the reference): arrow above it while scanning
               (tapping brings the code entry up), arrow below once manual
               entry is open (tapping sends it back down to the camera). */}
-          <ChevronUp
-            strokeWidth={3}
+          <DirectionChevron
+            direction="up"
             className={cn(
-              "w-4 h-4 text-white/70 transition-opacity duration-200",
+              "w-5 h-4 text-white/70 transition-opacity duration-200",
               view === "scan" ? "opacity-100" : "opacity-0",
             )}
-            aria-hidden="true"
           />
           <Keyboard className="w-14 h-14" />
-          <ChevronDown
-            strokeWidth={3}
+          <DirectionChevron
+            direction="down"
             className={cn(
-              "w-4 h-4 text-white/70 transition-opacity duration-200",
+              "w-5 h-4 text-white/70 transition-opacity duration-200",
               view === "manual" ? "opacity-100" : "opacity-0",
             )}
-            aria-hidden="true"
           />
         </button>
         <button
@@ -555,7 +592,7 @@ export function QrScanModal({
           onClick={toggleTorch}
           disabled={!torchSupported}
           className={cn(
-            "flex flex-col items-center justify-center w-28 h-28 rounded-full transition-colors disabled:cursor-not-allowed gap-1.5",
+            "flex flex-col items-center justify-center w-28 h-28 rounded-full transition-colors disabled:cursor-not-allowed gap-0.5",
             torchOn ? "bg-white text-black" : "bg-white/15 text-white hover:bg-white/25",
             !torchSupported && "opacity-40",
           )}
@@ -563,10 +600,11 @@ export function QrScanModal({
         >
           {/* Invisible spacer matching the keyboard button's chevron slot so
               both icons sit on the same horizontal line. */}
-          <span className="w-4 h-4" aria-hidden="true" />
+          <span className="w-5 h-4" aria-hidden="true" />
           <Flashlight className="w-14 h-14" />
-          <span className="w-4 h-4" aria-hidden="true" />
+          <span className="w-5 h-4" aria-hidden="true" />
         </button>
+      </div>
       </div>
     </div>
   );
