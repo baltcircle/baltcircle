@@ -137,7 +137,7 @@ export function SettingsPage() {
         <ThemeSection mode={mode} setMode={setMode} />
 
         {isRegistered && (
-          <div className="mt-5 shrink-0">
+          <div className="shrink-0">
             <button
               type="button"
               onClick={() => setDeleteDialogOpen(true)}
