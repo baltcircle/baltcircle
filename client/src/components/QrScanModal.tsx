@@ -291,9 +291,11 @@ export function QrScanModal({
     return () => stopCamera();
   }, [open, startCamera, stopCamera]);
 
-  // Track how much the on-screen keyboard eats into the viewport so the
-  // bottom controls can dock right above it instead of just nudging up by a
-  // fixed amount (which the real keyboard would otherwise cover).
+  // Track how much the on-screen keyboard eats into the viewport. The
+  // modal's own height is shrunk by exactly this much (see the container's
+  // style below) so the fixed-height box never extends behind the keyboard
+  // — that's what previously let iOS pan/scroll the extra offscreen space
+  // and let the bottom controls overlap the code input once nudged up.
   const [keyboardInset, setKeyboardInset] = useState(0);
   useEffect(() => {
     if (!open) {
@@ -387,6 +389,7 @@ export function QrScanModal({
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col bg-black overscroll-none"
+      style={{ height: keyboardInset > 0 ? `calc(100% - ${keyboardInset}px)` : "100%" }}
       data-testid="dialog-qr-scan"
       role="dialog"
       aria-modal="true"
@@ -418,17 +421,18 @@ export function QrScanModal({
 
       {/* Header */}
       <div
-        className="relative z-10 shrink-0 flex items-center justify-center px-12"
+        className="relative z-10 shrink-0 flex items-center justify-center px-20"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 1.25rem)", paddingBottom: "0.5rem", minHeight: "3.5rem" }}
       >
         <button
           type="button"
           onClick={() => onOpenChange(false)}
-          className="absolute left-4 flex items-center justify-center w-9 h-9 rounded-full text-white hover:bg-white/15 transition-colors"
-          style={{ top: "calc(env(safe-area-inset-top) + 0.75rem)" }}
+          className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center justify-center w-14 h-14 rounded-full text-white hover:bg-white/15 transition-colors"
           data-testid="button-close-qr-scan"
         >
-          <X className="w-6 h-6" />
+          {/* Sized to match the header text (text-4xl = 36px) so it grew
+              proportionally when the heading was doubled. */}
+          <X className="w-9 h-9" />
         </button>
         <h1 className="text-white text-4xl font-medium text-center leading-tight">
           {view === "scan" ? "Найдите QR-код на руле" : "Введите код"}
@@ -507,24 +511,21 @@ export function QrScanModal({
       )}
 
       {/* Bottom controls: switch to manual entry, toggle the flashlight.
-          The whole row docks right above the on-screen keyboard when manual
-          entry opens (tracked via visualViewport, with a fixed fallback for
-          browsers without it) and settles back down when it closes. */}
+          The row itself never moves — the modal's own height now shrinks to
+          the visible area above the keyboard (see the container style above),
+          so normal flex layout keeps this row above the keyboard without any
+          overlap with the code input/OK button centered above it. */}
       <div
-        className="relative z-10 shrink-0 flex items-center justify-center gap-16 transition-transform duration-300 ease-out"
+        className="relative z-10 shrink-0 flex items-center justify-center gap-20"
         style={{
           paddingBottom: "calc(env(safe-area-inset-bottom) + 2rem)",
           paddingTop: "1rem",
-          transform:
-            view === "manual"
-              ? `translateY(-${keyboardInset > 0 ? keyboardInset + 12 : 88}px)`
-              : "translateY(0)",
         }}
       >
         <button
           type="button"
           onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
-          className="flex flex-col items-center justify-center w-24 h-24 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors gap-0.5"
+          className="flex flex-col items-center justify-center w-28 h-28 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors gap-1.5"
           data-testid="button-toggle-manual-entry"
         >
           {/* Direction hint, drawn inside the button next to the keyboard
@@ -532,16 +533,18 @@ export function QrScanModal({
               (tapping brings the code entry up), arrow below once manual
               entry is open (tapping sends it back down to the camera). */}
           <ChevronUp
+            strokeWidth={3}
             className={cn(
-              "w-3.5 h-3.5 text-white/70 transition-opacity duration-200",
+              "w-4 h-4 text-white/70 transition-opacity duration-200",
               view === "scan" ? "opacity-100" : "opacity-0",
             )}
             aria-hidden="true"
           />
           <Keyboard className="w-14 h-14" />
           <ChevronDown
+            strokeWidth={3}
             className={cn(
-              "w-3.5 h-3.5 text-white/70 transition-opacity duration-200",
+              "w-4 h-4 text-white/70 transition-opacity duration-200",
               view === "manual" ? "opacity-100" : "opacity-0",
             )}
             aria-hidden="true"
@@ -552,7 +555,7 @@ export function QrScanModal({
           onClick={toggleTorch}
           disabled={!torchSupported}
           className={cn(
-            "flex flex-col items-center justify-center w-24 h-24 rounded-full transition-colors disabled:cursor-not-allowed gap-0.5",
+            "flex flex-col items-center justify-center w-28 h-28 rounded-full transition-colors disabled:cursor-not-allowed gap-1.5",
             torchOn ? "bg-white text-black" : "bg-white/15 text-white hover:bg-white/25",
             !torchSupported && "opacity-40",
           )}
@@ -560,9 +563,9 @@ export function QrScanModal({
         >
           {/* Invisible spacer matching the keyboard button's chevron slot so
               both icons sit on the same horizontal line. */}
-          <span className="w-3.5 h-3.5" aria-hidden="true" />
+          <span className="w-4 h-4" aria-hidden="true" />
           <Flashlight className="w-14 h-14" />
-          <span className="w-3.5 h-3.5" aria-hidden="true" />
+          <span className="w-4 h-4" aria-hidden="true" />
         </button>
       </div>
     </div>
