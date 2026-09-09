@@ -290,6 +290,29 @@ export function QrScanModal({
     return () => stopCamera();
   }, [open, startCamera, stopCamera]);
 
+  // Track how much the on-screen keyboard eats into the viewport so the
+  // bottom controls can dock right above it instead of just nudging up by a
+  // fixed amount (which the real keyboard would otherwise cover).
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  useEffect(() => {
+    if (!open) {
+      setKeyboardInset(0);
+      return;
+    }
+    const vv = typeof window !== "undefined" ? window.visualViewport : undefined;
+    if (!vv) return;
+    const update = () => {
+      setKeyboardInset(Math.max(0, window.innerHeight - vv.height));
+    };
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, [open]);
+
   // Escape closes like any other full-screen overlay in the app; body scroll
   // is locked while open so the page behind it can't scroll on mobile.
   useEffect(() => {
@@ -453,15 +476,18 @@ export function QrScanModal({
       )}
 
       {/* Bottom controls: switch to manual entry, toggle the flashlight.
-          The whole row rises when manual entry opens (making room for/drawing
-          the eye toward the code input above it) and settles back down when
-          it closes, echoing the direction hint on the keyboard button. */}
+          The whole row docks right above the on-screen keyboard when manual
+          entry opens (tracked via visualViewport, with a fixed fallback for
+          browsers without it) and settles back down when it closes. */}
       <div
-        className="relative z-10 shrink-0 flex items-center justify-center gap-14 transition-transform duration-300 ease-out"
+        className="relative z-10 shrink-0 flex items-center justify-center gap-16 transition-transform duration-300 ease-out"
         style={{
           paddingBottom: "calc(env(safe-area-inset-bottom) + 2rem)",
           paddingTop: "1rem",
-          transform: view === "manual" ? "translateY(-1.25rem)" : "translateY(0)",
+          transform:
+            view === "manual"
+              ? `translateY(-${keyboardInset > 0 ? keyboardInset + 12 : 88}px)`
+              : "translateY(0)",
         }}
       >
         <div className="relative flex items-center justify-center">
@@ -470,14 +496,14 @@ export function QrScanModal({
               entry is open (tapping sends it back down to the camera). */}
           <ChevronUp
             className={cn(
-              "absolute -top-6 w-5 h-5 text-white/70 transition-opacity duration-200",
+              "absolute -top-7 w-6 h-6 text-white/70 transition-opacity duration-200",
               view === "scan" ? "opacity-100" : "opacity-0",
             )}
             aria-hidden="true"
           />
           <ChevronDown
             className={cn(
-              "absolute -bottom-6 w-5 h-5 text-white/70 transition-opacity duration-200",
+              "absolute -bottom-7 w-6 h-6 text-white/70 transition-opacity duration-200",
               view === "manual" ? "opacity-100" : "opacity-0",
             )}
             aria-hidden="true"
@@ -485,10 +511,10 @@ export function QrScanModal({
           <button
             type="button"
             onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
-            className="flex items-center justify-center w-16 h-16 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
+            className="flex items-center justify-center w-20 h-20 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
             data-testid="button-toggle-manual-entry"
           >
-            <Keyboard className="w-8 h-8" />
+            <Keyboard className="w-12 h-12" />
           </button>
         </div>
         <button
@@ -496,13 +522,13 @@ export function QrScanModal({
           onClick={toggleTorch}
           disabled={!torchSupported}
           className={cn(
-            "flex items-center justify-center w-16 h-16 rounded-full transition-colors disabled:cursor-not-allowed",
+            "flex items-center justify-center w-20 h-20 rounded-full transition-colors disabled:cursor-not-allowed",
             torchOn ? "bg-white text-black" : "bg-white/15 text-white hover:bg-white/25",
             !torchSupported && "opacity-40",
           )}
           data-testid="button-toggle-flashlight"
         >
-          <Flashlight className="w-8 h-8" />
+          <Flashlight className="w-12 h-12" />
         </button>
       </div>
     </div>
