@@ -88,12 +88,12 @@ export function SafetyPage() {
 
   return (
     <OverlayShell title="Информация">
-      <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-safety">
+      <div className="px-4 py-5 max-w-2xl mx-auto" data-testid="page-safety">
         <nav
           aria-label="Содержание раздела информации"
-          className="mb-8"
+          className="mb-6"
         >
-          <ul className="space-y-5 list-none">
+          <ul className="space-y-3 list-none">
             <li>
               <a
                 href="#riding"
@@ -137,12 +137,12 @@ export function SafetyPage() {
           </ul>
         </nav>
 
-        <div className="prose prose-sm dark:prose-invert max-w-none space-y-10 text-sm leading-relaxed">
+        <div className="prose prose-sm dark:prose-invert max-w-none space-y-7 text-sm leading-normal prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-headings:mb-1">
           <section id="riding" data-testid="section-info-riding" className="scroll-mt-6">
             <h2 className="font-display text-xl font-light">Безопасная поездка</h2>
             <p className="text-muted-foreground mt-1">{RIDING_CATEGORY.description}</p>
             <p>{RIDING_CATEGORY.intro}</p>
-            <div className="space-y-8 mt-6">
+            <div className="space-y-6 mt-4">
               {RIDING_DOCS.map((doc) => (
                 <InfoDocument
                   key={doc.slug}
@@ -158,7 +158,7 @@ export function SafetyPage() {
             <h2 className="font-display text-xl font-light">Конфиденциальность и данные</h2>
             <p className="text-muted-foreground mt-1">{PRIVACY_CATEGORY.description}</p>
             <p>{renderParagraph(PRIVACY_CATEGORY.intro, INFO_INLINE_REFERENCES)}</p>
-            <div className="space-y-8 mt-6">
+            <div className="space-y-6 mt-4">
               {PRIVACY_DOCS.map((doc) => (
                 <InfoDocument
                   key={doc.slug}
