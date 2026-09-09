@@ -1,0 +1,85 @@
+name: Lock Phase 3 preflight (read-only)
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: [self-hosted, baltcircle-prod]
+    steps:
+      - name: Read the approved lock through the authenticated production API
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i baltcircle-mvp node <<'NODE'
+          const http = require('node:http');
+          const crypto = require('node:crypto');
+          const { Client } = require('pg');
+          const signature = require('cookie-signature');
+
+          const IMEI = '862596083776074';
+          const SESSION_TTL_MS = 5 * 60 * 1000;
+          const db = new Client({ connectionString: process.env.DATABASE_URL });
+
+          function normalizePhone(value) {
+            const trimmed = String(value || '').trim();
+            const hasPlus = trimmed.startsWith('+');
+            let digits = trimmed.replace(/\D/g, '');
+            if (!hasPlus && digits.length === 11 && digits.startsWith('8')) return '+' + '7' + digits.slice(1);
+            return hasPlus ? '+' + digits : digits;
+          }
+
+          function request(cookie) {
+            return new Promise((resolve, reject) => {
+              const req = http.request({
+                host: '127.0.0.1', port: Number(process.env.PORT || 5000),
+                path: '/api/admin/locks', method: 'GET',
+                headers: { Cookie: `bc.sid=${cookie}`, Accept: 'application/json' },
+              }, (res) => {
+                let body = '';
+                res.setEncoding('utf8');
+                res.on('data', (chunk) => { body += chunk; });
+                res.on('end', () => resolve({ status: res.statusCode, body }));
+              });
+              req.on('error', reject);
+              req.end();
+            });
+          }
+
+          (async () => {
+            if (!process.env.DATABASE_URL || !process.env.SESSION_SECRET) {
+              throw new Error('Production container is missing DATABASE_URL or SESSION_SECRET.');
+            }
+            await db.connect();
+            const users = (await db.query('SELECT id, phone, role FROM users WHERE role IN ($1, $2)', ['operator', 'admin'])).rows;
+            const configuredAdmins = new Set(String(process.env.ADMIN_PHONE_NUMBERS || '').split(',').map(normalizePhone).filter((v) => v.replace(/\D/g, '').length >= 10));
+            let actor = users.find((u) => u.role === 'admin' || u.role === 'operator');
+            if (!actor && configuredAdmins.size) {
+              const candidates = (await db.query('SELECT id, phone, role FROM users')).rows;
+              actor = candidates.find((u) => configuredAdmins.has(normalizePhone(u.phone)));
+            }
+            if (!actor) throw new Error('No existing production operator/admin account is available for a temporary scoped session.');
+
+            const sid = `phase3-preflight-${crypto.randomUUID()}`;
+            const expires = new Date(Date.now() + SESSION_TTL_MS);
+            const sess = { cookie: { originalMaxAge: SESSION_TTL_MS, expires, secure: true, httpOnly: true, path: '/', sameSite: 'lax' }, userId: actor.id };
+            await db.query('INSERT INTO session (sid, sess, expire) VALUES ($1, $2::json, $3)', [sid, JSON.stringify(sess), expires]);
+            try {
+              const response = await request(`s:${signature.sign(sid, process.env.SESSION_SECRET)}`);
+              if (response.status !== 200) throw new Error(`GET /api/admin/locks returned HTTP ${response.status}: ${response.body}`);
+              const locks = JSON.parse(response.body);
+              const target = locks.find((lock) => lock.imei === IMEI) || null;
+              console.log(JSON.stringify({ operation: 'preflight-get-locks', imei: IMEI, existingLock: target }, null, 2));
+            } finally {
+              await db.query('DELETE FROM session WHERE sid = $1', [sid]);
+              await db.end();
+            }
+          })().catch(async (err) => {
+            try { await db.end(); } catch (_) {}
+            console.error(`Phase 3 preflight failed: ${err.message}`);
+            process.exitCode = 1;
+          });
+          NODE
