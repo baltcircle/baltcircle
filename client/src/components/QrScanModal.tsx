@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Bike } from "@shared/schema";
 import { BrowserQRCodeReader, type IScannerControls } from "@zxing/browser";
 import { Button } from "@/components/ui/button";
-import { X, Keyboard, Flashlight, CameraOff, Loader2 } from "lucide-react";
+import { X, Keyboard, Flashlight, CameraOff, Loader2, ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { extractBikeCode, classifyBikeForScan } from "./qr-scan-utils";
@@ -452,31 +452,57 @@ export function QrScanModal({
         </div>
       )}
 
-      {/* Bottom controls: switch to manual entry, toggle the flashlight. */}
+      {/* Bottom controls: switch to manual entry, toggle the flashlight.
+          The whole row rises when manual entry opens (making room for/drawing
+          the eye toward the code input above it) and settles back down when
+          it closes, echoing the direction hint on the keyboard button. */}
       <div
-        className="relative z-10 shrink-0 flex items-center justify-center gap-14"
-        style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 2rem)", paddingTop: "1rem" }}
+        className="relative z-10 shrink-0 flex items-center justify-center gap-14 transition-transform duration-300 ease-out"
+        style={{
+          paddingBottom: "calc(env(safe-area-inset-bottom) + 2rem)",
+          paddingTop: "1rem",
+          transform: view === "manual" ? "translateY(-1.25rem)" : "translateY(0)",
+        }}
       >
-        <button
-          type="button"
-          onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
-          className="flex items-center justify-center w-14 h-14 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
-          data-testid="button-toggle-manual-entry"
-        >
-          <Keyboard className="w-6 h-6" />
-        </button>
+        <div className="relative flex items-center justify-center">
+          {/* Direction hint: arrow above the keyboard button while scanning
+              (tapping brings the code entry up), arrow below once manual
+              entry is open (tapping sends it back down to the camera). */}
+          <ChevronUp
+            className={cn(
+              "absolute -top-6 w-5 h-5 text-white/70 transition-opacity duration-200",
+              view === "scan" ? "opacity-100" : "opacity-0",
+            )}
+            aria-hidden="true"
+          />
+          <ChevronDown
+            className={cn(
+              "absolute -bottom-6 w-5 h-5 text-white/70 transition-opacity duration-200",
+              view === "manual" ? "opacity-100" : "opacity-0",
+            )}
+            aria-hidden="true"
+          />
+          <button
+            type="button"
+            onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
+            className="flex items-center justify-center w-16 h-16 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
+            data-testid="button-toggle-manual-entry"
+          >
+            <Keyboard className="w-8 h-8" />
+          </button>
+        </div>
         <button
           type="button"
           onClick={toggleTorch}
           disabled={!torchSupported}
           className={cn(
-            "flex items-center justify-center w-14 h-14 rounded-full transition-colors disabled:cursor-not-allowed",
+            "flex items-center justify-center w-16 h-16 rounded-full transition-colors disabled:cursor-not-allowed",
             torchOn ? "bg-white text-black" : "bg-white/15 text-white hover:bg-white/25",
             !torchSupported && "opacity-40",
           )}
           data-testid="button-toggle-flashlight"
         >
-          <Flashlight className="w-6 h-6" />
+          <Flashlight className="w-8 h-8" />
         </button>
       </div>
     </div>
