@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Bike } from "@shared/schema";
 import { BrowserQRCodeReader, type IScannerControls } from "@zxing/browser";
 import { Button } from "@/components/ui/button";
-import { X, Keyboard, Flashlight, CameraOff, Loader2, Delete } from "lucide-react";
+import { X, Keyboard, Flashlight, CameraOff, Loader2, Delete, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { extractBikeCode, classifyBikeForScan } from "./qr-scan-utils";
@@ -451,8 +451,13 @@ export function QrScanModal({
       {/* Scan / manual content stays put — only the bottom controls rise
           above the keyboard (see below), so the code input never drifts
           away from its natural centered position. */}
-      {view === "scan" && (
-        <div className="relative flex-1 flex flex-col items-center justify-center px-10">
+      {/* Shared stage for both faces: the scan reticle stays mounted at
+          rest, the manual entry panel is an always-mounted bottom-sheet
+          layer that slides up over it (and back down) via `translate-y`,
+          instead of being mounted/unmounted — that's what makes the
+          slide-up/slide-down (наплыв) animation possible. */}
+      <div className="relative flex-1 overflow-hidden">
+        <div className="absolute inset-0 flex flex-col items-center justify-center px-10">
           <div className="relative aspect-square w-full max-w-[280px]">
             <div className="absolute inset-0 rounded-3xl border-2 border-white/90" />
             {cameraState === "loading" && (
@@ -485,40 +490,39 @@ export function QrScanModal({
             )}
           </div>
         </div>
-      )}
 
-      {/* Manual view: BC-prefixed code entry via our own numeric keypad —
-          no real <input> is ever focused, so the OS never raises its own
-          keyboard (and with it, no autofill row / accessory toolbar eating
-          extra height, no viewport-resize dance to keep everything visible). */}
-      {view === "manual" && (
-        <div className="relative flex-1 flex flex-col items-center px-8">
+        {/* Manual view: BC-prefixed code entry via our own numeric keypad —
+            no real <input> is ever focused, so the OS never raises its own
+            keyboard (and with it, no autofill row / accessory toolbar eating
+            extra height, no viewport-resize dance to keep everything visible).
+            Always mounted; `translate-y-full` parks it below the viewport
+            while scanning and `translate-y-0` brings it up over the camera. */}
+        <div
+          className={cn(
+            "absolute inset-0 flex flex-col items-center bg-neutral-900 px-4 transition-transform duration-300 ease-out",
+            view === "manual" ? "translate-y-0" : "translate-y-full pointer-events-none",
+          )}
+          aria-hidden={view !== "manual"}
+        >
           {/* Input block sits low in the space above the keypad, right next
-              to it, instead of floating at mid-height. */}
-          <div className="flex-1 flex flex-col items-center justify-end gap-2 w-full max-w-[15.5rem] min-h-0 pb-3">
+              to it, instead of floating at mid-height. Its own max-width is
+              deliberately a touch wider than the keypad's below. */}
+          <div className="flex-1 flex flex-col items-center justify-end gap-2 w-full min-h-0 pb-3">
             <div
-              className="flex items-center w-full rounded-2xl border-2 border-white/80 bg-black overflow-hidden"
+              className="flex items-center w-full max-w-[24rem] rounded-2xl border-2 border-primary bg-black overflow-hidden"
               data-testid="input-bike-code"
             >
-              <span className="px-3 py-2 text-white/50 text-base font-mono select-none">
+              <span className="px-4 py-3.5 text-primary text-xl font-mono select-none">
                 BC-
               </span>
-              <span className="flex-1 min-w-0 py-2 pr-3 text-base font-mono text-white tracking-wider">
+              <span className="flex-1 min-w-0 py-3.5 pr-4 text-xl font-mono text-white tracking-wider">
                 {digits || <span className="text-white/30">014</span>}
                 <span
-                  className="inline-block w-[2px] h-4 ml-0.5 bg-white/70 align-middle animate-pulse"
+                  className="inline-block w-[2px] h-5 ml-0.5 bg-white/70 align-middle animate-pulse"
                   aria-hidden="true"
                 />
               </span>
             </div>
-            <Button
-              type="button"
-              onClick={confirmCode}
-              className="w-full"
-              data-testid="button-confirm-bike-code"
-            >
-              ОК
-            </Button>
             {error && (
               <div className="text-xs text-red-400 text-center" data-testid="qr-scan-error">
                 {error}
@@ -526,39 +530,50 @@ export function QrScanModal({
             )}
           </div>
 
-          <div className="shrink-0 grid grid-cols-3 gap-2 w-full max-w-[15.5rem] pb-4">
+          {/* 3x4 keypad, adaptive to screen width (capped so it doesn't
+              balloon on tablets): backspace bottom-left (under 7), 0
+              bottom-middle (under 8), confirm/enter bottom-right (under 9). */}
+          <div className="shrink-0 grid grid-cols-3 gap-3 w-full max-w-[22rem] pb-4">
             {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
               <button
                 key={d}
                 type="button"
                 onClick={() => appendDigit(d)}
-                className="h-11 rounded-lg bg-white/10 text-white text-base font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
+                className="aspect-square rounded-2xl bg-white/10 text-white text-2xl font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
                 data-testid={`button-keypad-${d}`}
               >
                 {d}
               </button>
             ))}
-            <div aria-hidden="true" />
+            <button
+              type="button"
+              onClick={backspaceDigit}
+              aria-label="Удалить последнюю цифру"
+              className="aspect-square rounded-2xl bg-white/10 text-white flex items-center justify-center hover:bg-white/20 active:bg-white/25 transition-colors"
+              data-testid="button-keypad-backspace"
+            >
+              <Delete className="w-6 h-6" />
+            </button>
             <button
               type="button"
               onClick={() => appendDigit("0")}
-              className="h-11 rounded-lg bg-white/10 text-white text-base font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
+              className="aspect-square rounded-2xl bg-white/10 text-white text-2xl font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
               data-testid="button-keypad-0"
             >
               0
             </button>
             <button
               type="button"
-              onClick={backspaceDigit}
-              aria-label="Удалить последнюю цифру"
-              className="h-11 rounded-lg bg-white/10 text-white flex items-center justify-center hover:bg-white/20 active:bg-white/25 transition-colors"
-              data-testid="button-keypad-backspace"
+              onClick={confirmCode}
+              aria-label="Подтвердить код"
+              className="aspect-square rounded-2xl bg-primary text-primary-foreground flex items-center justify-center hover:opacity-90 active:opacity-80 transition-opacity"
+              data-testid="button-keypad-confirm"
             >
-              <Delete className="w-5 h-5" />
+              <Check className="w-7 h-7" />
             </button>
           </div>
         </div>
-      )}
+      </div>
 
       {/* Bottom controls: switch to manual entry, toggle the flashlight.
           No transform/lift needed here anymore — the manual view has its
