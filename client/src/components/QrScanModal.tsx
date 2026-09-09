@@ -459,7 +459,7 @@ export function QrScanModal({
       <div className="relative flex-1 overflow-hidden">
         <div className="absolute inset-0 flex flex-col items-center justify-center px-10">
           <div className="relative aspect-square w-full max-w-[280px]">
-            <div className="absolute inset-0 rounded-3xl border-2 border-white/90" />
+            <div className="absolute inset-0 rounded-3xl border-2 border-primary" />
             {cameraState === "loading" && (
               <div
                 className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white"
@@ -592,36 +592,20 @@ export function QrScanModal({
       {/* Bottom controls: switch to manual entry, toggle the flashlight.
           No transform/lift needed here anymore — the manual view has its
           own keypad instead of the OS keyboard, so nothing ever resizes or
-          overlays this row. The naплыв (slide-up/slide-down) backdrop from
-          the manual panel above extends into this row too, so the button
-          row's background lifts in sync — the buttons themselves never
-          move, only what's behind them. */}
+          overlays this row. The row's dark backdrop is now permanent
+          (no longer synced to the manual panel's slide animation) so the
+          buttons never visually shift between scan and manual views. */}
       <div
-        className="relative z-10 shrink-0 flex items-center justify-center gap-14"
+        className="relative shrink-0 flex items-center justify-center gap-14 bg-neutral-900"
         style={{
           paddingBottom: "calc(env(safe-area-inset-bottom) + 2rem)",
           paddingTop: "1rem",
         }}
       >
-        {/* Relayed against the manual panel above with zero overlap (each
-            segment is `duration-150`, matching the panel's own): opening
-            (sliding up), this backdrop is the first leg and moves
-            immediately with no delay, handing off to the manual panel once
-            it's done; closing (sliding down), it's the second leg and waits
-            the full `delay-150` for the manual panel to finish first —
-            together the two read as a single continuous sweep instead of
-            two things moving at once. */}
-        <div
-          className={cn(
-            "absolute inset-0 bg-neutral-900 transition-transform duration-150 ease-out pointer-events-none",
-            view === "manual" ? "translate-y-0 delay-0" : "translate-y-full delay-150",
-          )}
-          aria-hidden="true"
-        />
         <button
           type="button"
           onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
-          className="relative z-10 flex flex-col items-center justify-center w-14 h-14 rounded-full bg-white/15 text-white [@media(hover:hover)]:hover:bg-white/25 transition-colors"
+          className="flex flex-col items-center justify-center w-14 h-14 rounded-full bg-white/15 text-primary [@media(hover:hover)]:hover:bg-white/25 transition-colors"
           data-testid="button-toggle-manual-entry"
         >
           {/* Direction hint, drawn inside the button next to the keyboard
@@ -629,13 +613,13 @@ export function QrScanModal({
               entry up), arrow below once manual entry is open (tapping
               sends it back down to the camera). */}
           {view === "scan" ? (
-            <DirectionChevron direction="up" className="w-4 h-3.5 text-white/70" />
+            <DirectionChevron direction="up" className="w-4 h-3.5 text-primary/70" />
           ) : (
             <span className="w-4 h-3.5" aria-hidden="true" />
           )}
           <Keyboard className="w-6 h-6" />
           {view === "manual" ? (
-            <DirectionChevron direction="down" className="w-4 h-3.5 text-white/70" />
+            <DirectionChevron direction="down" className="w-4 h-3.5 text-primary/70" />
           ) : (
             <span className="w-4 h-3.5" aria-hidden="true" />
           )}
@@ -645,8 +629,8 @@ export function QrScanModal({
           onClick={toggleTorch}
           disabled={!torchSupported}
           className={cn(
-            "relative z-10 flex flex-col items-center justify-center w-14 h-14 rounded-full transition-colors disabled:cursor-not-allowed",
-            torchOn ? "bg-white text-black" : "bg-white/15 text-white [@media(hover:hover)]:hover:bg-white/25",
+            "flex flex-col items-center justify-center w-14 h-14 rounded-full transition-colors disabled:cursor-not-allowed",
+            torchOn ? "bg-white text-black" : "bg-white/15 text-primary [@media(hover:hover)]:hover:bg-white/25",
             !torchSupported && "opacity-40",
           )}
           data-testid="button-toggle-flashlight"
