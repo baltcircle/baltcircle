@@ -381,7 +381,7 @@ export function QrScanModal({
   // Custom numeric keypad — replaces the OS keyboard entirely for manual
   // entry, so height/appearance stay fully under our control (no autofill
   // suggestion row, no Safari accessory toolbar with prev/next/done).
-  const MAX_CODE_DIGITS = 5;
+  const MAX_CODE_DIGITS = 3;
   const appendDigit = (d: string) => {
     setDigits((prev) => (prev.length >= MAX_CODE_DIGITS ? prev : prev + d));
     setError(null);
@@ -443,7 +443,7 @@ export function QrScanModal({
           <X className="w-6 h-6" />
         </button>
         <h1 className="flex-1 text-white text-lg font-medium text-center">
-          {view === "scan" ? "Найдите QR-код на руле" : "Введите код"}
+          {view === "scan" ? "Найдите QR-код на руле" : null}
         </h1>
         <span className="shrink-0 w-9 h-9" aria-hidden="true" />
       </div>
@@ -507,9 +507,12 @@ export function QrScanModal({
           {/* Input block sits low in the space above the keypad. The keypad
               is now shorter (rectangular keys, not square), so the freed
               vertical room pushes this block further down than before;
-              `pb-8` adds a clear, deliberate gap above the keypad on top of
-              that. Its own max-width stays wider than the keypad's below. */}
-          <div className="flex-1 flex flex-col items-center justify-end gap-2 w-full min-h-0 pb-8">
+              `pb-10` adds a clear, deliberate gap above the keypad on top of
+              that (and nudges the whole block a touch higher). The
+              "Введите код" label used to live in the header, far from the
+              field — it now sits directly above the input instead. */}
+          <div className="flex-1 flex flex-col items-center justify-end gap-2 w-full min-h-0 pb-10">
+            <span className="text-white text-base font-medium">Введите код</span>
             <div
               className="flex items-center justify-center w-full max-w-[24rem] rounded-2xl border-2 border-primary bg-black overflow-hidden py-3.5"
               data-testid="input-bike-code"
@@ -543,7 +546,7 @@ export function QrScanModal({
                 key={d}
                 type="button"
                 onClick={() => appendDigit(d)}
-                className="h-12 rounded-2xl bg-white/10 text-white text-xl font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
+                className="h-12 rounded-2xl bg-white/10 text-white text-xl font-medium [@media(hover:hover)]:hover:bg-white/20 active:bg-white/25 transition-colors"
                 data-testid={`button-keypad-${d}`}
               >
                 {d}
@@ -553,7 +556,7 @@ export function QrScanModal({
               type="button"
               onClick={backspaceDigit}
               aria-label="Удалить последнюю цифру"
-              className="h-12 rounded-2xl bg-white/10 text-white flex items-center justify-center hover:bg-white/20 active:bg-white/25 transition-colors"
+              className="h-12 rounded-2xl bg-white/10 text-white flex items-center justify-center [@media(hover:hover)]:hover:bg-white/20 active:bg-white/25 transition-colors"
               data-testid="button-keypad-backspace"
             >
               <Delete className="w-5 h-5" />
@@ -561,7 +564,7 @@ export function QrScanModal({
             <button
               type="button"
               onClick={() => appendDigit("0")}
-              className="h-12 rounded-2xl bg-white/10 text-white text-xl font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
+              className="h-12 rounded-2xl bg-white/10 text-white text-xl font-medium [@media(hover:hover)]:hover:bg-white/20 active:bg-white/25 transition-colors"
               data-testid="button-keypad-0"
             >
               0
@@ -570,7 +573,7 @@ export function QrScanModal({
               type="button"
               onClick={confirmCode}
               aria-label="Подтвердить код"
-              className="h-12 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center hover:opacity-90 active:opacity-80 transition-opacity"
+              className="h-12 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center [@media(hover:hover)]:hover:opacity-90 active:opacity-80 transition-opacity"
               data-testid="button-keypad-confirm"
             >
               <Check className="w-6 h-6" />
@@ -603,7 +606,7 @@ export function QrScanModal({
         <button
           type="button"
           onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
-          className="flex flex-col items-center justify-center w-14 h-14 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
+          className="relative z-10 flex flex-col items-center justify-center w-14 h-14 rounded-full bg-white/15 text-white [@media(hover:hover)]:hover:bg-white/25 transition-colors"
           data-testid="button-toggle-manual-entry"
         >
           {/* Direction hint, drawn inside the button next to the keyboard
@@ -627,8 +630,8 @@ export function QrScanModal({
           onClick={toggleTorch}
           disabled={!torchSupported}
           className={cn(
-            "flex flex-col items-center justify-center w-14 h-14 rounded-full transition-colors disabled:cursor-not-allowed",
-            torchOn ? "bg-white text-black" : "bg-white/15 text-white hover:bg-white/25",
+            "relative z-10 flex flex-col items-center justify-center w-14 h-14 rounded-full transition-colors disabled:cursor-not-allowed",
+            torchOn ? "bg-white text-black" : "bg-white/15 text-white [@media(hover:hover)]:hover:bg-white/25",
             !torchSupported && "opacity-40",
           )}
           data-testid="button-toggle-flashlight"
