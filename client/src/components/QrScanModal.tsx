@@ -492,16 +492,19 @@ export function QrScanModal({
           keyboard (and with it, no autofill row / accessory toolbar eating
           extra height, no viewport-resize dance to keep everything visible). */}
       {view === "manual" && (
-        <div className="relative flex-1 flex flex-col items-center justify-center px-8 gap-6">
-          <div className="flex flex-col items-center gap-3 w-full max-w-xs">
+        <div className="relative flex-1 flex flex-col items-center px-8">
+          {/* Input block is centered within the space above the keypad, so
+              it lands in the middle of the screen; the compact keypad below
+              it takes only the height it needs. */}
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 w-full max-w-[15.5rem] min-h-0">
             <div
               className="flex items-center w-full rounded-2xl border-2 border-white/80 bg-black overflow-hidden"
               data-testid="input-bike-code"
             >
-              <span className="px-4 py-4 text-white/50 text-base font-mono select-none border-r border-white/20">
+              <span className="px-4 py-3 text-white/50 text-base font-mono select-none border-r border-white/20">
                 BC-
               </span>
-              <span className="flex-1 min-w-0 px-3 py-4 text-base font-mono text-white tracking-wider">
+              <span className="flex-1 min-w-0 px-3 py-3 text-base font-mono text-white tracking-wider">
                 {digits || <span className="text-white/30">014</span>}
                 <span
                   className="inline-block w-[2px] h-4 ml-0.5 bg-white/70 align-middle animate-pulse"
@@ -524,13 +527,13 @@ export function QrScanModal({
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-3 w-full max-w-xs">
+          <div className="shrink-0 grid grid-cols-3 gap-2 w-full max-w-[15.5rem] pb-4">
             {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
               <button
                 key={d}
                 type="button"
                 onClick={() => appendDigit(d)}
-                className="h-14 rounded-xl bg-white/10 text-white text-xl font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
+                className="h-11 rounded-lg bg-white/10 text-white text-base font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
                 data-testid={`button-keypad-${d}`}
               >
                 {d}
@@ -540,7 +543,7 @@ export function QrScanModal({
             <button
               type="button"
               onClick={() => appendDigit("0")}
-              className="h-14 rounded-xl bg-white/10 text-white text-xl font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
+              className="h-11 rounded-lg bg-white/10 text-white text-base font-medium hover:bg-white/20 active:bg-white/25 transition-colors"
               data-testid="button-keypad-0"
             >
               0
@@ -549,10 +552,10 @@ export function QrScanModal({
               type="button"
               onClick={backspaceDigit}
               aria-label="Удалить последнюю цифру"
-              className="h-14 rounded-xl bg-white/10 text-white flex items-center justify-center hover:bg-white/20 active:bg-white/25 transition-colors"
+              className="h-11 rounded-lg bg-white/10 text-white flex items-center justify-center hover:bg-white/20 active:bg-white/25 transition-colors"
               data-testid="button-keypad-backspace"
             >
-              <Delete className="w-6 h-6" />
+              <Delete className="w-5 h-5" />
             </button>
           </div>
         </div>
