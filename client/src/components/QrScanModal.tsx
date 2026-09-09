@@ -450,38 +450,31 @@ export function QrScanModal({
         <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-black/10 to-black/70 pointer-events-none" />
       )}
 
-      {/* Header */}
+      {/* Header — close button and title sit in the same flex row so
+          `items-center` keeps them on one visual line no matter what; the
+          trailing invisible spacer (matching the button's width) keeps the
+          title truly centered instead of drifting toward the button. */}
       <div
-        className="relative z-10 shrink-0 flex items-center justify-center px-14"
+        className="relative z-10 shrink-0 flex items-center gap-2 px-4"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 1.25rem)", minHeight: "3.5rem" }}
       >
         <button
           type="button"
           onClick={() => onOpenChange(false)}
-          className="absolute left-4 flex items-center justify-center w-9 h-9 rounded-full text-white hover:bg-white/15 transition-colors"
-          style={{ top: "calc(env(safe-area-inset-top) + 0.75rem)" }}
+          className="shrink-0 flex items-center justify-center w-9 h-9 rounded-full text-white hover:bg-white/15 transition-colors"
           data-testid="button-close-qr-scan"
         >
           <X className="w-6 h-6" />
         </button>
-        <h1 className="text-white text-lg font-medium text-center">
+        <h1 className="flex-1 text-white text-lg font-medium text-center">
           {view === "scan" ? "Найдите QR-код на руле" : "Введите код"}
         </h1>
+        <span className="shrink-0 w-9 h-9" aria-hidden="true" />
       </div>
 
-      {/* Content + bottom controls move together as one block when the
-          keyboard opens, instead of the modal itself resizing — the keyboard
-          simply overlays on top, like any native overlay, while this block
-          slides up by exactly the keyboard's height so nothing ends up
-          hidden behind it. Moving both pieces as a single unit keeps their
-          relative spacing intact, so the buttons can never drift into the
-          input/OK button above them. */}
-      <div
-        className="relative z-10 flex-1 flex flex-col min-h-0 transition-transform duration-300 ease-out"
-        style={{
-          transform: view === "manual" && keyboardInset > 0 ? `translateY(-${keyboardInset}px)` : "translateY(0)",
-        }}
-      >
+      {/* Scan / manual content stays put — only the bottom controls rise
+          above the keyboard (see below), so the code input never drifts
+          away from its natural centered position. */}
       {view === "scan" && (
         <div className="relative flex-1 flex flex-col items-center justify-center px-10">
           <div className="relative aspect-square w-full max-w-[280px]">
@@ -552,55 +545,61 @@ export function QrScanModal({
         </div>
       )}
 
-      {/* Bottom controls: switch to manual entry, toggle the flashlight. */}
+      {/* Bottom controls: switch to manual entry, toggle the flashlight.
+          This row alone rises above the keyboard by exactly its height —
+          the input/OK button above stays fixed, so nothing ends up hidden
+          behind the keyboard and the input never moves. */}
       <div
-        className="relative shrink-0 flex items-center justify-center gap-14"
+        className="relative z-10 shrink-0 flex items-center justify-center gap-14 transition-transform duration-300 ease-out"
         style={{
           paddingBottom: "calc(env(safe-area-inset-bottom) + 2rem)",
           paddingTop: "1rem",
+          transform: view === "manual" && keyboardInset > 0 ? `translateY(-${keyboardInset}px)` : "translateY(0)",
         }}
       >
-        <div className="relative flex items-center justify-center">
-          {/* Direction hint: arrow above the keyboard button while scanning
-              (tapping brings the code entry up), arrow below once manual
-              entry is open (tapping sends it back down to the camera). */}
+        <button
+          type="button"
+          onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
+          className="flex flex-col items-center justify-center w-14 h-14 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
+          data-testid="button-toggle-manual-entry"
+        >
+          {/* Direction hint, drawn inside the button next to the keyboard
+              glyph: arrow above it while scanning (tapping brings the code
+              entry up), arrow below once manual entry is open (tapping
+              sends it back down to the camera). */}
           <DirectionChevron
             direction="up"
             className={cn(
-              "absolute -top-4 w-4 h-3.5 text-white/70 transition-opacity duration-200",
+              "w-4 h-3.5 text-white/70 transition-opacity duration-200",
               view === "scan" ? "opacity-100" : "opacity-0",
             )}
           />
-          <button
-            type="button"
-            onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
-            className="flex items-center justify-center w-14 h-14 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
-            data-testid="button-toggle-manual-entry"
-          >
-            <Keyboard className="w-6 h-6" />
-          </button>
+          <Keyboard className="w-6 h-6" />
           <DirectionChevron
             direction="down"
             className={cn(
-              "absolute -bottom-4 w-4 h-3.5 text-white/70 transition-opacity duration-200",
+              "w-4 h-3.5 text-white/70 transition-opacity duration-200",
               view === "manual" ? "opacity-100" : "opacity-0",
             )}
           />
-        </div>
+        </button>
         <button
           type="button"
           onClick={toggleTorch}
           disabled={!torchSupported}
           className={cn(
-            "flex items-center justify-center w-14 h-14 rounded-full transition-colors disabled:cursor-not-allowed",
+            "flex flex-col items-center justify-center w-14 h-14 rounded-full transition-colors disabled:cursor-not-allowed",
             torchOn ? "bg-white text-black" : "bg-white/15 text-white hover:bg-white/25",
             !torchSupported && "opacity-40",
           )}
           data-testid="button-toggle-flashlight"
         >
+          {/* Invisible spacers matching the keyboard button's chevron slots
+              so both icons sit on the same horizontal line. */}
+          <span className="w-4 h-3.5" aria-hidden="true" />
           <Flashlight className="w-6 h-6" />
+          <span className="w-4 h-3.5" aria-hidden="true" />
         </button>
-      </div>
       </div>
     </div>
   );
