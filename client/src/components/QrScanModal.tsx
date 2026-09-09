@@ -496,11 +496,16 @@ export function QrScanModal({
             keyboard (and with it, no autofill row / accessory toolbar eating
             extra height, no viewport-resize dance to keep everything visible).
             Always mounted; `translate-y-full` parks it below the viewport
-            while scanning and `translate-y-0` brings it up over the camera. */}
+            while scanning and `translate-y-0` brings it up over the camera.
+            Staggered against the bottom control bar's own backdrop below so
+            the two read as one continuous sweep instead of two separate
+            moves: opening (sliding up) this panel waits `delay-100` so the
+            bottom bar leads; closing (sliding down) it moves first with no
+            delay so it leads instead. */}
         <div
           className={cn(
             "absolute inset-0 flex flex-col items-center bg-neutral-900 px-4 transition-transform duration-300 ease-out",
-            view === "manual" ? "translate-y-0" : "translate-y-full pointer-events-none",
+            view === "manual" ? "translate-y-0 delay-100" : "translate-y-full delay-0 pointer-events-none",
           )}
           aria-hidden={view !== "manual"}
         >
@@ -596,10 +601,15 @@ export function QrScanModal({
           paddingTop: "1rem",
         }}
       >
+        {/* Staggered against the manual panel above: opening (sliding up)
+            this backdrop leads with no delay so the bottom bar lifts first;
+            closing (sliding down) it waits `delay-100` so the manual panel
+            leads instead — together the two moves read as one continuous
+            sweep rather than simultaneous, disconnected ones. */}
         <div
           className={cn(
             "absolute inset-0 bg-neutral-900 transition-transform duration-300 ease-out pointer-events-none",
-            view === "manual" ? "translate-y-0" : "translate-y-full",
+            view === "manual" ? "translate-y-0 delay-0" : "translate-y-full delay-100",
           )}
           aria-hidden="true"
         />
