@@ -78,6 +78,7 @@ export function QrScanModal({
   // shown as a non-editable adornment (same pattern as the +7 phone prefix in
   // AuthModal), so a rider can't mistype or omit it.
   const [digits, setDigits] = useState("");
+  const codeInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   // Когда браузер вернул NotAllowedError — показываем более полезную
@@ -303,6 +304,10 @@ export function QrScanModal({
     if (!vv) return;
     const update = () => {
       setKeyboardInset(Math.max(0, window.innerHeight - vv.height));
+      // Belt-and-suspenders: snap back any scroll the keyboard's own
+      // "reveal the focused field" heuristic tried to apply to the page
+      // pinned behind this fixed overlay.
+      window.scrollTo(0, 0);
     };
     update();
     vv.addEventListener("resize", update);
@@ -313,21 +318,47 @@ export function QrScanModal({
     };
   }, [open]);
 
-  // Escape closes like any other full-screen overlay in the app; body scroll
-  // is locked while open so the page behind it can't scroll on mobile.
+  // Escape closes like any other full-screen overlay in the app; the page
+  // behind it is pinned (fixed, not just overflow-hidden) while open so iOS
+  // Safari can't "scroll the whole overlay" to bring the focused manual-entry
+  // input above the keyboard — that scroll is exactly what made the code
+  // input window drift/scroll instead of the button row simply docking above
+  // the keyboard.
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onOpenChange(false);
     };
     document.addEventListener("keydown", onKeyDown);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const { body, documentElement: html } = document;
+    const prev = {
+      bodyOverflow: body.style.overflow,
+      bodyPosition: body.style.position,
+      bodyWidth: body.style.width,
+      htmlOverflow: html.style.overflow,
+    };
+    body.style.overflow = "hidden";
+    body.style.position = "fixed";
+    body.style.width = "100%";
+    html.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = prevOverflow;
+      body.style.overflow = prev.bodyOverflow;
+      body.style.position = prev.bodyPosition;
+      body.style.width = prev.bodyWidth;
+      html.style.overflow = prev.htmlOverflow;
     };
   }, [open, onOpenChange]);
+
+  // Focus the manual-entry input ourselves (instead of the native `autoFocus`
+  // attribute) so we can pass `preventScroll: true` — this stops the browser
+  // from scrolling the focused element into view, which is what made the code
+  // input window scroll on open instead of staying put while the keyboard
+  // rises beneath it.
+  useEffect(() => {
+    if (view !== "manual") return;
+    codeInputRef.current?.focus({ preventScroll: true });
+  }, [view]);
 
   const toggleTorch = useCallback(async () => {
     const track = streamRef.current?.getVideoTracks()[0];
@@ -387,8 +418,8 @@ export function QrScanModal({
 
       {/* Header */}
       <div
-        className="relative z-10 shrink-0 flex items-center justify-center px-14"
-        style={{ paddingTop: "calc(env(safe-area-inset-top) + 1.25rem)", minHeight: "3.5rem" }}
+        className="relative z-10 shrink-0 flex items-center justify-center px-12"
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 1.25rem)", paddingBottom: "0.5rem", minHeight: "3.5rem" }}
       >
         <button
           type="button"
@@ -399,7 +430,7 @@ export function QrScanModal({
         >
           <X className="w-6 h-6" />
         </button>
-        <h1 className="text-white text-lg font-medium text-center">
+        <h1 className="text-white text-4xl font-medium text-center leading-tight">
           {view === "scan" ? "Найдите QR-код на руле" : "Введите код"}
         </h1>
       </div>
@@ -449,12 +480,12 @@ export function QrScanModal({
               BC-
             </span>
             <input
+              ref={codeInputRef}
               value={digits}
               onChange={(e) => { setDigits(e.target.value.replace(/\D/g, "").slice(0, 5)); setError(null); }}
               onKeyDown={(e) => { if (e.key === "Enter") confirmCode(); }}
               placeholder="014"
               inputMode="numeric"
-              autoFocus
               className="flex-1 min-w-0 px-3 py-4 text-base bg-transparent outline-none font-mono text-white placeholder:text-white/30"
               data-testid="input-bike-code"
             />
@@ -490,45 +521,48 @@ export function QrScanModal({
               : "translateY(0)",
         }}
       >
-        <div className="relative flex items-center justify-center">
-          {/* Direction hint: arrow above the keyboard button while scanning
+        <button
+          type="button"
+          onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
+          className="flex flex-col items-center justify-center w-24 h-24 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors gap-0.5"
+          data-testid="button-toggle-manual-entry"
+        >
+          {/* Direction hint, drawn inside the button next to the keyboard
+              glyph (like the reference): arrow above it while scanning
               (tapping brings the code entry up), arrow below once manual
               entry is open (tapping sends it back down to the camera). */}
           <ChevronUp
             className={cn(
-              "absolute -top-7 w-6 h-6 text-white/70 transition-opacity duration-200",
+              "w-3.5 h-3.5 text-white/70 transition-opacity duration-200",
               view === "scan" ? "opacity-100" : "opacity-0",
             )}
             aria-hidden="true"
           />
+          <Keyboard className="w-14 h-14" />
           <ChevronDown
             className={cn(
-              "absolute -bottom-7 w-6 h-6 text-white/70 transition-opacity duration-200",
+              "w-3.5 h-3.5 text-white/70 transition-opacity duration-200",
               view === "manual" ? "opacity-100" : "opacity-0",
             )}
             aria-hidden="true"
           />
-          <button
-            type="button"
-            onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
-            className="flex items-center justify-center w-20 h-20 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
-            data-testid="button-toggle-manual-entry"
-          >
-            <Keyboard className="w-12 h-12" />
-          </button>
-        </div>
+        </button>
         <button
           type="button"
           onClick={toggleTorch}
           disabled={!torchSupported}
           className={cn(
-            "flex items-center justify-center w-20 h-20 rounded-full transition-colors disabled:cursor-not-allowed",
+            "flex flex-col items-center justify-center w-24 h-24 rounded-full transition-colors disabled:cursor-not-allowed gap-0.5",
             torchOn ? "bg-white text-black" : "bg-white/15 text-white hover:bg-white/25",
             !torchSupported && "opacity-40",
           )}
           data-testid="button-toggle-flashlight"
         >
-          <Flashlight className="w-12 h-12" />
+          {/* Invisible spacer matching the keyboard button's chevron slot so
+              both icons sit on the same horizontal line. */}
+          <span className="w-3.5 h-3.5" aria-hidden="true" />
+          <Flashlight className="w-14 h-14" />
+          <span className="w-3.5 h-3.5" aria-hidden="true" />
         </button>
       </div>
     </div>
