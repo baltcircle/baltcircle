@@ -452,20 +452,19 @@ export function QrScanModal({
 
       {/* Header */}
       <div
-        className="relative z-10 shrink-0 flex items-center justify-center px-20"
-        style={{ paddingTop: "calc(env(safe-area-inset-top) + 1.25rem)", paddingBottom: "0.5rem", minHeight: "3.5rem" }}
+        className="relative z-10 shrink-0 flex items-center justify-center px-14"
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 1.25rem)", minHeight: "3.5rem" }}
       >
         <button
           type="button"
           onClick={() => onOpenChange(false)}
-          className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center justify-center w-14 h-14 rounded-full text-white hover:bg-white/15 transition-colors"
+          className="absolute left-4 flex items-center justify-center w-9 h-9 rounded-full text-white hover:bg-white/15 transition-colors"
+          style={{ top: "calc(env(safe-area-inset-top) + 0.75rem)" }}
           data-testid="button-close-qr-scan"
         >
-          {/* Sized to match the header text (text-4xl = 36px) so it grew
-              proportionally when the heading was doubled. */}
-          <X className="w-9 h-9" />
+          <X className="w-6 h-6" />
         </button>
-        <h1 className="text-white text-4xl font-medium text-center leading-tight">
+        <h1 className="text-white text-lg font-medium text-center">
           {view === "scan" ? "Найдите QR-код на руле" : "Введите код"}
         </h1>
       </div>
@@ -555,54 +554,51 @@ export function QrScanModal({
 
       {/* Bottom controls: switch to manual entry, toggle the flashlight. */}
       <div
-        className="relative shrink-0 flex items-center justify-center gap-20"
+        className="relative shrink-0 flex items-center justify-center gap-14"
         style={{
           paddingBottom: "calc(env(safe-area-inset-bottom) + 2rem)",
           paddingTop: "1rem",
         }}
       >
-        <button
-          type="button"
-          onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
-          className="flex flex-col items-center justify-center w-28 h-28 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors gap-0.5"
-          data-testid="button-toggle-manual-entry"
-        >
-          {/* Direction hint, drawn inside the button next to the keyboard
-              glyph (like the reference): arrow above it while scanning
+        <div className="relative flex items-center justify-center">
+          {/* Direction hint: arrow above the keyboard button while scanning
               (tapping brings the code entry up), arrow below once manual
               entry is open (tapping sends it back down to the camera). */}
           <DirectionChevron
             direction="up"
             className={cn(
-              "w-5 h-4 text-white/70 transition-opacity duration-200",
+              "absolute -top-4 w-4 h-3.5 text-white/70 transition-opacity duration-200",
               view === "scan" ? "opacity-100" : "opacity-0",
             )}
           />
-          <Keyboard className="w-14 h-14" />
+          <button
+            type="button"
+            onClick={() => setView((v) => (v === "scan" ? "manual" : "scan"))}
+            className="flex items-center justify-center w-14 h-14 rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
+            data-testid="button-toggle-manual-entry"
+          >
+            <Keyboard className="w-6 h-6" />
+          </button>
           <DirectionChevron
             direction="down"
             className={cn(
-              "w-5 h-4 text-white/70 transition-opacity duration-200",
+              "absolute -bottom-4 w-4 h-3.5 text-white/70 transition-opacity duration-200",
               view === "manual" ? "opacity-100" : "opacity-0",
             )}
           />
-        </button>
+        </div>
         <button
           type="button"
           onClick={toggleTorch}
           disabled={!torchSupported}
           className={cn(
-            "flex flex-col items-center justify-center w-28 h-28 rounded-full transition-colors disabled:cursor-not-allowed gap-0.5",
+            "flex items-center justify-center w-14 h-14 rounded-full transition-colors disabled:cursor-not-allowed",
             torchOn ? "bg-white text-black" : "bg-white/15 text-white hover:bg-white/25",
             !torchSupported && "opacity-40",
           )}
           data-testid="button-toggle-flashlight"
         >
-          {/* Invisible spacer matching the keyboard button's chevron slot so
-              both icons sit on the same horizontal line. */}
-          <span className="w-5 h-4" aria-hidden="true" />
-          <Flashlight className="w-14 h-14" />
-          <span className="w-5 h-4" aria-hidden="true" />
+          <Flashlight className="w-6 h-6" />
         </button>
       </div>
       </div>
