@@ -73,37 +73,38 @@ const LIGHT_COLORS = {
   userDot:         "#61B5C4",
 } as const;
 
-// DARK PALETTE — modelled on Apple Maps' / CARTO Dark Matter's minimal dark
-// basemap technique: ONE desaturated slate-blue base hue (~220°) carries
-// land/urban/buildings/roads, differentiated mostly by LIGHTNESS (elevation
-// steps), not by saturated hue swings — this is what avoids "пятна" (blotchy
-// colour patches). Vegetation (forest/grass/farmland) gets a hue shift at the
-// SAME lightness/saturation as land, exactly like Apple does it, so it reads
-// as a calm tint rather than a green blob. Water is the one deliberately
-// darker + more saturated tone — the land/water split is the most important
-// contrast decision on a dark map. No pure black/white anywhere (avoids
-// halation and "дыры" — dead flat voids).
+// DARK PALETTE — colour-matched against real Apple Maps dark-mode screenshots
+// (pixel-sampled: countryside green ~#376e57, open sea ~#1d3983). At regional
+// zoom Apple paints almost the whole non-urban landmass as ONE vivid green
+// (forest/grass/farmland/base-land all sit in the SAME green family, split
+// only by lightness), so uncovered gaps between landuse polygons blend into
+// the surrounding countryside instead of poking through as a different-hue
+// "hole" — that's what actually avoids "пятна"/"дыры". Only the compact urban
+// core breaks the pattern with a distinct dark slate. Water is a clearly
+// LIGHTER, more saturated blue than the land — matching the reference (not the
+// near-black water of a Dark-Matter-style basemap) — since that land/water
+// split is the main contrast anchor on the map. No pure black/white anywhere.
 const DARK_COLORS = {
-  land:            "#1f2633",
-  water:           "#0d162b",
-  forest:          "#1e382c",
-  grass:           "#253c2d",
-  farmland:        "#333527",
-  urban:           "#272d3a",
-  building:        "#2f364c",
-  boundaryCountry: "#74569f",
-  roadOutline:     "#7489b4",
+  land:            "#283e33",
+  water:           "#1b306a",
+  forest:          "#336651",
+  grass:           "#2f503f",
+  farmland:        "#36432d",
+  urban:           "#242b38",
+  building:        "#2b344a",
+  boundaryCountry: "#7a5ca3",
+  roadOutline:     "#7a8fb8",
   roadOutlineOpacity: 0.4,
-  roadMinor:       "#5a657c",
-  houseNumber:     "#a5b5d4",
+  roadMinor:       "#6c7f75",
+  houseNumber:     "#aebbd5",
   cycleway:        "#3b82f6",
-  hospital:        "#39282b",
-  beach:           "#3d3729",
-  waterLabelText:  "#81bcda",
+  hospital:        "#432d31",
+  beach:           "#4b4330",
+  waterLabelText:  "#8dc6e2",
   waterLabelHalo:  "rgba(6,10,20,0.65)",
-  countryLabelText:"#aab7cf",
+  countryLabelText:"#b2bcd2",
   countryLabelHalo:"rgba(6,10,20,0.7)",
-  placeLabelText:  "#a5b5d4", // reuses houseNumber tone (light, on dark land)
+  placeLabelText:  "#aebbd5", // reuses houseNumber tone (light, on dark land)
   userShadowColor: "#ffffff",
   userShadowOpacity: 0.12,
   userHalo:        "#ffffff",
