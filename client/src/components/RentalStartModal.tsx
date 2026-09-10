@@ -317,18 +317,15 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="dialog-rental-start">
         <DialogHeader>
-          <DialogTitle className="font-display font-light flex items-center gap-2">
-            <QrCode className="w-5 h-5" /> Начать аренду
+          <DialogTitle className="font-display text-xl font-light text-center">
+            Начать аренду
           </DialogTitle>
         </DialogHeader>
 
         {/* Scanned / selected bike info */}
         {bike ? (
           <div className="rounded-xl border border-card-border bg-muted/40 p-4 flex items-center justify-between" data-testid="rental-bike-info">
-            <div>
-              <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Велосипед</div>
-              <div className="font-display text-xl font-light">{bike.id}</div>
-            </div>
+            <div className="font-display text-xl font-light">{bike.id}</div>
             <div className="flex flex-col items-end gap-2">
               <Badge>
                 {hasReservationForThisBike
@@ -346,40 +343,32 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
         )}
 
         {/* Tariff grid */}
-        <div className="space-y-2">
-          <div className="text-sm font-medium">Тариф</div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {TARIFFS.map((t) => {
-              const active = tariff === t.id;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setTariff(t.id)}
-                  data-testid={`card-tariff-${t.id}`}
-                  className={`rounded-xl border p-3 text-left transition-colors hover-elevate ${
-                    active ? "border-primary ring-1 ring-primary bg-primary/5" : "border-card-border"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1">
-                      Аренда
-                      {t.test && (
-                        <span className="px-1 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[9px] normal-case tracking-normal font-semibold">
-                          Тест
-                        </span>
-                      )}
-                    </span>
-                    {active && <Check className="w-3.5 h-3.5 text-primary" />}
-                  </div>
-                  <div className="font-display text-base font-light mt-1 leading-tight">{t.name}</div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    <span className="font-medium text-foreground">{t.price}</span> {t.unit}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {TARIFFS.map((t) => {
+            const active = tariff === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTariff(t.id)}
+                data-testid={`card-tariff-${t.id}`}
+                className={`relative rounded-xl border p-3 text-center transition-colors hover-elevate ${
+                  active ? "border-primary ring-1 ring-primary bg-primary/5" : "border-card-border"
+                }`}
+              >
+                {t.test && (
+                  <span className="absolute top-1.5 left-1.5 px-1 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[9px] uppercase tracking-widest font-semibold">
+                    тест
+                  </span>
+                )}
+                {active && <Check className="absolute top-2 right-2 w-3.5 h-3.5 text-primary" />}
+                <div className="font-display text-lg font-light leading-tight">{t.name}</div>
+                <div className="text-sm text-muted-foreground mt-1">
+                  <span className="font-medium text-foreground">{t.price}</span> {t.unit}
+                </div>
+              </button>
+            );
+          })}
         </div>
 
         {/* Graceful state when acquiring isn't configured yet. */}
