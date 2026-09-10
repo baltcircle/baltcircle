@@ -65,9 +65,9 @@ const LIGHT_COLORS = {
   urban:           "#f4f0eb", // settlement/built-up polygon — Apple's warm cream, dominant at city zoom
   building:        "#e8e1d4", // darker tint of `urban` so building footprints still read on top of it
   boundaryCountry: "#8a6fae", // RU / LT / PL state border (boundaries kind=country) — unchanged, not part of Apple match
-  roadOutline:     "#98a0a8", // couple tones darker than Apple's literal sample — their near-white roads read as invisible on our warmer land/urban tones; roads must stand out
+  roadOutline:     "#b0b8c0", // eased back up from #98a0a8 (too dark) — still noticeably darker than Apple's literal near-white sample so roads keep standing out on land/urban
   roadOutlineOpacity: 0.9,
-  roadMinor:       "#98a0a8", // same hue as roadOutline — Apple differentiates classes by width, not colour
+  roadMinor:       "#b0b8c0", // same hue as roadOutline — Apple differentiates classes by width, not colour
   houseNumber:     "#1D1E5D", // house-number labels (z16+) — brand blue, rendered at 0.55 opacity
   cycleway:        "#2563EB", // dedicated cycleways (highway=cycleway) — saturated blue, distinct from water #8ddbf6
   hospital:        "#f0e2e2", // landuse=hospital — soft pink patch (unchanged, pre-existing; Apple has no fill for hospital, just a POI pin)

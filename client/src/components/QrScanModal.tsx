@@ -592,11 +592,17 @@ export function QrScanModal({
       {/* Bottom controls: switch to manual entry, toggle the flashlight.
           No transform/lift needed here anymore — the manual view has its
           own keypad instead of the OS keyboard, so nothing ever resizes or
-          overlays this row. The row's dark backdrop is now permanent
-          (no longer synced to the manual panel's slide animation) so the
-          buttons never visually shift between scan and manual views. */}
+          overlays this row. Deliberately no opaque background of its own —
+          an earlier `bg-neutral-900` here painted a hard-edged solid black
+          rectangle over the live camera feed in scan view (it broke the
+          smooth top/bottom scrim gradient into a flat bar). What shows
+          through now is exactly that same full-screen scrim in scan view
+          (already ~70% black at this bottom edge) and the manual panel's
+          own full-screen `bg-neutral-900` in manual view — visually
+          identical dark backdrop, no seam, and the buttons keep the exact
+          same padding/position either way. */}
       <div
-        className="relative shrink-0 flex items-center justify-center gap-14 bg-neutral-900"
+        className="relative shrink-0 flex items-center justify-center gap-14"
         style={{
           paddingBottom: "calc(env(safe-area-inset-bottom) + 2rem)",
           paddingTop: "1rem",
