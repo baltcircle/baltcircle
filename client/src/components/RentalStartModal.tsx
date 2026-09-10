@@ -363,7 +363,7 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
                 )}
                 {active && <Check className="absolute top-2 right-2 w-3.5 h-3.5 text-primary" />}
                 <div className="font-display text-lg font-light leading-tight">{t.name}</div>
-                <div className="text-sm text-muted-foreground mt-1">
+                <div className="text-lg text-muted-foreground mt-1">
                   <span className="font-medium text-foreground">{t.price}</span> {t.unit}
                 </div>
               </button>
@@ -388,7 +388,7 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
             Tapping any row re-selects it — a real switch, not a binary toggle. */}
         {paymentsConfigured && (
           <div className="space-y-1.5">
-            {activeMethods.length > 0 && <div className="text-sm font-medium">Способ оплаты</div>}
+            {activeMethods.length > 0 && <div className="text-base font-medium">Способ оплаты</div>}
             <div className="rounded-xl border border-card-border bg-muted/40 p-1.5 space-y-1" data-testid="rental-payment-methods">
               {activeMethods.map((m) => {
                 const isSelected = selectedMethodId === m.id;
@@ -400,13 +400,13 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
                     onClick={() => setManualMethodId(m.id)}
                     disabled={submitting}
                     data-testid={`button-payment-method-${m.id}`}
-                    className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-left transition-colors hover-elevate ${
+                    className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2.5 text-sm text-left transition-colors hover-elevate ${
                       isSelected ? "bg-primary/10 ring-1 ring-primary" : ""
                     }`}
                   >
-                    <MethodIcon className="w-3.5 h-3.5 shrink-0" />
+                    <MethodIcon className="w-4 h-4 shrink-0" />
                     <span className="font-medium text-foreground truncate">{m.label}</span>
-                    {isSelected && <Check className="w-3.5 h-3.5 text-primary ml-auto shrink-0" />}
+                    {isSelected && <Check className="w-4 h-4 text-primary ml-auto shrink-0" />}
                   </button>
                 );
               })}
@@ -415,15 +415,15 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
                 onClick={() => setManualMethodId("hosted")}
                 disabled={submitting}
                 data-testid="button-payment-method-hosted"
-                className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-left transition-colors hover-elevate ${
+                className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2.5 text-sm text-left transition-colors hover-elevate ${
                   selectedMethodId === "hosted" ? "bg-primary/10 ring-1 ring-primary" : ""
                 }`}
               >
-                <QrCode className="w-3.5 h-3.5 shrink-0" />
+                <QrCode className="w-4 h-4 shrink-0" />
                 <span className={selectedMethodId === "hosted" ? "font-medium text-foreground" : "text-muted-foreground"}>
                   {activeMethods.length > 0 ? "Оплатить другой картой" : "Оплатить картой на странице Т-Банка"}
                 </span>
-                {selectedMethodId === "hosted" && <Check className="w-3.5 h-3.5 text-primary ml-auto shrink-0" />}
+                {selectedMethodId === "hosted" && <Check className="w-4 h-4 text-primary ml-auto shrink-0" />}
               </button>
             </div>
           </div>
