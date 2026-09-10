@@ -12,6 +12,7 @@ import {
   fillFromColor, coercePoints, smoothCorners, catmullRomSmooth,
 } from "./map/mapMarkers";
 import { createGeoFilter, douglasPeucker, segmentTrack, type TrackFix } from "@/lib/geoSmoothing";
+import { useTheme } from "@/lib/theme";
 
 /** Which optional overlay layers are drawn. Every flag defaults to visible so
  *  the customer map and editors are unaffected; the admin operations map flips
@@ -99,8 +100,21 @@ export function MapLibreMap({
   editorDraft = null,
   height = "100%", showLabels = false, center, centerZoom, className,
 }: MapLibreMapProps) {
+  const { theme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef       = useRef<any>(null);
+  // Тема, с которой ИНИЦИАЛИЗИРОВАНА карта (читается once-эффектом на mount —
+  // без неё карта всегда стартовала бы в светлой теме до первого переключения).
+  const themeRef      = useRef(theme);       themeRef.current = theme;
+  // Параметры источника тайлов, зафиксированные при первом boot() — нужны,
+  // чтобы пересобрать style.json через buildStyle() при смене темы без
+  // повторного boot/fetch тайлового источника.
+  const tileParamsRef = useRef<{ tileSource: { type: "pmtiles"; url: string } | { type: "xyz"; url: string }; minzoom: number; maxzoom: number } | null>(null);
+  // Инкрементируется после каждого успешного map.setStyle() (смена темы) —
+  // GeoJSON-оверлеи (saved-objects/ride-tracks/editor-draft) не переживают
+  // диффовый setStyle и должны быть перезаписаны через setData повторно.
+  const [styleVersion, setStyleVersion] = useState(0);
+  const appliedInitialThemeRef = useRef(false);
   // HTML markers (bikes/parkings/ride starts/tickets) are managed imperatively;
   // routes/zones/tracks go through GeoJSON sources. Kept in a ref so the render
   // effect can clear the previous batch before drawing the next.
@@ -152,9 +166,10 @@ export function MapLibreMap({
       if (cancelled || mapRef.current) return;
       const { width, height: h } = el.getBoundingClientRect();
       if (width === 0 || h === 0) return; // wait for a real size (ResizeObserver retries)
+      tileParamsRef.current = { tileSource, minzoom, maxzoom };
       const map = new maplibregl.Map({
         container: el,
-        style: buildStyle(tileSource, minzoom, maxzoom) as any,
+        style: buildStyle(tileSource, minzoom, maxzoom, themeRef.current) as any,
         center: center ? [center[1], center[0]] : DEFAULT_CENTER,
         zoom: DEFAULT_ZOOM,
         maxBounds: MAX_BOUNDS,
@@ -319,6 +334,46 @@ export function MapLibreMap({
       duration: 1000,
     });
   }, [center]);
+
+  // ── THEME: пересобираем style.json и переключаем карту при смене темы UI ───
+  // Первый прогон после ready пропускаем — карта уже инициализирована с нужной
+  // темой через themeRef в initMap(). diff:true меняет только paint-свойства
+  // (цвета/opacity), id источников/слоев не трогаются — живые GeoJSON-источники
+  // (saved-objects/ride-tracks/editor-draft/user-location) переживают свитч не
+  // теряя setData. styleVersion — защитный ре-синк на случай, если diff всё же
+  // пересобрал источник.
+  useEffect(() => {
+    if (!ready) return;
+    if (!appliedInitialThemeRef.current) {
+      appliedInitialThemeRef.current = true;
+      return;
+    }
+    const map = mapRef.current;
+    const params = tileParamsRef.current;
+    if (!map || !params) return;
+    const nextStyle = buildStyle(params.tileSource, params.minzoom, params.maxzoom, theme);
+    map.setStyle(nextStyle as any, { diff: true });
+    const onStyleLoad = () => {
+      // Blue-dot переживает диф лишь если источник не пересобрался — восстанавливаем
+      // на всякий случай из последней известной GPS-точки (heading сбросится до
+      // следующего тика watchPosition — не критично при редком переключении темы).
+      const src = map.getSource("user-location");
+      const p = lastUserPosRef.current;
+      if (src && p) {
+        src.setData({
+          type: "FeatureCollection",
+          features: [{
+            type: "Feature",
+            properties: { hasHeading: false, heading: 0 },
+            geometry: { type: "Point", coordinates: [p.lng, p.lat] },
+          }],
+        });
+      }
+      setStyleVersion((v) => v + 1);
+    };
+    map.once("style.load", onStyleLoad);
+    return () => { try { map.off("style.load", onStyleLoad); } catch { /* ignore */ } };
+  }, [theme, ready]);
 
   // ── GEOLOCATION: watchPosition → update "user-location" source ───────────────
   // Подписываемся один раз при mount (когда карта готова). Не требуем сразу —
@@ -498,7 +553,7 @@ export function MapLibreMap({
     }
     src.setData({ type: "FeatureCollection", features });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, mapObjects, show.objects]);
+  }, [ready, mapObjects, show.objects, styleVersion]);
 
   // ── EDITOR DRAFT: линия/полигон + вершины-маркеры ─────────────────────────
   // Точки в editorDraft хранятся как [lat, lng]; в GeoJSON идёт [lng, lat].
@@ -650,7 +705,7 @@ export function MapLibreMap({
       draftMarkersRef.current.push(marker);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, editorDraft?.points, editorDraft?.kind, editorDraft?.color]);
+  }, [ready, editorDraft?.points, editorDraft?.kind, editorDraft?.color, styleVersion]);
 
   // ── GeoJSON overlays: ride tracks (customer single ride + admin active rides) ─
   // Track points are [[x, y, t], ...] in abstract space; mapToReal(x,y) → [lat,lng],
@@ -698,7 +753,7 @@ export function MapLibreMap({
     }
     src.setData({ type: "FeatureCollection", features });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, ride, activeRides, show.rides]);
+  }, [ready, ride, activeRides, show.rides, styleVersion]);
 
   return <div ref={containerRef} className={className} style={{ height }} />;
 }
