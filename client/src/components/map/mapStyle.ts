@@ -74,28 +74,30 @@ const LIGHT_COLORS = {
 } as const;
 
 // DARK PALETTE — colour-matched against real Apple Maps dark-mode screenshots
-// (pixel-sampled: countryside green ~#376e57, open sea ~#1d3983). At regional
-// zoom Apple paints almost the whole non-urban landmass as ONE vivid green
-// (forest/grass/farmland/base-land all sit in the SAME green family, split
-// only by lightness), so uncovered gaps between landuse polygons blend into
-// the surrounding countryside instead of poking through as a different-hue
-// "hole" — that's what actually avoids "пятна"/"дыры". Only the compact urban
-// core breaks the pattern with a distinct dark slate. Water is a clearly
-// LIGHTER, more saturated blue than the land — matching the reference (not the
-// near-black water of a Dark-Matter-style basemap) — since that land/water
-// split is the main contrast anchor on the map. No pure black/white anywhere.
+// via direct pixel sampling (crops from raw CDP screenshots, sampled with PIL —
+// see mapStyle-apple-reference.md). Apple's dark "Standard" style uses exactly
+// THREE land tones — one base green (grass/farmland/scrub collapse into it),
+// one distinct darker teal-green (forest/park), and one settlement/built-up
+// slate — plus a single flat water tone (sea/lake/river all identical, no
+// real depth gradient in the vector style; the shore-to-deep lightening only
+// exists in Apple's satellite/Hybrid imagery, imitated below via a dedicated
+// coastline glow layer since our PMTiles source carries no bathymetry).
+// Roads are a SINGLE hue across every class (highway/major/minor) — hierarchy
+// reads through width only, not colour — confirmed by sampling both the ring
+// highway and a bare residential street at identical rgb(120,138,161).
 const DARK_COLORS = {
-  land:            "#283e33",
-  water:           "#1b306a",
-  forest:          "#336651",
-  grass:           "#2f503f",
-  farmland:        "#36432d",
-  urban:           "#242b38",
-  building:        "#2b344a",
+  land:            "#316d56", // base green — grass/farmland/scrub (Apple's dominant countryside tone)
+  water:           "#213782", // sea/lake/river — flat, matches Apple's Standard style exactly
+  shoreGlow:       "#3f5fa8", // imitated shallow-water lightening near the coastline (not a real Apple vector colour — see note above)
+  forest:          "#0c625e", // forest/park — Apple's second, more teal-leaning green
+  grass:           "#316d56", // collapsed onto `land` — Apple treats grass/meadow as the same base green
+  farmland:        "#316d56", // collapsed onto `land` — same reasoning
+  urban:           "#314256", // settlement/built-up polygon
+  building:        "#3c4c66", // lighter tint of `urban` so building footprints still read on top of it
   boundaryCountry: "#7a5ca3",
-  roadOutline:     "#7a8fb8",
+  roadOutline:     "#7889a1", // Apple's single road hue (all classes)
   roadOutlineOpacity: 0.4,
-  roadMinor:       "#6c7f75",
+  roadMinor:       "#7889a1", // same hue as roadOutline — Apple differentiates classes by width, not colour
   houseNumber:     "#aebbd5",
   cycleway:        "#3b82f6",
   hospital:        "#432d31",
@@ -190,6 +192,27 @@ export const buildStyle = (
     layers: [
       // Sea = background; the real `earth` land polygon (Protomaps) draws on top at every zoom.
       { id: "background", type: "background", paint: { "background-color": COLORS.water } },
+
+      // ── SHORE GLOW (dark theme only) — imitates the shore-to-deep water lightening
+      // seen on Apple Maps' satellite/Hybrid imagery (the vector "Standard" style
+      // itself has NO such gradient — confirmed by pixel sampling; our PMTiles
+      // source has no bathymetry either). Faked cheaply by tracing the `earth`
+      // polygon's own boundary (source-layer rendered as `line` draws its ring)
+      // with a wide, heavily blurred, lighter-blue line UNDER the land fill: the
+      // land half of the stroke gets covered by the opaque `earth` fill drawn
+      // right after, leaving only the water-side half visible as a soft glow.
+      // Widest/most visible when zoomed out (matches how the user actually spotted
+      // the effect on Apple Maps — at regional/continental zoom), tapered down at
+      // city zoom so it doesn't smear over coastal blocks.
+      ...(theme === "dark" ? [{
+        id: "water-shore-glow", type: "line", source: "pm", "source-layer": "earth",
+        paint: {
+          "line-color": DARK_COLORS.shoreGlow,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 4, 34, 7, 22, 10, 12, 13, 6, 16, 3],
+          "line-blur": ["interpolate", ["linear"], ["zoom"], 4, 20, 7, 12, 10, 7, 13, 4, 16, 2],
+          "line-opacity": 0.8,
+        },
+      } as const] : []),
 
       // ── LAND (earth) — root fix: real clipped land polygon, no more flooding ──
       { id: "earth", type: "fill", source: "pm", "source-layer": "earth", paint: { "fill-color": COLORS.land } },
