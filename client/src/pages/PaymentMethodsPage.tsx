@@ -11,10 +11,6 @@ import {
   CreditCard, Loader2, Trash2, Plus,
 } from "lucide-react";
 import { CardBrandIcon, SbpBrandIcon } from "@/components/PaymentBrandIcon";
-import visaLogo from "@/assets/payment-icons/visa.svg";
-import mastercardLogo from "@/assets/payment-icons/mastercard.svg";
-import mirLogo from "@/assets/payment-icons/mir.svg";
-import sbpLogo from "@/assets/payment-icons/sbp.svg";
 import type { SbpBank } from "@shared/sbp";
 import {
   type SbpBinding,
@@ -36,12 +32,6 @@ import { SbpBindModal } from "./payment-methods/SbpBindModal";
 const METHODS_KEY = ["/api/payment-methods"];
 const SBP_BANKS_KEY = ["/api/payments/tbank/sbp-banks"];
 const PENDING_POLL_INTERVAL_MS = 3_000;
-const ACCEPTED_PAYMENT_METHODS = [
-  { src: visaLogo, alt: "Visa" },
-  { src: mastercardLogo, alt: "Mastercard" },
-  { src: mirLogo, alt: "МИР" },
-  { src: sbpLogo, alt: "СБП" },
-] as const;
 
 export function PaymentMethodsPage() {
   const toast = useToast();
@@ -360,38 +350,6 @@ export function PaymentMethodsPage() {
   return (
     <OverlayShell title="Способы оплаты">
       <div className="px-4 py-6 max-w-md mx-auto" data-testid="page-payment-methods">
-        <section
-          className="mb-4 rounded-2xl border border-card-border bg-card overflow-hidden"
-          aria-labelledby="accepted-payment-methods-heading"
-          data-testid="accepted-payment-methods"
-        >
-          <div className="px-4 pt-4">
-            <h2
-              id="accepted-payment-methods-heading"
-              className="text-base font-semibold text-gray-900 dark:text-white"
-            >
-              Принимаем к оплате
-            </h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Банковские карты и СБП
-            </p>
-          </div>
-          <ul className="flex flex-wrap items-center gap-3 px-4 py-4">
-            {ACCEPTED_PAYMENT_METHODS.map((method) => (
-              <li
-                key={method.alt}
-                className="flex h-10 min-w-[62px] items-center justify-center rounded-lg border border-gray-200 bg-white px-2 shadow-sm dark:border-zinc-700"
-              >
-                <img
-                  src={method.src}
-                  alt={method.alt}
-                  className="h-7 w-auto max-w-[58px] object-contain"
-                />
-              </li>
-            ))}
-          </ul>
-        </section>
-
         {/* Linked methods — profile-style rows */}
         <div
           className="rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800"
@@ -453,34 +411,9 @@ export function PaymentMethodsPage() {
           <button
             type="button"
             disabled={busy}
-            onClick={handleAddCard}
-            data-testid="button-bind-card"
-            className="w-full px-4 py-3 border-b border-gray-100 dark:border-zinc-700 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
-          >
-            <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
-              {cardBusy ? <Loader2 className="w-5 h-5 animate-spin" /> : <CreditCard className="w-5 h-5" />}
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-base font-semibold text-gray-900 dark:text-white">
-                {methods.some((m) => m.type === "card" && m.status === "active")
-                  ? "Добавить ещё карту"
-                  : "Добавить карту"}
-              </p>
-              <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">
-                {cardBusy ? "Открываем форму банка…" : "Через защищённую форму T-Bank"}
-              </p>
-            </div>
-            {!cardBusy && (
-              <Plus className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
-            )}
-          </button>
-
-          <button
-            type="button"
-            disabled={busy}
             onClick={handleAddSbp}
             data-testid="button-add-sbp"
-            className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
+            className="w-full px-4 py-3 border-b border-gray-100 dark:border-zinc-700 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
           >
             {sbpBusy ? (
               <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
@@ -500,6 +433,31 @@ export function PaymentMethodsPage() {
               </p>
             </div>
             {!sbpBusy && (
+              <Plus className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            disabled={busy}
+            onClick={handleAddCard}
+            data-testid="button-bind-card"
+            className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
+          >
+            <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
+              {cardBusy ? <Loader2 className="w-5 h-5 animate-spin" /> : <CreditCard className="w-5 h-5" />}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-base font-semibold text-gray-900 dark:text-white">
+                {methods.some((m) => m.type === "card" && m.status === "active")
+                  ? "Добавить ещё карту"
+                  : "Добавить карту"}
+              </p>
+              <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">
+                {cardBusy ? "Открываем форму банка…" : "Через защищённую форму T-Bank"}
+              </p>
+            </div>
+            {!cardBusy && (
               <Plus className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
             )}
           </button>
