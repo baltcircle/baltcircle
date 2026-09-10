@@ -43,25 +43,35 @@ export const MAX_BOUNDS: [number, number, number, number] = [18.3, 53.2, 26.8, 5
 
 export type MapTheme = "light" | "dark";
 
-// LIGHT PALETTE - swap any value by HEX to re-theme the whole map.
-// Base tones follow the official Protomaps "light" flavor, tuned to the
-// TakeRide brand (#1D1E5D dark / #61B5C4 light).
+// LIGHT PALETTE — pixel-sampled from Apple Maps' light "Standard" style
+// (same method as DARK_COLORS below; see mapStyle-apple-reference.md).
+// Apple's light style mirrors the dark one structurally: THREE land tones —
+// one base green (grass/farmland collapse into it, dominant countryside
+// tone), one distinct darker green (forest), and one warm cream settlement/
+// built-up tone that takes over once landuse density is high (cities read as
+// almost entirely this cream, the green base is basically invisible there) —
+// plus a single flat water tone. Roads are again a SINGLE hue across every
+// class, sampled at rgb(224,227,230) on both a residential street and a
+// major arterial — hierarchy is width-only, exactly like dark. Apple's
+// Standard style renders no distinct building-footprint fill at any zoom
+// (buildings only appear as extruded 3D in Satellite/flyover); `building`
+// below is our own reasonable tint since our renderer needs one.
 const LIGHT_COLORS = {
-  land:            "#e8e6e1", // land polygon (Protomaps `earth` layer) — soft warm grey
-  water:           "#9fc9e0", // sea, gulfs, lakes, rivers — muted blue
-  forest:          "#c4e7d2", // forest / wood (Protomaps light landcover.forest)
-  grass:           "#d2efcf", // grass / meadow / park (landcover.grassland)
-  farmland:        "#d8efd2", // farmland (landcover.farmland)
-  urban:           "#dcdcec", // urban_area / residential / built-up landuse — light tint of brand #1D1E5D
-  building:        "#cfd0e3", // building polygons — slightly deeper tint of brand #1D1E5D (reads over `urban`)
-  boundaryCountry: "#8a6fae", // RU / LT / PL state border (boundaries kind=country)
-  roadOutline:     "#1D1E5D", // ALL roads — 1px outline in dark-theme primary (hollow fill)
-  roadOutlineOpacity: 0.28,
-  roadMinor:       "#c9c7c1", // major/medium/minor/path — no outline, plain light line
+  land:            "#e0f0c1", // base green — grass/farmland (Apple's dominant countryside tone)
+  water:           "#8ddbf6", // sea/lake/river — flat, matches Apple's Standard style exactly
+  forest:          "#c2e5a8", // forest/park — Apple's second, darker green
+  grass:           "#e0f0c1", // collapsed onto `land` — Apple treats grass/meadow as the same base green
+  farmland:        "#e0f0c1", // collapsed onto `land` — same reasoning
+  urban:           "#f4f0eb", // settlement/built-up polygon — Apple's warm cream, dominant at city zoom
+  building:        "#e8e1d4", // darker tint of `urban` so building footprints still read on top of it
+  boundaryCountry: "#8a6fae", // RU / LT / PL state border (boundaries kind=country) — unchanged, not part of Apple match
+  roadOutline:     "#e0e3e6", // Apple's single road hue (all classes)
+  roadOutlineOpacity: 0.9,
+  roadMinor:       "#e0e3e6", // same hue as roadOutline — Apple differentiates classes by width, not colour
   houseNumber:     "#1D1E5D", // house-number labels (z16+) — brand blue, rendered at 0.55 opacity
-  cycleway:        "#2563EB", // dedicated cycleways (highway=cycleway) — saturated blue, distinct from muted water #9fc9e0
-  hospital:        "#f0e2e2", // landuse=hospital — soft pink patch
-  beach:           "#f3ecc8", // landuse=beach — warm sand patch
+  cycleway:        "#2563EB", // dedicated cycleways (highway=cycleway) — saturated blue, distinct from water #8ddbf6
+  hospital:        "#f0e2e2", // landuse=hospital — soft pink patch (unchanged, pre-existing; Apple has no fill for hospital, just a POI pin)
+  beach:           "#f3ecc8", // landuse=beach — warm sand patch (unchanged, pre-existing)
   waterLabelText:  "#3a7ab0",
   waterLabelHalo:  "rgba(255,255,255,0.8)",
   countryLabelText:"#4a5a6a",
