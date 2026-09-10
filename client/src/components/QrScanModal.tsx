@@ -7,6 +7,13 @@ import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { extractBikeCode, classifyBikeForScan } from "./qr-scan-utils";
 
+// Exact rendered height of the bottom icon row (keyboard/flashlight): its
+// own `paddingTop` (1rem) + button height (`h-14` = 3.5rem) + its own
+// `paddingBottom` (env(safe-area-inset-bottom) + 2rem). The manual-entry
+// panel below reserves precisely this much space at its own bottom edge —
+// see that panel's comment for why.
+const CONTROLS_HEIGHT = "calc(1rem + 3.5rem + 2rem + env(safe-area-inset-bottom))";
+
 // Direction hint drawn inside the keyboard button. Deliberately not a
 // lucide chevron: this angle is much wider/blunter (obtuse, ~132° instead
 // of lucide's fixed 90°) and the stroke is thicker, per design feedback —
@@ -431,7 +438,7 @@ export function QrScanModal({
           trailing invisible spacer (matching the button's width) keeps the
           title truly centered instead of drifting toward the button. */}
       <div
-        className="relative z-10 shrink-0 flex items-center gap-2 px-4"
+        className="relative z-20 shrink-0 flex items-center gap-2 px-4"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 1.25rem)", minHeight: "3.5rem" }}
       >
         <button
@@ -448,17 +455,16 @@ export function QrScanModal({
         <span className="shrink-0 w-9 h-9" aria-hidden="true" />
       </div>
 
-      {/* Scan / manual content stays put — only the bottom controls rise
-          above the keyboard (see below), so the code input never drifts
-          away from its natural centered position. */}
-      {/* Shared stage for both faces: the scan reticle stays mounted at
-          rest, the manual entry panel is an always-mounted bottom-sheet
-          layer that slides up over it (and back down) via `translate-y`,
-          instead of being mounted/unmounted — that's what makes the
-          slide-up/slide-down (наплыв) animation possible. */}
-      <div className="relative flex-1 overflow-hidden">
-        <div className="absolute inset-0 flex flex-col items-center justify-center px-10">
-          <div className="relative aspect-square w-full max-w-[280px]">
+      {/* Scan stage — just the reticle. The manual-entry panel used to be
+          nested inside this box too, clipped to it via `overflow-hidden`;
+          that capped its slide-up animation to this box's own height, so
+          it looked like the keypad "popped in" already in place right
+          above the icon row instead of visibly sliding up from beneath
+          it. The panel now lives at the outer level as its own
+          full-screen layer (below), with the whole screen's height to
+          travel, so it genuinely slides up from below the icon row. */}
+      <div className="relative flex-1 flex flex-col items-center justify-center px-10">
+        <div className="relative aspect-square w-full max-w-[280px]">
             <div className="absolute inset-0 rounded-3xl border-2 border-primary" />
             {cameraState === "loading" && (
               <div
@@ -489,103 +495,107 @@ export function QrScanModal({
               </div>
             )}
           </div>
-        </div>
+      </div>
 
-        {/* Manual view: BC-prefixed code entry via our own numeric keypad —
-            no real <input> is ever focused, so the OS never raises its own
-            keyboard (and with it, no autofill row / accessory toolbar eating
-            extra height, no viewport-resize dance to keep everything visible).
-            Always mounted; `translate-y-full` parks it below the viewport
-            while scanning and `translate-y-0` brings it up over the camera.
-            Relayed against the bottom control bar's own backdrop below with
-            zero overlap (each segment is `duration-150`, so one fully
-            finishes before the other starts) so the two moves read as one
-            continuous sweep: opening (sliding up), this panel is the second
-            leg and waits the full `delay-150` for the bottom bar to finish
-            first; closing (sliding down), it's the first leg and moves
-            immediately with no delay, handing off to the bottom bar after. */}
-        <div
-          className={cn(
-            "absolute inset-0 flex flex-col items-center bg-neutral-900 px-4 transition-transform duration-150 ease-out",
-            view === "manual" ? "translate-y-0 delay-150" : "translate-y-full delay-0 pointer-events-none",
-          )}
-          aria-hidden={view !== "manual"}
-        >
-          {/* Input block sits low in the space above the keypad. The keypad
+      {/* Manual view: BC-prefixed code entry via our own numeric keypad —
+          no real <input> is ever focused, so the OS never raises its own
+          keyboard (and with it, no autofill row / accessory toolbar eating
+          extra height, no viewport-resize dance to keep everything visible).
+          Always mounted; `translate-y-full` parks it below the viewport
+          while scanning and `translate-y-0` brings it up over the camera.
+          This is a full-screen layer (`absolute inset-0`, not confined to
+          the stage above), specifically so `translate-y-full` pushes it
+          entirely below the real screen bottom (behind the icon row, past
+          the safe area) — that's what makes it visibly slide up from the
+          very bottom instead of materializing right above the icon row.
+          `paddingBottom: CONTROLS_HEIGHT` reserves exactly the icon row's
+          own height at this panel's bottom edge, so the keypad still comes
+          to rest in the same spot as before even though the panel itself
+          is now taller. `z-10` keeps it above the camera/scrim but below
+          the header and icon row (`z-20` each, further down), which stay
+          visible and usable throughout the slide. */}
+      <div
+        className={cn(
+          "absolute inset-0 z-10 flex flex-col items-center bg-neutral-900 px-4 transition-transform duration-150 ease-out",
+          view === "manual" ? "translate-y-0" : "translate-y-full pointer-events-none",
+        )}
+        style={{ paddingBottom: CONTROLS_HEIGHT }}
+        aria-hidden={view !== "manual"}
+      >
+        {/* Input block sits low in the space above the keypad. The keypad
               is now shorter (rectangular keys, not square), so the freed
               vertical room pushes this block further down than before;
               `pb-10` adds a clear, deliberate gap above the keypad on top of
               that (and nudges the whole block a touch higher). The
               "Введите код" label used to live in the header, far from the
               field — it now sits directly above the input instead. */}
-          <div className="flex-1 flex flex-col items-center justify-end gap-2 w-full min-h-0 pb-10">
-            <span className="text-white text-base font-medium">Введите код</span>
-            <div
-              className="flex items-center justify-center w-full max-w-[24rem] rounded-2xl border-2 border-primary bg-black overflow-hidden py-3.5"
-              data-testid="input-bike-code"
-            >
-              <span className="text-primary text-xl font-mono select-none">
-                BC-
-              </span>
-              <span className="text-xl font-mono text-white tracking-wider">
-                {digits || <span className="text-white/30">014</span>}
-                <span
-                  className="inline-block w-[2px] h-5 ml-0.5 bg-white/70 align-middle animate-pulse"
-                  aria-hidden="true"
-                />
-              </span>
+        <div className="flex-1 flex flex-col items-center justify-end gap-2 w-full min-h-0 pb-10">
+          <span className="text-white text-base font-medium">Введите код</span>
+          <div
+            className="flex items-center justify-center w-full max-w-[24rem] rounded-2xl border-2 border-primary bg-black overflow-hidden py-3.5"
+            data-testid="input-bike-code"
+          >
+            <span className="text-primary text-xl font-mono select-none">
+              BC-
+            </span>
+            <span className="text-xl font-mono text-white tracking-wider">
+              {digits || <span className="text-white/30">014</span>}
+              <span
+                className="inline-block w-[2px] h-5 ml-0.5 bg-white/70 align-middle animate-pulse"
+                aria-hidden="true"
+              />
+            </span>
+          </div>
+          {error && (
+            <div className="text-xs text-red-400 text-center" data-testid="qr-scan-error">
+              {error}
             </div>
-            {error && (
-              <div className="text-xs text-red-400 text-center" data-testid="qr-scan-error">
-                {error}
-              </div>
-            )}
-          </div>
+          )}
+        </div>
 
-          {/* 3x4 keypad, adaptive to screen width but ~25% narrower than
-              before (max-w-[16.5rem] vs the prior 22rem) and rectangular
-              rather than square keys (fixed h-12 instead of aspect-square):
-              backspace bottom-left (under 7), 0 bottom-middle (under 8),
-              confirm/enter bottom-right (under 9). Rounding is kept. */}
-          <div className="shrink-0 grid grid-cols-3 gap-3 w-full max-w-[16.5rem] pb-4">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
-              <button
-                key={d}
-                type="button"
-                onClick={() => appendDigit(d)}
-                className="h-12 rounded-2xl bg-white/10 text-white text-xl font-medium [@media(hover:hover)]:hover:bg-white/20 active:bg-white/25 transition-colors"
-                data-testid={`button-keypad-${d}`}
-              >
-                {d}
-              </button>
-            ))}
+        {/* 3x4 keypad, adaptive to screen width but ~25% narrower than
+            before (max-w-[16.5rem] vs the prior 22rem) and rectangular
+            rather than square keys (fixed h-12 instead of aspect-square):
+            backspace bottom-left (under 7), 0 bottom-middle (under 8),
+            confirm/enter bottom-right (under 9). Rounding is kept. */}
+        <div className="shrink-0 grid grid-cols-3 gap-3 w-full max-w-[16.5rem] pb-4">
+          {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
             <button
+              key={d}
               type="button"
-              onClick={backspaceDigit}
-              aria-label="Удалить последнюю цифру"
-              className="h-12 rounded-2xl bg-white/10 text-white flex items-center justify-center [@media(hover:hover)]:hover:bg-white/20 active:bg-white/25 transition-colors"
-              data-testid="button-keypad-backspace"
-            >
-              <Delete className="w-5 h-5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => appendDigit("0")}
+              onClick={() => appendDigit(d)}
               className="h-12 rounded-2xl bg-white/10 text-white text-xl font-medium [@media(hover:hover)]:hover:bg-white/20 active:bg-white/25 transition-colors"
-              data-testid="button-keypad-0"
+              data-testid={`button-keypad-${d}`}
             >
-              0
+              {d}
             </button>
-            <button
-              type="button"
-              onClick={confirmCode}
-              aria-label="Подтвердить код"
-              className="h-12 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center [@media(hover:hover)]:hover:opacity-90 active:opacity-80 transition-opacity"
-              data-testid="button-keypad-confirm"
-            >
-              <Check className="w-6 h-6" />
-            </button>
-          </div>
+          ))}
+          <button
+            type="button"
+            onClick={backspaceDigit}
+            aria-label="Удалить последнюю цифру"
+            className="h-12 rounded-2xl bg-white/10 text-white flex items-center justify-center [@media(hover:hover)]:hover:bg-white/20 active:bg-white/25 transition-colors"
+            data-testid="button-keypad-backspace"
+          >
+            <Delete className="w-5 h-5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => appendDigit("0")}
+            className="h-12 rounded-2xl bg-white/10 text-white text-xl font-medium [@media(hover:hover)]:hover:bg-white/20 active:bg-white/25 transition-colors"
+            data-testid="button-keypad-0"
+          >
+            0
+          </button>
+          <button
+            type="button"
+            onClick={confirmCode}
+            aria-label="Подтвердить код"
+            className="h-12 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center [@media(hover:hover)]:hover:opacity-90 active:opacity-80 transition-opacity"
+            data-testid="button-keypad-confirm"
+          >
+            <Check className="w-6 h-6" />
+          </button>
         </div>
       </div>
 
@@ -602,7 +612,7 @@ export function QrScanModal({
           identical dark backdrop, no seam, and the buttons keep the exact
           same padding/position either way. */}
       <div
-        className="relative shrink-0 flex items-center justify-center gap-14"
+        className="relative z-20 shrink-0 flex items-center justify-center gap-14"
         style={{
           paddingBottom: "calc(env(safe-area-inset-bottom) + 2rem)",
           paddingTop: "1rem",
