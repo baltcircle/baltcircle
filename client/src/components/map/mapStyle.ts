@@ -311,15 +311,20 @@ export const buildStyle = (
           14, ["match", ["get", "kind"], "highway", 10, "major_road", 5.2, "medium_road", 2.9, "minor_road", 2.7, "path", 2.1, 2.7],
           16, ["match", ["get", "kind"], "highway", 14, "major_road", 6.8, "medium_road", 4, "minor_road", 3.6, "path", 2.5, 3.6],
         ];
-        // Zoom-gated visibility (matches reference maps): trunk roads from z8,
-        // minor roads only once the user zooms into a district (z13), paths z14.
+        // Zoom-gated visibility, calibrated against 2GIS's zoom scale (наиболее
+        // детализированный референс — см. аудит 2026-09): trunk/major roads from
+        // z8; medium_road (вторичная сеть, связывающая посёлки) открывается уже
+        // на z10 — у 2ГИС эта сеть видна значительно раньше нашего прежнего z12;
+        // minor roads (локальные улицы) с z13 — совпадает с 2ГИС, где именные
+        // улицы внутри города появляются на z12-13; paths/пешеходные — с z15,
+        // у 2ГИС пешеходная детализация проявляется позже (z15-17), а не с z14.
         // Filtering out minor/path at low zoom also means far fewer features are
         // drawn on the oblast overview — lighter load.
         const ROAD_FILTER: any = ["any",
           ["in", ["get", "kind"], ["literal", ["highway", "major_road"]]],
-          ["all", ["==", ["get", "kind"], "medium_road"], [">=", ["zoom"], 12]],
+          ["all", ["==", ["get", "kind"], "medium_road"], [">=", ["zoom"], 10]],
           ["all", ["==", ["get", "kind"], "minor_road"], [">=", ["zoom"], 13]],
-          ["all", ["==", ["get", "kind"], "path"], [">=", ["zoom"], 14]],
+          ["all", ["==", ["get", "kind"], "path"], [">=", ["zoom"], 15]],
         ];
         // Outline только для highway (областные + окружная). Все остальные (major/medium/
         // minor/path) рисуем без контура — в цвет land, чтобы были белыми линиями
@@ -382,14 +387,17 @@ export const buildStyle = (
         },
       },
 
-      // ── BUILDINGS (z11+) ──────────────────────────────────────────────────────
+      // ── BUILDINGS (z14+) ───────────────────────────────────────────────────────
+      // minzoom 14 (было 13): у 2ГИС отдельные контуры домов проявляются на z14-15,
+      // на z13 там ещё только именные улицы без заливки кварталов — наше z13 было
+      // на шаг раньше референса, сдвинули на z14.
       {
-        id: "building", type: "fill", source: "pm", "source-layer": "buildings", minzoom: 13,
+        id: "building", type: "fill", source: "pm", "source-layer": "buildings", minzoom: 14,
         paint: {
           "fill-color": COLORS.building,
           "fill-outline-color": COLORS.building,
-          // Opaque at z14+ so underlying road lines don't bleed through the building.
-          "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.7, 14, 1],
+          // Opaque at z15+ so underlying road lines don't bleed through the building.
+          "fill-opacity": ["interpolate", ["linear"], ["zoom"], 14, 0.7, 15, 1],
         },
       },
 
