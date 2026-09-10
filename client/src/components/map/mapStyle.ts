@@ -13,6 +13,9 @@ export function ensurePMTilesProtocol() {
 }
 
 // Overlay marker colours (resolved HEX — swap here to re-theme markers).
+// Semantic status colours (available/rented/maintenance/...) stay identical
+// across light/dark map themes on purpose — they're functional indicators,
+// not decor, and staff rely on the same hue meaning the same status everywhere.
 export const MARKER_COLORS = {
   bikeAvailable:  "#26a884",
   bikeRented:     "#1d6f8e",
@@ -38,10 +41,12 @@ export const MARKER_COLORS = {
 
 export const MAX_BOUNDS: [number, number, number, number] = [18.3, 53.2, 26.8, 57.3];
 
-// PALETTE - swap any value by HEX to re-theme the whole map.
+export type MapTheme = "light" | "dark";
+
+// LIGHT PALETTE - swap any value by HEX to re-theme the whole map.
 // Base tones follow the official Protomaps "light" flavor, tuned to the
 // TakeRide brand (#1D1E5D dark / #61B5C4 light).
-const COLORS = {
+const LIGHT_COLORS = {
   land:            "#e8e6e1", // land polygon (Protomaps `earth` layer) — soft warm grey
   water:           "#9fc9e0", // sea, gulfs, lakes, rivers — muted blue
   forest:          "#c4e7d2", // forest / wood (Protomaps light landcover.forest)
@@ -51,9 +56,63 @@ const COLORS = {
   building:        "#cfd0e3", // building polygons — slightly deeper tint of brand #1D1E5D (reads over `urban`)
   boundaryCountry: "#8a6fae", // RU / LT / PL state border (boundaries kind=country)
   roadOutline:     "#1D1E5D", // ALL roads — 1px outline in dark-theme primary (hollow fill)
+  roadOutlineOpacity: 0.28,
+  roadMinor:       "#c9c7c1", // major/medium/minor/path — no outline, plain light line
   houseNumber:     "#1D1E5D", // house-number labels (z16+) — brand blue, rendered at 0.55 opacity
   cycleway:        "#2563EB", // dedicated cycleways (highway=cycleway) — saturated blue, distinct from muted water #9fc9e0
+  hospital:        "#f0e2e2", // landuse=hospital — soft pink patch
+  beach:           "#f3ecc8", // landuse=beach — warm sand patch
+  waterLabelText:  "#3a7ab0",
+  waterLabelHalo:  "rgba(255,255,255,0.8)",
+  countryLabelText:"#4a5a6a",
+  countryLabelHalo:"rgba(255,255,255,0.85)",
+  placeLabelText:  "#1D1E5D", // reuses roadOutline tone
+  userShadowColor: "#000000",
+  userShadowOpacity: 0.25,
+  userHalo:        "#ffffff",
+  userDot:         "#61B5C4",
 } as const;
+
+// DARK PALETTE — modelled on Apple Maps' / CARTO Dark Matter's minimal dark
+// basemap technique: ONE desaturated slate-blue base hue (~220°) carries
+// land/urban/buildings/roads, differentiated mostly by LIGHTNESS (elevation
+// steps), not by saturated hue swings — this is what avoids "пятна" (blotchy
+// colour patches). Vegetation (forest/grass/farmland) gets a hue shift at the
+// SAME lightness/saturation as land, exactly like Apple does it, so it reads
+// as a calm tint rather than a green blob. Water is the one deliberately
+// darker + more saturated tone — the land/water split is the most important
+// contrast decision on a dark map. No pure black/white anywhere (avoids
+// halation and "дыры" — dead flat voids).
+const DARK_COLORS = {
+  land:            "#1f2633",
+  water:           "#0d162b",
+  forest:          "#1e382c",
+  grass:           "#253c2d",
+  farmland:        "#333527",
+  urban:           "#272d3a",
+  building:        "#2f364c",
+  boundaryCountry: "#74569f",
+  roadOutline:     "#7489b4",
+  roadOutlineOpacity: 0.4,
+  roadMinor:       "#5a657c",
+  houseNumber:     "#a5b5d4",
+  cycleway:        "#3b82f6",
+  hospital:        "#39282b",
+  beach:           "#3d3729",
+  waterLabelText:  "#81bcda",
+  waterLabelHalo:  "rgba(6,10,20,0.65)",
+  countryLabelText:"#aab7cf",
+  countryLabelHalo:"rgba(6,10,20,0.7)",
+  placeLabelText:  "#a5b5d4", // reuses houseNumber tone (light, on dark land)
+  userShadowColor: "#ffffff",
+  userShadowOpacity: 0.12,
+  userHalo:        "#ffffff",
+  userDot:         "#61B5C4",
+} as const;
+
+function getColors(theme: MapTheme) {
+  return theme === "dark" ? DARK_COLORS : LIGHT_COLORS;
+}
 
 // PMTiles file served same-origin via Express (Range request support, no CORS).
 const PMTILES_URL = "/kaliningrad.pmtiles";
@@ -68,7 +127,13 @@ export const DEFAULT_ZOOM = 11;
 
 export { PMTILES_URL, ADDR_URL };
 
-export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type: "xyz"; url: string }, minzoom: number, maxzoom: number): object => {
+export const buildStyle = (
+  tileSource: { type: "pmtiles"; url: string } | { type: "xyz"; url: string },
+  minzoom: number,
+  maxzoom: number,
+  theme: MapTheme = "light",
+): object => {
+  const COLORS = getColors(theme);
   // Russian label with graceful fallback (Protomaps stores names in `name:ru` / `name` / `name:en`).
   const RU = ["coalesce", ["get", "name:ru"], ["get", "name"], ["get", "name:en"]];
   return {
@@ -168,12 +233,12 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
             "industrial",    COLORS.urban,
             "commercial",    COLORS.urban,
             "residential",   COLORS.urban,
-            "hospital",      "#f0e2e2",
+            "hospital",      COLORS.hospital,
             "college",       COLORS.urban,
             "university",    COLORS.urban,
             "school",        COLORS.urban,
             "kindergarten",  COLORS.urban,
-            "beach",         "#f3ecc8",
+            "beach",         COLORS.beach,
             "pedestrian",    COLORS.urban,
             COLORS.urban,
           ],
@@ -258,13 +323,12 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
         // Outline только для highway (областные + окружная). Все остальные (major/medium/
         // minor/path) рисуем без контура — в цвет land, чтобы были белыми линиями
         // без тёмной обводки (убирает паутину).
-        const OUT_OPACITY = 0.28;
         return [
           {
             id: "road-outline", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
             filter: ["all", ROAD_FILTER, ["==", ["get", "kind"], "highway"]],
             layout: { "line-cap": "round", "line-join": "round" },
-            paint: { "line-color": COLORS.roadOutline, "line-width": ROAD_W_OUT, "line-opacity": OUT_OPACITY },
+            paint: { "line-color": COLORS.roadOutline, "line-width": ROAD_W_OUT, "line-opacity": COLORS.roadOutlineOpacity },
           },
           {
             // highway — hollow в цвет land (внутри контура).
@@ -278,7 +342,7 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
             id: "road-inner", type: "line", source: "pm", "source-layer": "roads", minzoom: 8,
             filter: ["all", ROAD_FILTER, ["!=", ["get", "kind"], "highway"]],
             layout: { "line-cap": "round", "line-join": "round" },
-            paint: { "line-color": "#c9c7c1", "line-width": ROAD_W },
+            paint: { "line-color": COLORS.roadMinor, "line-width": ROAD_W },
           },
         ];
       })(),
@@ -330,7 +394,7 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
 
       // ── HOUSE NUMBERS (z15+) ──────────────────────────────────────────────────
       // Overlay from the `addresses` pmtiles. Kept off until z15 (individual houses
-      // become distinguishable there) so numbers don't clutter the map. Blue at 0.55
+      // become distinguishable there) so numbers don't clutter the map. 0.55
       // opacity; collision detection hides overlapping numbers automatically.
       {
         id: "house-numbers", type: "symbol", source: "addr", "source-layer": "addresses", minzoom: 15,
@@ -372,7 +436,7 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
           "text-size": 11,
           "symbol-placement": "point",
         },
-        paint: { "text-color": "#3a7ab0", "text-halo-color": "rgba(255,255,255,0.8)", "text-halo-width": 1.5 },
+        paint: { "text-color": COLORS.waterLabelText, "text-halo-color": COLORS.waterLabelHalo, "text-halo-width": 1.5 },
       },
 
       // ── RIVER NAMES (LineString: written along the river, appear with roads) ──
@@ -389,7 +453,7 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
           "text-max-angle": 30,
           "text-padding": 5,
         },
-        paint: { "text-color": "#3a7ab0", "text-halo-color": "rgba(255,255,255,0.8)", "text-halo-width": 1.5 },
+        paint: { "text-color": COLORS.waterLabelText, "text-halo-color": COLORS.waterLabelHalo, "text-halo-width": 1.5 },
       },
 
       // ── FAR-ZOOM LABELS (z<8): border countries + Kaliningrad, BOLD ───────────
@@ -414,7 +478,7 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
           "text-letter-spacing": 0.15,
           "text-padding": 4,
         },
-        paint: { "text-color": "#4a5a6a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1.5 },
+        paint: { "text-color": COLORS.countryLabelText, "text-halo-color": COLORS.countryLabelHalo, "text-halo-width": 1.5 },
       },
 
       // ── POLAND STATIC LABEL (z<8): forced into visible area below Kaliningrad ──
@@ -429,7 +493,7 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
           "text-letter-spacing": 0.15,
           "text-padding": 4,
         },
-        paint: { "text-color": "#4a5a6a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1.5 },
+        paint: { "text-color": COLORS.countryLabelText, "text-halo-color": COLORS.countryLabelHalo, "text-halo-width": 1.5 },
       },
 
       // ── KALININGRAD STATIC LABEL (z<8): repositioned east of the city point ──
@@ -445,7 +509,7 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
           "text-letter-spacing": 0.15,
           "text-padding": 4,
         },
-        paint: { "text-color": "#4a5a6a", "text-halo-color": "rgba(255,255,255,0.85)", "text-halo-width": 1.5 },
+        paint: { "text-color": COLORS.countryLabelText, "text-halo-color": COLORS.countryLabelHalo, "text-halo-width": 1.5 },
       },
 
       // ── PLACE LABELS (z8+): cities, towns, villages ───────────────────────────
@@ -503,12 +567,14 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
       // сектор-конус. Цвет — брендовый --primary #61B5C4 (голубой TakeRide).
       //
       // Мягкая тень под точкой (circle-blur даёт размытие → эффект drop-shadow).
+      // Тёмная тень на светлой карте / светлое сияние на тёмной — чёрная тень
+      // на тёмном фоне была бы невидимой.
       {
         id: "user-location-shadow", type: "circle", source: "user-location",
         paint: {
           "circle-radius": 13,
-          "circle-color": "#000000",
-          "circle-opacity": 0.25,
+          "circle-color": COLORS.userShadowColor,
+          "circle-opacity": COLORS.userShadowOpacity,
           "circle-blur": 0.6,
           "circle-translate": [0, 1],
           "circle-stroke-width": 0,
@@ -537,7 +603,7 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
         id: "user-location-halo", type: "circle", source: "user-location",
         paint: {
           "circle-radius": 11,
-          "circle-color": "#ffffff",
+          "circle-color": COLORS.userHalo,
           "circle-opacity": 1,
           "circle-stroke-width": 0,
         },
@@ -546,7 +612,7 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
         id: "user-location-dot", type: "circle", source: "user-location",
         paint: {
           "circle-radius": 7,
-          "circle-color": "#61B5C4",
+          "circle-color": COLORS.userDot,
           "circle-opacity": 1,
           "circle-stroke-width": 0,
         },
@@ -577,7 +643,7 @@ export const buildStyle = (tileSource: { type: "pmtiles"; url: string } | { type
           "symbol-sort-key": ["-", ["coalesce", ["get", "population_rank"], 0]],
         },
         paint: {
-          "text-color": COLORS.roadOutline,
+          "text-color": COLORS.placeLabelText,
           // Opacity rules (Яндекс/Google-style), by kind:
           //  - Districts (neighbourhood/suburb): constant 0.55 — dimmer than
           //    street names, but always visible as in-city landmarks.
