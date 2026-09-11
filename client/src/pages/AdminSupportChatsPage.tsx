@@ -53,7 +53,10 @@ export function AdminSupportChatsPage() {
         </div>
       </header>
 
-      <div className="grid gap-4 lg:grid-cols-[320px_1fr] min-h-[70vh]">
+      {/* h-[70vh] (важно — фиксированная, не min-h) на lg: без неё grid растягивался по
+          содержимому чата, и вся страница тянулась вместо внутреннего скролла в
+          ChatList/AdminChatPanel. На мобильной вёрстке (одна колонка) остаётся min-h. */}
+      <div className="grid gap-4 lg:grid-cols-[320px_1fr] min-h-[70vh] lg:h-[70vh]">
         <ChatList
           rows={rows}
           filtered={filtered}

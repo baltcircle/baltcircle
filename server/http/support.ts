@@ -7,7 +7,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import type { SupportMessage } from "@shared/schema";
 import { sendSupportMessageSchema, createSupportFeedbackSchema } from "@shared/schema";
-import { matchFaq, wantsOperator, BOT_FALLBACK, BOT_HANDOFF } from "@shared/support-faq";
+import { matchFaq, wantsOperator, BOT_FALLBACK, BOT_HANDOFF, SUPPORT_SESSION_CLOSED_NOTE } from "@shared/support-faq";
 import { riderId, requireAuth, requireRole, actorName } from "./context";
 import { sendToUserAsync } from "../push";
 import {
@@ -212,10 +212,10 @@ export function registerSupportChatRoutes(app: Express): void {
     res.status(201).json(note);
   });
 
-  // Стартовая оценка работы поддержки (1-5) после того, как оператор
-  // закрыл сессию (сигнал пришёл через SSE-событие
-  // support_session_closed ниже). Всегда пропускаемо на клиенте — если
-  // райдер закрыл диалог без оценки, сюда просто не придёт.
+  // Стартовая оценка работы поддержки (1-5), которую клиент показывает после
+  // закрытия сессии (см. SUPPORT_SESSION_CLOSED_NOTE в shared/support-faq.ts).
+  // Всегда пропускаемо на клиенте — если райдер закрыл диалог без оценки,
+  // сюда просто не придёт.
   app.post("/api/support/chat/feedback", requireAuth, async (req, res) => {
     const parsed = createSupportFeedbackSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -355,10 +355,12 @@ export function registerSupportChatRoutes(app: Express): void {
 
   // Оператор завершает сессию: возвращаем разговор в режим 'bot' —
   // следующий вопрос райдера снова пройдёт через бота/эскалацию,
-  // как в свежем разговоре. Фиксируется системной заметкой в истории,
-  // потом отдельным SSE-событием { type: "support_session_closed" } просим
-  // клиента показать рейтинг-попап — это не сообщение и не легит в
-  // историю, клиент отличает его по полю `type`.
+  // как в свежем разговоре. Фиксируется системной заметкой в истории
+  // (см. SUPPORT_SESSION_CLOSED_NOTE) — клиент сам определяет момент показа
+  // рейтинг-карточки по совпадению последнего сообщения с этим текстом —
+  // надёжнее, чем отдельное эфемерное SSE-событие (терялось при разрыве
+  // соединения: сама заметка всегда доедет через обычный запрос чата,
+  // даже если SSE пропустил событие).
   app.post("/api/admin/support/chats/:id/close", requireRole("operator", "admin"), async (req, res) => {
     const id = Number.parseInt(String(req.params.id), 10);
     if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "Неверный id" });
@@ -368,13 +370,12 @@ export function registerSupportChatRoutes(app: Express): void {
       conversationId: id,
       senderRole: "system",
       senderId: null,
-      body: "Оператор завершил сессию поддержки. Если возникнут новые вопросы — просто напишите.",
+      body: SUPPORT_SESSION_CLOSED_NOTE,
     });
     await storage.setSupportMode(id, "bot");
     await storage.markSupportRead(id, "operator");
     const resolvedNote = await resolveOutgoingMessage(note);
     supportEvents.emit(String(id), resolvedNote);
-    supportEvents.emit(String(id), { type: "support_session_closed", conversationId: id });
     supportEvents.emit("inbox", { conversationId: id });
     res.status(201).json({ ok: true, message: resolvedNote });
   });

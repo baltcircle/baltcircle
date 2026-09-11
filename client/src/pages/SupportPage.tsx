@@ -7,12 +7,31 @@ import { apiRequest, queryClient, API_BASE } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { LifeBuoy } from "lucide-react";
-import { BOT_GREETING } from "@shared/support-faq";
+import { BOT_GREETING, SUPPORT_SESSION_CLOSED_NOTE } from "@shared/support-faq";
 import { CHAT_KEY, MAX_FILE_BYTES, type ChatState, fmtDay, fileToBase64 } from "./support/utils";
 import { MessageBubble } from "./support/MessageBubble";
 import { SupportQuickActions } from "./support/SupportQuickActions";
 import { ChatInputForm } from "./support/ChatInputForm";
 import { SupportRatingCard } from "./support/SupportRatingCard";
+
+// Какие id заметок закрытия уже получили оценку — чтобы после ответа
+// карточка не всплывала снова при следующем открытии чата/перезагрузке страницы.
+const RATED_NOTE_IDS_KEY = "support_rated_close_note_ids";
+function loadRatedNoteIds(): Set<number> {
+  try {
+    const raw = localStorage.getItem(RATED_NOTE_IDS_KEY);
+    return new Set(raw ? (JSON.parse(raw) as number[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+function markNoteRated(id: number) {
+  try {
+    const ids = loadRatedNoteIds();
+    ids.add(id);
+    localStorage.setItem(RATED_NOTE_IDS_KEY, JSON.stringify(Array.from(ids)));
+  } catch { /* localStorage недоступен — карточка может перепоказаться, не критично */ }
+}
 
 export function SupportPage() {
   const toast = useToast();
@@ -24,7 +43,7 @@ export function SupportPage() {
   const [text, setText] = useState("");
   const [attachment, setAttachment] = useState<{ url: string; previewUrl: string; mime: string; localName: string } | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [ratingOpen, setRatingOpen] = useState(false);
+  const [ratedNoteIds, setRatedNoteIds] = useState<Set<number>>(() => loadRatedNoteIds());
   const fileRef = useRef<HTMLInputElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -40,12 +59,7 @@ export function SupportPage() {
     const es = new EventSource(`${API_BASE}/api/support/chat/stream`, { withCredentials: true });
     es.onmessage = (evt) => {
       try {
-        const payload = JSON.parse(evt.data) as SupportMessage | { type: "support_session_closed"; conversationId: number };
-        if ("type" in payload && payload.type === "support_session_closed") {
-          setRatingOpen(true);
-          return;
-        }
-        const msg = payload as SupportMessage;
+        const msg = JSON.parse(evt.data) as SupportMessage;
         queryClient.setQueryData<ChatState>(CHAT_KEY, (prev) => {
           if (!prev) return prev;
           if (prev.messages.some((m) => m.id === msg.id)) return prev;
@@ -180,6 +194,16 @@ export function SupportPage() {
   const showQuickActions =
     !!lastMessage && lastMessage.senderRole === "bot" && chatQ.data?.conversation.mode === "bot";
 
+  // Карточку рейтинга всегда показываем по содержимому последнего сообщения,
+  // а не по отдельному эфемерному SSE-событию: если оно пропадёт при разрыве
+  // соединения, заметка (обычное сообщение) всё равно доедет через обычный
+  // запрос чата, и карточка появится всё равно.
+  const closingNote =
+    lastMessage && lastMessage.senderRole === "system" && lastMessage.body === SUPPORT_SESSION_CLOSED_NOTE
+      ? lastMessage
+      : null;
+  const showRating = closingNote != null && !ratedNoteIds.has(closingNote.id);
+
   if (!isRegistered) {
     return (
       <OverlayShell title="Помощь">
@@ -235,7 +259,14 @@ export function SupportPage() {
                   escalating={escalateMut.isPending}
                 />
               )}
-              {ratingOpen && <SupportRatingCard onDone={() => setRatingOpen(false)} />}
+              {showRating && (
+                <SupportRatingCard
+                  onDone={() => {
+                    markNoteRated(closingNote!.id);
+                    setRatedNoteIds(loadRatedNoteIds());
+                  }}
+                />
+              )}
             </>
           )}
           <div ref={bottomRef} />
