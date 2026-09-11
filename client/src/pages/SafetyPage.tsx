@@ -1,5 +1,6 @@
 import { useEffect, type MouseEvent } from "react";
 import { OverlayShell } from "@/components/OverlayShell";
+import { CardBrandIcon, SbpBrandIcon } from "@/components/PaymentBrandIcon";
 import { INFO_CATEGORIES, PRIVACY_DOCS, RIDING_DOCS } from "@/lib/info";
 import { InfoDocument } from "./safety/InfoDocument";
 import { LegalSection } from "./safety/LegalSection";
@@ -175,7 +176,38 @@ export function SafetyPage() {
             data-testid="section-autocharge-info"
             className="scroll-mt-6"
           >
-            <h2 className="font-display text-xl font-light">Автосписание за поездку</h2>
+            <h2 className="font-display text-xl font-light">Способы оплаты</h2>
+            <p className="text-muted-foreground mt-1" data-testid="text-accepted-payment-methods">
+              Принимаем банковские карты Visa, Mastercard и МИР, а также оплату через СБП
+              (Систему быстрых платежей) — привязать карту или счёт СБП можно на странице{" "}
+              <a
+                href="/payment-methods"
+                className="text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
+              >
+                «Способы оплаты»
+              </a>
+              .
+            </p>
+            <ul
+              className="flex flex-wrap items-center gap-3 mt-2 mb-4 list-none"
+              aria-label="Принимаемые способы оплаты"
+              data-testid="list-accepted-payment-methods"
+            >
+              <li>
+                <CardBrandIcon brand="visa" />
+              </li>
+              <li>
+                <CardBrandIcon brand="mastercard" />
+              </li>
+              <li>
+                <CardBrandIcon brand="mir" />
+              </li>
+              <li>
+                <SbpBrandIcon />
+              </li>
+            </ul>
+
+            <h2 className="font-display text-xl font-light mt-4">Автосписание за поездку</h2>
             <p data-testid="text-autocharge-info-how-it-works">
               Стоимость выбранного тарифа списывается при старте поездки, а при превышении
               оплаченного времени доплата по поминутному тарифу списывается при завершении
