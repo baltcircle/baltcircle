@@ -20,7 +20,7 @@ import { TARIFFS, MAX_ACTIVE_RIDES_PER_USER } from "@shared/geo";
 import type { Tariff } from "@shared/geo";
 import type { Ride } from "@shared/schema";
 import {
-  Bike as BikeIcon, Check, CreditCard, QrCode, Loader2,
+  Bike as BikeIcon, Check, CreditCard, Loader2,
   AlertCircle, Smartphone, CalendarClock, FlaskConical,
 } from "lucide-react";
 
@@ -300,7 +300,7 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
   // started by the rider who holds that exact reservation (storage.startRide
   // enforces the same ownership gate server-side — this is just the UI mirror).
   const canPay = !!bike && (bike.status === "available" || hasReservationForThisBike)
-    && paymentsConfigured && !submitting;
+    && paymentsConfigured && useSavedCard && !submitting;
   const canBook = !!bike && bike.status === "available"
     && !atCombinedCap && !hasReservationForThisBike && !bookMut.isPending;
   const canStartTestRide = canStartTest && !!bike
@@ -308,8 +308,9 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
     && testMinutesValid;
 
   function onPrimary() {
+    // Гатится через canPay: без привязанного способа оплаты кнопка дизаблена, так
+    // что hosted-оплата (payMut) больше не затрагивается отсюда.
     if (useSavedCard) chargeMut.mutate();
-    else payMut.mutate();
   }
 
   return (
@@ -382,12 +383,13 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
           </div>
         ) : null}
 
-        {/* Payment method picker: every active saved card/SBP link, newest first,
-            plus a "pay with another card" row that opens T-Bank's hosted form.
-            Tapping any row re-selects it — a real switch, not a binary toggle. */}
-        {paymentsConfigured && (
+        {/* Payment method picker: только сохранённые способы оплаты — никакого “hosted”-варианта
+            с переходом на форму Т-Банка: без привязанного способа оплаты сканирование QR
+            вообще недоступно (гатится отдельно), так что до этого экрана райдер всегда уже
+            имеет хотя бы один активный метод. Тап по строке заново выбирает ее. */}
+        {paymentsConfigured && activeMethods.length > 0 && (
           <div className="space-y-1.5">
-            {activeMethods.length > 0 && <div className="text-base font-medium">Способ оплаты</div>}
+            <div className="text-base font-medium">Способ оплаты</div>
             <div className="rounded-xl border border-card-border bg-muted/40 p-1.5 space-y-1" data-testid="rental-payment-methods">
               {activeMethods.map((m) => {
                 const isSelected = selectedMethodId === m.id;
@@ -409,28 +411,18 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
                   </button>
                 );
               })}
-              {/* "Оплатить другой картой" убрана, когда есть хотя бы один привязанный
-                  способ оплаты — выбор ограничивается сохранёнными методами. Оставляем
-                  hosted-вариант только как fallback для первой оплаты, когда связаться
-                  пока нечем. */}
-              {activeMethods.length === 0 && (
-                <button
-                  type="button"
-                  onClick={() => setManualMethodId("hosted")}
-                  disabled={submitting}
-                  data-testid="button-payment-method-hosted"
-                  className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2.5 text-sm text-left transition-colors hover-elevate ${
-                    selectedMethodId === "hosted" ? "bg-primary/10 ring-1 ring-primary" : ""
-                  }`}
-                >
-                  <QrCode className="w-4 h-4 shrink-0" />
-                  <span className={selectedMethodId === "hosted" ? "font-medium text-foreground" : "text-muted-foreground"}>
-                    Оплатить картой на странице Т-Банка
-                  </span>
-                  {selectedMethodId === "hosted" && <Check className="w-4 h-4 text-primary ml-auto shrink-0" />}
-                </button>
-              )}
             </div>
+          </div>
+        )}
+
+        {/* Без привязанного способа оплаты здесь нет ни списка методов, ни hosted-кнопки —
+            райдер до этого модального окна не дойдёт (QR-сканер гатит доступ отдельно).
+            Страхует на случай, если модалка всё же открылась таким райдером — не даёт тихо
+            улететь в hosted-оплату без выбора и объясняет, что нужно сделать. */}
+        {paymentsConfigured && activeMethods.length === 0 && (
+          <div className="rounded-md bg-muted/60 text-muted-foreground text-xs p-2.5 flex items-start gap-1.5" data-testid="rental-no-payment-method">
+            <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>Сначала привяжите карту или счёт в настройках профиля — без сохранённого способа оплаты начать аренду нельзя.</span>
           </div>
         )}
 
