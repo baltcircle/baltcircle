@@ -1,0 +1,26 @@
+name: Fix pmtiles 403 (home dir traverse permission)
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  fix-permissions:
+    runs-on: [self-hosted, baltcircle-prod]
+    environment: production
+    steps:
+      - name: Grant traverse (execute) permission on /home/yc-user for nginx (www-data)
+        run: |
+          set -x
+          echo "--- before ---"
+          stat -c '%A %U:%G %n' /home/yc-user
+          chmod o+x /home/yc-user
+          echo "--- after ---"
+          stat -c '%A %U:%G %n' /home/yc-user
+
+      - name: Verify pmtiles files now readable through nginx
+        run: |
+          set -x
+          curl -skIL -H "Host: takeride.ru" --range bytes=0-100 http://127.0.0.1/kaliningrad.pmtiles || true
+          curl -skIL -H "Host: takeride.ru" --range bytes=0-100 http://127.0.0.1/addresses.pmtiles || true
