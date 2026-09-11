@@ -12,7 +12,7 @@ import { CHAT_KEY, MAX_FILE_BYTES, type ChatState, fmtDay, fileToBase64 } from "
 import { MessageBubble } from "./support/MessageBubble";
 import { SupportQuickActions } from "./support/SupportQuickActions";
 import { ChatInputForm } from "./support/ChatInputForm";
-import { SupportRatingDialog } from "./support/SupportRatingDialog";
+import { SupportRatingCard } from "./support/SupportRatingCard";
 
 export function SupportPage() {
   const toast = useToast();
@@ -235,13 +235,13 @@ export function SupportPage() {
                   escalating={escalateMut.isPending}
                 />
               )}
+              {ratingOpen && <SupportRatingCard onDone={() => setRatingOpen(false)} />}
             </>
           )}
           <div ref={bottomRef} />
         </div>
 
         {/* Поле ввода — приклеено к низу внешнего скроллера */}
-        <SupportRatingDialog open={ratingOpen} onOpenChange={setRatingOpen} />
         <ChatInputForm
           onSubmit={submit}
           attachment={attachment}

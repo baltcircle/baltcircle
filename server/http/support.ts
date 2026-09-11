@@ -368,7 +368,7 @@ export function registerSupportChatRoutes(app: Express): void {
       conversationId: id,
       senderRole: "system",
       senderId: null,
-      body: "Оператор завершил сессию поддержки. Если возникнут новые вопросы — просто напишите, бот снова на связи.",
+      body: "Оператор завершил сессию поддержки. Если возникнут новые вопросы — просто напишите.",
     });
     await storage.setSupportMode(id, "bot");
     await storage.markSupportRead(id, "operator");
