@@ -296,7 +296,6 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
   });
 
   const submitting = payMut.isPending || chargeMut.isPending;
-  const selectedTariff = TARIFFS.find((t) => t.id === tariff);
   // "available" bikes can always be started; a "reserved" bike can ONLY be
   // started by the rider who holds that exact reservation (storage.startRide
   // enforces the same ownership gate server-side — this is just the UI mirror).
@@ -410,21 +409,27 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
                   </button>
                 );
               })}
-              <button
-                type="button"
-                onClick={() => setManualMethodId("hosted")}
-                disabled={submitting}
-                data-testid="button-payment-method-hosted"
-                className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2.5 text-sm text-left transition-colors hover-elevate ${
-                  selectedMethodId === "hosted" ? "bg-primary/10 ring-1 ring-primary" : ""
-                }`}
-              >
-                <QrCode className="w-4 h-4 shrink-0" />
-                <span className={selectedMethodId === "hosted" ? "font-medium text-foreground" : "text-muted-foreground"}>
-                  {activeMethods.length > 0 ? "Оплатить другой картой" : "Оплатить картой на странице Т-Банка"}
-                </span>
-                {selectedMethodId === "hosted" && <Check className="w-4 h-4 text-primary ml-auto shrink-0" />}
-              </button>
+              {/* "Оплатить другой картой" убрана, когда есть хотя бы один привязанный
+                  способ оплаты — выбор ограничивается сохранёнными методами. Оставляем
+                  hosted-вариант только как fallback для первой оплаты, когда связаться
+                  пока нечем. */}
+              {activeMethods.length === 0 && (
+                <button
+                  type="button"
+                  onClick={() => setManualMethodId("hosted")}
+                  disabled={submitting}
+                  data-testid="button-payment-method-hosted"
+                  className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2.5 text-sm text-left transition-colors hover-elevate ${
+                    selectedMethodId === "hosted" ? "bg-primary/10 ring-1 ring-primary" : ""
+                  }`}
+                >
+                  <QrCode className="w-4 h-4 shrink-0" />
+                  <span className={selectedMethodId === "hosted" ? "font-medium text-foreground" : "text-muted-foreground"}>
+                    Оплатить картой на странице Т-Банка
+                  </span>
+                  {selectedMethodId === "hosted" && <Check className="w-4 h-4 text-primary ml-auto shrink-0" />}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -517,7 +522,7 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
 
         <DialogFooter className="flex-row gap-2">
           <Button
-            className="flex-1 min-w-0 px-2"
+            className="flex-1 min-w-0 px-2 text-base"
             disabled={!canPay}
             onClick={onPrimary}
             data-testid="button-start-rental"
@@ -525,15 +530,13 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
             {submitting ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
-              <span className="truncate">
-                Начать{selectedTariff ? ` — ${selectedTariff.price} ₽` : ""}
-              </span>
+              <span className="truncate">Начать</span>
             )}
           </Button>
           <Button
             type="button"
             variant="outline"
-            className="flex-1 min-w-0 px-2"
+            className="flex-1 min-w-0 px-2 text-base"
             disabled={!canBook}
             onClick={() => bookMut.mutate()}
             data-testid="button-book-reservation"
@@ -548,10 +551,7 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
             {bookMut.isPending ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
-              <>
-                <CalendarClock className="w-4 h-4 mr-1.5 shrink-0" />
-                <span className="truncate">Бронь</span>
-              </>
+              <span className="truncate">Бронь</span>
             )}
           </Button>
         </DialogFooter>
