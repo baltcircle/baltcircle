@@ -2,10 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { OverlayShell } from "@/components/OverlayShell";
 import type { RideWithFeedback } from "@shared/schema";
 import { Card } from "@/components/ui/card";
-import { fmtDateShort, fmtDistance, fmtRideTimeRange, fmtRub, fmtRideTariff } from "@/lib/format";
+import { fmtDateFull, fmtDistanceKm, fmtRideTimeRange, fmtRub, fmtRideTariff } from "@/lib/format";
 import { apiRequest } from "@/lib/queryClient";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { Route, Clock, MapPin, Receipt } from "lucide-react";
+import { Route, Bike } from "lucide-react";
 
 export function RidesPage() {
   // История поездок — приватные данные конкретного пользователя. Гостям её не
@@ -73,33 +73,37 @@ export function RidesPage() {
         <div className="space-y-3">
           {rides.map(r => (
             <Card key={r.id} className="p-4 lg:p-5" data-testid={`row-ride-${r.id}`}>
-              <div className="flex items-baseline justify-between gap-2 mb-3">
-                <div className="font-display text-base font-light" data-testid={`text-ride-date-${r.id}`}>
-                  {fmtDateShort(r.startedAt)}
-                </div>
-                <div className="text-xs text-muted-foreground shrink-0" data-testid={`text-ride-bike-${r.id}`}>
-                  {r.bikeId}
-                </div>
+              <div
+                className="text-center text-xs text-muted-foreground mb-2"
+                data-testid={`text-ride-date-${r.id}`}
+              >
+                {fmtDateFull(r.startedAt)}
               </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
-                <Cell icon={<Clock className="w-3.5 h-3.5" />} label="Время" value={fmtRideTimeRange(r.startedAt, r.endedAt)} />
-                <Cell icon={<MapPin className="w-3.5 h-3.5" />} label="Дистанция" value={fmtDistance(r.distanceM)} />
-                <Cell icon={<Route className="w-3.5 h-3.5" />} label="Тариф" value={fmtRideTariff(r)} />
-                <Cell icon={<Receipt className="w-3.5 h-3.5" />} label="Стоимость" value={fmtRub(r.cost)} />
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Bike className="w-5 h-5 text-muted-foreground shrink-0" />
+                  <div className="min-w-0">
+                    <div className="font-medium" data-testid={`text-ride-time-${r.id}`}>
+                      {fmtRideTimeRange(r.startedAt, r.endedAt)}
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {fmtDistanceKm(r.distanceM)} · {r.bikeId}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-baseline gap-2 shrink-0">
+                  <span className="text-xs text-muted-foreground" data-testid={`text-ride-tariff-${r.id}`}>
+                    {fmtRideTariff(r)}
+                  </span>
+                  <span className="font-medium" data-testid={`text-ride-cost-${r.id}`}>
+                    {fmtRub(r.cost)}
+                  </span>
+                </div>
               </div>
             </Card>
           ))}
         </div>
       </div>
     </OverlayShell>
-  );
-}
-
-function Cell({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
-  return (
-    <div className="flex flex-col items-center text-center">
-      <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center justify-center gap-1">{icon}{label}</div>
-      <div className="font-display font-light mt-0.5">{value}</div>
-    </div>
   );
 }

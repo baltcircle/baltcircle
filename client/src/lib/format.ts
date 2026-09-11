@@ -33,6 +33,14 @@ export function fmtDistance(meters: number) {
   if (meters < 1000) return Math.round(meters) + " м";
   return (meters / 1000).toFixed(1) + " км";
 }
+// Compact km-only variant for dense ride rows, e.g. "<1 км", "1 км", "1.6 км",
+// "2.8 км" — rounds to one decimal but drops a bare ".0".
+export function fmtDistanceKm(meters: number) {
+  if (meters < 1000) return "<1 км";
+  const km = Math.round(meters / 100) / 10;
+  const str = Number.isInteger(km) ? String(km) : km.toFixed(1);
+  return `${str} км`;
+}
 export function fmtDuration(ms: number) {
   const total = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(total / 60);
@@ -60,6 +68,14 @@ export function fmtDate(ts: number) {
 // contexts that show the clock time separately (ride history cards).
 export function fmtDateShort(ts: number) {
   return new Date(ts).toLocaleString("ru-RU", { day: "2-digit", month: "short" });
+}
+// Full-month date, e.g. "28 июля" — year appended only when it isn't the
+// current year ("15 октября 2023"), matching how most trip-history apps show dates.
+export function fmtDateFull(ts: number) {
+  const d = new Date(ts);
+  const opts: Intl.DateTimeFormatOptions = { day: "numeric", month: "long" };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  return d.toLocaleString("ru-RU", opts);
 }
 // Clock time only (HH:MM), e.g. "19:34" — used to build a start–end range.
 export function fmtTimeOnly(ts: number) {
