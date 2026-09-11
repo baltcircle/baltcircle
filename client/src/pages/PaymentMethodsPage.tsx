@@ -139,20 +139,25 @@ export function PaymentMethodsPage() {
     },
     onSuccess: ({ data, bank }) => {
       queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+      // Райдер выбрал банк — значит payload это его deeplink, и тап по банку
+      // должен вести в приложение сразу, без промежуточного экрана
+      // подтверждения — закрываем модалку и сразу уводим. Фоновый polling
+      // pending-метода (см. эффект ниже) догонит статус сам — без тоста и без
+      // участия открытой модалки. Переход только на тач-устройствах: в
+      // десктопном браузере банковской схемы нет, там модалка остаётся со своей
+      // кнопкой/QR, как и раньше.
+      if (bank && isOpenablePayload(data.qrPayload) && detectSbpDeviceType() === "mobile") {
+        setSbpModalOpen(false);
+        setSbpBinding(null);
+        window.location.assign(data.qrPayload);
+        return;
+      }
       setSbpBinding({
         methodId: data.methodId,
         payload: data.qrPayload,
         status: "waiting",
         ...(bank ? { bankName: bank.name } : {}),
       });
-      // Райдер выбрал банк — значит payload это его deeplink, и тап по банку
-      // должен вести в приложение, а не к QR. Переход только на тач-
-      // устройствах: в десктопном браузере банковской схемы нет и попытка
-      // дала бы ошибку вместо QR. Модалка остаётся под переходом: если
-      // приложения нет, райдер вернётся на кнопку и QR.
-      if (bank && isOpenablePayload(data.qrPayload) && detectSbpDeviceType() === "mobile") {
-        window.location.assign(data.qrPayload);
-      }
     },
     onError: (e: Error) =>
       toast.toast({ title: "Не удалось привязать счёт СБП", description: cleanErr(e), variant: "destructive" }),

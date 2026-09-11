@@ -61,10 +61,6 @@ export function SbpBankPicker({
 
   return (
     <div className="flex flex-col" data-testid="sbp-bank-picker">
-      <p className="text-sm text-gray-500 dark:text-zinc-400 mb-3">
-        Выберите банк, в котором открыт счёт — привязку нужно подтвердить в его приложении.
-      </p>
-
       {banks.length > 8 && (
         <div className="relative mb-2">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-zinc-500 pointer-events-none" />
@@ -93,6 +89,20 @@ export function SbpBankPicker({
           <p className="mt-3 text-sm text-gray-500 dark:text-zinc-400">
             Список банков сейчас недоступен. Привязку можно завершить по QR-коду.
           </p>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={onUseQr}
+            data-testid="button-sbp-use-qr"
+            className="mt-4 w-full inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-gray-200 dark:border-zinc-700 text-gray-700 dark:text-zinc-200 font-medium hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {startingBankId === "" ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <QrCode className="w-4 h-4" />
+            )}
+            Показать QR-код
+          </button>
         </div>
       ) : visible.length === 0 ? (
         <p className="py-8 text-center text-sm text-gray-400 dark:text-zinc-500">
@@ -124,21 +134,6 @@ export function SbpBankPicker({
           })}
         </ul>
       )}
-
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onUseQr}
-        data-testid="button-sbp-use-qr"
-        className="mt-4 w-full inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-gray-200 dark:border-zinc-700 text-gray-700 dark:text-zinc-200 font-medium hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {startingBankId === "" ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
-        ) : (
-          <QrCode className="w-4 h-4" />
-        )}
-        Показать QR-код
-      </button>
     </div>
   );
 }

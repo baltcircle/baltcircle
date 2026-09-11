@@ -63,7 +63,7 @@ export function SbpBindModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 pt-5 pb-2">
-          <h2 className="text-lg font-display font-light text-gray-900 dark:text-white">
+          <h2 className="text-xl font-display font-light text-gray-900 dark:text-white">
             {binding === null ? "Выберите банк" : "Привязка счёта СБП"}
           </h2>
           <button
