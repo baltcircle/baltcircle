@@ -26,7 +26,6 @@ import {
   startSbpBinding,
   isOpenablePayload,
 } from "./payment-methods/binding-utils";
-import { TbankBindModal } from "./payment-methods/TbankBindModal";
 import { SbpBindModal } from "./payment-methods/SbpBindModal";
 
 const METHODS_KEY = ["/api/payment-methods"];
@@ -259,8 +258,61 @@ export function PaymentMethodsPage() {
   // Результат привязки НЕ доверяем URL внутри попапа — авторитетен серверный
   // webhook. Ловим двумя путями: (1) polling статуса созданной записи (methodId)
   // каждые 2с; (2) postMessage от попапа при возврате на ?from=tbank (ускоряет
-  // закрытие). Модалка закрывается, когда карта active/failed или по таймауту.
+  // закрытие). Никакого собственного оверлея/модалки над страницей нет —
+  // tbankBind живёт только как служебное состояние для попапа и polling'а;
+  // сбрасывается, когда карта active/failed, попап закрыт вручную или по таймауту.
   const bindFrame = tbankBind; // { methodId, url } | null — состояние объявлено выше
+
+  // Открываем попап сразу, как только появился tbankBind — без какой-либо
+  // собственной модалки/оверлея над страницей. Если браузер блокирует попап
+  // (мобильные браузеры иногда не считают ответ мутации "свежим" жестом), не
+  // показываем запасной UI, а сразу уходим вкладкой на hosted-форму — тем же
+  // путём, что и фоллбэк выше без methodId, — чтобы райдер не остался без
+  // возможности продолжить привязку.
+  const openedBindMethodId = useRef<number | null>(null);
+  const bindPopupRef = useRef<Window | null>(null);
+  useEffect(() => {
+    if (!tbankBind || openedBindMethodId.current === tbankBind.methodId) return;
+    openedBindMethodId.current = tbankBind.methodId;
+    const { url, methodId } = tbankBind;
+    const width = 430;
+    const height = 760;
+    const left = Math.max(0, Math.round((window.screen.width - width) / 2));
+    const top = Math.max(0, Math.round((window.screen.height - height) / 2));
+    // Deliberately no "noopener" — the return page (?from=tbank) needs
+    // window.opener to postMessage the result back and self-close.
+    const popup = window.open(
+      url,
+      "tbank-bind",
+      `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`,
+    );
+    bindPopupRef.current = popup;
+    const blockCheck = window.setTimeout(() => {
+      if (openedBindMethodId.current !== methodId) return;
+      if (!popup || popup.closed) {
+        // Попап заблокирован — уходим вкладкой на hosted-форму вместо показа
+        // собственного UI поверх страницы.
+        setTbankBind(null);
+        setRedirecting(true);
+        window.location.replace(url);
+      }
+    }, 500);
+    const closePoll = window.setInterval(() => {
+      if (bindPopupRef.current?.closed) {
+        window.clearInterval(closePoll);
+        if (openedBindMethodId.current === methodId) {
+          // Закрытие вручную: дотягиваем статус (webhook/polling мог ещё не
+          // отработать) и обновляем список — авто-reconcile выше доведёт.
+          setTbankBind(null);
+          queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+        }
+      }
+    }, 700);
+    return () => {
+      window.clearTimeout(blockCheck);
+      window.clearInterval(closePoll);
+    };
+  }, [tbankBind]);
 
   // Ловим postMessage от iframe (index.html шлёт tbank:done при возврате).
   useEffect(() => {
@@ -483,17 +535,6 @@ export function PaymentMethodsPage() {
         />
       )}
 
-      {tbankBind && (
-        <TbankBindModal
-          url={tbankBind.url}
-          onClose={() => {
-            // Закрытие вручную: дотягиваем статус (webhook/polling мог ещё не
-            // отработать) и обновляем список — авто-reconcile выше доведёт.
-            setTbankBind(null);
-            queryClient.invalidateQueries({ queryKey: METHODS_KEY });
-          }}
-        />
-      )}
     </OverlayShell>
   );
 }
