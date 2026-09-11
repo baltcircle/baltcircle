@@ -5,15 +5,6 @@ export const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 export type ChatState = { conversation: SupportConversation; messages: SupportMessage[] };
 
-// Вопросы совпадают с ключевыми словами бота (shared/support-faq.ts) —
-// тап отправляет вопрос, бот отвечает скриптом.
-export const FAQ_HINT = [
-  { q: "Как начать аренду велосипеда?" },
-  { q: "Как завершить поездку?" },
-  { q: "Как привязать карту и сколько стоит?" },
-  { q: "Что означают зоны на карте?" },
-];
-
 export function fmtTime(ms: number): string {
   return new Date(ms).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 }

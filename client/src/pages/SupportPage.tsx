@@ -7,9 +7,10 @@ import { apiRequest, queryClient, API_BASE } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { LifeBuoy } from "lucide-react";
+import { BOT_GREETING } from "@shared/support-faq";
 import { CHAT_KEY, MAX_FILE_BYTES, type ChatState, fmtDay, fileToBase64 } from "./support/utils";
 import { MessageBubble } from "./support/MessageBubble";
-import { FaqEmptyState } from "./support/FaqEmptyState";
+import { SupportQuickActions } from "./support/SupportQuickActions";
 import { ChatInputForm } from "./support/ChatInputForm";
 
 export function SupportPage() {
@@ -123,11 +124,31 @@ export function SupportPage() {
     sendMut.mutate();
   }
 
-  // Быстрый вызов оператора — шлём ключевое слово, бот переключит разговор.
-  function callOperator() {
-    if (sendMut.isPending) return;
-    sendMut.mutate("Оператор");
-  }
+  // Тихое закрытие раунда: бот справился, админку не уведомляем.
+  const resolveMut = useMutation<SupportMessage, Error, void>({
+    mutationFn: async () => (await apiRequest("POST", "/api/support/chat/resolve", {})).json(),
+    onSuccess: (msg) => {
+      queryClient.setQueryData<ChatState>(CHAT_KEY, (prev) => {
+        if (!prev) return prev;
+        if (prev.messages.some((m) => m.id === msg.id)) return prev;
+        return { ...prev, messages: [...prev.messages, msg] };
+      });
+    },
+  });
+
+  // Явный вызов живого оператора — с уведомлением админки.
+  const escalateMut = useMutation<{ message: SupportMessage | null; alreadyHuman: boolean }, Error, void>({
+    mutationFn: async () => (await apiRequest("POST", "/api/support/chat/escalate", {})).json(),
+    onSuccess: (res) => {
+      queryClient.setQueryData<ChatState>(CHAT_KEY, (prev) => {
+        if (!prev) return prev;
+        const withMode = { ...prev, conversation: { ...prev.conversation, mode: "human" as const } };
+        if (!res.message) return withMode;
+        if (withMode.messages.some((m) => m.id === res.message!.id)) return withMode;
+        return { ...withMode, messages: [...withMode.messages, res.message] };
+      });
+    },
+  });
 
   // Группировка по дате для разделителей
   const grouped = useMemo(() => {
@@ -143,6 +164,14 @@ export function SupportPage() {
     }
     return groups;
   }, [messages]);
+
+  // Кнопки «Вопрос решён» / «Позвать оператора» показываем только сразу
+  // после автоответа бота, пока разговор ещё не передан оператору — как
+  // только придёт новое сообщение (пользователя, системное или оператора),
+  // последним в списке будет уже не bot-сообщение, и кнопки сами исчезнут.
+  const lastMessage = messages[messages.length - 1];
+  const showQuickActions =
+    !!lastMessage && lastMessage.senderRole === "bot" && chatQ.data?.conversation.mode === "bot";
 
   if (!isRegistered) {
     return (
@@ -171,23 +200,35 @@ export function SupportPage() {
         >
           {chatQ.isLoading ? (
             <div className="text-xs text-muted-foreground text-center py-8">Загрузка чата…</div>
-          ) : messages.length === 0 ? (
-            <FaqEmptyState
-              onPickFaq={(q) => sendMut.mutate(q)}
-              onCallOperator={callOperator}
-              disabled={sendMut.isPending}
-            />
           ) : (
-            grouped.map((g, gi) => (
-              <div key={gi} className="space-y-1.5">
-                <div className="text-[10px] uppercase tracking-widest text-muted-foreground text-center py-1">
-                  {g.day}
+            <>
+              {/* Приветствие бота — всегда первым, не хранится в БД. FAQ теперь
+                  скрыт внутри свободного текста: бот сам разбирает вопрос. */}
+              <div className="flex justify-start">
+                <div className="max-w-[80%] rounded-2xl rounded-bl-md bg-muted px-3 py-2">
+                  <div className="text-[10px] font-medium opacity-70 mb-0.5">Бот поддержки</div>
+                  <div className="text-sm whitespace-pre-wrap break-words leading-snug">{BOT_GREETING}</div>
                 </div>
-                {g.items.map((m) => (
-                  <MessageBubble key={m.id} message={m} />
-                ))}
               </div>
-            ))
+              {grouped.map((g, gi) => (
+                <div key={gi} className="space-y-1.5">
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground text-center py-1">
+                    {g.day}
+                  </div>
+                  {g.items.map((m) => (
+                    <MessageBubble key={m.id} message={m} />
+                  ))}
+                </div>
+              ))}
+              {showQuickActions && (
+                <SupportQuickActions
+                  onResolve={() => resolveMut.mutate()}
+                  onEscalate={() => escalateMut.mutate()}
+                  resolving={resolveMut.isPending}
+                  escalating={escalateMut.isPending}
+                />
+              )}
+            </>
           )}
           <div ref={bottomRef} />
         </div>

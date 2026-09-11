@@ -1,6 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { AdminSupportConversationRow, SupportMessage } from "@shared/schema";
+import type { AdminSupportConversationRow } from "@shared/schema";
 import { queryClient, API_BASE } from "@/lib/queryClient";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { playSupportChime, primeAudio } from "@/lib/support-notify";
@@ -44,9 +44,6 @@ export function useSupportUnread(): UseSupportUnreadResult {
     };
   }, [enabled]);
 
-  // Отслеживание уже виденных id, чтобы SSE-рестарт не звенел на старом сообщении.
-  const seenRef = useRef<Set<number>>(new Set());
-
   useEffect(() => {
     if (!enabled) return;
     const es = new EventSource(`${API_BASE}/api/admin/support/inbox/stream`, {
@@ -54,22 +51,22 @@ export function useSupportUnread(): UseSupportUnreadResult {
     });
 
     es.onmessage = (evt) => {
-      let msg: SupportMessage | null;
-      try {
-        msg = JSON.parse(evt.data) as SupportMessage;
-      } catch {
-        msg = null;
-      }
+      // Сервер гонит лёгкие полевые объекты ({conversationId, notify?, escalated?}),
+      // а не полные SupportMessage — см. server/http/support.ts.
+      const payload: { conversationId?: number; notify?: boolean; escalated?: boolean } | null = (() => {
+        try {
+          return JSON.parse(evt.data);
+        } catch {
+          return null;
+        }
+      })();
 
       // Всегда синхронизируем inbox.
       queryClient.invalidateQueries({ queryKey: INBOX_KEY });
 
-      if (!msg) return;
-      if (seenRef.current.has(msg.id)) return;
-      seenRef.current.add(msg.id);
-
-      // Пикаем только на входящие от пользователя.
-      if (msg.senderRole === "user") {
+      // Пикаем только когда сообщение действительно требует внимания человека
+      // (эскалация или уже идущий human-диалог) — не на тихие FAQ-ответы бота.
+      if (payload?.notify) {
         playSupportChime();
       }
     };

@@ -150,7 +150,12 @@ export function registerSupportChatRoutes(app: Express): void {
     });
     const resolvedMsg = await resolveOutgoingMessage(msg);
     supportEvents.emit(String(conv.id), resolvedMsg);
-    supportEvents.emit("inbox", { conversationId: conv.id }); // будит SSE админа
+    // Инбокс админа будим только если разговор уже ведёт человек — там
+    // любое новое сообщение важно. Фат-вопросы, которые разберёт бот,
+    // не должны будить админку — они тихо закрываются кнопкой «Вопрос решён».
+    if (conv.mode === "human") {
+      supportEvents.emit("inbox", { conversationId: conv.id, notify: true });
+    }
     res.status(201).json(resolvedMsg);
 
     // 2. Бот-логика — только если разговор ещё в режиме 'bot'. В human-режиме
@@ -168,7 +173,7 @@ export function registerSupportChatRoutes(app: Express): void {
         body: BOT_HANDOFF,
       });
       supportEvents.emit(String(conv.id), handoff);
-      supportEvents.emit("inbox", { conversationId: conv.id, escalated: true });
+      supportEvents.emit("inbox", { conversationId: conv.id, escalated: true, notify: true });
       return;
     }
 
@@ -185,6 +190,49 @@ export function registerSupportChatRoutes(app: Express): void {
       body: answer,
     });
     supportEvents.emit(String(conv.id), botMsg);
+  });
+
+  // Пользователь отмечает вопрос решённым (бот сам справился) — тихо
+  // закрываем раунд: записываем системную заметку в историю и сбрасываем
+  // счётчик непрочитанных оператора, но без инбокс-события — обычный
+  // FAQ-раунд, закрытый пользователем, не требует внимания админки.
+  app.post("/api/support/chat/resolve", requireAuth, async (req, res) => {
+    const uid = riderId(req);
+    const conv = await storage.ensureSupportConversation(uid);
+    const note = await storage.appendSupportMessage({
+      conversationId: conv.id,
+      senderRole: "system",
+      senderId: null,
+      body: "Пользователь отметил: вопрос решён.",
+    });
+    await storage.markSupportRead(conv.id, "operator");
+    // Синк открытых вкладок/чата оператора, если он сейчас смотрит этот разговор —
+    // без буди инбокса/звука, это и есть «без уведомления админки».
+    supportEvents.emit(String(conv.id), note);
+    res.status(201).json(note);
+  });
+
+  // Явный вызов живого оператора кнопкой — детерминированная эскалация без
+  // опоры на поиск ключевых слов (wantsOperator остаётся для свободного текста
+  // типа «свяжите с оператором»). Всегда будит инбокс со звуком.
+  app.post("/api/support/chat/escalate", requireAuth, async (req, res) => {
+    const uid = riderId(req);
+    const conv = await storage.ensureSupportConversation(uid);
+    if (conv.mode === "human") {
+      // Оператор уже ведёт разговор — просто наверх напоминаем, без дубля хенд-офф.
+      supportEvents.emit("inbox", { conversationId: conv.id, escalated: true, notify: true });
+      return res.json({ message: null, alreadyHuman: true });
+    }
+    await storage.setSupportMode(conv.id, "human");
+    const handoff = await storage.appendSupportMessage({
+      conversationId: conv.id,
+      senderRole: "system",
+      senderId: null,
+      body: BOT_HANDOFF,
+    });
+    supportEvents.emit(String(conv.id), handoff);
+    supportEvents.emit("inbox", { conversationId: conv.id, escalated: true, notify: true });
+    res.status(201).json({ message: handoff, alreadyHuman: false });
   });
 
   // Пометить как прочитанное со стороны пользователя.
