@@ -1,0 +1,53 @@
+name: Diagnose pmtiles 403 (read-only)
+
+# One-off diagnostic: /kaliningrad.pmtiles and /addresses.pmtiles are being
+# served with HTTP 403 by nginx (confirmed via live browser check against
+# takeride.ru), which is a hard client-visible map failure, not a transient
+# one. Nginx's own error log records the exact reason for a 403 (permission
+# denied, path not found under the alias, etc.) — this workflow surfaces
+# that plus file ownership/permissions on the host, with zero mutation.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  diagnose:
+    name: Inspect pmtiles files + nginx error log
+    runs-on:
+      - self-hosted
+      - baltcircle-prod
+    environment: production
+    steps:
+      - name: File ownership/permissions under the pmtiles alias root
+        run: |
+          set -x
+          echo "--- ls -la /home/yc-user/osm ---"
+          ls -la /home/yc-user/osm/ || true
+          echo "--- stat on each pmtiles file ---"
+          for f in /home/yc-user/osm/*.pmtiles; do
+            stat "$f" || true
+          done
+          echo "--- ls -la /home/yc-user (parent dir perms/exec bit matter for nginx traversal) ---"
+          ls -la /home/yc-user/ || true
+          echo "--- nginx worker_process user ---"
+          ps -eo user,cmd | grep -i 'nginx: worker' | grep -v grep || true
+
+      - name: Recent nginx error log entries mentioning pmtiles
+        run: |
+          set -x
+          sudo tail -n 200 /var/log/nginx/error.log 2>&1 | grep -i pmtiles || echo "(no pmtiles-related lines in last 200)"
+          echo "--- last 40 lines of error.log unfiltered, for context ---"
+          sudo tail -n 40 /var/log/nginx/error.log || true
+
+      - name: Direct local curl against nginx for both files
+        run: |
+          set -x
+          curl -sI -H "Host: takeride.ru" --range bytes=0-100 http://127.0.0.1/kaliningrad.pmtiles || true
+          curl -sI -H "Host: takeride.ru" --range bytes=0-100 http://127.0.0.1/addresses.pmtiles || true
+
+      - name: SELinux / AppArmor status (can also cause a bare 403)
+        run: |
+          set -x
+          command -v getenforce >/dev/null 2>&1 && getenforce || echo "no SELinux"
+          sudo aa-status 2>&1 | head -20 || echo "no AppArmor / not permitted"
