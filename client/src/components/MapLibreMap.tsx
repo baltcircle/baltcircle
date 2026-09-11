@@ -13,6 +13,7 @@ import {
 } from "./map/mapMarkers";
 import { createGeoFilter, douglasPeucker, segmentTrack, type TrackFix } from "@/lib/geoSmoothing";
 import { useTheme } from "@/lib/theme";
+import { Button } from "@/components/ui/button";
 
 /** Which optional overlay layers are drawn. Every flag defaults to visible so
  *  the customer map and editors are unaffected; the admin operations map flips
@@ -126,6 +127,12 @@ export function MapLibreMap({
   // resolves before map init would otherwise render into a null map and stay blank.
   const readyRef     = useRef(false);
   const [ready, setReady] = useState(false);
+  // Хардening: true, когда карта так и не поднялась после MAX_BOOT_RETRIES
+  // автоматических попыток (сетевой сбой у источника тайлов, потерянный WebGL-
+  // контекст, зависший запрос) — тогда показываем fallback UI с ручной кнопкой
+  // «Повторить», а не оставляем пользователя перед немым синим экраном.
+  const [mapFailed, setMapFailed] = useState(false);
+  const manualRetryRef = useRef<() => void>(() => {});
 
   // Latest callbacks kept in refs so the one-time init effect always calls the
   // current handler without re-subscribing map events on every render.
@@ -157,6 +164,45 @@ export function MapLibreMap({
     const el = containerRef.current;
     if (!el) return;
     let cancelled = false;
+    let retryCount = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Хардening — карта периодически «зависала» синим экраном: water-подложка
+    // видна, а слой earth поверх неё не встал, потому что источник тайлов не
+    // поднялся (сетевой сбой pmtiles-Range-запроса, потерянный WebGL-контекст),
+    // а ошибка либо не пришла синхронно в try/catch вокруг initMap, либо вообще
+    // не всплыла как событие. MAX_BOOT_RETRIES ограничивает автоматические
+    // попытки, чтобы при реальном сбое сети не устроить шторм запросов к
+    // серверу; после них — понятный fallback UI с ручной кнопкой «Повторить».
+    const MAX_BOOT_RETRIES = 3;
+    const LOAD_TIMEOUT_MS = 12000;
+
+    const clearRetryTimer = () => {
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    };
+
+    const destroyMap = () => {
+      try { mapRef.current?.remove(); } catch { /* ignore */ }
+      mapRef.current = null;
+      readyRef.current = false;
+      if (!cancelled) setReady(false);
+    };
+
+    // Единая точка восстановления. Вызывается из: (1) error-события карты ДО
+    // первого load, (2) webglcontextlost, (3) таймаута, если load не пришёл
+    // вообще без единого события error (тихо зависший запрос).
+    const recover = () => {
+      if (cancelled) return;
+      clearRetryTimer();
+      destroyMap();
+      retryCount += 1;
+      if (retryCount > MAX_BOOT_RETRIES) {
+        if (!cancelled) setMapFailed(true);
+        return;
+      }
+      const delay = Math.min(1500 * retryCount, 6000);
+      retryTimer = setTimeout(() => { if (!cancelled) boot(); }, delay);
+    };
 
     const initMap = (
       tileSource: { type: "pmtiles"; url: string } | { type: "xyz"; url: string },
@@ -187,11 +233,44 @@ export function MapLibreMap({
         map.touchZoomRotate.disable();
         map.keyboard.disable();
       }
+
+      // Карта не поднялась за отведённое время без единого события error —
+      // например, зависший fetch без таймаута на уровне сети/сервера/nginx.
+      let loadTimeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+        loadTimeoutId = null;
+        if (mapRef.current === map && !readyRef.current) recover();
+      }, LOAD_TIMEOUT_MS);
+
+      map.on("error", (e: any) => {
+        // После первой успешной отрисовки одиночные ошибки отдельных тайлов —
+        // обычное дело на границе покрытия pmtiles-экстракта, не повод
+        // перезапускать карту (иначе она бы мигала при обычном панорамировании).
+        // Фатальны только ошибки ДО первого load: тогда earth так и не встал
+        // поверх water-подложки — это и есть «голубой экран».
+        if (readyRef.current) {
+          console.warn("[map] non-fatal error after load", e?.error ?? e);
+          return;
+        }
+        console.error("[map] fatal load error, recovering", e?.error ?? e);
+        if (mapRef.current === map) recover();
+      });
+
+      try {
+        map.getCanvas().addEventListener("webglcontextlost", (ev: Event) => {
+          ev.preventDefault();
+          console.error("[map] WebGL context lost, recovering");
+          if (mapRef.current === map) recover();
+        });
+      } catch { /* getCanvas can throw before the map is fully initialised */ }
+
       // Map clicks feed the editor draw mode with real [lat, lng].
       map.on("click", (e: maplibregl.MapMouseEvent) => {
         onMapClickRef.current?.([e.lngLat.lat, e.lngLat.lng]);
       });
       map.once("load", () => {
+        if (loadTimeoutId) { clearTimeout(loadTimeoutId); loadTimeoutId = null; }
+        retryCount = 0;
+        if (!cancelled) setMapFailed(false);
         map.resize();
         readyRef.current = true;
         // Сектор-конус направления движения (стиль Google Maps «луч фонарика»).
@@ -304,10 +383,22 @@ export function MapLibreMap({
     window.addEventListener("focus", onRestore);
     document.addEventListener("visibilitychange", onRestore);
 
+    // Кнопка «Повторить» в fallback-оверлее (после источения автоматических
+    // повторов): сбрасывает счётчик попыток и честно пересобирает карту.
+    manualRetryRef.current = () => {
+      retryCount = 0;
+      clearRetryTimer();
+      setMapFailed(false);
+      destroyMap();
+      boot();
+    };
+
     boot();
 
     return () => {
       cancelled = true;
+      clearRetryTimer();
+      manualRetryRef.current = () => {};
       resizeTimers.forEach(clearTimeout);
       resizeTimers.clear();
       window.removeEventListener("pageshow", onRestore);
@@ -755,5 +846,20 @@ export function MapLibreMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, ride, activeRides, show.rides, styleVersion]);
 
-  return <div ref={containerRef} className={className} style={{ height }} />;
+  return (
+    <div
+      className={className}
+      style={{ height, ...(className ? {} : { position: "relative" as const }) }}
+    >
+      <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
+      {mapFailed && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background/95 px-4 text-center">
+          <p className="text-destructive text-sm">Не удалось загрузить карту. Проверьте соединение с интернетом.</p>
+          <Button type="button" size="sm" onClick={() => manualRetryRef.current()}>
+            Повторить попытку
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 }
