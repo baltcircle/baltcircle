@@ -56,6 +56,22 @@ export function fmtRelative(ts: number) {
 export function fmtDate(ts: number) {
   return new Date(ts).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
+// Date without a time component (day + short month), e.g. "01 сент." — for
+// contexts that show the clock time separately (ride history cards).
+export function fmtDateShort(ts: number) {
+  return new Date(ts).toLocaleString("ru-RU", { day: "2-digit", month: "short" });
+}
+// Clock time only (HH:MM), e.g. "19:34" — used to build a start–end range.
+export function fmtTimeOnly(ts: number) {
+  return new Date(ts).toLocaleString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+// "19:34–19:35" for a finished ride, "c 19:34" while it's still active (no
+// endedAt yet) — replaces showing raw trip duration next to a separate start
+// timestamp with a single at-a-glance interval.
+export function fmtRideTimeRange(startedAt: number, endedAt: number | null) {
+  if (endedAt == null) return `с ${fmtTimeOnly(startedAt)}`;
+  return `${fmtTimeOnly(startedAt)}–${fmtTimeOnly(endedAt)}`;
+}
 // Date-only variant (no time) for contexts where the exact minute doesn't
 // matter — e.g. a user's registration date in the admin table.
 export function fmtDateOnly(ts: number) {
