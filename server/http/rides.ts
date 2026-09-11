@@ -15,7 +15,7 @@ import {
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
   createRideFeedbackSchema, startTestRideSchema,
 } from "@shared/schema";
-import type { PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
+import type { PaymentMethod, PaymentOrder, Ride, AdminFeedbackRow } from "@shared/schema";
 import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./../sms";
 import {
   getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
@@ -309,13 +309,25 @@ export function registerRideRoutes(app: Express): void {
     const { limit, offset } = parsePageParams(req);
     res.json(await storage.listAdminRides({ limit, offset }));
   });
-  // Admin Reviews list: every submitted post-ride feedback, newest first,
-  // enriched with rider identity + bike id. Sorting/filtering happen
+  // Admin Reviews list: every submitted post-ride feedback PLUS every
+  // support-chat rating (submitted after an operator closes a session),
+  // merged newest-first and tagged with a `kind` discriminant so the client
+  // can show "Поддержка" for support rows. Sorting/filtering happen
   // client-side over this full list, mirroring /api/admin/rides.
   app.get("/api/admin/feedback", requireRole("operator", "admin"), async (req, res) => {
-    res.setHeader("X-Total-Count", String(await storage.countRideFeedback()));
     const { limit, offset } = parsePageParams(req);
-    res.json(await storage.listRideFeedback({ limit, offset }));
+    const [rideRows, supportRows, rideTotal, supportTotal] = await Promise.all([
+      storage.listRideFeedback({ limit, offset }),
+      storage.listSupportFeedback({ limit, offset }),
+      storage.countRideFeedback(),
+      storage.countSupportFeedback(),
+    ]);
+    const merged: AdminFeedbackRow[] = [
+      ...rideRows.map((r) => ({ ...r, kind: "ride" as const })),
+      ...supportRows.map((r) => ({ ...r, kind: "support" as const })),
+    ].sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+    res.setHeader("X-Total-Count", String(rideTotal + supportTotal));
+    res.json(merged);
   });
   // Manually finish any active ride. Reuses the shared endRide() (which settles
   // cost, frees the bike and charges the wallet) but, unlike the rider endpoint,

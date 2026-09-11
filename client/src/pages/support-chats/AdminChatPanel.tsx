@@ -6,7 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Send, Paperclip, X as XIcon, User as UserIcon, Phone, Loader2,
+  Send, Paperclip, X as XIcon, User as UserIcon, Phone, Loader2, LogOut,
 } from "lucide-react";
 import { INBOX_KEY, MAX_FILE_BYTES, type ChatState, chatKey, fmtDay, fileToBase64 } from "./utils";
 import { AdminMessageBubble } from "./AdminMessageBubble";
@@ -60,6 +60,28 @@ export function AdminChatPanel({
       })
       .catch(() => {});
   }, [conversationId, messages.length]);
+
+  // Завершает сессию: разговор возвращается в режим 'bot', райдеру
+  // пришлёт рейтинг-попап (SSE-событие support_session_closed на SupportPage).
+  const closeMut = useMutation<{ ok: true; message: SupportMessage }, Error, void>({
+    mutationFn: async () => (await apiRequest("POST", `/api/admin/support/chats/${conversationId}/close`, {})).json(),
+    onSuccess: ({ message }) => {
+      queryClient.setQueryData<ChatState>(chatKey(conversationId), (prev) => {
+        if (!prev) return prev;
+        if (prev.messages.some((m) => m.id === message.id)) return prev;
+        return { ...prev, messages: [...prev.messages, message] };
+      });
+      queryClient.invalidateQueries({ queryKey: INBOX_KEY });
+      toast.toast({ title: "Сессия завершена" });
+    },
+    onError: (e) => {
+      toast.toast({
+        title: "Не удалось завершить",
+        description: e?.message?.replace(/^\d+:\s*/, "") ?? String(e),
+        variant: "destructive",
+      });
+    },
+  });
 
   const sendMut = useMutation<SupportMessage, Error, void>({
     mutationFn: async () => {
@@ -162,6 +184,19 @@ export function AdminChatPanel({
             </a>
           )}
         </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="shrink-0 gap-1.5"
+          onClick={() => closeMut.mutate()}
+          disabled={row?.mode !== "human" || closeMut.isPending}
+          title={row?.mode !== "human" ? "Доступно после подключения оператора" : undefined}
+          data-testid="button-close-support-session"
+        >
+          {closeMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LogOut className="w-3.5 h-3.5" />}
+          Завершить сессию
+        </Button>
       </div>
 
       {/* Сообщения */}

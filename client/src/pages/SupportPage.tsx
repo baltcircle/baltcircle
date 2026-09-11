@@ -12,6 +12,7 @@ import { CHAT_KEY, MAX_FILE_BYTES, type ChatState, fmtDay, fileToBase64 } from "
 import { MessageBubble } from "./support/MessageBubble";
 import { SupportQuickActions } from "./support/SupportQuickActions";
 import { ChatInputForm } from "./support/ChatInputForm";
+import { SupportRatingDialog } from "./support/SupportRatingDialog";
 
 export function SupportPage() {
   const toast = useToast();
@@ -23,6 +24,7 @@ export function SupportPage() {
   const [text, setText] = useState("");
   const [attachment, setAttachment] = useState<{ url: string; previewUrl: string; mime: string; localName: string } | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [ratingOpen, setRatingOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -38,7 +40,12 @@ export function SupportPage() {
     const es = new EventSource(`${API_BASE}/api/support/chat/stream`, { withCredentials: true });
     es.onmessage = (evt) => {
       try {
-        const msg = JSON.parse(evt.data) as SupportMessage;
+        const payload = JSON.parse(evt.data) as SupportMessage | { type: "support_session_closed"; conversationId: number };
+        if ("type" in payload && payload.type === "support_session_closed") {
+          setRatingOpen(true);
+          return;
+        }
+        const msg = payload as SupportMessage;
         queryClient.setQueryData<ChatState>(CHAT_KEY, (prev) => {
           if (!prev) return prev;
           if (prev.messages.some((m) => m.id === msg.id)) return prev;
@@ -234,6 +241,7 @@ export function SupportPage() {
         </div>
 
         {/* Поле ввода — приклеено к низу внешнего скроллера */}
+        <SupportRatingDialog open={ratingOpen} onOpenChange={setRatingOpen} />
         <ChatInputForm
           onSubmit={submit}
           attachment={attachment}

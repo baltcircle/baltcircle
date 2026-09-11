@@ -16,6 +16,7 @@ import type {
   Lock, AdminCreateLockInput, AdminUpdateLockInput, WalletTopupOrder,
   OauthIdentity, OauthProvider, Reservation,
   RideFeedback, CreateRideFeedbackInput, AdminRideFeedback, Alert,
+  SupportFeedback, AdminSupportFeedback,
 } from "@shared/schema";
 
 export interface IUserStorage {
@@ -368,6 +369,11 @@ export interface IFeedbackStorage {
   // with rider identity + bike id (mirrors listAdminRides/countRides).
   listRideFeedback(opts?: { limit?: number; offset?: number }): Promise<AdminRideFeedback[]>;
   countRideFeedback(): Promise<number>;
+  // support-chat rating (1-5), submitted after an operator closes a session —
+  // separate table/list, merged with ride feedback by GET /api/admin/feedback.
+  submitSupportFeedback(conversationId: number, userId: string, rating: number): Promise<SupportFeedback>;
+  listSupportFeedback(opts?: { limit?: number; offset?: number }): Promise<AdminSupportFeedback[]>;
+  countSupportFeedback(): Promise<number>;
 }
 
 export interface IReservationStorage {

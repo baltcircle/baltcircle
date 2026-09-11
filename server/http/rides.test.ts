@@ -25,6 +25,8 @@ const storageMock = vi.hoisted(() => ({
   countRides: vi.fn(),
   listRideFeedback: vi.fn(),
   countRideFeedback: vi.fn(),
+  listSupportFeedback: vi.fn(),
+  countSupportFeedback: vi.fn(),
   endRide: vi.fn(),
 }));
 const rideEvents = vi.hoisted(() => {
@@ -616,17 +618,23 @@ describe("GET /api/admin/rides", () => {
 });
 
 describe("GET /api/admin/feedback", () => {
-  it("sets X-Total-Count and returns the paginated admin feedback list", async () => {
+  it("merges ride and support feedback, newest first, tagged with kind", async () => {
     const { get } = routeApp();
     storageMock.countRideFeedback.mockResolvedValue(42);
-    storageMock.listRideFeedback.mockResolvedValue([{ id: 1, rating: 5 }]);
+    storageMock.countSupportFeedback.mockResolvedValue(3);
+    storageMock.listRideFeedback.mockResolvedValue([{ id: 1, rating: 5, createdAt: 100 }]);
+    storageMock.listSupportFeedback.mockResolvedValue([{ id: 1, rating: 4, createdAt: 200 }]);
     const res = response();
 
     await get.get("/api/admin/feedback")!({ query: { limit: "10", offset: "0" } }, res);
 
-    expect(res.headers["X-Total-Count"]).toBe("42");
+    expect(res.headers["X-Total-Count"]).toBe("45");
     expect(storageMock.listRideFeedback).toHaveBeenCalledWith({ limit: 10, offset: 0 });
-    expect(res.body).toEqual([{ id: 1, rating: 5 }]);
+    expect(storageMock.listSupportFeedback).toHaveBeenCalledWith({ limit: 10, offset: 0 });
+    expect(res.body).toEqual([
+      { id: 1, rating: 4, createdAt: 200, kind: "support" },
+      { id: 1, rating: 5, createdAt: 100, kind: "ride" },
+    ]);
   });
 });
 

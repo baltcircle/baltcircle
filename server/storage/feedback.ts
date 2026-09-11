@@ -1,5 +1,5 @@
-import { rideFeedback, feedbackTierForRating, FEEDBACK_REASON_IDS, rides, users } from "@shared/schema";
-import type { RideFeedback, CreateRideFeedbackInput, AdminRideFeedback, User } from "@shared/schema";
+import { rideFeedback, feedbackTierForRating, FEEDBACK_REASON_IDS, rides, users, supportFeedback } from "@shared/schema";
+import type { RideFeedback, CreateRideFeedbackInput, AdminRideFeedback, User, SupportFeedback, AdminSupportFeedback } from "@shared/schema";
 import { count, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db/bootstrap";
 import type { Constructor } from "./mixin";
@@ -81,6 +81,49 @@ export function FeedbackMixin<TBase extends Constructor>(Base: TBase) {
 
     async countRideFeedback(): Promise<number> {
       return (await db.select({ c: count() }).from(rideFeedback))[0].c;
+    }
+
+    // Оценка работы поддержки, которую райдер ставит сразу после того, как
+    // оператор закрывает сессию. Без upsert-а (в отличие от
+    // submitRideFeedback) — один разговор может закрываться много раз,
+    // каждое закрытие — своя строка оценки.
+    async submitSupportFeedback(conversationId: number, userId: string, rating: number): Promise<SupportFeedback> {
+      return (await db.insert(supportFeedback).values({
+        conversationId, userId, rating, createdAt: Date.now(),
+      }).returning())[0] as SupportFeedback;
+    }
+
+    // Админский список «Отзывы» (мержится с listRideFeedback в
+    // GET /api/admin/feedback), свежие сначала, обогащён именем/телефоном
+    // райдера, как listRideFeedback делает для байка/имени.
+    async listSupportFeedback(opts?: { limit?: number; offset?: number }): Promise<AdminSupportFeedback[]> {
+      const limit = opts?.limit ?? 500;
+      const offset = opts?.offset ?? 0;
+      const rows = (await db.select().from(supportFeedback)
+        .orderBy(desc(supportFeedback.createdAt))
+        .limit(limit)
+        .offset(offset)) as SupportFeedback[];
+      if (rows.length === 0) return [];
+
+      const userIds = Array.from(new Set(rows.map((r) => r.userId)));
+      const userRows = await db.select().from(users).where(inArray(users.id, userIds));
+      const userById = new Map((userRows as User[]).map((u) => [u.id, u]));
+
+      return rows.map((r) => {
+        const u = userById.get(r.userId);
+        return {
+          ...r,
+          bikeId: null,
+          reasons: [],
+          comment: null,
+          userName: u?.name ?? null,
+          userPhone: u?.phone ?? null,
+        } as AdminSupportFeedback;
+      });
+    }
+
+    async countSupportFeedback(): Promise<number> {
+      return (await db.select({ c: count() }).from(supportFeedback))[0].c;
     }
   };
 }

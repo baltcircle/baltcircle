@@ -1,13 +1,15 @@
-import type { AdminRideFeedback } from "@shared/schema";
+import type { AdminFeedbackRow } from "@shared/schema";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { fmtDate } from "@/lib/format";
 import { formatFeedbackReasons } from "@shared/feedback";
 
-export function FeedbackRowItem({ f }: { f: AdminRideFeedback }) {
-  const reasonLabels = formatFeedbackReasons(f.rating, f.reasons);
+export function FeedbackRowItem({ f }: { f: AdminFeedbackRow }) {
+  // Строки поддержки не идут через причины поездки — там всегда одна оценка работы
+  // оператора без детализации.
+  const reasonLabels = f.kind === "support" ? ["Поддержка"] : formatFeedbackReasons(f.rating, f.reasons);
   const rating = f.rating;
   return (
-    <TableRow data-testid={`feedback-row-${f.id}`}>
+    <TableRow data-testid={`feedback-row-${f.kind}-${f.id}`}>
       <TableCell className="text-center">
         <div className="font-medium">{f.userName ?? "—"}</div>
         <div className="text-xs text-muted-foreground font-mono">{f.userPhone ?? f.userId.slice(0, 8)}</div>

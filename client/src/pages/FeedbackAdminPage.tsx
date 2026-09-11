@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import type { AdminRideFeedback } from "@shared/schema";
+import type { AdminFeedbackRow } from "@shared/schema";
 import { formatFeedbackReasons } from "@shared/feedback";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -18,7 +18,7 @@ type SortKey = "date" | "rating" | "category";
 type SortDir = "asc" | "desc";
 
 export function FeedbackAdminPage() {
-  const feedbackQ = useQuery<AdminRideFeedback[]>({ queryKey: FEEDBACK_KEY });
+  const feedbackQ = useQuery<AdminFeedbackRow[]>({ queryKey: FEEDBACK_KEY });
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -40,8 +40,10 @@ export function FeedbackAdminPage() {
     const withKeys = filtered.map((f) => ({
       f,
       // Sort by the first formatted category label so rows with no reason
-      // ("—") consistently sort to one end regardless of direction.
-      categoryKey: formatFeedbackReasons(f.rating, f.reasons)[0] ?? "",
+      // ("—") consistently sort to one end regardless of direction. Support
+      // rows always sort under the fixed "Поддержка" label, ride rows keep
+      // the existing per-reason label.
+      categoryKey: f.kind === "support" ? "Поддержка" : (formatFeedbackReasons(f.rating, f.reasons)[0] ?? ""),
     }));
     const dir = sortDir === "asc" ? 1 : -1;
     withKeys.sort((a, b) => {
@@ -115,7 +117,7 @@ export function FeedbackAdminPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pageItems.map((f) => <FeedbackRowItem key={f.id} f={f} />)}
+              {pageItems.map((f) => <FeedbackRowItem key={`${f.kind}-${f.id}`} f={f} />)}
             </TableBody>
           </Table>
         )}

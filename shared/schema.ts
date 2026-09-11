@@ -873,6 +873,14 @@ export type AdminRideFeedback = RideFeedback & {
   userPhone: string | null;
 };
 
+// Объединённая строка админского списка «Отзывы» — пост-поездочный
+// рейтинг и рейтинг работы поддержки показаны в одной таблице, различаются
+// дискриминантом `kind` (GET /api/admin/feedback мержит listRideFeedback +
+// listSupportFeedback и клеит его к каждой строке).
+export type AdminFeedbackRow =
+  | (AdminRideFeedback & { kind: "ride" })
+  | (AdminSupportFeedback & { kind: "support" });
+
 export const createRideFeedbackSchema = z.object({
   rating: z.number().int().min(1).max(5),
   reasons: z.array(z.string().trim().min(1).max(40)).max(15).default([]),
@@ -1339,6 +1347,44 @@ export type AdminSupportConversationRow = SupportConversation & {
   lastMessagePreview: string | null;
 };
 // mode уже входит в SupportConversation ('bot' | 'human').
+
+// Рейтинг работы поддержки 1-5 звёзд, который всплывает у райдера сразу
+// после того, как оператор нажимает «Завершить сессию» (см.
+// POST /api/admin/support/chats/:id/close в server/http/support.ts).
+// Без reasons/comment — в отличие от rideFeedback тут только звёзды.
+// support_conversations — один непрерывный чат на пользователя, поэтому
+// намеренно НЕТ уникального индекса по conversationId: одна и та же беседа
+// закрывается и переоткрывается много раз за свою жизнь, и каждое закрытие —
+// отдельная строка оценки.
+export const supportFeedback = pgTable("support_feedback", {
+  id: serial("id").primaryKey(),
+  conversationId: integer("conversation_id").notNull().references(() => supportConversations.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id),
+  rating: integer("rating").notNull(),   // 1..5
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+}, (t) => [
+  index("idx_support_feedback_conv").on(t.conversationId),
+  index("idx_support_feedback_created").on(t.createdAt),
+  index("idx_support_feedback_user").on(t.userId),
+]);
+export type SupportFeedback = typeof supportFeedback.$inferSelect;
+
+export const createSupportFeedbackSchema = z.object({
+  rating: z.number().int().min(1).max(5),
+});
+export type CreateSupportFeedbackInput = z.infer<typeof createSupportFeedbackSchema>;
+
+// Enriched shape для админского списка «Отзывы» — мержится там с
+// AdminRideFeedback (см. AdminFeedbackRow ниже). bikeId/reasons/comment
+// всегда пустые — у обращения в поддержку нет велосипеда/причин из пула
+// rideFeedback, а колонка «Пункты» рендерит для таких строк «Поддержка».
+export type AdminSupportFeedback = SupportFeedback & {
+  bikeId: null;
+  reasons: [];
+  comment: null;
+  userName: string | null;
+  userPhone: string | null;
+};
 
 // Enriched shape returned by admin endpoints — bundles rider info so the
 // operator UI can render the request without extra round trips.

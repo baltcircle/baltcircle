@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { storage } from "../storage";
 import type { SupportMessage } from "@shared/schema";
-import { sendSupportMessageSchema } from "@shared/schema";
+import { sendSupportMessageSchema, createSupportFeedbackSchema } from "@shared/schema";
 import { matchFaq, wantsOperator, BOT_FALLBACK, BOT_HANDOFF } from "@shared/support-faq";
 import { riderId, requireAuth, requireRole, actorName } from "./context";
 import { sendToUserAsync } from "../push";
@@ -212,6 +212,21 @@ export function registerSupportChatRoutes(app: Express): void {
     res.status(201).json(note);
   });
 
+  // Стартовая оценка работы поддержки (1-5) после того, как оператор
+  // закрыл сессию (сигнал пришёл через SSE-событие
+  // support_session_closed ниже). Всегда пропускаемо на клиенте — если
+  // райдер закрыл диалог без оценки, сюда просто не придёт.
+  app.post("/api/support/chat/feedback", requireAuth, async (req, res) => {
+    const parsed = createSupportFeedbackSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Некорректная оценка" });
+    }
+    const uid = riderId(req);
+    const conv = await storage.ensureSupportConversation(uid);
+    const row = await storage.submitSupportFeedback(conv.id, uid, parsed.data.rating);
+    res.status(201).json(row);
+  });
+
   // Явный вызов живого оператора кнопкой — детерминированная эскалация без
   // опоры на поиск ключевых слов (wantsOperator остаётся для свободного текста
   // типа «свяжите с оператором»). Всегда будит инбокс со звуком.
@@ -336,6 +351,32 @@ export function registerSupportChatRoutes(app: Express): void {
       data: { kind: "support", conversationId: id },
     });
     res.status(201).json(resolvedMsg);
+  });
+
+  // Оператор завершает сессию: возвращаем разговор в режим 'bot' —
+  // следующий вопрос райдера снова пройдёт через бота/эскалацию,
+  // как в свежем разговоре. Фиксируется системной заметкой в истории,
+  // потом отдельным SSE-событием { type: "support_session_closed" } просим
+  // клиента показать рейтинг-попап — это не сообщение и не легит в
+  // историю, клиент отличает его по полю `type`.
+  app.post("/api/admin/support/chats/:id/close", requireRole("operator", "admin"), async (req, res) => {
+    const id = Number.parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "Неверный id" });
+    const conv = await storage.getSupportConversation(id);
+    if (!conv) return res.status(404).json({ error: "Разговор не найден" });
+    const note = await storage.appendSupportMessage({
+      conversationId: id,
+      senderRole: "system",
+      senderId: null,
+      body: "Оператор завершил сессию поддержки. Если возникнут новые вопросы — просто напишите, бот снова на связи.",
+    });
+    await storage.setSupportMode(id, "bot");
+    await storage.markSupportRead(id, "operator");
+    const resolvedNote = await resolveOutgoingMessage(note);
+    supportEvents.emit(String(id), resolvedNote);
+    supportEvents.emit(String(id), { type: "support_session_closed", conversationId: id });
+    supportEvents.emit("inbox", { conversationId: id });
+    res.status(201).json({ ok: true, message: resolvedNote });
   });
 
   // Пометить прочитанным со стороны оператора.
