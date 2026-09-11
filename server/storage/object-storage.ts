@@ -14,11 +14,14 @@
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-const BUCKET = process.env.YANDEX_OS_BUCKET ?? "";
-const ENDPOINT = process.env.YANDEX_OS_ENDPOINT ?? "https://storage.yandexcloud.net";
-const REGION = process.env.YANDEX_OS_REGION ?? "ru-central1";
-const ACCESS_KEY_ID = process.env.YANDEX_OS_ACCESS_KEY_ID ?? "";
-const SECRET_ACCESS_KEY = process.env.YANDEX_OS_SECRET_ACCESS_KEY ?? "";
+// `||` (not `??`) на месте: GitHub Actions передаёт неустановленную vars.*
+// переменную как пустую строку "", а не undefined/null — `??` её не ловит,
+// из-за чего AWS SDK получал REGION="" и падал с "Region is missing".
+const BUCKET = process.env.YANDEX_OS_BUCKET || "";
+const ENDPOINT = process.env.YANDEX_OS_ENDPOINT || "https://storage.yandexcloud.net";
+const REGION = process.env.YANDEX_OS_REGION || "ru-central1";
+const ACCESS_KEY_ID = process.env.YANDEX_OS_ACCESS_KEY_ID || "";
+const SECRET_ACCESS_KEY = process.env.YANDEX_OS_SECRET_ACCESS_KEY || "";
 
 // TTL превью сразу после аплоада (композер чата) — короткий, файл почти
 // сразу же либо отправляется (после чего URL всё равно перевыпускается при
