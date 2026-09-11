@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { fmtDateFull, fmtDistanceKm, fmtRideTimeRange, fmtRub, fmtRideTariff } from "@/lib/format";
 import { apiRequest } from "@/lib/queryClient";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { Route, Bike } from "lucide-react";
+import { Route } from "lucide-react";
 
 export function RidesPage() {
   // История поездок — приватные данные конкретного пользователя. Гостям её не
@@ -74,25 +74,22 @@ export function RidesPage() {
           {rides.map(r => (
             <Card key={r.id} className="p-4 lg:p-5" data-testid={`row-ride-${r.id}`}>
               <div
-                className="text-center text-xs text-muted-foreground mb-2"
+                className="text-center text-base font-bold mb-2"
                 data-testid={`text-ride-date-${r.id}`}
               >
                 {fmtDateFull(r.startedAt)}
               </div>
               <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <Bike className="w-5 h-5 text-muted-foreground shrink-0" />
-                  <div className="min-w-0">
-                    <div className="font-medium" data-testid={`text-ride-time-${r.id}`}>
-                      {fmtRideTimeRange(r.startedAt, r.endedAt)}
-                    </div>
-                    <div className="text-xs text-muted-foreground truncate">
-                      {fmtDistanceKm(r.distanceM)} · {r.bikeId}
-                    </div>
+                <div className="min-w-0">
+                  <div className="font-medium" data-testid={`text-ride-time-${r.id}`}>
+                    {fmtRideTimeRange(r.startedAt, r.endedAt)}
+                  </div>
+                  <div className="text-xs text-muted-foreground truncate">
+                    {fmtDistanceKm(r.distanceM)} · {r.bikeId}
                   </div>
                 </div>
                 <div className="flex items-baseline gap-2 shrink-0">
-                  <span className="text-xs text-muted-foreground" data-testid={`text-ride-tariff-${r.id}`}>
+                  <span className="font-medium" data-testid={`text-ride-tariff-${r.id}`}>
                     {fmtRideTariff(r)}
                   </span>
                   <span className="font-medium" data-testid={`text-ride-cost-${r.id}`}>
