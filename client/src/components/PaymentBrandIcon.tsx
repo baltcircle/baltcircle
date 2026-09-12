@@ -18,15 +18,19 @@ function Tile({ children, bg }: { children: React.ReactNode; bg?: string }) {
   );
 }
 
-// Card-shaped tile: rounded rectangle with a black outline, evoking a
-// physical card outline instead of the generic circular icon slot. Used only
-// for CardBrandIcon — SBP keeps the round tile.
+// Card-shaped tile: a real card's ~1.586:1 aspect ratio with a thin black
+// outline, evoking a physical card instead of the generic circular icon slot.
+// The network mark sits small in the bottom-right corner, like it does on an
+// actual card, rather than filling the whole tile. Used only for
+// CardBrandIcon — SBP keeps the round tile.
 function CardTile({ children, bg }: { children: React.ReactNode; bg?: string }) {
   return (
     <span
-      className={`flex items-center justify-center w-9 h-9 rounded-md border-2 border-black shrink-0 overflow-hidden ${bg ?? "bg-muted"}`}
+      className={`relative flex w-11 h-7 rounded-[5px] border border-black shrink-0 overflow-hidden ${bg ?? "bg-muted"}`}
     >
-      {children}
+      <span className="absolute bottom-0.5 right-0.5 origin-bottom-right scale-[0.55]">
+        {children}
+      </span>
     </span>
   );
 }
