@@ -131,6 +131,27 @@ jobs:
           sudo chown -R 1000:1000 "$HOST_UPLOADS_DIR"
           sudo chmod -R u+rwX "$HOST_UPLOADS_DIR"
 
+      # audit finding #2 (2026-09-11 pmtiles-403 incident): nginx (running as
+      # www-data, NOT inside the app container) serves /kaliningrad.pmtiles
+      # and /addresses.pmtiles directly off /home/yc-user/osm/*.pmtiles
+      # (deploy/nginx/baltcircle.conf `alias`). That requires www-data to
+      # have the traverse (execute) bit on every directory in the path, not
+      # just read access to the files themselves. The 2026-09-11 outage was
+      # exactly this bit missing on /home/yc-user, fixed manually and only
+      # once via fix-osm-dir-permissions.yml. A VM restore, a `chmod -R`
+      # elsewhere, or a fresh disk image can silently reset it, and nothing
+      # would notice until nginx started 403-ing map tiles again. Enforcing
+      # it on every deploy — not as a one-off manual runbook step — closes
+      # that regression path. `chmod o+x` alone (no `-R`, no recursion into
+      # /home/yc-user's other contents) only grants traverse on the home
+      # dir itself; it does not widen read/write access to anything inside
+      # it, so this cannot expose secrets. Idempotent — safe on every deploy.
+      - name: Ensure /home/yc-user stays traversable by nginx for pmtiles serving
+        run: |
+          set -e
+          sudo chmod o+x /home/yc-user
+          stat -c '%A %U:%G %n' /home/yc-user
+
       # One-shot data migration: legacy SQLite (data.db in the old Docker volume)
       # -> managed PostgreSQL. Runs only if the legacy volume still holds a
       # data.db AND the migration has not been marked done. The migrate script is

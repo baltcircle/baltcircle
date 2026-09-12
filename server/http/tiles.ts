@@ -60,31 +60,80 @@ import {
 function servePmtiles(fileName: string) {
   return (req: Request, res: Response): void => {
     const filePath = nodePath.join("/app/osm", fileName);
-    if (!fs.existsSync(filePath)) {
+    let fileSize: number;
+    try {
+      // statSync (not existsSync+statSync) collapses the check-then-use race
+      // into one syscall — the file can still legitimately disappear between
+      // this and createReadStream below (e.g. a concurrent atomic `mv` during
+      // regen), which is why createReadStream also gets an error handler.
+      fileSize = fs.statSync(filePath).size;
+    } catch {
       res.status(404).end();
       return;
     }
-    const stat = fs.statSync(filePath);
-    const fileSize = stat.size;
+
+    // audit HIGH #9 follow-up: an unvalidated Range header (garbage text,
+    // reversed/out-of-bounds bytes, a suffix-range MapLibre never sends but
+    // a hostile client could) used to flow straight into parseInt and then
+    // into Content-Range/Content-Length — `NaN` there is a malformed
+    // response, not a clean error. Validate strictly per RFC 7233 and
+    // answer 416 with the required Content-Range: */size on anything else.
     const rangeHeader = req.headers.range;
+    let start = 0;
+    let end = fileSize - 1;
+    let isPartial = false;
+    if (typeof rangeHeader === "string") {
+      const match = /^bytes=(\d+)-(\d*)$/.exec(rangeHeader.trim());
+      const parsedStart = match ? parseInt(match[1], 10) : NaN;
+      const parsedEnd = match && match[2] ? parseInt(match[2], 10) : fileSize - 1;
+      const valid =
+        match !== null &&
+        Number.isFinite(parsedStart) &&
+        Number.isFinite(parsedEnd) &&
+        parsedStart <= parsedEnd &&
+        parsedStart < fileSize;
+      if (!valid) {
+        res.setHeader("Content-Range", `bytes */${fileSize}`);
+        res.status(416).end();
+        return;
+      }
+      start = parsedStart;
+      end = Math.min(parsedEnd, fileSize - 1);
+      isPartial = true;
+    }
+
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Content-Type", "application/octet-stream");
     res.setHeader("Accept-Ranges", "bytes");
     res.setHeader("Cache-Control", "public, max-age=86400");
-    if (rangeHeader) {
-      const parts = rangeHeader.replace(/bytes=/, "").split("-");
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-      const chunkSize = end - start + 1;
+
+    const stream = fs.createReadStream(filePath, isPartial ? { start, end } : undefined);
+    // A Readable's 'error' event has no default handler in Node — left
+    // unhandled it crashes the whole process, taking every other in-flight
+    // request down with it. Triggers include the underlying file being
+    // swapped mid-read (the same regen race guarded against above) and a
+    // mobile client dropping the connection mid-Range-read while panning.
+    stream.on("error", (err: NodeJS.ErrnoException) => {
+      logger.warn({ err, filePath }, "pmtiles fallback: read stream error");
+      if (!res.headersSent) {
+        res.status(err.code === "ENOENT" ? 404 : 500).end();
+      } else {
+        res.destroy();
+      }
+    });
+    // Client aborted (e.g. fast pan cancels an in-flight Range fetch) — stop
+    // reading instead of leaking the file descriptor to completion.
+    res.on("close", () => stream.destroy());
+
+    if (isPartial) {
       res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
-      res.setHeader("Content-Length", chunkSize);
+      res.setHeader("Content-Length", end - start + 1);
       res.status(206);
-      fs.createReadStream(filePath, { start, end }).pipe(res);
     } else {
       res.setHeader("Content-Length", fileSize);
       res.status(200);
-      fs.createReadStream(filePath).pipe(res);
     }
+    stream.pipe(res);
   };
 }
 

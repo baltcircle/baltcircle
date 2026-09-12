@@ -53,6 +53,37 @@ jobs:
               echo "OK: $url"
             fi
           done
+
+          # audit #5 (pmtiles hardening): a plain 200 doesn't rule out a
+          # truncated/corrupt file (the exact failure mode a non-atomic
+          # regen write could produce) or a regressed filesystem permission
+          # (the 2026-09-11 pmtiles-403 incident). Pull the first 7 bytes via
+          # a real byte-Range request — same request shape MapLibre's
+          # PMTiles protocol issues — and check both the HTTP status and the
+          # PMTiles v3 magic ("PMTiles" ASCII header).
+          pmtiles_ok=1
+          for f in kaliningrad.pmtiles addresses.pmtiles; do
+            attempt_ok=0
+            for i in 1 2 3; do
+              status=$(curl --silent --max-time 10 --range 0-6 \
+                --write-out "%{http_code}" --output /tmp/pmtiles_magic \
+                "https://takeride.ru/$f")
+              magic=$(cat /tmp/pmtiles_magic 2>/dev/null || echo "")
+              if [ "$status" = "206" ] && [ "$magic" = "PMTiles" ]; then
+                attempt_ok=1
+                break
+              fi
+              sleep 10
+            done
+            if [ "$attempt_ok" -eq 0 ]; then
+              echo "PMTILES BROKEN: $f (status=$status, magic='$magic')"
+              pmtiles_ok=0
+              ok=0
+            else
+              echo "OK: $f"
+            fi
+          done
+          echo "pmtiles_healthy=$pmtiles_ok" >> "$GITHUB_OUTPUT"
           echo "healthy=$ok" >> "$GITHUB_OUTPUT"
 
       - name: Find existing incident issue
@@ -62,7 +93,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           num=$(gh issue list --repo "${{ github.repository }}" \
-            --label incident --state open --search "in:title \"Prod down\"" \
+            --label incident --state open --search "in:title \"Prod incident\"" \
             --json number --jq '.[0].number // ""')
           echo "issue_number=$num" >> "$GITHUB_OUTPUT"
 
@@ -71,13 +102,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Distinguish "API unreachable" from "map data broken" (audit #5) —
+          # they have different causes and different runbook steps, and the
+          # site can be up with only the map broken (or vice versa).
+          detail="Автоматический мониторинг (uptime-monitor.yml) обнаружил проблему."
+          if [ "${{ steps.probe.outputs.pmtiles_healthy }}" = "0" ]; then
+            detail="$detail\n\n🗺️ **Карта:** /kaliningrad.pmtiles и/или /addresses.pmtiles не отвечают корректно (ожидался 206 + PMTiles magic-байты) — см. лог прогона."
+          fi
           gh issue create --repo "${{ github.repository }}" \
-            --title "🔴 Prod down: takeride.ru unreachable" \
+            --title "🔴 Prod incident: takeride.ru" \
             --label incident \
-            --body "Автоматический мониторинг (uptime-monitor.yml) не смог получить ответ от https://takeride.ru/api/bikes и/или https://www.takeride.ru/api/bikes.
+            --body "$(printf '%b' "$detail")
 
           **Обнаружено:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-          **Прогон:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          **Прогон:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} (подробности — в логе шага Probe)
 
           Единая точка отказа (HIGH #23, zero-budget вариант) — на проде одна VM без failover, горизонтальное масштабирование отложено до старта проекта. См. docs/runbook-incident-response.md для порядка восстановления.
 

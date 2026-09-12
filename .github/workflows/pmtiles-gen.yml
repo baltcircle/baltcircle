@@ -72,11 +72,32 @@ jobs:
           test -n "$BUILD_URL" || { echo "ERROR: no recent Protomaps build found"; exit 1; }
 
           # ── Extract the region (range requests — reads only needed tiles) ──
-          echo "=== pmtiles extract $BBOX (maxzoom $MAXZOOM) ==="
-          "$PM_BIN" extract "$BUILD_URL" kaliningrad.pmtiles \
+          # Hardening: nginx (deploy/nginx/baltcircle.conf) serves kaliningrad.pmtiles
+          # straight off this path to live production traffic while this job runs.
+          # Extracting directly INTO that filename would let a concurrent request
+          # read a partially-written file mid-extract -- and since nginx would still
+          # answer 200/206 for it, that broken read gets cached for 24h as if valid
+          # (the exact class of incident fixed in nginx on 2026-09-11, just from the
+          # other end). Extract to a temp file in the SAME directory (so the final
+          # `mv` is a same-filesystem rename -- atomic, not a copy) and only swap it
+          # into the live filename once the extract has fully succeeded.
+          TMP_OUT="kaliningrad.pmtiles.tmp.$$"
+          trap 'rm -f "$TMP_OUT"' EXIT
+          OLD_SIZE=$(stat -c%s kaliningrad.pmtiles 2>/dev/null || echo 629145600)
+          NEED_MB=$(( OLD_SIZE / 1024 / 1024 + 200 ))
+          AVAIL_MB=$(df -Pm . | tail -1 | awk '{print $4}')
+          if [ "$AVAIL_MB" -lt "$NEED_MB" ]; then
+            echo "ERROR: only ${AVAIL_MB}MB free, need ~${NEED_MB}MB for a safe extract (old file + new temp file coexist briefly)"
+            exit 1
+          fi
+          echo "=== pmtiles extract $BBOX (maxzoom $MAXZOOM) -> $TMP_OUT ==="
+          "$PM_BIN" extract "$BUILD_URL" "$TMP_OUT" \
             --bbox="$BBOX" --maxzoom="$MAXZOOM"
-          echo "pmtiles: $(du -sh kaliningrad.pmtiles)"
-          "$PM_BIN" show kaliningrad.pmtiles 2>&1 | head -8 || true
+          echo "pmtiles: $(du -sh "$TMP_OUT")"
+          "$PM_BIN" show "$TMP_OUT" 2>&1 | head -8 || true
+          # ── Atomic swap into the served path -- never overwrite the live file in place ──
+          mv -f "$TMP_OUT" kaliningrad.pmtiles
+          trap - EXIT
           free -h
 
           # ── Publish to GitHub Release (same flow as before) ──
