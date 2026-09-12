@@ -521,7 +521,14 @@ export function PaymentMethodsPage() {
                       )}
                       <div className="min-w-0 flex-1">
                         <p className="text-base font-semibold text-gray-900 dark:text-white truncate font-mono">
-                          {m.label}
+                          {m.type === "card" && m.label.startsWith("*") ? (
+                            <>
+                              <span className="text-xs align-super">*</span>
+                              {m.label.slice(1)}
+                            </>
+                          ) : (
+                            m.label
+                          )}
                         </p>
                       </div>
                       <button

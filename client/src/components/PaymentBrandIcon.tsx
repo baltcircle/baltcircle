@@ -28,7 +28,7 @@ function CardTile({ children, bg }: { children: React.ReactNode; bg?: string }) 
     <span
       className={`relative flex w-11 h-7 rounded-[5px] border border-black shrink-0 overflow-hidden ${bg ?? "bg-muted"}`}
     >
-      <span className="absolute bottom-0.5 right-0.5 origin-bottom-right scale-[0.55]">
+      <span className="absolute bottom-0.5 right-0.5 origin-bottom-right scale-[0.85]">
         {children}
       </span>
     </span>
