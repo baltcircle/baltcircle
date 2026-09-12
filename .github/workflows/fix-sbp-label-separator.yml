@@ -54,6 +54,9 @@ jobs:
           COMMIT;
           SQL
 
+      - name: Fetch Yandex Cloud CA cert
+        run: curl -fsSL -o "${{ github.workspace }}/yc-root.crt" https://storage.yandexcloud.net/cloud-certs/CA.pem
+
       - name: Apply correction
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -63,8 +66,14 @@ jobs:
             echo "❌ Secret DATABASE_URL is not set."
             exit 1
           fi
+          # sslmode=verify-full (enforced by the app itself) needs the Yandex
+          # Cloud managed-Postgres CA to verify the server cert; libpq looks
+          # for it at ~/.postgresql/root.crt by default when sslrootcert isn't
+          # given in the URL, so point PGSSLROOTCERT at the file we mount in.
           docker run --rm \
             -e DATABASE_URL \
+            -e PGSSLROOTCERT=/certs/root.crt \
             -v "${{ github.workspace }}/fix-sbp-labels.sql:/fix.sql:ro" \
+            -v "${{ github.workspace }}/yc-root.crt:/certs/root.crt:ro" \
             postgres:16-alpine \
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /fix.sql
