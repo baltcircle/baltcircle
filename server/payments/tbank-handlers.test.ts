@@ -1058,7 +1058,7 @@ describe("handleSbpBindingNotification: BankMemberId", () => {
       status: "active",
       accountToken: "account-token-1",
       bankMemberId: "100000000004",
-      label: "СБП · Сбербанк",
+      label: "СБП Сбербанк",
     }));
   });
 

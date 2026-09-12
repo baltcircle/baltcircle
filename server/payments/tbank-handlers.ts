@@ -290,7 +290,7 @@ export async function handleSbpBindingNotification(
       status: "active",
       accountToken: accountToken || method.accountToken,
       bankMemberId: bankMemberId || method.bankMemberId,
-      label: bankName ? `СБП · ${bankName}` : "СБП",
+      label: bankName ? `СБП ${bankName}` : "СБП",
       lastErrorCode: null,
       lastErrorMessage: null,
       lastErrorDetails: null,

@@ -494,7 +494,7 @@ export function registerPaymentRoutes(app: Express): void {
         status: "active",
         accountToken: accountToken || method.accountToken,
         bankMemberId: bankMemberId || method.bankMemberId,
-        label: bankName ? `СБП · ${bankName}` : "СБП",
+        label: bankName ? `СБП ${bankName}` : "СБП",
         lastErrorCode: null,
         lastErrorMessage: null,
         lastErrorDetails: null,
