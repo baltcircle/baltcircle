@@ -89,14 +89,16 @@ export function RidesPage() {
                     <span className="font-medium text-center">–</span>
                     <span className="font-medium text-center">{fmtTimeOnly(r.endedAt)}</span>
                     <span className="text-xs text-muted-foreground text-center">{fmtDistanceKm(r.distanceM)}</span>
-                    <span className="text-xs text-muted-foreground text-center">·</span>
+                    {/* Пустая ячейка сохраняет 3-колоночную сетку (как в строке времени
+                        выше), чтобы код велосипеда не сместился после удаления точки. */}
+                    <span aria-hidden="true" />
                     <span className="text-xs text-muted-foreground text-center">{r.bikeId}</span>
                   </div>
                 ) : (
                   <div className="min-w-0" data-testid={`text-ride-time-${r.id}`}>
                     <div className="font-medium">с {fmtTimeOnly(r.startedAt)}</div>
                     <div className="text-xs text-muted-foreground truncate">
-                      {fmtDistanceKm(r.distanceM)} · {r.bikeId}
+                      {fmtDistanceKm(r.distanceM)} {r.bikeId}
                     </div>
                   </div>
                 )}
