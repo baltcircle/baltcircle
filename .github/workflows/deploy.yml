@@ -152,6 +152,32 @@ jobs:
           sudo chmod o+x /home/yc-user
           stat -c '%A %U:%G %n' /home/yc-user
 
+      # Discovered 2026-09-12: deploy/nginx/baltcircle.conf in this repo was
+      # purely decorative — nothing ever copied it onto the VM. The live file
+      # (/etc/nginx/sites-available/baltcircle) is hand-maintained and had
+      # drifted from the repo (missing the pmtiles security headers added in
+      # this same commit). This step makes the repo the actual source of
+      # truth: back up the live file, install the repo's version, validate
+      # with `nginx -t` BEFORE reloading, and roll back automatically if the
+      # new config doesn't pass — a bad config can never take a passing
+      # deploy down with it. Idempotent — safe on every deploy.
+      - name: Sync nginx config from repo and reload if valid
+        run: |
+          set -e
+          LIVE_CONF="/etc/nginx/sites-available/baltcircle"
+          BACKUP_CONF="/etc/nginx/sites-available/baltcircle.bak"
+          sudo cp "$LIVE_CONF" "$BACKUP_CONF"
+          sudo cp deploy/nginx/baltcircle.conf "$LIVE_CONF"
+          if sudo nginx -t; then
+            sudo systemctl reload nginx
+            echo "✅ nginx config synced from repo and reloaded"
+          else
+            echo "❌ new nginx config failed validation — restoring previous live config" >&2
+            sudo cp "$BACKUP_CONF" "$LIVE_CONF"
+            sudo nginx -t
+            exit 1
+          fi
+
       # One-shot data migration: legacy SQLite (data.db in the old Docker volume)
       # -> managed PostgreSQL. Runs only if the legacy volume still holds a
       # data.db AND the migration has not been marked done. The migrate script is
