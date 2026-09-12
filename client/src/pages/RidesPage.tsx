@@ -100,7 +100,7 @@ export function RidesPage() {
                     </div>
                   </div>
                 )}
-                <div className="flex flex-col items-end shrink-0">
+                <div className="flex flex-col items-center shrink-0">
                   <span className="font-medium" data-testid={`text-ride-tariff-${r.id}`}>
                     {fmtRideTariff(r)}
                   </span>
