@@ -485,7 +485,7 @@ export function PaymentMethodsPage() {
             disabled={busy}
             onClick={handleAddSbp}
             data-testid="button-add-sbp"
-            className="w-full px-4 py-3 border-b border-gray-100 dark:border-zinc-700 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
+            className="w-full px-4 py-3 border-b border-gray-100 dark:border-zinc-700 flex items-center justify-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {sbpBusy ? (
               <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
@@ -494,13 +494,9 @@ export function PaymentMethodsPage() {
             ) : (
               <SbpBrandIcon />
             )}
-            <div className="min-w-0 flex-1">
-              <p className="text-base font-semibold text-gray-900 dark:text-white">
-                {methods.some((m) => m.type === "sbp" && m.status === "active")
-                  ? "Добавить ещё счёт СБП"
-                  : "Добавить счёт СБП"}
-              </p>
-            </div>
+            <p className="text-base font-semibold text-gray-900 dark:text-white">
+              Добавить счёт СБП
+            </p>
             {!sbpBusy && (
               <Plus className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
             )}
@@ -511,18 +507,14 @@ export function PaymentMethodsPage() {
             disabled={busy}
             onClick={handleAddCard}
             data-testid="button-bind-card"
-            className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
+            className="w-full px-4 py-3 flex items-center justify-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
               {cardBusy ? <Loader2 className="w-5 h-5 animate-spin" /> : <CreditCard className="w-5 h-5" />}
             </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-base font-semibold text-gray-900 dark:text-white">
-                {methods.some((m) => m.type === "card" && m.status === "active")
-                  ? "Добавить ещё карту"
-                  : "Добавить карту"}
-              </p>
-            </div>
+            <p className="text-base font-semibold text-gray-900 dark:text-white">
+              Добавить карту
+            </p>
             {!cardBusy && (
               <Plus className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
             )}
