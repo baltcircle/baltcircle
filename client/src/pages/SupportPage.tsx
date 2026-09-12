@@ -223,10 +223,14 @@ export function SupportPage() {
   return (
     <OverlayShell title="Поддержка">
       <div className="relative flex flex-col min-h-full max-w-2xl w-full mx-auto" data-testid="page-support-chat">
-        {/* Область сообщений (скролл ведёт внешний OverlayShell) */}
+        {/* Область сообщений (скролл ведёт внешний OverlayShell).
+            flex-col + justify-end прижимает контент к низу, когда сообщений
+            мало — иначе flex-1 растягивал бы пустое место МЕЖДУ сообщениями
+            и полем ввода вместо того, чтобы оставить его сверху, у заголовка;
+            это же убирает лишний скролл всего раздела на короткой переписке. */}
         <div
           ref={scrollerRef}
-          className="flex-1 px-3 py-3 space-y-3 pb-24"
+          className="flex-1 flex flex-col justify-end px-3 py-3 space-y-3"
           data-testid="support-chat-messages"
         >
           {chatQ.isLoading ? (
