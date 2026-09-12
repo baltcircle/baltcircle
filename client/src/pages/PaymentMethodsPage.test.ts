@@ -92,6 +92,17 @@ describe("PaymentMethodsPage binding controls", () => {
     expect(visiblePaymentMethods([superseded, cancelled, authFail, noErrorCode, active, pending])).toEqual([active]);
   });
 
+  it("always sorts an active SBP method above active cards, without reordering same-type methods", () => {
+    const card1 = { id: 1, type: "card", label: "•••• 1111", status: "active" } as PublicPaymentMethod;
+    const card2 = { id: 2, type: "card", label: "•••• 2222", status: "active" } as PublicPaymentMethod;
+    const sbp = { id: 3, type: "sbp", label: "СБП", status: "active" } as PublicPaymentMethod;
+
+    // SBP added last (newest) still floats to the top, ahead of both cards.
+    expect(visiblePaymentMethods([card1, card2, sbp])).toEqual([sbp, card1, card2]);
+    // Already-first SBP stays first; relative card order is untouched either way.
+    expect(visiblePaymentMethods([sbp, card1, card2])).toEqual([sbp, card1, card2]);
+  });
+
   it("does not render an inline bank-error detail", () => {
     expect(pageSource).not.toContain("method-error-");
     expect(pageSource).not.toContain("{m.status === \"failed\" && err && (");
@@ -115,8 +126,8 @@ describe("PaymentMethodsPage binding controls", () => {
     expect(pageSource).not.toContain("shouldNotifyBindingFailure");
   });
 
-  it("silently polls each supported pending binding route every three seconds", () => {
-    expect(pageSource).toContain("const PENDING_POLL_INTERVAL_MS = 3_000");
+  it("silently polls each supported pending binding route on a short fixed interval", () => {
+    expect(pageSource).toContain("const PENDING_POLL_INTERVAL_MS = 1_500");
     expect(utilsSource).toContain('`/api/payments/tbank/refresh-bind-sbp/${method.id}`');
     expect(utilsSource).toContain('`/api/payment-methods/${method.id}/refresh`');
     expect(utilsSource).toContain('`/api/payments/tbank/refresh-bind/${method.id}`');

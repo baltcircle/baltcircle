@@ -28,7 +28,12 @@ import { SbpBindModal } from "./payment-methods/SbpBindModal";
 
 const METHODS_KEY = ["/api/payment-methods"];
 const SBP_BANKS_KEY = ["/api/payments/tbank/sbp-banks"];
-const PENDING_POLL_INTERVAL_MS = 3_000;
+// 1.5с вместо прежних 3с — основной рычаг ощутимой задержки появления
+// карты/СБП-счёта в списке: единственный, что не завязан на внешний RTT до
+// T-Bank. lastPendingPollAt ниже принудительно сбрасывается в местах, где мы
+// точно знаем о завершении банковской сессии (postMessage, закрытие попапа),
+// чтобы не ждать остаток текущего интервала.
+const PENDING_POLL_INTERVAL_MS = 1_500;
 
 export function PaymentMethodsPage() {
   const toast = useToast();
@@ -301,11 +306,14 @@ export function PaymentMethodsPage() {
         if (openedBindMethodId.current === methodId) {
           // Закрытие вручную: дотягиваем статус (webhook/polling мог ещё не
           // отработать) и обновляем список — авто-reconcile выше доведёт.
+          // Сброс throttle — следующий тик поллинга (эффект перезапустится от
+          // смены methods/tbankBind) не будет ждать остаток интервала.
           setTbankBind(null);
+          lastPendingPollAt.current = 0;
           queryClient.invalidateQueries({ queryKey: METHODS_KEY });
         }
       }
-    }, 700);
+    }, 300);
     return () => {
       window.clearTimeout(blockCheck);
       window.clearInterval(closePoll);
@@ -325,11 +333,14 @@ export function PaymentMethodsPage() {
       // scary local failure toast before reconciliation can hide it.
       if (d.hasSuccess && !d.success) {
         setTbankBind(null);
+        lastPendingPollAt.current = 0;
         queryClient.invalidateQueries({ queryKey: METHODS_KEY });
         return;
       }
       // Успех/Init: не закрываем сразу — даём polling подтвердить статус по
-      // webhook (active), но форсируем немедленный refetch для скорости.
+      // webhook (active), но форсируем немедленный refetch для скорости, и
+      // сбрасываем throttle поллинга, чтобы следующий тик не ждал интервал.
+      lastPendingPollAt.current = 0;
       queryClient.invalidateQueries({ queryKey: METHODS_KEY });
     };
     window.addEventListener("message", onMsg);
