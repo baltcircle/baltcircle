@@ -51,3 +51,15 @@ jobs:
           set -x
           command -v getenforce >/dev/null 2>&1 && getenforce || echo "no SELinux"
           sudo aa-status 2>&1 | head -20 || echo "no AppArmor / not permitted"
+
+      - name: Locate live nginx config and check whether it tracks the repo
+        run: |
+          set -x
+          echo "--- sites-enabled ---"
+          ls -la /etc/nginx/sites-enabled/ 2>&1 || true
+          echo "--- readlink each ---"
+          for f in /etc/nginx/sites-enabled/*; do readlink -f "$f" 2>&1 || true; done
+          echo "--- does the live pmtiles location block have the security headers we added? ---"
+          sudo nginx -T 2>&1 | grep -A20 'pmtiles_file' || echo "(no pmtiles location found in live config)"
+          echo "--- repo checkout path vs live config mtime ---"
+          echo "repo file: $(readlink -f deploy/nginx/baltcircle.conf 2>&1), mtime: $(stat -c %y deploy/nginx/baltcircle.conf 2>&1)"
