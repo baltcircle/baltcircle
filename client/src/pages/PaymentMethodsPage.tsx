@@ -49,6 +49,38 @@ export function PaymentMethodsPage() {
   const timedOutBindingIds = useRef(new Set<number>());
   const pendingBindingIds = useRef(new Set<number>());
   const lastPendingPollAt = useRef(0);
+  // Попап, открытый СИНХРОННО в самом click-хендлере (см. handleAddCard) —
+  // до await мутации. Браузеры считают попап "легитимным", только если
+  // window.open вызван в том же тике, что и user gesture; наш bind-card идёт
+  // через сетевой запрос за URL, и к моменту ответа gesture уже "остывает" —
+  // именно это и вызывает промпт "сайт пытается открыть всплывающее окно".
+  // Поэтому открываем пустое окно сразу по тапу, а когда придёт URL —
+  // просто переводим уже открытое окно на него (popup.location.href), без
+  // повторного window.open.
+  const pendingPopupRef = useRef<Window | null>(null);
+
+  const POPUP_WIDTH = 430;
+  const POPUP_HEIGHT = 760;
+  const popupFeatures = () => {
+    const left = Math.max(0, Math.round((window.screen.width - POPUP_WIDTH) / 2));
+    const top = Math.max(0, Math.round((window.screen.height - POPUP_HEIGHT) / 2));
+    return `width=${POPUP_WIDTH},height=${POPUP_HEIGHT},left=${left},top=${top},resizable=yes,scrollbars=yes`;
+  };
+  // Открывает пустое окно прямо в текущем event-тике (сохраняя user gesture) и
+  // рисует в нём простой лоадер, чтобы не было мигающего пустого about:blank.
+  const openPendingPopup = () => {
+    const popup = window.open("", "tbank-bind", popupFeatures());
+    if (popup) {
+      popup.document.write(
+        '<!doctype html><meta charset="utf-8"><title>Загрузка…</title>' +
+          '<body style="margin:0;height:100vh;display:flex;align-items:center;' +
+          'justify-content:center;font-family:system-ui,sans-serif;color:#8a8a8a">' +
+          "Загрузка…</body>",
+      );
+    }
+    pendingPopupRef.current = popup;
+    return popup;
+  };
 
   // Глобальный defaultOptions отключает refetchOnWindowFocus и держит staleTime: Infinity.
   // Наш ручной invalidateQueries (postMessage/закрытие попапа/polling) покрывает
@@ -114,15 +146,29 @@ export function PaymentMethodsPage() {
         // Открываем hosted-форму T-Bank в отдельном ПОПАПе (T-Bank блокирует
         // встраивание своей формы в iframe). Вкладка НЕ уходит на pay.tbank.ru →
         // история не меняется. Статус ловим общим фоновым polling'ом.
+        // попап уже открыт синхронно (openPendingPopup в handleAddCard) —
+        // эффект ниже только переведёт его на URL, никакого нового window.open.
         setTbankBind({ methodId: data.methodId, url: data.paymentUrl });
       } else if (data.paymentUrl) {
         // Фоллбэк (methodId не пришёл): старый путь через уход вкладки.
+        // предварительно открытый попап больше не нужен — закрываем, чтобы не
+        // оставались пустые окна с лоадером.
+        pendingPopupRef.current?.close();
+        pendingPopupRef.current = null;
         setRedirecting(true);
         window.location.replace(data.paymentUrl);
+      } else {
+        pendingPopupRef.current?.close();
+        pendingPopupRef.current = null;
       }
     },
-    onError: (e: Error) =>
-      toast.toast({ title: "Не удалось привязать карту", description: cleanErr(e), variant: "destructive" }),
+    onError: (e: Error) => {
+      // заранее открытый пустой попап надо закрыть — иначе останется пустое
+      // окно с вечным лоадером.
+      pendingPopupRef.current?.close();
+      pendingPopupRef.current = null;
+      toast.toast({ title: "Не удалось привязать карту", description: cleanErr(e), variant: "destructive" });
+    },
   });
 
   // Start a real SBP ACCOUNT binding via AddAccountQr. The backend returns a QR
@@ -289,17 +335,20 @@ export function PaymentMethodsPage() {
     if (!tbankBind || openedBindMethodId.current === tbankBind.methodId) return;
     openedBindMethodId.current = tbankBind.methodId;
     const { url, methodId } = tbankBind;
-    const width = 430;
-    const height = 760;
-    const left = Math.max(0, Math.round((window.screen.width - width) / 2));
-    const top = Math.max(0, Math.round((window.screen.height - height) / 2));
+    // Переиспользуем попап, открытый СИНХРОННО в click-хендлере (см.
+    // openPendingPopup/handleAddCard) — просто переводим его на нужный URL.
+    // Это сохраняет user gesture и не вызывает промпт "сайт пытается открыть
+    // всплывающее окно". Новый window.open здесь — только запасной путь
+    // (например, если pendingPopupRef уже сброшен по какой-то причине).
     // Deliberately no "noopener" — the return page (?from=tbank) needs
     // window.opener to postMessage the result back and self-close.
-    const popup = window.open(
-      url,
-      "tbank-bind",
-      `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`,
-    );
+    let popup = pendingPopupRef.current;
+    pendingPopupRef.current = null;
+    if (popup && !popup.closed) {
+      popup.location.href = url;
+    } else {
+      popup = window.open(url, "tbank-bind", popupFeatures());
+    }
     bindPopupRef.current = popup;
     const blockCheck = window.setTimeout(() => {
       if (openedBindMethodId.current !== methodId) return;
@@ -384,6 +433,11 @@ export function PaymentMethodsPage() {
       });
       return;
     }
+    // Открываем пустое окно ПРЯМО тут — в том же тике, что и клик кнопки, до
+    // асинхронного запроса за URL. Иначе к моменту ответа сервера user gesture
+    // утерян, и браузер трактует window.open как всплывающее окно и просит
+    // разрешение.
+    openPendingPopup();
     bindCardMut.mutate();
   };
 
