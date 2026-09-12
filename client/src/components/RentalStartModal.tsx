@@ -5,6 +5,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { closeReservationNotifications } from "@/lib/push";
 import { cleanErr } from "@/lib/api-error";
 import type { Bike, PublicPaymentMethod, Reservation } from "@shared/schema";
+import { sortSbpFirst } from "@/pages/payment-methods/binding-utils";
 import { TEST_RIDE_MIN_MINUTES, TEST_RIDE_MAX_MINUTES } from "@shared/schema";
 import {
   TBANK_CONFIG_KEY, PAYMENT_METHODS_KEY, RESERVATION_ACTIVE_KEY, type TbankConfigResponse,
@@ -99,14 +100,19 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
   const methodsQ = useQuery<PublicPaymentMethod[]>({
     queryKey: PAYMENT_METHODS_KEY,
     enabled: open,
+    // Согласованно с PaymentMethodsPage: глобально refetchOnWindowFocus отключён, но
+    // если райдер открыл эту модалку во время/сразу после привязки карты, возврат
+    // фокуса на вкладку всё равно переспрашивает свежий статус.
+    refetchOnWindowFocus: "always",
   });
-  const activeMethods = (methodsQ.data ?? []).filter(
+  const activeMethods = sortSbpFirst((methodsQ.data ?? []).filter(
     (m) => m.status === "active" && m.provider === "tbank"
       && ((m.type === "card" && m.hasRebillId) || (m.type === "sbp" && m.hasAccountToken)),
-  );
+  ));
   // `manualMethodId` wins only while it still points at a method that's still
-  // active; otherwise fall back to the newest saved method (list is already
-  // sorted newest-first by the API), or the hosted form if none exist.
+  // active; otherwise fall back to the first method in `activeMethods` — SBP
+  // first (sortSbpFirst), then the newest card (API order) — or the hosted
+  // form if none exist.
   const manualStillValid = manualMethodId === "hosted"
     || (manualMethodId != null && activeMethods.some((m) => m.id === manualMethodId));
   const selectedMethodId: number | "hosted" = manualStillValid

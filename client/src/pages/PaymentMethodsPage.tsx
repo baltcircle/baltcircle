@@ -50,7 +50,18 @@ export function PaymentMethodsPage() {
   const pendingBindingIds = useRef(new Set<number>());
   const lastPendingPollAt = useRef(0);
 
-  const methodsQ = useQuery<PublicPaymentMethod[]>({ queryKey: METHODS_KEY });
+  // Глобальный defaultOptions отключает refetchOnWindowFocus и держит staleTime: Infinity.
+  // Наш ручной invalidateQueries (postMessage/закрытие попапа/polling) покрывает
+  // большинство случаев, но не все: на мобильных браузерах попап банка иногда
+  // открывается в той же вкладке/возвратает через App-свитч/PWA-lifecycle
+  // иначе, и ни один из наших триггеров мог не сработать — тогда список оставался
+  // старым до ручной перезагрузки. "always" — надёжная сеть: при возврате фокуса на
+  // вкладку (закрыли попап, вернулись из банковского приложения на мобильном) список
+  // всё равно переспрашивается, без ручного обновления страницы.
+  const methodsQ = useQuery<PublicPaymentMethod[]>({
+    queryKey: METHODS_KEY,
+    refetchOnWindowFocus: "always",
+  });
   const methods = methodsQ.data ?? [];
   const visibleMethods = visiblePaymentMethods(methods);
 

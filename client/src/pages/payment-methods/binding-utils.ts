@@ -61,19 +61,23 @@ export function statusLabel(status: string): { text: string; cls: string } {
   }
 }
 
-// СБП всегда отображается первой в списке привязанных способов (без явной
-// пометки «закреплён» — просто порядок). Карты и прочие типы сохраняют
-// относительный порядок между собой (Array.prototype.sort — стабильная
-// сортировка), меняется только позиция СБП-строк.
+// СБП всегда отображается первой — без явной пометки «закреплён», просто
+// порядок. Карты и прочие типы сохраняют относительный порядок между собой
+// (Array.prototype.sort — стабильная сортировка), меняется только позиция
+// СБП-строк. Общая для списка привязанных способов (visiblePaymentMethods
+// ниже) и для пикера метода оплаты в модалке старта аренды (RentalStartModal),
+// чтобы порядок был одинаковым везде в приложении.
+export function sortSbpFirst<T extends { type: string }>(methods: T[]): T[] {
+  return [...methods].sort((a, b) => {
+    if (a.type === b.type) return 0;
+    if (a.type === "sbp") return -1;
+    if (b.type === "sbp") return 1;
+    return 0;
+  });
+}
+
 export function visiblePaymentMethods(methods: PublicPaymentMethod[]): PublicPaymentMethod[] {
-  return methods
-    .filter((method) => method.status !== "pending" && method.status !== "failed")
-    .sort((a, b) => {
-      if (a.type === b.type) return 0;
-      if (a.type === "sbp") return -1;
-      if (b.type === "sbp") return 1;
-      return 0;
-    });
+  return sortSbpFirst(methods.filter((method) => method.status !== "pending" && method.status !== "failed"));
 }
 
 // API data is normally serialized as a numeric unix-ms value by Drizzle. Keep
