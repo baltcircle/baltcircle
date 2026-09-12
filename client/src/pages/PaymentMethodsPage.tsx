@@ -7,7 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { TBANK_CONFIG_KEY, type TbankConfigResponse } from "@/lib/payment";
 import {
-  CreditCard, Loader2, Trash2, Plus,
+  CreditCard, Loader2, Trash2,
 } from "lucide-react";
 import { CardBrandIcon, SbpBrandIcon } from "@/components/PaymentBrandIcon";
 import type { SbpBank } from "@shared/sbp";
@@ -478,14 +478,14 @@ export function PaymentMethodsPage() {
           )}
         </div>
 
-        {/* Add actions — profile-style rows */}
-        <div className="mt-4 rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800">
+        {/* Add actions — раздельные карточки с небольшим отступом между ними */}
+        <div className="mt-4 space-y-2">
           <button
             type="button"
             disabled={busy}
             onClick={handleAddSbp}
             data-testid="button-add-sbp"
-            className="w-full px-4 py-3 border-b border-gray-100 dark:border-zinc-700 flex items-center justify-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full px-4 py-3 rounded-2xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 flex items-center justify-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {sbpBusy ? (
               <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
@@ -497,9 +497,6 @@ export function PaymentMethodsPage() {
             <p className="text-base font-semibold text-gray-900 dark:text-white">
               Добавить счёт СБП
             </p>
-            {!sbpBusy && (
-              <Plus className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
-            )}
           </button>
 
           <button
@@ -507,7 +504,7 @@ export function PaymentMethodsPage() {
             disabled={busy}
             onClick={handleAddCard}
             data-testid="button-bind-card"
-            className="w-full px-4 py-3 flex items-center justify-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full px-4 py-3 rounded-2xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 flex items-center justify-center gap-3 hover:bg-gray-50 dark:hover:bg-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <span className="flex items-center justify-center w-9 h-9 rounded-full bg-muted text-muted-foreground shrink-0">
               {cardBusy ? <Loader2 className="w-5 h-5 animate-spin" /> : <CreditCard className="w-5 h-5" />}
@@ -515,9 +512,6 @@ export function PaymentMethodsPage() {
             <p className="text-base font-semibold text-gray-900 dark:text-white">
               Добавить карту
             </p>
-            {!cardBusy && (
-              <Plus className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
-            )}
           </button>
         </div>
       </div>
