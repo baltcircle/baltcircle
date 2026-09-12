@@ -67,15 +67,25 @@ export function PaymentMethodsPage() {
     return `width=${POPUP_WIDTH},height=${POPUP_HEIGHT},left=${left},top=${top},resizable=yes,scrollbars=yes`;
   };
   // Открывает пустое окно прямо в текущем event-тике (сохраняя user gesture) и
-  // рисует в нём простой лоадер, чтобы не было мигающего пустого about:blank.
+  // рисует в нём лоадер в теме приложения (фон + акцент как на странице), чтобы
+  // переход "наше окно → форма банка" не выглядел как две разные всплывашки —
+  // визуально это один и тот же экран, который просто заполняется контентом.
   const openPendingPopup = () => {
     const popup = window.open("", "tbank-bind", popupFeatures());
     if (popup) {
+      const dark = document.documentElement.classList.contains("dark");
+      const bg = dark ? "#18181b" : "#ffffff";
+      const fg = dark ? "#a1a1aa" : "#71717a";
+      const ring = dark ? "#3f3f46" : "#e4e4e7";
       popup.document.write(
-        '<!doctype html><meta charset="utf-8"><title>Загрузка…</title>' +
-          '<body style="margin:0;height:100vh;display:flex;align-items:center;' +
-          'justify-content:center;font-family:system-ui,sans-serif;color:#8a8a8a">' +
-          "Загрузка…</body>",
+        '<!doctype html><meta charset="utf-8"><title>Переход в банк…</title>' +
+          `<body style="margin:0;height:100vh;background:${bg};display:flex;` +
+          "flex-direction:column;align-items:center;justify-content:center;gap:16px;" +
+          `font-family:system-ui,-apple-system,sans-serif;color:${fg}">` +
+          `<div style="width:36px;height:36px;border-radius:50%;border:3px solid ${ring};` +
+          `border-top-color:${fg};animation:spin 0.8s linear infinite"></div>` +
+          '<div style="font-size:14px">Открываем форму банка…</div>' +
+          "<style>@keyframes spin{to{transform:rotate(360deg)}}</style>",
       );
     }
     pendingPopupRef.current = popup;
