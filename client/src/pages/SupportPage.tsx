@@ -47,6 +47,9 @@ export function SupportPage() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  // Актуальная высота fixed-приклеенного к низу поля ввода — резервируется
+  // отступом в области сообщений, чтобы последнее сообщение не скрылось за ним.
+  const [inputHeight, setInputHeight] = useState(72);
 
   // Автоскролл вниз при новом сообщении
   useEffect(() => {
@@ -230,7 +233,8 @@ export function SupportPage() {
             это же убирает лишний скролл всего раздела на короткой переписке. */}
         <div
           ref={scrollerRef}
-          className="flex-1 flex flex-col justify-end px-3 py-3 space-y-3"
+          className="flex-1 flex flex-col justify-end px-3 pt-3 space-y-3"
+          style={{ paddingBottom: inputHeight + 12 }}
           data-testid="support-chat-messages"
         >
           {chatQ.isLoading ? (
@@ -287,6 +291,7 @@ export function SupportPage() {
           sending={sendMut.isPending}
           text={text}
           setText={setText}
+          onHeightChange={setInputHeight}
         />
       </div>
     </OverlayShell>

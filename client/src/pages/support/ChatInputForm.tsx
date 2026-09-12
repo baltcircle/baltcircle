@@ -1,11 +1,11 @@
-import type { RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Send, Paperclip, X as XIcon, Loader2 } from "lucide-react";
 
 export function ChatInputForm({
   onSubmit, attachment, onRemoveAttachment, fileRef, onPickFile,
-  uploading, sending, text, setText,
+  uploading, sending, text, setText, onHeightChange,
 }: {
   onSubmit: (e: React.FormEvent) => void;
   attachment: { url: string; previewUrl: string; mime: string; localName: string } | null;
@@ -16,11 +16,34 @@ export function ChatInputForm({
   sending: boolean;
   text: string;
   setText: (v: string) => void;
+  /** Сообщает актуальную высоту формы — родитель резервирует под неё
+   *  отступ снизу в области сообщений, чтобы последнее сообщение не
+   *  пряталось под полем ввода. */
+  onHeightChange?: (px: number) => void;
 }) {
+  const formRef = useRef<HTMLFormElement | null>(null);
+
+  // position: fixed вместо sticky — приклеивает поле ввода к реальному
+  // низу видимой области браузера. В отличие от высоты, вычисленной через
+  // dvh/visualViewport (не везде надёжно, особенно в Яндекс.Браузере с его
+  // адрес-баром), fixed-позиционирование браузер всегда считает правильно
+  // сам, поэтому скролл чата не может "уйти" ниже поля ввода.
+  useEffect(() => {
+    const el = formRef.current;
+    if (!el || !onHeightChange) return;
+    const report = () => onHeightChange(el.offsetHeight);
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [onHeightChange, attachment, text]);
+
   return (
+    <div className="fixed inset-x-0 bottom-0 z-20 flex justify-center pointer-events-none">
     <form
+      ref={formRef}
       onSubmit={onSubmit}
-      className="sticky bottom-0 z-10 border-t border-border/50 bg-background/95 backdrop-blur px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+      className="pointer-events-auto w-full max-w-2xl border-t border-border/50 bg-background/95 backdrop-blur px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
     >
       {attachment && (
         <div className="mb-2 flex items-center gap-2 rounded-md border border-border/60 bg-muted/40 p-2">
@@ -86,5 +109,6 @@ export function ChatInputForm({
         </Button>
       </div>
     </form>
+    </div>
   );
 }
