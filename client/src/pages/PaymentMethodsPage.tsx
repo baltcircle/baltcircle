@@ -5,7 +5,6 @@ import type { PublicPaymentMethod } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { fmtDate } from "@/lib/format";
 import { TBANK_CONFIG_KEY, type TbankConfigResponse } from "@/lib/payment";
 import {
   CreditCard, Loader2, Trash2, Plus,
@@ -18,7 +17,6 @@ import {
   refreshPendingMethod,
   cancelTimedOutPendingMethod,
   visiblePaymentMethods,
-  statusLabel,
   methodError,
   cleanErr,
   detectSbpDeviceType,
@@ -423,7 +421,6 @@ export function PaymentMethodsPage() {
           ) : (
             <ul className="divide-y divide-gray-100 dark:divide-zinc-700" data-testid="methods-list">
               {visibleMethods.map((m) => {
-                const st = statusLabel(m.status);
                 return (
                   <li
                     key={m.id}
@@ -439,10 +436,6 @@ export function PaymentMethodsPage() {
                       <div className="min-w-0 flex-1">
                         <p className="text-base font-semibold text-gray-900 dark:text-white truncate font-mono">
                           {m.label}
-                        </p>
-                        <p className="text-xs mt-0.5">
-                          <span className={st.cls}>{st.text}</span>
-                          <span className="text-gray-400 dark:text-zinc-500"> · {fmtDate(m.createdAt)}</span>
                         </p>
                       </div>
                       <button
@@ -485,9 +478,6 @@ export function PaymentMethodsPage() {
                   ? "Добавить ещё счёт СБП"
                   : "Добавить счёт СБП"}
               </p>
-              <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">
-                {sbpBusy ? "Открываем банк…" : "Оплата по СБП — привязка без карты"}
-              </p>
             </div>
             {!sbpBusy && (
               <Plus className="w-5 h-5 text-gray-400 dark:text-zinc-500 shrink-0" />
@@ -509,9 +499,6 @@ export function PaymentMethodsPage() {
                 {methods.some((m) => m.type === "card" && m.status === "active")
                   ? "Добавить ещё карту"
                   : "Добавить карту"}
-              </p>
-              <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">
-                {cardBusy ? "Открываем форму банка…" : "Через защищённую форму T-Bank"}
               </p>
             </div>
             {!cardBusy && (
