@@ -47,8 +47,13 @@ export function OverlayShell({ title, subtitle, children }: OverlayShellProps) {
         </div>
       </div>
 
-      {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Scrollable content.
+          overscroll-behavior-y: contain — не даём скроллу "протечь" на
+          document/body: без этого мобильные браузеры (особенно с чужим
+          адрес-баром, напр. Яндекс) позволяют резиновую перетяжку страницы
+          ниже реального контента, и под открытым полем ввода видна пустая
+          область со скроллом. Скролл самого чата это не затрагивает. */}
+      <div className="flex-1 overflow-y-auto overscroll-y-contain">
         {children}
       </div>
     </div>
