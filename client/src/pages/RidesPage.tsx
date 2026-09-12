@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { OverlayShell } from "@/components/OverlayShell";
 import type { RideWithFeedback } from "@shared/schema";
 import { Card } from "@/components/ui/card";
-import { fmtDateFull, fmtDistanceKm, fmtRideTimeRange, fmtRub, fmtRideTariff } from "@/lib/format";
+import { fmtDateFull, fmtDistanceKm, fmtTimeOnly, fmtRub, fmtRideTariff } from "@/lib/format";
 import { apiRequest } from "@/lib/queryClient";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { Route } from "lucide-react";
@@ -80,15 +80,27 @@ export function RidesPage() {
                 {fmtDateFull(r.startedAt)}
               </div>
               <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="font-medium" data-testid={`text-ride-time-${r.id}`}>
-                    {fmtRideTimeRange(r.startedAt, r.endedAt)}
+                {r.endedAt != null ? (
+                  <div
+                    className="grid grid-cols-[auto_auto_auto] gap-x-1.5"
+                    data-testid={`text-ride-time-${r.id}`}
+                  >
+                    <span className="font-medium text-center">{fmtTimeOnly(r.startedAt)}</span>
+                    <span className="font-medium text-center">–</span>
+                    <span className="font-medium text-center">{fmtTimeOnly(r.endedAt)}</span>
+                    <span className="text-xs text-muted-foreground text-center">{fmtDistanceKm(r.distanceM)}</span>
+                    <span className="text-xs text-muted-foreground text-center">·</span>
+                    <span className="text-xs text-muted-foreground text-center">{r.bikeId}</span>
                   </div>
-                  <div className="text-xs text-muted-foreground truncate">
-                    {fmtDistanceKm(r.distanceM)} · {r.bikeId}
+                ) : (
+                  <div className="min-w-0" data-testid={`text-ride-time-${r.id}`}>
+                    <div className="font-medium">с {fmtTimeOnly(r.startedAt)}</div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {fmtDistanceKm(r.distanceM)} · {r.bikeId}
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-baseline gap-2 shrink-0">
+                )}
+                <div className="flex flex-col items-end shrink-0">
                   <span className="font-medium" data-testid={`text-ride-tariff-${r.id}`}>
                     {fmtRideTariff(r)}
                   </span>
