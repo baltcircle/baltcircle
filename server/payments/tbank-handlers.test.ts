@@ -773,10 +773,10 @@ describe("card-binding duplicate protection", () => {
     );
 
     expect(storageMock.updatePaymentMethod).toHaveBeenNthCalledWith(
-      1, 138, expect.objectContaining({ status: "active", label: "•••• 0777", brand: "visa" }),
+      1, 138, expect.objectContaining({ status: "active", label: "*0777", brand: "visa" }),
     );
     expect(storageMock.updatePaymentMethod).toHaveBeenNthCalledWith(
-      2, 139, expect.objectContaining({ status: "active", label: "•••• 4444", brand: "mastercard" }),
+      2, 139, expect.objectContaining({ status: "active", label: "*4444", brand: "mastercard" }),
     );
   });
 
@@ -808,9 +808,9 @@ describe("card-binding duplicate protection", () => {
   });
 
   it("only extracts four digits from the fixed masked-card label", () => {
-    expect(extractLast4FromLabel("•••• 0777")).toBe("0777");
+    expect(extractLast4FromLabel("*0777")).toBe("0777");
     expect(extractLast4FromLabel("Карта")).toBeNull();
-    expect(extractLast4FromLabel("•••• 777")).toBeNull();
+    expect(extractLast4FromLabel("*777")).toBeNull();
   });
 
   it("honors a late AUTHORIZED+RebillId notification for an Init binding superseded locally", async () => {

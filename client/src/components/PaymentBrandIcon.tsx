@@ -18,6 +18,19 @@ function Tile({ children, bg }: { children: React.ReactNode; bg?: string }) {
   );
 }
 
+// Card-shaped tile: rounded rectangle with a black outline, evoking a
+// physical card outline instead of the generic circular icon slot. Used only
+// for CardBrandIcon — SBP keeps the round tile.
+function CardTile({ children, bg }: { children: React.ReactNode; bg?: string }) {
+  return (
+    <span
+      className={`flex items-center justify-center w-9 h-9 rounded-md border-2 border-black shrink-0 overflow-hidden ${bg ?? "bg-muted"}`}
+    >
+      {children}
+    </span>
+  );
+}
+
 function VisaLogo() {
   return (
     <svg viewBox="0 0 48 16" className="w-7 h-4" role="img" aria-label="Visa">
@@ -86,16 +99,16 @@ function SbpLogo() {
 export function CardBrandIcon({ brand }: { brand?: Brand }) {
   switch (brand) {
     case "visa":
-      return <Tile bg="bg-white dark:bg-zinc-100">{<VisaLogo />}</Tile>;
+      return <CardTile bg="bg-white dark:bg-zinc-100">{<VisaLogo />}</CardTile>;
     case "mastercard":
-      return <Tile bg="bg-white dark:bg-zinc-100">{<MastercardLogo />}</Tile>;
+      return <CardTile bg="bg-white dark:bg-zinc-100">{<MastercardLogo />}</CardTile>;
     case "mir":
-      return <Tile bg="bg-white dark:bg-zinc-100">{<MirLogo />}</Tile>;
+      return <CardTile bg="bg-white dark:bg-zinc-100">{<MirLogo />}</CardTile>;
     default:
       return (
-        <Tile>
+        <CardTile>
           <CreditCard className="w-5 h-5 text-muted-foreground" />
-        </Tile>
+        </CardTile>
       );
   }
 }

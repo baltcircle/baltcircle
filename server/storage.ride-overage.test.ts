@@ -27,7 +27,7 @@ import { chargeRideOverageAsync } from "./storage/ride";
 
 function makeMethod(overrides: Partial<PaymentMethod> = {}): PaymentMethod {
   return {
-    id: 5, userId: "user-1", type: "card", label: "•••• 4242", brand: "visa",
+    id: 5, userId: "user-1", type: "card", label: "*4242", brand: "visa",
     status: "active", provider: "tbank", customerKey: "user-1", cardId: "c-1",
     rebillId: "rebill-abc", rebillIdHash: null, accountToken: null, accountTokenHash: null,
     purpose: null, orderId: null, paymentId: null, createdAt: 0,

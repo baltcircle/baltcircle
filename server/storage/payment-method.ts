@@ -30,7 +30,7 @@ export function PaymentMethodMixin<TBase extends Constructor>(Base: TBase) {
     // injected via the client. A masked test pan is used for "card" — never a
     // real number — and a fixed label for SBP.
     async linkPaymentMethod(userId: string, type: "card" | "sbp") {
-      const label = type === "card" ? "•••• 4242" : "СБП";
+      const label = type === "card" ? "*4242" : "СБП";
       return (await db.insert(paymentMethods).values({
         userId, type, label, status: "linked", createdAt: Date.now(),
       }).returning())[0] as PaymentMethod;
@@ -405,7 +405,7 @@ export function PaymentMethodMixin<TBase extends Constructor>(Base: TBase) {
     // recent qualifying card is returned. Returns undefined when no usable saved
     // card exists (the caller then falls back to the hosted payment flow).
     // Detect a physical-card duplicate just before activating a pending binding.
-    // label is always produced by maskPan() as "•••• XXXX", so a four-digit suffix
+    // label is always produced by maskPan() as "*XXXX", so a four-digit suffix
     // is a safe fingerprint without a schema change. Known brands refine the match;
     // legacy rows with an unknown brand still match by last4 to avoid false
     // negatives. An unknown candidate brand also falls back to last4 alone.

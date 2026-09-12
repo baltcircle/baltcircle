@@ -886,14 +886,14 @@ export async function bindViaVerificationPayment(
 export function maskPan(pan: string): string {
   const digits = pan.replace(/\D/g, "");
   const last4 = digits.slice(-4);
-  return last4 ? `•••• ${last4}` : "Карта";
+  return last4 ? `*${last4}` : "Карта";
 }
 
 // Extract the fingerprint used for duplicate detection from our own masked-card
 // label. Accept only the fixed maskPan() shape so legacy/generic labels cannot
 // accidentally match a card.
 export function extractLast4FromLabel(label: string): string | null {
-  const match = /^••••\s(\d{4})$/.exec(label.trim());
+  const match = /^\*(\d{4})$/.exec(label.trim());
   return match?.[1] ?? null;
 }
 

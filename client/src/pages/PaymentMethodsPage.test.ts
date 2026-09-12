@@ -72,14 +72,14 @@ describe("PaymentMethodsPage binding controls", () => {
     const noErrorCode = {
       id: 8,
       type: "card",
-      label: "•••• 4242",
+      label: "*4242",
       status: "failed",
       lastErrorCode: null,
     } as PublicPaymentMethod;
     const active = {
       id: 9,
       type: "card",
-      label: "•••• 4242",
+      label: "*4242",
       status: "active",
     } as PublicPaymentMethod;
     const pending = {
@@ -93,8 +93,8 @@ describe("PaymentMethodsPage binding controls", () => {
   });
 
   it("always sorts an active SBP method above active cards, without reordering same-type methods", () => {
-    const card1 = { id: 1, type: "card", label: "•••• 1111", status: "active" } as PublicPaymentMethod;
-    const card2 = { id: 2, type: "card", label: "•••• 2222", status: "active" } as PublicPaymentMethod;
+    const card1 = { id: 1, type: "card", label: "*1111", status: "active" } as PublicPaymentMethod;
+    const card2 = { id: 2, type: "card", label: "*2222", status: "active" } as PublicPaymentMethod;
     const sbp = { id: 3, type: "sbp", label: "СБП", status: "active" } as PublicPaymentMethod;
 
     // SBP added last (newest) still floats to the top, ahead of both cards.
@@ -147,7 +147,7 @@ describe("PaymentMethodsPage binding controls", () => {
   it("does not timeout-toast a fresh pending card on mount, even with an old active card", () => {
     const now = Date.now();
     const activeCard = {
-      id: 1, type: "card", label: "•••• 4242", status: "active", createdAt: now - 86_400_000,
+      id: 1, type: "card", label: "*4242", status: "active", createdAt: now - 86_400_000,
     } as PublicPaymentMethod;
     const freshPendingCard = {
       id: 2, type: "card", label: "Карта (привязывается…)", status: "pending", createdAt: now,

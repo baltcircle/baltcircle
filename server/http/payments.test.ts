@@ -66,9 +66,9 @@ vi.mock("../payments/tbank-handlers", () => ({
   }),
   refundVerificationCharge: refundVerificationChargeMock,
   bindViaVerificationPayment: bindViaVerificationPaymentMock,
-  maskPan: (pan: string) => `•••• ${pan.replace(/\D/g, "").slice(-4)}`,
+  maskPan: (pan: string) => `*${pan.replace(/\D/g, "").slice(-4)}`,
   cardBrand: (pan: string) => pan.startsWith("4") ? "visa" : null,
-  extractLast4FromLabel: (label: string) => /^••••\s(\d{4})$/.exec(label)?.[1] ?? null,
+  extractLast4FromLabel: (label: string) => /^\*(\d{4})$/.exec(label)?.[1] ?? null,
 }));
 
 import { registerPaymentRoutes } from "./payments";
@@ -554,7 +554,7 @@ describe("authoritative pending card-binding reconciliation", () => {
     const { get } = routeApp();
     const boundCard = {
       id: 70, userId: "user-1", provider: "tbank", type: "card", status: "active",
-      cardId: "card-70", brand: "visa", label: "•••• 4242",
+      cardId: "card-70", brand: "visa", label: "*4242",
       rebillId: "2004700000000070", rebillIdHash: "deadbeef",
       accountToken: null, accountTokenHash: null,
       customerKey: "user-1", requestKey: "request-70", paymentId: "payment-70",
