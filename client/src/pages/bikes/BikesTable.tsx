@@ -16,7 +16,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  Pencil, QrCode, Archive, Trash2, Bike as BikeIcon, Wrench, FlaskConical, RotateCcw,
+  Pencil, QrCode, Trash2, Bike as BikeIcon, Wrench, FlaskConical, RotateCcw,
 } from "lucide-react";
 import { Link } from "wouter";
 import { TablePager, useClientPagination } from "@/components/table-pager";
@@ -38,19 +38,6 @@ export function BikesTable({
   const [purgeTarget, setPurgeTarget] = useState<Bike | null>(null);
   const parkingName = (id: string | null) =>
     id ? parkings.find((p) => p.id === id)?.name ?? id : "—";
-
-  const archiveMut = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiRequest("POST", `/api/admin/bikes/${encodeURIComponent(id)}/archive`);
-      return res.json() as Promise<Bike>;
-    },
-    onSuccess: (bike) => {
-      queryClient.invalidateQueries({ queryKey: ADMIN_BIKES_KEY });
-      queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
-      toast.toast({ title: "Велосипед в архиве", description: bike.id });
-    },
-    onError: (err: any) => toast.toast({ title: "Не удалось", description: err?.message?.replace(/^\d+:\s*/, ""), variant: "destructive" }),
-  });
 
   const restoreMut = useMutation({
     mutationFn: async (id: string) => {
@@ -164,17 +151,6 @@ export function BikesTable({
                       <Wrench className="w-4 h-4" />
                     </Link>
                   </Button>
-                  {canWrite && b.status !== "archived" && (
-                    <Button
-                      variant="ghost" size="icon"
-                      onClick={() => archiveMut.mutate(b.id)}
-                      disabled={archiveMut.isPending}
-                      title="В архив"
-                      data-testid={`button-archive-${b.id}`}
-                    >
-                      <Archive className="w-4 h-4" />
-                    </Button>
-                  )}
                   {canWrite && b.status === "archived" && (
                     <Button
                       variant="ghost" size="icon"

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Pencil, Archive, Trash2, MapPin, RotateCcw } from "lucide-react";
+import { Pencil, Trash2, MapPin, RotateCcw } from "lucide-react";
 import { ADMIN_PARKINGS_KEY } from "./parking-utils";
 
 export function ParkingsTable({
@@ -44,19 +44,6 @@ export function ParkingsTable({
       return ga - gb || ia - ib || na.localeCompare(nb);
     });
   }, [parkings]);
-
-  const archiveMut = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiRequest("POST", `/api/admin/parkings/${encodeURIComponent(id)}/archive`);
-      return res.json() as Promise<Parking>;
-    },
-    onSuccess: (p) => {
-      queryClient.invalidateQueries({ queryKey: ADMIN_PARKINGS_KEY });
-      queryClient.invalidateQueries({ queryKey: ["/api/parkings"] });
-      toast.toast({ title: "Парковка в архиве", description: p.name });
-    },
-    onError: (err: any) => toast.toast({ title: "Не удалось", description: err?.message?.replace(/^\d+:\s*/, ""), variant: "destructive" }),
-  });
 
   const restoreMut = useMutation({
     mutationFn: async (id: string) => {
@@ -154,15 +141,6 @@ export function ParkingsTable({
                           <>
                             <Button variant="ghost" size="icon" onClick={() => onEdit(p)} title="Редактировать" data-testid={`button-edit-parking-${p.id}`}>
                               <Pencil className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost" size="icon"
-                              onClick={() => archiveMut.mutate(p.id)}
-                              disabled={archiveMut.isPending}
-                              title="В архив"
-                              data-testid={`button-archive-parking-${p.id}`}
-                            >
-                              <Archive className="w-4 h-4" />
                             </Button>
                             <Button
                               variant="ghost" size="icon"
