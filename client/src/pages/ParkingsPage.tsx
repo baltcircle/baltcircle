@@ -28,8 +28,10 @@ export function ParkingsPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    // Поиск находит парковку даже если она скрыта (в архиве) —
+    // скрытые остаются вне обычного списка только пока поиск пуст.
     return parkings
-      .filter((p) => (showArchived ? !!p.archivedAt : !p.archivedAt))
+      .filter((p) => q || (showArchived ? !!p.archivedAt : !p.archivedAt))
       .filter((p) => !q || p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || (p.city ?? "").toLowerCase().includes(q))
       .sort((a, b) => a.id.localeCompare(b.id));
   }, [parkings, search, showArchived]);
@@ -98,17 +100,16 @@ export function ParkingsPage() {
         </div>
       )}
 
-      <div className="flex items-center gap-2 mb-4">
-        <Button
-          variant={showArchived ? "default" : "outline"}
-          size="sm"
+      {archivedCount > 0 && (
+        <button
+          type="button"
           onClick={() => setShowArchived((v) => !v)}
+          className="block text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 mb-4"
           data-testid="button-toggle-archived-parkings"
         >
-          {showArchived ? "Скрыть архив" : "Показать архив"}
-          {archivedCount > 0 && <span className="ml-2 opacity-70">{archivedCount}</span>}
-        </Button>
-      </div>
+          {showArchived ? "Скрыть скрытые" : `Скрытых: ${archivedCount} · показать`}
+        </button>
+      )}
 
       <ParkingsTable
         parkings={filtered}

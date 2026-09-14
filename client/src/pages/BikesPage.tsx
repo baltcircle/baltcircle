@@ -47,8 +47,10 @@ export function BikesPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    // Поиск по коду находит велосипед даже если он скрыт (в архиве) —
+    // скрытые остаются вне обычного списка только пока поиск пуст.
     return bikes
-      .filter((b) => showArchived || b.status !== "archived")
+      .filter((b) => q || showArchived || b.status !== "archived")
       .filter((b) => !q || b.id.toLowerCase().includes(q))
       .sort((a, b) => a.id.localeCompare(b.id));
   }, [bikes, search, showArchived]);
@@ -112,17 +114,16 @@ export function BikesPage() {
         </div>
       </header>
 
-      <div className="flex items-center gap-2 mb-4">
-        <Button
-          variant={showArchived ? "default" : "outline"}
-          size="sm"
+      {archivedCount > 0 && (
+        <button
+          type="button"
           onClick={() => setShowArchived((v) => !v)}
+          className="block text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 mb-4"
           data-testid="button-toggle-archived"
         >
-          {showArchived ? "Скрыть архив" : "Показать архив"}
-          {archivedCount > 0 && <span className="ml-2 opacity-70">{archivedCount}</span>}
-        </Button>
-      </div>
+          {showArchived ? "Скрыть скрытые" : `Скрытых: ${archivedCount} · показать`}
+        </button>
+      )}
 
       <BikesTable
         bikes={filtered}
