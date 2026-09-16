@@ -107,7 +107,7 @@ export function RideFeedbackDialog({ open, onOpenChange, rideId }: Props) {
     <Dialog open={open} onOpenChange={(v) => !submitMut.isPending && handleOpenChange(v)}>
       <DialogContent data-testid="dialog-ride-feedback">
         <DialogHeader>
-          <DialogTitle className="font-display font-light">Как прошла поездка?</DialogTitle>
+          <DialogTitle className="font-display text-xl font-light text-center">Как прошла поездка?</DialogTitle>
         </DialogHeader>
 
         <div className="flex justify-center gap-1 py-2">
@@ -188,8 +188,8 @@ export function RideFeedbackDialog({ open, onOpenChange, rideId }: Props) {
           </div>
         )}
 
-        <DialogFooter>
-          {tier ? (
+        {tier && (
+          <DialogFooter>
             <Button
               className="w-full"
               disabled={submitMut.isPending}
@@ -204,17 +204,8 @@ export function RideFeedbackDialog({ open, onOpenChange, rideId }: Props) {
                 "Отправить"
               )}
             </Button>
-          ) : (
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => handleOpenChange(false)}
-              data-testid="button-skip-feedback"
-            >
-              Готово
-            </Button>
-          )}
-        </DialogFooter>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );

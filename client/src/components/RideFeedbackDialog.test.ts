@@ -15,7 +15,7 @@ describe("RideFeedbackDialog category/sub-reason UI", () => {
     // Submission must be allowed with just a top-level category selected
     // (or even none) — the button only gates on `tier` (derived from
     // `rating`), never on `reasons.length`.
-    expect(source).toMatch(/\{tier \? \(\s*<Button[\s\S]{0,150}disabled=\{submitMut\.isPending\}/);
+    expect(source).toMatch(/\{tier && \(\s*<DialogFooter>\s*<Button[\s\S]{0,150}disabled=\{submitMut\.isPending\}/);
   });
 });
 
