@@ -362,20 +362,26 @@ export function qrToSvg(text: string, opts?: { size?: number; quiet?: number; la
   }
 
   const label = opts?.label?.trim();
-  // Extra vertical space (in QR "module" units) reserved below the code for
-  // the label row. Height grows, width stays tied to `size` so the QR itself
-  // isn't resized.
-  const labelHeight = label ? Math.max(6, Math.round(dim * 0.22)) : 0;
-  const totalHeight = dim + labelHeight;
-  const pxHeight = Math.round(px * (totalHeight / dim));
+  // Keep the whole sticker square: reserve a fixed fraction of the canvas
+  // height for the label row below the code, and shrink the QR itself
+  // uniformly (same scale on both axes, so modules stay square, never
+  // stretched) to fit above it — instead of growing the canvas into a
+  // rectangle the way an unshrunk QR + label would.
+  const labelFrac = label ? 0.2 : 0;
+  const qrAreaPx = px * (1 - labelFrac);
+  const moduleSize = qrAreaPx / dim;
+  const offsetX = (px - qrAreaPx) / 2;
+  const labelHeightPx = px - qrAreaPx;
   const labelText = label
-    ? `<text x="${dim / 2}" y="${dim + labelHeight * 0.68}" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="${(labelHeight * 0.55).toFixed(2)}" fill="#000000">${escapeSvgText(label)}</text>`
+    ? `<text x="${px / 2}" y="${qrAreaPx + labelHeightPx * 0.68}" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="${(labelHeightPx * 0.5).toFixed(2)}" fill="#000000">${escapeSvgText(label)}</text>`
     : "";
 
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${pxHeight}" viewBox="0 0 ${dim} ${totalHeight}" shape-rendering="crispEdges">`,
-    `<rect width="${dim}" height="${totalHeight}" fill="#ffffff"/>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${px} ${px}" shape-rendering="crispEdges">`,
+    `<rect width="${px}" height="${px}" fill="#ffffff"/>`,
+    `<g transform="translate(${offsetX.toFixed(3)},0) scale(${moduleSize.toFixed(6)})">`,
     `<path d="${path}" fill="#000000"/>`,
+    `</g>`,
     labelText,
     `</svg>`,
   ].join("");
