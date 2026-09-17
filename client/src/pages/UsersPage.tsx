@@ -83,9 +83,16 @@ export function UsersPage() {
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-users">
-      <header className="mb-6 flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Пользователи</h1>
+      <h1 className="font-display text-2xl lg:text-3xl font-light mb-6">Пользователи</h1>
+
+      <div className="flex items-center justify-between flex-wrap gap-4 mb-2">
+        <div className="flex items-center gap-2 pl-4 text-sm text-muted-foreground" data-testid="users-summary">
+          <span className="inline-flex items-center gap-1.5"><Users className="w-4 h-4" /> Всего: {users.length}</span>
+          {blockedCount > 0 && (
+            <span className="inline-flex items-center gap-1.5 text-destructive">
+              <Ban className="w-4 h-4" /> заблокировано: {blockedCount}
+            </span>
+          )}
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -97,15 +104,6 @@ export function UsersPage() {
             data-testid="input-users-search"
           />
         </div>
-      </header>
-
-      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground" data-testid="users-summary">
-        <span className="inline-flex items-center gap-1.5"><Users className="w-4 h-4" /> Всего: {users.length}</span>
-        {blockedCount > 0 && (
-          <span className="inline-flex items-center gap-1.5 text-destructive">
-            <Ban className="w-4 h-4" /> заблокировано: {blockedCount}
-          </span>
-        )}
       </div>
 
       <Card className="overflow-hidden">

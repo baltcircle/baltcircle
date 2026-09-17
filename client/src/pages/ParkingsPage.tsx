@@ -62,16 +62,15 @@ export function ParkingsPage() {
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-parkings">
-      <header className="mb-6 flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">
-            Управление парковками
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Активных: {activeCount}
-            {archivedCount > 0 ? ` · ${archivedCount} в архиве` : ""}
-          </p>
-        </div>
+      <h1 className="font-display text-2xl lg:text-3xl font-light mb-6">
+        Управление парковками
+      </h1>
+
+      <div className="flex items-center justify-between flex-wrap gap-4 mb-2">
+        <p className="text-muted-foreground text-sm pl-4">
+          Активных: {activeCount}
+          {archivedCount > 0 ? ` · ${archivedCount} в архиве` : ""}
+        </p>
         <div className="flex items-center gap-2">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -87,7 +86,7 @@ export function ParkingsPage() {
             <Plus className="w-4 h-4 mr-2" /> Добавить
           </Button>
         </div>
-      </header>
+      </div>
 
       {activeCount === 0 && (
         <div

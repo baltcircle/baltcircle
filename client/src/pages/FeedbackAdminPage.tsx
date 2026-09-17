@@ -67,10 +67,9 @@ export function FeedbackAdminPage() {
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-feedback">
-      <header className="mb-6 flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Отзывы</h1>
-        </div>
+      <h1 className="font-display text-2xl lg:text-3xl font-light mb-6">Отзывы</h1>
+
+      <div className="flex items-center justify-end gap-4 mb-2">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -81,7 +80,7 @@ export function FeedbackAdminPage() {
             data-testid="input-feedback-search"
           />
         </div>
-      </header>
+      </div>
 
       <Card className="overflow-hidden">
         {feedbackQ.isLoading ? (

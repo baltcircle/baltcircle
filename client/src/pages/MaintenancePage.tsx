@@ -108,19 +108,18 @@ export function MaintenancePage() {
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-maintenance">
-      <header className="mb-6 flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Сервисные заявки</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Активных {openCount}
-          </p>
-        </div>
+      <h1 className="font-display text-2xl lg:text-3xl font-light mb-6">Сервисные заявки</h1>
+
+      <div className="flex items-center justify-between flex-wrap gap-4 mb-2">
+        <p className="text-muted-foreground text-sm pl-4">
+          Активных {openCount}
+        </p>
         <div className="flex items-center gap-2">
           <Button onClick={() => { setForm(emptyForm); setCreateOpen(true); }} data-testid="button-create-ticket">
             <Plus className="w-4 h-4 mr-2" />Создать заявку
           </Button>
         </div>
-      </header>
+      </div>
 
       {/* Filters */}
       <Card className="p-4 mb-4" data-testid="ticket-filters">
