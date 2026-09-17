@@ -7,13 +7,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fmtRelative, fmtRub } from "@/lib/format";
 import {
-  Map as MapIcon, Users as UsersIcon, Wrench,
+  Users as UsersIcon, Wrench,
   Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity, ChevronRight,
   LifeBuoy, MessageSquare, AlertOctagon, ShieldAlert, PowerOff, Unlock,
 } from "lucide-react";
 import { useSupportUnread } from "@/hooks/use-support-unread";
 import { playSupportChime, primeAudio } from "@/lib/support-notify";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
+import { OperationsMapPage } from "./OperationsMapPage";
 import { deriveMetrics, deriveAlerts, fmtNow } from "./admin/metrics";
 import { StatusChip, SummaryRow, RideStatusBadge } from "./admin/dashboard-widgets";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -193,6 +194,11 @@ export function AdminPage() {
           </div>
         </div>
       </header>
+
+      {/* ---------- Operator map (embedded from OperationsMapPage) ---------- */}
+      <section className="mb-6" data-testid="dashboard-operations-map">
+        <OperationsMapPage embedded />
+      </section>
 
       <div className="grid lg:grid-cols-3 gap-4">
         {/* ---------- Alerts ---------- */}
@@ -565,28 +571,6 @@ export function AdminPage() {
               <SummaryRow label="Операторов / админов" value={m.staffCount} />
               <SummaryRow label="Заблокировано" value={m.blockedUsers} tone={m.blockedUsers > 0 ? "rose" : undefined} />
             </div>
-          </Card>
-
-          <Card className="p-5" data-testid="dashboard-map-summary">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-display text-lg font-light flex items-center gap-2">
-                <MapIcon className="w-4 h-4 text-primary" />Карта
-              </h2>
-              <Link href="/admin/map" className="text-xs text-primary hover:underline" data-testid="link-map-detail">
-                Редактор
-              </Link>
-            </div>
-            {mapObjects.length === 0 ? (
-              <div className="text-sm text-muted-foreground py-2" data-testid="dashboard-map-empty">
-                Объекты не настроены. Добавьте маршруты и зоны в редакторе.
-              </div>
-            ) : (
-              <div className="space-y-2 text-sm">
-                <SummaryRow label="Всего объектов" value={m.mapObjects} />
-                <SummaryRow label="Маршруты" value={m.mapRoutes} />
-                <SummaryRow label="Зоны" value={m.mapZones} />
-              </div>
-            )}
           </Card>
         </div>
       </div>
