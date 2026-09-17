@@ -345,9 +345,16 @@ function escapeSvgText(s: string): string {
  * is given, the human-readable code (e.g. "BC-001") is baked into the SVG
  * itself as a text row below the QR modules — so a downloaded/printed copy
  * of this exact file always carries the code, not just the on-screen dialog
- * around it.
+ * around it. `physicalSize`, when given (e.g. "30mm"), is written onto the
+ * outer width/height instead of the plain `size` number — the viewBox and
+ * every internal coordinate stay in abstract units, so a print/export path
+ * can pin the sticker to a real physical size (a fixed square on paper)
+ * without touching the on-screen rendering math at all.
  */
-export function qrToSvg(text: string, opts?: { size?: number; quiet?: number; label?: string }): string {
+export function qrToSvg(
+  text: string,
+  opts?: { size?: number; quiet?: number; label?: string; physicalSize?: string },
+): string {
   const modules = encodeQr(text);
   const count = modules.length;
   const quiet = opts?.quiet ?? 4;
@@ -366,18 +373,23 @@ export function qrToSvg(text: string, opts?: { size?: number; quiet?: number; la
   // height for the label row below the code, and shrink the QR itself
   // uniformly (same scale on both axes, so modules stay square, never
   // stretched) to fit above it — instead of growing the canvas into a
-  // rectangle the way an unshrunk QR + label would.
-  const labelFrac = label ? 0.2 : 0;
+  // rectangle the way an unshrunk QR + label would. The fraction is kept
+  // small and the text sits low in its slot, right under the QR, so the
+  // gap between the code and the label reads as tight, not floaty.
+  const labelFrac = label ? 0.15 : 0;
   const qrAreaPx = px * (1 - labelFrac);
   const moduleSize = qrAreaPx / dim;
   const offsetX = (px - qrAreaPx) / 2;
   const labelHeightPx = px - qrAreaPx;
   const labelText = label
-    ? `<text x="${px / 2}" y="${qrAreaPx + labelHeightPx * 0.68}" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="${(labelHeightPx * 0.5).toFixed(2)}" fill="#000000">${escapeSvgText(label)}</text>`
+    ? `<text x="${px / 2}" y="${qrAreaPx + labelHeightPx * 0.8}" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="${(labelHeightPx * 0.62).toFixed(2)}" fill="#000000">${escapeSvgText(label)}</text>`
     : "";
 
+  const outSize = opts?.physicalSize ?? String(px);
+  const style = opts?.physicalSize ? ` style="width:${outSize};height:${outSize}"` : "";
+
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${px} ${px}" shape-rendering="crispEdges">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${outSize}" height="${outSize}" viewBox="0 0 ${px} ${px}" shape-rendering="crispEdges"${style}>`,
     `<rect width="${px}" height="${px}" fill="#ffffff"/>`,
     `<g transform="translate(${offsetX.toFixed(3)},0) scale(${moduleSize.toFixed(6)})">`,
     `<path d="${path}" fill="#000000"/>`,

@@ -14,12 +14,18 @@ export function BikeQrDialog({
 }: { bike: Bike | null; onClose: () => void; onCopied: () => void }) {
   const link = bike ? bikeQrLink(bike.id) : "";
 
+  // The physical sticker — QR + code — is pinned to a real 3×3 cm square via
+  // `physicalSize`, independent of the abstract `size` used for module math,
+  // so it stays exactly that size whether opened, printed, or handed to a
+  // label service.
+  const STICKER_PHYSICAL_SIZE = "30mm";
+
   const download = () => {
     if (!bike) return;
     // Bake the bike code into the downloaded file itself — it may be handed
     // off to a printer/label service that never sees this dialog's on-screen
     // text, so the code has to travel inside the SVG.
-    const svg = qrToSvg(link, { size: 512, label: bike.id });
+    const svg = qrToSvg(link, { size: 512, label: bike.id, physicalSize: STICKER_PHYSICAL_SIZE });
     const blob = new Blob([svg], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -31,7 +37,7 @@ export function BikeQrDialog({
 
   const print = () => {
     if (!bike) return;
-    const svg = qrToSvg(link, { size: 320 });
+    const svg = qrToSvg(link, { size: 320, label: bike.id, physicalSize: STICKER_PHYSICAL_SIZE });
     const w = window.open("", "_blank", "width=420,height=560");
     if (!w) return;
     // bike.id / bike.model are operator-controlled free text — escape before
@@ -39,9 +45,15 @@ export function BikeQrDialog({
     const id = escapeHtml(bike.id);
     const model = escapeHtml(bike.model);
     w.document.write(`<!doctype html><html><head><title>QR ${id}</title>
-      <style>body{font-family:sans-serif;text-align:center;padding:32px}
-      h1{font-size:20px;margin:16px 0 4px}p{color:#666;margin:0;font-size:13px}</style>
-      </head><body>${svg}<h1>${id}</h1><p>${model}</p>
+      <style>
+        @page { size: A4; margin: 20mm; }
+        body{font-family:sans-serif;text-align:center;padding:32px}
+        p{color:#666;margin:12px 0 0;font-size:13px}
+        .hint{color:#999;margin-top:24px;font-size:11px}
+        @media print { .hint{display:none} }
+      </style>
+      </head><body>${svg}<p>${model}</p>
+      <p class="hint">Перед печатью выберите масштаб 100% / «Фактический размер» (без «вписать на страницу») — иначе наклейка не совпадёт с 3×3 см.</p>
       <script>window.onload=function(){window.print();}</script></body></html>`);
     w.document.close();
   };
