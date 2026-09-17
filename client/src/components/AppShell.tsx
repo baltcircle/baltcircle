@@ -184,7 +184,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="flex-1 px-3 py-4 space-y-6 overflow-y-auto">
           <SidebarGroup
-            label={isAdmin ? "Операторская панель" : "Пользователь"}
+            label={isAdmin ? undefined : "Пользователь"}
             items={nav}
             isActive={matchActive}
           />
@@ -286,13 +286,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 }
 
 function SidebarGroup({ label, items, isActive }: {
-  label: string;
+  label?: string;
   items: NavItem[];
   isActive: (h: string) => boolean;
 }) {
   return (
     <div>
-      <div className="px-3 mb-2 text-[10px] uppercase tracking-[0.22em] opacity-60">{label}</div>
+      {label && <div className="px-3 mb-2 text-[10px] uppercase tracking-[0.22em] opacity-60">{label}</div>}
       <div className="space-y-0.5">
         {items.map(item => {
           const Icon = item.icon;

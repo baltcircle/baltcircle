@@ -14,7 +14,6 @@ import {
 import { useSupportUnread } from "@/hooks/use-support-unread";
 import { playSupportChime, primeAudio } from "@/lib/support-notify";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
-import { OperationsMapPage } from "./OperationsMapPage";
 import { deriveMetrics, deriveAlerts, fmtNow } from "./admin/metrics";
 import { StatusChip, SummaryRow, RideStatusBadge } from "./admin/dashboard-widgets";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -135,10 +134,7 @@ export function AdminPage() {
       >
         <div className="flex items-start justify-between flex-wrap gap-4">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">
-              Операторская панель · TakeRide
-            </div>
-            <div className="mt-2 flex items-center gap-3">
+            <div className="flex items-center gap-3">
               {serviceOk ? (
                 <span className="inline-flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
                   <CheckCircle2 className="w-6 h-6" />
@@ -197,11 +193,6 @@ export function AdminPage() {
           </div>
         </div>
       </header>
-
-      {/* ---------- Operator map (embedded from OperationsMapPage) ---------- */}
-      <section className="mb-6" data-testid="dashboard-operations-map">
-        <OperationsMapPage embedded />
-      </section>
 
       <div className="grid lg:grid-cols-3 gap-4">
         {/* ---------- Alerts ---------- */}
@@ -298,9 +289,10 @@ export function AdminPage() {
         </Card>
       </div>
 
-      {/* ---------- lock_open_unattended (2026-09 audit: late/unsolicited positive unlock echo, manual ack) ---------- */}
+      {/* ---------- Compact alert toasts: 3 per row on large screens ---------- */}
+      {/* lock_open_unattended (2026-09 audit: late/unsolicited positive unlock echo, manual ack) */}
       <div className="grid lg:grid-cols-3 gap-4 mt-4">
-        <Card className="p-5 lg:col-span-3" data-testid="dashboard-unlocked-alerts">
+        <Card className="p-5" data-testid="dashboard-unlocked-alerts">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-lg font-light flex items-center gap-2">
               <Unlock className={`w-4 h-4 ${unattendedUnlockAlerts.length ? "text-rose-600" : "text-muted-foreground"}`} />
@@ -348,11 +340,9 @@ export function AdminPage() {
             </div>
           )}
         </Card>
-      </div>
 
-      {/* ---------- Fall-alarm alerts (OMNI lock alarm code 2, manual ack) ---------- */}
-      <div className="grid lg:grid-cols-3 gap-4 mt-4">
-        <Card className="p-5 lg:col-span-3" data-testid="dashboard-fall-alerts">
+        {/* Fall-alarm alerts (OMNI lock alarm code 2, manual ack) */}
+        <Card className="p-5" data-testid="dashboard-fall-alerts">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-lg font-light flex items-center gap-2">
               <AlertOctagon className={`w-4 h-4 ${fallAlerts.length ? "text-rose-500" : "text-muted-foreground"}`} />
@@ -400,11 +390,9 @@ export function AdminPage() {
             </div>
           )}
         </Card>
-      </div>
 
-      {/* ---------- Кража велосипеда (auto-"lost" после 6 подряд alarm code=1, со звуком, manual ack) ---------- */}
-      <div className="grid lg:grid-cols-3 gap-4 mt-4">
-        <Card className="p-5 lg:col-span-3" data-testid="dashboard-theft-alerts">
+        {/* Кража велосипеда (auto-"lost" после 6 подряд alarm code=1, со звуком, manual ack) */}
+        <Card className="p-5" data-testid="dashboard-theft-alerts">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-lg font-light flex items-center gap-2">
               <ShieldAlert className={`w-4 h-4 ${theftAlerts.length ? "text-rose-600" : "text-muted-foreground"}`} />
@@ -452,11 +440,9 @@ export function AdminPage() {
             </div>
           )}
         </Card>
-      </div>
 
-      {/* ---------- Auto-offline alerts (low lock battery, manual ack) ---------- */}
-      <div className="grid lg:grid-cols-3 gap-4 mt-4">
-        <Card className="p-5 lg:col-span-3" data-testid="dashboard-offline-alerts">
+        {/* Auto-offline alerts (low lock battery, manual ack) */}
+        <Card className="p-5" data-testid="dashboard-offline-alerts">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-lg font-light flex items-center gap-2">
               <PowerOff className={`w-4 h-4 ${offlineAlerts.length ? "text-slate-500" : "text-muted-foreground"}`} />
