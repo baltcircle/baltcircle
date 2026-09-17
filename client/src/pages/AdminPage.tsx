@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { fmtRelative, fmtRub } from "@/lib/format";
 import {
   Users as UsersIcon, Wrench,
-  Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity, ChevronRight,
+  Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity,
   LifeBuoy, MessageSquare, AlertOctagon, ShieldAlert, PowerOff, Unlock,
 } from "lucide-react";
 import { useSupportUnread } from "@/hooks/use-support-unread";
@@ -200,52 +200,8 @@ export function AdminPage() {
         <OperationsMapPage embedded />
       </section>
 
+      {/* ---------- Compact alert toasts: 3 per row on large screens ---------- */}
       <div className="grid lg:grid-cols-3 gap-4">
-        {/* ---------- Alerts ---------- */}
-        <Card className="p-5 lg:col-span-2" data-testid="dashboard-alerts">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display text-lg font-light flex items-center gap-2">
-              <AlertTriangle className={`w-4 h-4 ${alerts.length ? "text-amber-500" : "text-muted-foreground"}`} />
-              Требует внимания
-            </h2>
-            {alerts.length > 0 && <Badge variant="outline">{alerts.length}</Badge>}
-          </div>
-          {loading ? (
-            <div className="text-sm text-muted-foreground py-6">Загружаем данные…</div>
-          ) : alerts.length === 0 ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground py-6" data-testid="dashboard-alerts-empty">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              Активных проблем нет — флот работает штатно.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {alerts.map(a => (
-                <Link
-                  key={a.id}
-                  href={a.href}
-                  data-testid={`dashboard-alert-${a.id}`}
-                  className="flex items-center gap-3 rounded-lg border border-card-border p-3 hover-elevate"
-                >
-                  <span
-                    className={`flex items-center justify-center w-8 h-8 rounded-full shrink-0 ${
-                      a.severity === "critical"
-                        ? "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
-                        : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                    }`}
-                  >
-                    <AlertTriangle className="w-4 h-4" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium truncate">{a.title}</div>
-                    <div className="text-xs text-muted-foreground truncate">{a.detail}</div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                </Link>
-              ))}
-            </div>
-          )}
-        </Card>
-
         {/* ---------- Support inbox summary ---------- */}
         <Card className="p-5" data-testid="dashboard-support-inbox">
           <div className="flex items-center justify-between mb-3">
@@ -293,11 +249,8 @@ export function AdminPage() {
             </div>
           )}
         </Card>
-      </div>
 
-      {/* ---------- Compact alert toasts: 3 per row on large screens ---------- */}
-      {/* lock_open_unattended (2026-09 audit: late/unsolicited positive unlock echo, manual ack) */}
-      <div className="grid lg:grid-cols-3 gap-4 mt-4">
+        {/* lock_open_unattended (2026-09 audit: late/unsolicited positive unlock echo, manual ack) */}
         <Card className="p-5" data-testid="dashboard-unlocked-alerts">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-lg font-light flex items-center gap-2">
