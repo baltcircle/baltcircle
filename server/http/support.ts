@@ -16,6 +16,8 @@ import {
 } from "../storage/object-storage";
 import { logger } from "../logger";
 
+const pinSupportConversationSchema = z.object({ pinned: z.boolean() });
+
 // -------- SSE fan-out для поддержки --------
 // Event name = conversation_id (число как строка) → пуш идёт только владельцу
 // разговора и активному оператору, слушающему этот же id.
@@ -386,6 +388,19 @@ export function registerSupportChatRoutes(app: Express): void {
     if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "Неверный id" });
     await storage.markSupportRead(id, "operator");
     res.json({ ok: true });
+  });
+
+  // Закрепить/снять закрепление чата — закреплённые всегда выше в инбоксе.
+  app.post("/api/admin/support/chats/:id/pin", requireRole("operator", "admin"), async (req, res) => {
+    const id = Number.parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "Неверный id" });
+    const parsed = pinSupportConversationSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Укажите pinned: boolean" });
+    const conv = await storage.getSupportConversation(id);
+    if (!conv) return res.status(404).json({ error: "Разговор не найден" });
+    const updated = await storage.setSupportConversationPinned(id, parsed.data.pinned);
+    supportEvents.emit("inbox", { conversationId: id });
+    res.json({ ok: true, conversation: updated });
   });
 
   // SSE для оператора: разговор.

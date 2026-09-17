@@ -2,11 +2,11 @@ import type { AdminSupportConversationRow } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Phone } from "lucide-react";
+import { Phone, Pin } from "lucide-react";
 import { fmtRelative } from "@/lib/format";
 
 export function ChatList({
-  rows, filtered, isLoading, query, setQuery, selectedId, setSelectedId,
+  rows, filtered, isLoading, query, setQuery, selectedId, setSelectedId, onTogglePin,
 }: {
   rows: AdminSupportConversationRow[];
   filtered: AdminSupportConversationRow[];
@@ -15,6 +15,7 @@ export function ChatList({
   setQuery: (v: string) => void;
   selectedId: number | null;
   setSelectedId: (id: number) => void;
+  onTogglePin: (id: number, pinned: boolean) => void;
 }) {
   return (
     <Card className="p-2 flex flex-col overflow-hidden" data-testid="admin-support-chat-list">
@@ -38,12 +39,17 @@ export function ChatList({
           filtered.map((r) => {
             const active = r.id === selectedId;
             const unread = r.operatorUnreadCount ?? 0;
+            const pinned = r.pinnedAt != null;
             return (
               <button
                 key={r.id}
                 onClick={() => setSelectedId(r.id)}
                 className={`w-full text-left p-2.5 rounded-md transition-colors ${
-                  active ? "bg-primary/10 border border-primary/40" : "hover:bg-muted/50 border border-transparent"
+                  active
+                    ? "bg-primary/10 border border-primary/40"
+                    : pinned
+                      ? "bg-amber-500/5 hover:bg-amber-500/10 border border-transparent"
+                      : "hover:bg-muted/50 border border-transparent"
                 }`}
                 data-testid={`admin-support-chat-item-${r.id}`}
               >
@@ -54,6 +60,25 @@ export function ChatList({
                   {unread > 0 && (
                     <Badge variant="default" className="text-[10px] h-5">{unread}</Badge>
                   )}
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onTogglePin(r.id, !pinned);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter" && e.key !== " ") return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onTogglePin(r.id, !pinned);
+                    }}
+                    className="p-1 -m-1 rounded hover:bg-muted shrink-0"
+                    title={pinned ? "Открепить чат" : "Закрепить чат"}
+                    data-testid={`button-pin-chat-${r.id}`}
+                  >
+                    <Pin className={`w-3.5 h-3.5 ${pinned ? "text-primary fill-current" : "text-muted-foreground"}`} />
+                  </span>
                 </div>
                 {r.userPhone && (
                   <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">

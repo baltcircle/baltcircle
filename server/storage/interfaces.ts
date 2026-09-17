@@ -193,6 +193,7 @@ export interface ISupportStorage {
   setSupportMode(conversationId: number, mode: "bot" | "human"): Promise<void>;
   listAllSupportConversations(): Promise<AdminSupportConversationRow[]>;
   getSupportConversation(id: number): Promise<SupportConversation | undefined>;
+  setSupportConversationPinned(id: number, pinned: boolean): Promise<SupportConversation | undefined>;
 }
 
 export interface IBikeStorage {

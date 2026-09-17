@@ -83,9 +83,9 @@ export function UsersPage() {
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-users">
-      <h1 className="font-display text-2xl lg:text-3xl font-light mb-6">Пользователи</h1>
+      <h1 className="font-display text-2xl lg:text-3xl font-light mb-6 text-center">Пользователи</h1>
 
-      <div className="flex items-center justify-between flex-wrap gap-4 mb-2">
+      <div className="flex items-end justify-between flex-wrap gap-4 mb-2">
         <div className="flex items-center gap-2 pl-4 text-sm text-muted-foreground" data-testid="users-summary">
           <span className="inline-flex items-center gap-1.5"><Users className="w-4 h-4" /> Всего: {users.length}</span>
           {blockedCount > 0 && (

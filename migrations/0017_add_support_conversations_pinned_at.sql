@@ -1,0 +1,1 @@
+ALTER TABLE "support_conversations" ADD COLUMN "pinned_at" bigint;

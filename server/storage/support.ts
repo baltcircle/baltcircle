@@ -140,13 +140,20 @@ export function SupportMixin<TBase extends Constructor>(Base: TBase) {
       }
     }
 
-    /** Admin inbox: all conversations, newest activity first, joined with rider profile. */
+    /**
+     * Admin inbox: all conversations, joined with rider profile.
+     * Закреплённые (pinned_at IS NOT NULL) — всегда первой группой, внутри
+     * каждой группы — по свежести последнего сообщения. Так новое сообщение
+     * поднимает чат в начало своей группы, а закреплённые не тонут среди
+     * обычных при массовом наплыве сообщений.
+     */
     async listAllSupportConversations(): Promise<AdminSupportConversationRow[]> {
       const rows = await db.execute(sql`
         SELECT
           c.id, c.user_id AS "userId", c.mode, c.last_message_at AS "lastMessageAt",
           c.user_unread_count AS "userUnreadCount",
           c.operator_unread_count AS "operatorUnreadCount",
+          c.pinned_at AS "pinnedAt",
           c.created_at AS "createdAt",
           u.name AS "userName", u.phone AS "userPhone",
           (
@@ -157,7 +164,7 @@ export function SupportMixin<TBase extends Constructor>(Base: TBase) {
           ) AS "lastMessagePreview"
         FROM support_conversations c
         LEFT JOIN users u ON u.id = c.user_id
-        ORDER BY COALESCE(c.last_message_at, c.created_at) DESC
+        ORDER BY (c.pinned_at IS NULL) ASC, COALESCE(c.last_message_at, c.created_at) DESC
       `);
       return (rows as any).rows as AdminSupportConversationRow[];
     }
@@ -165,6 +172,14 @@ export function SupportMixin<TBase extends Constructor>(Base: TBase) {
     async getSupportConversation(id: number): Promise<SupportConversation | undefined> {
       return (await db.select().from(supportConversations)
         .where(eq(supportConversations.id, id)).limit(1))[0] as SupportConversation | undefined;
+    }
+
+    /** Закрепить/снять закрепление чата в операторском инбоксе. */
+    async setSupportConversationPinned(id: number, pinned: boolean): Promise<SupportConversation | undefined> {
+      return (await db.update(supportConversations)
+        .set({ pinnedAt: pinned ? Date.now() : null })
+        .where(eq(supportConversations.id, id))
+        .returning())[0] as SupportConversation | undefined;
     }
   };
 }

@@ -108,9 +108,9 @@ export function MaintenancePage() {
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-maintenance">
-      <h1 className="font-display text-2xl lg:text-3xl font-light mb-6">Сервисные заявки</h1>
+      <h1 className="font-display text-2xl lg:text-3xl font-light mb-6 text-center">Сервисные заявки</h1>
 
-      <div className="flex items-center justify-between flex-wrap gap-4 mb-2">
+      <div className="flex items-end justify-between flex-wrap gap-4 mb-2">
         <p className="text-muted-foreground text-sm pl-4">
           Активных {openCount}
         </p>

@@ -120,6 +120,13 @@
       "when": 1789126220562,
       "tag": "0016_nosy_shriek",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789638304610,
+      "tag": "0017_add_support_conversations_pinned_at",
+      "breakpoints": true
     }
   ]
 }

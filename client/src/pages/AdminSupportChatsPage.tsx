@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { AdminSupportConversationRow } from "@shared/schema";
 import { useSupportUnread } from "@/hooks/use-support-unread";
 import { Card } from "@/components/ui/card";
-import { LifeBuoy, MessageSquare } from "lucide-react";
+import { MessageSquare } from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { INBOX_KEY } from "./support-chats/utils";
 import { ChatList } from "./support-chats/ChatList";
 import { AdminChatPanel } from "./support-chats/AdminChatPanel";
@@ -29,8 +30,6 @@ export function AdminSupportChatsPage() {
     });
   }, [rows, query]);
 
-  const totalUnread = rows.reduce((s, r) => s + (r.operatorUnreadCount ?? 0), 0);
-
   // Автовыбор первого при загрузке
   useEffect(() => {
     if (selectedId == null && rows.length > 0) {
@@ -38,20 +37,15 @@ export function AdminSupportChatsPage() {
     }
   }, [rows, selectedId]);
 
+  const pinMut = useMutation<unknown, Error, { id: number; pinned: boolean }>({
+    mutationFn: async ({ id, pinned }) =>
+      (await apiRequest("POST", `/api/admin/support/chats/${id}/pin`, { pinned })).json(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: INBOX_KEY }),
+  });
+
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-support-chats">
-      <header className="mb-4 flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Поддержка</div>
-          <h1 className="font-display text-2xl lg:text-3xl font-light mt-1 flex items-center gap-2">
-            <LifeBuoy className="w-6 h-6 text-primary" />
-            Обращения
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            {rows.length} чатов, {totalUnread} новых сообщений.
-          </p>
-        </div>
-      </header>
+      <h1 className="font-display text-2xl lg:text-3xl font-light mb-6 text-center">Обращения</h1>
 
       {/* h-[70vh] (важно — фиксированная, не min-h) на lg: без неё grid растягивался по
           содержимому чата, и вся страница тянулась вместо внутреннего скролла в
@@ -65,6 +59,7 @@ export function AdminSupportChatsPage() {
           setQuery={setQuery}
           selectedId={selectedId}
           setSelectedId={setSelectedId}
+          onTogglePin={(id, pinned) => pinMut.mutate({ id, pinned })}
         />
 
         {/* Панель чата */}

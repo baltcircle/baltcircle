@@ -87,7 +87,7 @@ export function RidesAdminPage() {
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-rides">
-      <h1 className="font-display text-2xl lg:text-3xl font-light mb-6">Поездки</h1>
+      <h1 className="font-display text-2xl lg:text-3xl font-light mb-6 text-center">Поездки</h1>
 
       {/* ---------- Tabs / filters ---------- */}
       <div className="flex items-center justify-between flex-wrap gap-4 mb-2">

@@ -1304,6 +1304,10 @@ export const supportConversations = pgTable("support_conversations", {
   lastMessageAt: bigint("last_message_at", { mode: "number" }),
   userUnreadCount: integer("user_unread_count").notNull().default(0),
   operatorUnreadCount: integer("operator_unread_count").notNull().default(0),
+  // NULL — не закреплён; иначе момент закрепления оператором. Закреплённые
+  // чаты всегда показываются в инбоксе выше обычных, независимо от времени
+  // последнего сообщения.
+  pinnedAt: bigint("pinned_at", { mode: "number" }),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 }, (t) => [
   index("idx_support_conv_user").on(t.userId),

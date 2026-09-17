@@ -83,11 +83,11 @@ export function BikesPage() {
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-bikes">
-      <h1 className="font-display text-2xl lg:text-3xl font-light mb-6">
+      <h1 className="font-display text-2xl lg:text-3xl font-light mb-6 text-center">
         Управление велосипедами
       </h1>
 
-      <div className="flex items-center justify-between flex-wrap gap-4 mb-2">
+      <div className="flex items-end justify-between flex-wrap gap-4 mb-2">
         <p className="text-muted-foreground text-sm pl-4">
           Активных: {bikes.filter((b) => b.status !== "archived").length}
           {archivedCount > 0 ? ` · ${archivedCount} в архиве` : ""}
