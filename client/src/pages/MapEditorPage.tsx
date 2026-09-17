@@ -30,7 +30,7 @@ export function MapEditorPage() {
   const [name, setName] = useState("");
   const [color, setColor] = useState(TYPE_OPTIONS[0].color);
   const [draft, setDraft] = useState<[number, number][]>([]);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const { geoCenter, handleGeolocate } = useGeolocation();
 
@@ -219,37 +219,6 @@ export function MapEditorPage() {
         <MapPin className="w-5 h-5" />
       </button>
 
-      {/* ── Верхний тулбар: выбор типа ─────────────────────────────────────── */}
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 w-[min(720px,calc(100%-24px))]">
-        <Card className="p-2 flex items-center gap-1 shadow-lg backdrop-blur bg-background/95">
-          {TYPE_OPTIONS.map((o) => {
-            const active = o.id === type;
-            return (
-              <button
-                key={o.id}
-                onClick={() => chooseType(o.id)}
-                data-testid={`editor-type-${o.id}`}
-                title={o.desc}
-                className={[
-                  "flex-1 flex flex-col items-center gap-1 rounded-md px-2 py-2 text-[11px] transition",
-                  active ? "bg-primary/10 border border-primary" : "border border-transparent hover:bg-muted",
-                ].join(" ")}
-              >
-                <span className="flex items-center gap-1.5">
-                  {o.kind === "route"
-                    ? <RouteIcon className="w-3.5 h-3.5" style={{ color: o.color }} />
-                    : <Hexagon className="w-3.5 h-3.5" style={{ color: o.color }} />}
-                  <span className="font-medium leading-tight">{o.short}</span>
-                </span>
-                <span className="text-[9px] text-muted-foreground leading-tight text-center hidden md:block">
-                  {o.desc.split(" — ")[1] ?? ""}
-                </span>
-              </button>
-            );
-          })}
-        </Card>
-      </div>
-
       {/* ── Нижний плавающий тулбар: рисование ─────────────────────────────── */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 w-[min(760px,calc(100%-24px))]">
         {editingId !== null && (
@@ -282,6 +251,32 @@ export function MapEditorPage() {
               data-testid="editor-color"
               title="Цвет объекта"
             />
+          </div>
+
+          {/* Выбор типа объекта — перенесено сюда из верхнего тулбара, только
+           * иконка + короткое название, без мелких подписей-описаний
+           * (описание доступно по наведению через title). */}
+          <div className="flex items-center gap-1 mb-3">
+            {TYPE_OPTIONS.map((o) => {
+              const active = o.id === type;
+              return (
+                <button
+                  key={o.id}
+                  onClick={() => chooseType(o.id)}
+                  data-testid={`editor-type-${o.id}`}
+                  title={o.desc}
+                  className={[
+                    "flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-xs transition",
+                    active ? "bg-primary/10 border border-primary" : "border border-transparent hover:bg-muted",
+                  ].join(" ")}
+                >
+                  {o.kind === "route"
+                    ? <RouteIcon className="w-3.5 h-3.5" style={{ color: o.color }} />
+                    : <Hexagon className="w-3.5 h-3.5" style={{ color: o.color }} />}
+                  <span className="font-medium leading-tight">{o.short}</span>
+                </button>
+              );
+            })}
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2">
