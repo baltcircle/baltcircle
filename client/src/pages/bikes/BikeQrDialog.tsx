@@ -14,11 +14,12 @@ export function BikeQrDialog({
 }: { bike: Bike | null; onClose: () => void; onCopied: () => void }) {
   const link = bike ? bikeQrLink(bike.id) : "";
 
-  // The physical sticker — QR + code — is pinned to a real 3×3 cm square via
+  // The physical sticker — QR + code — is pinned to a real square via
   // `physicalSize`, independent of the abstract `size` used for module math,
   // so it stays exactly that size whether opened, printed, or handed to a
-  // label service.
-  const STICKER_PHYSICAL_SIZE = "30mm";
+  // label service. Set slightly above the nominal 3×3 cm cut size to
+  // compensate for the ~2mm print-scale shrink observed on real printers.
+  const STICKER_PHYSICAL_SIZE = "32mm";
 
   const download = () => {
     if (!bike) return;
@@ -53,7 +54,7 @@ export function BikeQrDialog({
         @media print { .hint{display:none} }
       </style>
       </head><body>${svg}<p>${model}</p>
-      <p class="hint">Перед печатью выберите масштаб 100% / «Фактический размер» (без «вписать на страницу») — иначе наклейка не совпадёт с 3×3 см.</p>
+      <p class="hint">Перед печатью выберите масштаб 100% / «Фактический размер» (без «вписать на страницу») — иначе наклейка не совпадёт с 3,2×3,2 см.</p>
       <script>window.onload=function(){window.print();}</script></body></html>`);
     w.document.close();
   };

@@ -384,11 +384,11 @@ export function qrToSvg(
   const offsetX = (px - qrAreaPx) / 2;
   const quietPx = quiet * moduleSize;
   const darkBottomPx = qrAreaPx - quietPx; // bottom edge of the actual dark modules
-  const gapPx = moduleSize * 0.18; // tight explicit breathing room — well under a full quiet zone
+  const gapPx = moduleSize * 0.1; // tight explicit breathing room — well under a full quiet zone
   const labelTopPx = darkBottomPx + gapPx;
   const labelHeightPx = px - labelTopPx;
   const labelText = label
-    ? `<text x="${px / 2}" y="${labelTopPx + labelHeightPx * 0.7}" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="${(labelHeightPx * 0.52).toFixed(2)}" fill="#000000">${escapeSvgText(label)}</text>`
+    ? `<text x="${px / 2}" y="${labelTopPx + labelHeightPx * 0.72}" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="${(labelHeightPx * 0.55).toFixed(2)}" fill="#000000">${escapeSvgText(label)}</text>`
     : "";
   // Cut-guide frame: a thin outline right at the physical edge of the
   // sticker, so a printed copy shows exactly where the 3×3 cm square ends.
