@@ -265,7 +265,7 @@ export function MapEditorPage() {
                   data-testid={`editor-type-${o.id}`}
                   title={o.desc}
                   className={[
-                    "flex items-center justify-center gap-1 rounded-md px-1.5 py-1.5 text-[11px] whitespace-nowrap transition",
+                    "flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs whitespace-nowrap transition",
                     active ? "bg-primary/10 border border-primary" : "border border-transparent hover:bg-muted",
                   ].join(" ")}
                 >
