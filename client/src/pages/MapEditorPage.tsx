@@ -9,7 +9,6 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useGeolocation } from "./map/use-geolocation";
 import {
-  Save,
   Eraser,
   Route as RouteIcon,
   Hexagon,
@@ -239,7 +238,7 @@ export function MapEditorPage() {
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={`Название (необязательно) · напр. «${activeType.kind === "zone" ? "Пляж Светлогорска" : "Пионерский → Янтарный"}»`}
+              placeholder="Название (необязательно)"
               className="h-9 text-sm"
               data-testid="editor-name"
             />
@@ -253,10 +252,10 @@ export function MapEditorPage() {
             />
           </div>
 
-          {/* Выбор типа объекта — перенесено сюда из верхнего тулбара, только
-           * иконка + короткое название, без мелких подписей-описаний
-           * (описание доступно по наведению через title). */}
-          <div className="flex items-center gap-1 mb-3">
+          {/* Один ряд: тип объекта (иконка + короткое название, без подписей
+           * под текстом — описание доступно по наведению через title) и
+           * кнопки действий, сжаты, чтобы уместиться в одну строку. */}
+          <div className="flex items-center gap-1">
             {TYPE_OPTIONS.map((o) => {
               const active = o.id === type;
               return (
@@ -266,21 +265,19 @@ export function MapEditorPage() {
                   data-testid={`editor-type-${o.id}`}
                   title={o.desc}
                   className={[
-                    "flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-xs transition",
+                    "flex items-center justify-center gap-1 rounded-md px-1.5 py-1.5 text-[11px] whitespace-nowrap transition",
                     active ? "bg-primary/10 border border-primary" : "border border-transparent hover:bg-muted",
                   ].join(" ")}
                 >
                   {o.kind === "route"
-                    ? <RouteIcon className="w-3.5 h-3.5" style={{ color: o.color }} />
-                    : <Hexagon className="w-3.5 h-3.5" style={{ color: o.color }} />}
+                    ? <RouteIcon className="w-3.5 h-3.5 shrink-0" style={{ color: o.color }} />
+                    : <Hexagon className="w-3.5 h-3.5 shrink-0" style={{ color: o.color }} />}
                   <span className="font-medium leading-tight">{o.short}</span>
                 </button>
               );
             })}
-          </div>
 
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 ml-auto">
               <Button
                 type="button"
                 variant="outline"
@@ -309,9 +306,7 @@ export function MapEditorPage() {
                 onClick={handleSave}
                 disabled={saveM.isPending || !canSave}
                 data-testid="editor-save"
-                className="min-w-[110px]"
               >
-                <Save className="w-4 h-4 mr-1.5" />
                 {saveM.isPending ? "Сохр…" : (editingId !== null ? "Обновить" : "Сохранить")}
               </Button>
             </div>
