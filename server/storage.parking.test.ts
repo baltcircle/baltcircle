@@ -1,9 +1,10 @@
 // Tests for createParking()'s allocation-race fix (audit: слой данных,
 // "nextParkingId() — полный scan и гонка"). Drizzle is mocked, so this
 // exercises the TS-side contract: an explicit id conflict is translated to a
-// friendly domain error, and an auto-generated P-NN candidate that collides
-// with a just-inserted row (simulating a concurrent create) retries with the
-// next free slot instead of failing or double-allocating.
+// friendly domain error, and an auto-generated <ГородCode>-NN candidate
+// (Калининград -> K-NN) that collides with a just-inserted row (simulating a
+// concurrent create) retries with the next free slot instead of failing or
+// double-allocating.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Parking } from "@shared/schema";
 
@@ -81,28 +82,43 @@ describe("createParking — explicit id", () => {
   });
 });
 
-describe("createParking — auto-generated P-NN id (race-safety)", () => {
+describe("createParking — auto-generated <ГородCode>-NN id (race-safety)", () => {
   it("retries the next free slot when a concurrent create just took the first candidate", async () => {
-    // 1st nextParkingId() scan: no parkings yet -> candidate "P-01".
-    // Insert of "P-01" fails: another request won the race and took it first.
-    // 2nd nextParkingId() scan now sees "P-01" taken -> candidate "P-02".
-    // Insert of "P-02" succeeds. Final getParking("P-02") returns the row.
-    selectQueue = [[], [{ id: "P-01" }], [parkingRow({ id: "P-02" })]];
+    // baseInput.city is "Калининград" -> prefix "K".
+    // 1st nextParkingId() scan: no parkings yet -> candidate "K-01".
+    // Insert of "K-01" fails: another request won the race and took it first.
+    // 2nd nextParkingId() scan now sees "K-01" taken -> candidate "K-02".
+    // Insert of "K-02" succeeds. Final getParking("K-02") returns the row.
+    selectQueue = [[], [{ id: "K-01" }], [parkingRow({ id: "K-02" })]];
     insertQueue = [UNIQUE_VIOLATION, undefined];
 
     const result = await storage.createParking({ ...baseInput });
 
-    expect(result).toEqual({ parking: parkingRow({ id: "P-02" }) });
+    expect(result).toEqual({ parking: parkingRow({ id: "K-02" }) });
     expect(insertQueue).toHaveLength(0); // both insert attempts were consumed
   });
 
-  it("allocates P-01 directly when the table is empty", async () => {
-    selectQueue = [[], [parkingRow({ id: "P-01" })]];
+  it("allocates K-01 directly when the table is empty (Калининград prefix)", async () => {
+    selectQueue = [[], [parkingRow({ id: "K-01" })]];
     insertQueue = [undefined];
 
     const result = await storage.createParking({ ...baseInput });
 
-    expect(result).toEqual({ parking: parkingRow({ id: "P-01" }) });
+    expect(result).toEqual({ parking: parkingRow({ id: "K-01" }) });
+  });
+
+  it("uses the Зеленоградск prefix (Z) instead of Калининград's when that city is picked", async () => {
+    // Existing rows are for other cities/prefixes and must not affect the
+    // Z- count: only "Z-01".. "Z-06" mean 6 already added in Зеленоградск.
+    selectQueue = [
+      ["K-01", "K-02", "Z-01", "Z-02", "Z-03", "Z-04", "Z-05", "Z-06"].map((id) => ({ id })),
+      [parkingRow({ id: "Z-07", city: "Зеленоградск" })],
+    ];
+    insertQueue = [undefined];
+
+    const result = await storage.createParking({ ...baseInput, city: "Зеленоградск" });
+
+    expect(result).toEqual({ parking: parkingRow({ id: "Z-07", city: "Зеленоградск" }) });
   });
 
   it("gives up with a domain error after exhausting retry attempts instead of looping forever", async () => {

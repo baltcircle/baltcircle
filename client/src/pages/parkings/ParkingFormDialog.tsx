@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import type { Parking } from "@shared/schema";
-import { PARKING_CITIES } from "@shared/schema";
+import type { Parking, ParkingCity } from "@shared/schema";
+import { PARKING_CITIES, nextParkingCode } from "@shared/schema";
 import { realToMap } from "@shared/geo";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -36,7 +36,6 @@ export function ParkingFormDialog({
     if (!open) return;
     setFormError(null);
     setForm(editing ? {
-      id: editing.id,
       name: editing.name,
       city: editing.city ?? "",
       capacity: String(editing.capacity),
@@ -71,6 +70,14 @@ export function ParkingFormDialog({
     draftParking,
     ...parkings.filter((p) => !p.archivedAt && p.id !== editing?.id),
   ];
+
+  // Живой предпросмотр кода, который присвоит сервер при сохранении — считаем
+  // по тому же списку парковок и той же функции (nextParkingCode), что и
+  // сервер, так что предпросмотр обычно совпадает с итоговым кодом; финальное
+  // слово всё равно за сервером на момент фактической записи (гонки/архив).
+  const previewCode = !editing && form.city
+    ? nextParkingCode(form.city as ParkingCity, parkings.map((p) => p.id))
+    : null;
 
   const saveMut = useMutation({
     mutationFn: async (payload: { editingId: string | null; body: any }) => {
@@ -130,7 +137,7 @@ export function ParkingFormDialog({
     if (editing) {
       saveMut.mutate({ editingId: editing.id, body: common });
     } else {
-      saveMut.mutate({ editingId: null, body: { ...(form.id.trim() ? { id: form.id.trim() } : {}), ...common } });
+      saveMut.mutate({ editingId: null, body: common });
     }
   };
 
@@ -158,11 +165,11 @@ export function ParkingFormDialog({
 
           <div className="space-y-3">
             {!editing && (
-              <Field label="Код / ID (необязательно)">
+              <Field label="Код (авто, по городу)">
                 <Input
-                  value={form.id}
-                  onChange={(e) => setForm((f) => ({ ...f, id: e.target.value.toUpperCase() }))}
-                  placeholder="Авто (P-16) или свой"
+                  value={previewCode ?? "Сначала выберите город"}
+                  readOnly
+                  disabled
                   data-testid="input-parking-id"
                 />
               </Field>

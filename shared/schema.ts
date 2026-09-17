@@ -609,6 +609,29 @@ export type ParkingStatus = (typeof PARKING_STATUSES)[number];
 export const PARKING_CITIES = ["Калининград", "Зеленоградск", "Пионерский", "Балтийск", "Светлогорск"] as const;
 export type ParkingCity = (typeof PARKING_CITIES)[number];
 
+// Транслитерированная первая буква города — префикс кода парковки (K-07,
+// Z-07, ...). Новый город в PARKING_CITIES => дописать и сюда.
+export const PARKING_CITY_CODE: Record<ParkingCity, string> = {
+  "Калининград": "K",
+  "Зеленоградск": "Z",
+  "Пионерский": "P",
+  "Балтийск": "B",
+  "Светлогорск": "S",
+};
+
+// Следующий свободный код парковки для города: префикс города + порядковый
+// номер (минимум 2 цифры, растёт дальше сам при переполнении). Чистая
+// функция без обращения к БД — сервер использует её для реальной выдачи
+// кода, а форма на клиенте — для живого предпросмотра по тому же списку
+// парковок, так что обе стороны считают идентично.
+export function nextParkingCode(city: ParkingCity, existingIds: string[]): string {
+  const prefix = PARKING_CITY_CODE[city];
+  const taken = new Set(existingIds.map((id) => id.toUpperCase()));
+  let n = 1;
+  while (taken.has(`${prefix}-${String(n).padStart(2, "0")}`)) n++;
+  return `${prefix}-${String(n).padStart(2, "0")}`;
+}
+
 // Admin: create a parking point. Coordinates are required (picked on the map or
 // typed manually). Capacity defaults to a sensible rack size; occupied starts
 // at 0 for a freshly provisioned point.

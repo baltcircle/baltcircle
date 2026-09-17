@@ -1,5 +1,5 @@
-import { parkings, bikes, zones } from "@shared/schema";
-import type { Parking, ZoneRow, AdminCreateParkingInput, AdminUpdateParkingInput, Bike } from "@shared/schema";
+import { parkings, bikes, zones, nextParkingCode } from "@shared/schema";
+import type { Parking, ZoneRow, AdminCreateParkingInput, AdminUpdateParkingInput, Bike, ParkingCity } from "@shared/schema";
 import { eq, count } from "drizzle-orm";
 import { db } from "../db/bootstrap";
 import type { Constructor } from "./mixin";
@@ -39,23 +39,23 @@ export function ParkingMixin<TBase extends Constructor>(Base: TBase) {
       return (await db.select().from(parkings).where(eq(parkings.id, id)).limit(1))[0] as Parking | undefined;
     }
 
-    // Generate the next free P-NN id when the operator doesn't supply one. Just
-    // a candidate picker — NOT a reservation. createParking() below is the one
+    // Generate the next free <ГородCode>-NN id when the operator doesn't supply
+    // one — К(алининград)=K, З(еленоградск)=Z, П(ионерский)=P, Б(алтийск)=B,
+    // С(ветлогорск)=S, номер по порядку добавления в этом городе. Just a
+    // candidate picker — NOT a reservation. createParking() below is the one
     // responsible for making the actual claim race-safe.
     //
     // Public rather than private: createParking references this through an
     // explicit `this: {...}` structural parameter type (same rule as
     // optStr/isUniqueViolation in base.ts — a private member can't satisfy a
     // plain object type from outside the declaring method).
-    async nextParkingId(): Promise<string> {
+    async nextParkingId(city: ParkingCity): Promise<string> {
       const ids = ((await db.select({ id: parkings.id }).from(parkings)) as { id: string }[]).map((r) => r.id);
-      let n = 1;
-      while (ids.includes(`P-${String(n).padStart(2, "0")}`)) n++;
-      return `P-${String(n).padStart(2, "0")}`;
+      return nextParkingCode(city, ids);
     }
 
     async createParking(
-      this: { optStr(v: string | undefined): string | null; isUniqueViolation(err: unknown): boolean; nextParkingId(): Promise<string>; getParking(id: string): Promise<Parking | undefined> },
+      this: { optStr(v: string | undefined): string | null; isUniqueViolation(err: unknown): boolean; nextParkingId(city: ParkingCity): Promise<string>; getParking(id: string): Promise<Parking | undefined> },
       input: AdminCreateParkingInput,
     ) {
       const now = Date.now();
@@ -93,13 +93,13 @@ export function ParkingMixin<TBase extends Constructor>(Base: TBase) {
         return { parking: (await this.getParking(id))! };
       }
 
-      // No explicit id: pick the next free P-NN slot and insert directly. If
-      // another concurrent create just took that exact id, retry with the next
-      // free slot instead of surfacing a spurious "already exists" — the
-      // operator asked for "any free code", not that specific one.
+      // No explicit id: pick the next free <ГородCode>-NN slot for this city and
+      // insert directly. If another concurrent create just took that exact id,
+      // retry with the next free slot instead of surfacing a spurious "already
+      // exists" — the operator asked for "any free code", not that specific one.
       const MAX_ATTEMPTS = 50;
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-        const candidate = await this.nextParkingId();
+        const candidate = await this.nextParkingId(input.city);
         try {
           await db.insert(parkings).values(values(candidate) as any);
           return { parking: (await this.getParking(candidate))! };

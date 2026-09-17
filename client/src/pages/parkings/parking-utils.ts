@@ -4,7 +4,6 @@ export const ADMIN_PARKINGS_KEY = ["/api/admin/parkings"] as const;
 // переключатель списка — архив/живые, как у велосипедов.
 
 export type ParkingFormState = {
-  id: string;
   name: string;
   city: string;
   capacity: string;
@@ -17,6 +16,6 @@ export type ParkingFormState = {
 };
 
 export const emptyParkingForm: ParkingFormState = {
-  id: "", name: "", city: "", capacity: "10", occupied: "0", radius: "30",
+  name: "", city: "", capacity: "10", occupied: "0", radius: "30",
   notes: "", x: 500, y: 350,
 };
