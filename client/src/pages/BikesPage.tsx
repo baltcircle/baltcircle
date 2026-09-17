@@ -85,14 +85,12 @@ export function BikesPage() {
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-bikes">
       <header className="mb-6 flex items-end justify-between flex-wrap gap-4">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Парк</div>
           <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">
             Управление велосипедами
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            {bikes.filter((b) => b.status !== "archived").length} активных
-            {archivedCount > 0 ? ` · ${archivedCount} в архиве` : ""}. Добавляйте реальные
-            велосипеды и печатайте QR-коды.
+            Активных: {bikes.filter((b) => b.status !== "archived").length}
+            {archivedCount > 0 ? ` · ${archivedCount} в архиве` : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">

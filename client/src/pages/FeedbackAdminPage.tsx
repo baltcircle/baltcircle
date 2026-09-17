@@ -69,11 +69,7 @@ export function FeedbackAdminPage() {
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-feedback">
       <header className="mb-6 flex items-end justify-between flex-wrap gap-4">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Операции</div>
           <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Отзывы</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Оценки и комментарии райдеров после поездок. Сортируйте по пунктам отзыва или количеству звёзд.
-          </p>
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

@@ -87,13 +87,25 @@ export function RidesAdminPage() {
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-rides">
-      <header className="mb-6 flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Операции</div>
-          <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Поездки</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Все аренды флота: райдер, велосипед, тариф, длительность и стоимость. Активную поездку можно завершить вручную.
-          </p>
+      <header className="mb-6">
+        <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Поездки</h1>
+      </header>
+
+      {/* ---------- Tabs / filters ---------- */}
+      <div className="flex items-center justify-between flex-wrap gap-4 mb-4">
+        <div className="flex items-center gap-2" data-testid="rides-tabs">
+          {TABS.map((t) => (
+            <Button
+              key={t.id}
+              size="sm"
+              variant={tab === t.id ? "default" : "outline"}
+              onClick={() => setTab(t.id)}
+              data-testid={t.testId}
+            >
+              {t.label}
+              <Badge variant="secondary" className="ml-2">{counts[t.id]}</Badge>
+            </Button>
+          ))}
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -105,22 +117,6 @@ export function RidesAdminPage() {
             data-testid="input-rides-search"
           />
         </div>
-      </header>
-
-      {/* ---------- Tabs / filters ---------- */}
-      <div className="flex items-center gap-2 mb-4" data-testid="rides-tabs">
-        {TABS.map((t) => (
-          <Button
-            key={t.id}
-            size="sm"
-            variant={tab === t.id ? "default" : "outline"}
-            onClick={() => setTab(t.id)}
-            data-testid={t.testId}
-          >
-            {t.label}
-            <Badge variant="secondary" className="ml-2">{counts[t.id]}</Badge>
-          </Button>
-        ))}
       </div>
 
       <Card className="overflow-hidden">
