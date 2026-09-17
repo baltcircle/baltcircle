@@ -94,9 +94,9 @@ export function ParkingsTable({
             <Fragment key={`grp-${city}`}>
               <TableRow className="bg-muted/50 hover:bg-muted/50" data-testid={`parking-city-group-${city}`}>
                 <TableCell colSpan={4} className="py-2 text-center">
-                  <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    <MapPin className="w-3.5 h-3.5" />{city}
-                    <span className="font-normal normal-case tracking-normal">· {rows.length}</span>
+                  <span className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
+                    {city}
+                    <span className="font-bold normal-case tracking-normal">{rows.length}</span>
                   </span>
                 </TableCell>
               </TableRow>
