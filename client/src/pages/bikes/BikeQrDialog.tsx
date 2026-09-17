@@ -19,7 +19,7 @@ export function BikeQrDialog({
   // so it stays exactly that size whether opened, printed, or handed to a
   // label service. Set slightly above the nominal 3×3 cm cut size to
   // compensate for the ~2mm print-scale shrink observed on real printers.
-  const STICKER_PHYSICAL_SIZE = "32mm";
+  const STICKER_PHYSICAL_SIZE = "31mm";
 
   const download = () => {
     if (!bike) return;
@@ -54,7 +54,7 @@ export function BikeQrDialog({
         @media print { .hint{display:none} }
       </style>
       </head><body>${svg}<p>${model}</p>
-      <p class="hint">Перед печатью выберите масштаб 100% / «Фактический размер» (без «вписать на страницу») — иначе наклейка не совпадёт с 3,2×3,2 см.</p>
+      <p class="hint">Перед печатью выберите масштаб 100% / «Фактический размер» (без «вписать на страницу») — иначе наклейка не совпадёт с 3,1×3,1 см.</p>
       <script>window.onload=function(){window.print();}</script></body></html>`);
     w.document.close();
   };

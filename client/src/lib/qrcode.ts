@@ -378,17 +378,20 @@ export function qrToSvg(
   // since the text sits inside the old quiet zone) and, by needing a
   // smaller reserved fraction overall, leaves more of the canvas for the
   // QR block itself, so it renders bigger too.
-  const labelFrac = label ? 0.075 : 0;
+  const labelFrac = label ? 0.065 : 0;
   const qrAreaPx = px * (1 - labelFrac);
   const moduleSize = qrAreaPx / dim;
   const offsetX = (px - qrAreaPx) / 2;
   const quietPx = quiet * moduleSize;
   const darkBottomPx = qrAreaPx - quietPx; // bottom edge of the actual dark modules
-  const gapPx = moduleSize * 0.1; // tight explicit breathing room — well under a full quiet zone
+  const gapPx = moduleSize * 0.06; // tight explicit breathing room — well under a full quiet zone
   const labelTopPx = darkBottomPx + gapPx;
-  const labelHeightPx = px - labelTopPx;
+  // Font size is pinned to a fixed fraction of the whole canvas (not of the
+  // shrinking label band) so tuning labelFrac/gapPx never changes the code's
+  // printed size — only the QR block and the gap in front of it.
+  const fontSizePx = px * 0.0949;
   const labelText = label
-    ? `<text x="${px / 2}" y="${labelTopPx + labelHeightPx * 0.72}" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="${(labelHeightPx * 0.55).toFixed(2)}" fill="#000000">${escapeSvgText(label)}</text>`
+    ? `<text x="${px / 2}" y="${(labelTopPx + fontSizePx * 0.85).toFixed(2)}" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="${fontSizePx.toFixed(2)}" fill="#000000">${escapeSvgText(label)}</text>`
     : "";
   // Cut-guide frame: a thin outline right at the physical edge of the
   // sticker, so a printed copy shows exactly where the 3×3 cm square ends.
