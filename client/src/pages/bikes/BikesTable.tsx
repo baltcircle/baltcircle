@@ -106,7 +106,7 @@ export function BikesTable({
             <TableHead className="text-center">Замок ID</TableHead>
             <TableHead className="text-center">Заряд/состояние</TableHead>
             <TableHead className="text-center">Парковка</TableHead>
-            <TableHead className="text-right">Действия</TableHead>
+            <TableHead className="text-center">Действия</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -137,7 +137,7 @@ export function BikesTable({
               </TableCell>
               <TableCell className="text-sm text-center text-muted-foreground">{parkingName(b.parkingId)}</TableCell>
               <TableCell>
-                <div className="flex items-center justify-end gap-1">
+                <div className="flex items-center justify-center gap-1">
                   <Button variant="ghost" size="icon" onClick={() => onQr(b)} title="QR-код" data-testid={`button-qr-${b.id}`}>
                     <QrCode className="w-4 h-4" />
                   </Button>

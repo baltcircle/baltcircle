@@ -85,15 +85,15 @@ export function ParkingsTable({
           <TableRow>
             <TableHead className="w-24 text-center">Код</TableHead>
             <TableHead className="text-center">Название</TableHead>
-            <TableHead className="text-right">Занято / Вмест.</TableHead>
-            <TableHead className="text-right">Действия</TableHead>
+            <TableHead className="text-center">Занято / Вмест.</TableHead>
+            <TableHead className="text-center">Действия</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {grouped.map(([city, rows]) => (
             <Fragment key={`grp-${city}`}>
               <TableRow className="bg-muted/50 hover:bg-muted/50" data-testid={`parking-city-group-${city}`}>
-                <TableCell colSpan={4} className="py-2">
+                <TableCell colSpan={4} className="py-2 text-center">
                   <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     <MapPin className="w-3.5 h-3.5" />{city}
                     <span className="font-normal normal-case tracking-normal">· {rows.length}</span>
@@ -124,9 +124,9 @@ export function ParkingsTable({
                       </div>
                       {p.notes && <div className="text-xs text-muted-foreground truncate max-w-xs">{p.notes}</div>}
                     </TableCell>
-                    <TableCell className="text-right text-sm font-mono">{p.occupied} / {p.capacity}</TableCell>
+                    <TableCell className="text-center text-sm font-mono">{p.occupied} / {p.capacity}</TableCell>
                     <TableCell>
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-center gap-1">
                         {isArchived ? (
                           <Button
                             variant="ghost" size="sm"
