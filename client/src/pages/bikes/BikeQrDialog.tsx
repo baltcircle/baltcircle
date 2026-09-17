@@ -46,8 +46,8 @@ export function BikeQrDialog({
     const model = escapeHtml(bike.model);
     w.document.write(`<!doctype html><html><head><title>QR ${id}</title>
       <style>
-        @page { size: A4; margin: 20mm; }
-        body{font-family:sans-serif;text-align:center;padding:32px}
+        @page { size: A4; margin: 0; }
+        body{font-family:sans-serif;text-align:center;padding:20mm 10mm 10mm}
         p{color:#666;margin:12px 0 0;font-size:13px}
         .hint{color:#999;margin-top:24px;font-size:11px}
         @media print { .hint{display:none} }

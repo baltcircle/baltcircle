@@ -378,17 +378,17 @@ export function qrToSvg(
   // since the text sits inside the old quiet zone) and, by needing a
   // smaller reserved fraction overall, leaves more of the canvas for the
   // QR block itself, so it renders bigger too.
-  const labelFrac = label ? 0.095 : 0;
+  const labelFrac = label ? 0.075 : 0;
   const qrAreaPx = px * (1 - labelFrac);
   const moduleSize = qrAreaPx / dim;
   const offsetX = (px - qrAreaPx) / 2;
   const quietPx = quiet * moduleSize;
   const darkBottomPx = qrAreaPx - quietPx; // bottom edge of the actual dark modules
-  const gapPx = moduleSize * 0.32; // tight explicit breathing room — well under a full quiet zone
+  const gapPx = moduleSize * 0.18; // tight explicit breathing room — well under a full quiet zone
   const labelTopPx = darkBottomPx + gapPx;
   const labelHeightPx = px - labelTopPx;
   const labelText = label
-    ? `<text x="${px / 2}" y="${labelTopPx + labelHeightPx * 0.72}" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="${(labelHeightPx * 0.55).toFixed(2)}" fill="#000000">${escapeSvgText(label)}</text>`
+    ? `<text x="${px / 2}" y="${labelTopPx + labelHeightPx * 0.7}" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="${(labelHeightPx * 0.52).toFixed(2)}" fill="#000000">${escapeSvgText(label)}</text>`
     : "";
   // Cut-guide frame: a thin outline right at the physical edge of the
   // sticker, so a printed copy shows exactly where the 3×3 cm square ends.
