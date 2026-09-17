@@ -127,6 +127,13 @@
       "when": 1789638304610,
       "tag": "0017_add_support_conversations_pinned_at",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789641618895,
+      "tag": "0018_renumber_parking_codes_by_city",
+      "breakpoints": true
     }
   ]
 }
