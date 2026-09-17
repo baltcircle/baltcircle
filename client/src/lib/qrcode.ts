@@ -369,20 +369,32 @@ export function qrToSvg(
   }
 
   const label = opts?.label?.trim();
-  // Keep the whole sticker square: reserve a fixed fraction of the canvas
-  // height for the label row below the code, and shrink the QR itself
-  // uniformly (same scale on both axes, so modules stay square, never
-  // stretched) to fit above it — instead of growing the canvas into a
-  // rectangle the way an unshrunk QR + label would. The fraction is kept
-  // small and the text sits low in its slot, right under the QR, so the
-  // gap between the code and the label reads as tight, not floaty.
-  const labelFrac = label ? 0.15 : 0;
+  // Keep the whole sticker square: reserve a small fraction of the canvas
+  // for the QR block (modules + their own built-in quiet zone), and let the
+  // label text start right after the *dark modules end* — not after the
+  // QR block's own trailing quiet-zone band — so that whitespace isn't
+  // paid for twice. This overlap is what actually tightens the gap (a
+  // bigger reserved label fraction here does NOT mean more visual gap,
+  // since the text sits inside the old quiet zone) and, by needing a
+  // smaller reserved fraction overall, leaves more of the canvas for the
+  // QR block itself, so it renders bigger too.
+  const labelFrac = label ? 0.11 : 0;
   const qrAreaPx = px * (1 - labelFrac);
   const moduleSize = qrAreaPx / dim;
   const offsetX = (px - qrAreaPx) / 2;
-  const labelHeightPx = px - qrAreaPx;
+  const quietPx = quiet * moduleSize;
+  const darkBottomPx = qrAreaPx - quietPx; // bottom edge of the actual dark modules
+  const gapPx = moduleSize * 0.5; // tight explicit breathing room — well under a full quiet zone
+  const labelTopPx = darkBottomPx + gapPx;
+  const labelHeightPx = px - labelTopPx;
   const labelText = label
-    ? `<text x="${px / 2}" y="${qrAreaPx + labelHeightPx * 0.8}" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="${(labelHeightPx * 0.62).toFixed(2)}" fill="#000000">${escapeSvgText(label)}</text>`
+    ? `<text x="${px / 2}" y="${labelTopPx + labelHeightPx * 0.78}" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="${(labelHeightPx * 0.68).toFixed(2)}" fill="#000000">${escapeSvgText(label)}</text>`
+    : "";
+  // Cut-guide frame: a thin outline right at the physical edge of the
+  // sticker, so a printed copy shows exactly where the 3×3 cm square ends.
+  const frameStrokeW = Math.max(1, px * 0.006);
+  const frame = label
+    ? `<rect x="${(frameStrokeW / 2).toFixed(2)}" y="${(frameStrokeW / 2).toFixed(2)}" width="${(px - frameStrokeW).toFixed(2)}" height="${(px - frameStrokeW).toFixed(2)}" fill="none" stroke="#000000" stroke-width="${frameStrokeW.toFixed(2)}"/>`
     : "";
 
   const outSize = opts?.physicalSize ?? String(px);
@@ -395,6 +407,7 @@ export function qrToSvg(
     `<path d="${path}" fill="#000000"/>`,
     `</g>`,
     labelText,
+    frame,
     `</svg>`,
   ].join("");
 }
