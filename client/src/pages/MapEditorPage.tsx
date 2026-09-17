@@ -266,7 +266,7 @@ export function MapEditorPage() {
                   title={o.desc}
                   className={[
                     "flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs whitespace-nowrap transition",
-                    active ? "bg-primary/10 border border-primary" : "border border-transparent hover:bg-muted",
+                    active ? "bg-primary/10 border border-primary" : "border [border-color:var(--button-outline)] hover:bg-muted",
                   ].join(" ")}
                 >
                   {o.kind === "route"
