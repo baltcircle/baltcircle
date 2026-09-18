@@ -29,6 +29,13 @@ describe("FeedbackAdminPage", () => {
     expect(source).toContain("useClientPagination(sorted)");
     expect(source).toContain("<TablePager");
   });
+
+  it("filters by \u043f\u0443\u043d\u043a\u0442\u044b via a Select, like the Maintenance status filter", () => {
+    expect(source).toContain('data-testid="select-feedback-category"');
+    expect(source).toContain('<SelectItem value="all">\u0412\u0441\u0435 \u043f\u0443\u043d\u043a\u0442\u044b</SelectItem>');
+    expect(source).toContain("categoryOptions.map");
+    expect(source).toContain("labels.includes(categoryFilter)");
+  });
 });
 
 describe("FeedbackRowItem", () => {

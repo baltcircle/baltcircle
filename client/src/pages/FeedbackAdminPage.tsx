@@ -6,6 +6,9 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
   Table, TableBody, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Search, AlertTriangle, ArrowUp, ArrowDown } from "lucide-react";
@@ -20,21 +23,41 @@ type SortDir = "asc" | "desc";
 export function FeedbackAdminPage() {
   const feedbackQ = useQuery<AdminFeedbackRow[]>({ queryKey: FEEDBACK_KEY });
   const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const rows = feedbackQ.data ?? [];
 
+  // Every distinct "Пункты" label actually present in the loaded feedback,
+  // in the same shape the table cell renders them ("Поддержка" for support
+  // rows, formatted reason labels otherwise) — powers the filter dropdown
+  // below, analogous to the Status filter on the Maintenance page.
+  const categoryOptions = useMemo(() => {
+    const labels = new Set<string>();
+    for (const f of rows) {
+      if (f.kind === "support") { labels.add("Поддержка"); continue; }
+      for (const label of formatFeedbackReasons(f.rating, f.reasons)) labels.add(label);
+    }
+    return Array.from(labels).sort((a, b) => a.localeCompare(b, "ru"));
+  }, [rows]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((f) =>
-      (f.userName ?? "").toLowerCase().includes(q) ||
-      (f.userPhone ?? "").toLowerCase().includes(q) ||
-      (f.bikeId ?? "").toLowerCase().includes(q) ||
-      (f.comment ?? "").toLowerCase().includes(q),
-    );
-  }, [rows, search]);
+    return rows.filter((f) => {
+      if (categoryFilter !== "all") {
+        const labels = f.kind === "support" ? ["Поддержка"] : formatFeedbackReasons(f.rating, f.reasons);
+        if (!labels.includes(categoryFilter)) return false;
+      }
+      if (!q) return true;
+      return (
+        (f.userName ?? "").toLowerCase().includes(q) ||
+        (f.userPhone ?? "").toLowerCase().includes(q) ||
+        (f.bikeId ?? "").toLowerCase().includes(q) ||
+        (f.comment ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [rows, search, categoryFilter]);
 
   const sorted = useMemo(() => {
     const withKeys = filtered.map((f) => ({
@@ -69,7 +92,19 @@ export function FeedbackAdminPage() {
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-feedback">
       <h1 className="font-display text-2xl lg:text-3xl font-light mb-6 text-center">Отзывы</h1>
 
-      <div className="flex items-center justify-end gap-4 mb-2">
+      <div className="flex items-end justify-end gap-4 mb-2">
+        <div className="w-56">
+          <div className="text-xs text-muted-foreground mb-1">Пункты</div>
+          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <SelectTrigger data-testid="select-feedback-category"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все пункты</SelectItem>
+              {categoryOptions.map((label) => (
+                <SelectItem key={label} value={label}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
