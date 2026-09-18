@@ -14,7 +14,7 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
 import {
-  TrendingUp, Bike as BikeIcon, Wrench, MapPin, Users as UsersIcon,
+  TrendingUp, MapPin, Users as UsersIcon,
   Download, AlertTriangle, Activity, Clock, Wallet, RefreshCw, Star,
 } from "lucide-react";
 
@@ -123,10 +123,7 @@ export function AnalyticsPage() {
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-analytics">
       <header className="mb-6">
-        <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Операционный центр</div>
-        <div className="flex flex-wrap items-center gap-3 mt-1">
-          <h1 className="font-display text-2xl lg:text-3xl font-light">Аналитика</h1>
-        </div>
+        <h1 className="font-display text-2xl lg:text-3xl font-light text-center">Аналитика</h1>
       </header>
 
       {/* ---------- Controls: period + export ---------- */}
@@ -190,15 +187,13 @@ export function AnalyticsPage() {
       ) : (
         <>
           {/* KPI cards */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 mb-6" data-testid="analytics-kpis">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6" data-testid="analytics-kpis">
             <Kpi label="Поездок за период" value={String(a.kpis.ridesCount)} icon={<Activity className="w-4 h-4" />} testId="analytics-kpi-rides" />
-            <Kpi label="Активных поездок" value={String(a.kpis.activeRides)} icon={<BikeIcon className="w-4 h-4" />} testId="analytics-kpi-active-rides" />
             <Kpi label="Выручка (по тарифам)" value={fmtRub(a.kpis.revenue)} icon={<Wallet className="w-4 h-4" />} testId="analytics-kpi-revenue" />
             <Kpi label="Ср. длительность" value={fmtDuration(a.kpis.avgDurationMin * 60000)} icon={<Clock className="w-4 h-4" />} testId="analytics-kpi-avg-duration" />
             <Kpi label="Средний чек" value={fmtRub(a.kpis.avgCheck)} icon={<Wallet className="w-4 h-4" />} testId="analytics-kpi-avg-check" />
             <Kpi label="Новых пользователей" value={String(a.kpis.newUsers)} icon={<UsersIcon className="w-4 h-4" />} testId="analytics-kpi-new-users" />
             <Kpi label="С поездками за период" value={String(a.kpis.usersWithRides)} icon={<UsersIcon className="w-4 h-4" />} testId="analytics-kpi-users-with-rides" />
-            <Kpi label="Открытых заявок" value={String(a.kpis.openTickets)} icon={<Wrench className="w-4 h-4" />} testId="analytics-kpi-open-tickets" />
           </div>
 
           {/* Rides per day trend */}
@@ -234,45 +229,79 @@ export function AnalyticsPage() {
             )}
           </Card>
 
-          {/* Feedback counts by rating tier */}
-          <Card className="p-5 mb-6" data-testid="analytics-feedback">
-            <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
-              <Star className="w-4 h-4 text-primary" />Отзывы о поездках
-            </h2>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-center">Оценка</TableHead>
-                  <TableHead className="text-center">Количество отзывов</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow data-testid="analytics-feedback-1">
-                  <TableCell className="text-center">1 звезда</TableCell>
-                  <TableCell className="text-center font-mono">{a.feedbackCounts.r1}</TableCell>
-                </TableRow>
-                <TableRow data-testid="analytics-feedback-2">
-                  <TableCell className="text-center">2 звезды</TableCell>
-                  <TableCell className="text-center font-mono">{a.feedbackCounts.r2}</TableCell>
-                </TableRow>
-                <TableRow data-testid="analytics-feedback-3">
-                  <TableCell className="text-center">3 звезды</TableCell>
-                  <TableCell className="text-center font-mono">{a.feedbackCounts.r3}</TableCell>
-                </TableRow>
-                <TableRow data-testid="analytics-feedback-4">
-                  <TableCell className="text-center">4 звезды</TableCell>
-                  <TableCell className="text-center font-mono">{a.feedbackCounts.r4}</TableCell>
-                </TableRow>
-                <TableRow data-testid="analytics-feedback-5">
-                  <TableCell className="text-center">5 звёзд</TableCell>
-                  <TableCell className="text-center font-mono">{a.feedbackCounts.r5}</TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </Card>
+          {/* Feedback counts + parking usage side by side */}
+          <div className="grid md:grid-cols-2 gap-6 mb-6">
+            <Card className="p-5" data-testid="analytics-feedback">
+              <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
+                <Star className="w-4 h-4 text-primary" />Отзывы о поездках
+              </h2>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-center">Оценка</TableHead>
+                    <TableHead className="text-center">Количество отзывов</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow data-testid="analytics-feedback-1">
+                    <TableCell className="text-center">1 звезда</TableCell>
+                    <TableCell className="text-center font-mono">{a.feedbackCounts.r1}</TableCell>
+                  </TableRow>
+                  <TableRow data-testid="analytics-feedback-2">
+                    <TableCell className="text-center">2 звезды</TableCell>
+                    <TableCell className="text-center font-mono">{a.feedbackCounts.r2}</TableCell>
+                  </TableRow>
+                  <TableRow data-testid="analytics-feedback-3">
+                    <TableCell className="text-center">3 звезды</TableCell>
+                    <TableCell className="text-center font-mono">{a.feedbackCounts.r3}</TableCell>
+                  </TableRow>
+                  <TableRow data-testid="analytics-feedback-4">
+                    <TableCell className="text-center">4 звезды</TableCell>
+                    <TableCell className="text-center font-mono">{a.feedbackCounts.r4}</TableCell>
+                  </TableRow>
+                  <TableRow data-testid="analytics-feedback-5">
+                    <TableCell className="text-center">5 звёзд</TableCell>
+                    <TableCell className="text-center font-mono">{a.feedbackCounts.r5}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </Card>
 
-          {/* Repeated-problem bikes */}
-          <Card className="p-5 mb-6" data-testid="analytics-repeated-bikes">
+            <Card className="p-5" data-testid="analytics-parking">
+              <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
+                <MapPin className="w-4 h-4 text-primary" />Парковки
+              </h2>
+              {a.parkingUsage.length === 0 ? (
+                <EmptyRow text="Парковки не настроены — данных нет." />
+              ) : a.parkingUsage.every((p) => p.rideStarts === 0) ? (
+                <div className="text-sm text-muted-foreground py-4" data-testid="analytics-parking-empty">
+                  За выбранный период стартов рядом с парковками не зафиксировано.
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-center">Парковка</TableHead>
+                      <TableHead className="text-center">Стартов рядом</TableHead>
+                      <TableHead className="text-center">Занято / вместимость</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {a.parkingUsage.slice(0, 15).map((p) => (
+                      <TableRow key={p.id} data-testid={`analytics-parking-${p.id}`}>
+                        <TableCell className="text-center">{p.name}</TableCell>
+                        <TableCell className="text-center font-mono">{p.rideStarts}</TableCell>
+                        <TableCell className="text-center font-mono">{p.occupied} / {p.capacity}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </Card>
+          </div>
+
+          {/* Repeated-problem bikes — always last */}
+          <Card className="p-5" data-testid="analytics-repeated-bikes">
             <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
               <AlertTriangle className="w-4 h-4 text-destructive" />Повторяющиеся проблемы
             </h2>
@@ -293,39 +322,6 @@ export function AnalyticsPage() {
                       <TableCell className="font-mono text-center">{b.bike_id}</TableCell>
                       <TableCell className="text-center font-mono">{b.tickets}</TableCell>
                       <TableCell className="text-center font-mono">{b.open}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </Card>
-
-          {/* Parking usage */}
-          <Card className="p-5" data-testid="analytics-parking">
-            <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
-              <MapPin className="w-4 h-4 text-primary" />Парковки
-            </h2>
-            {a.parkingUsage.length === 0 ? (
-              <EmptyRow text="Парковки не настроены — данных нет." />
-            ) : a.parkingUsage.every((p) => p.rideStarts === 0) ? (
-              <div className="text-sm text-muted-foreground py-4" data-testid="analytics-parking-empty">
-                За выбранный период стартов рядом с парковками не зафиксировано.
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-center">Парковка</TableHead>
-                    <TableHead className="text-center">Стартов рядом</TableHead>
-                    <TableHead className="text-center">Занято / вместимость</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {a.parkingUsage.slice(0, 15).map((p) => (
-                    <TableRow key={p.id} data-testid={`analytics-parking-${p.id}`}>
-                      <TableCell className="text-center">{p.name}</TableCell>
-                      <TableCell className="text-center font-mono">{p.rideStarts}</TableCell>
-                      <TableCell className="text-center font-mono">{p.occupied} / {p.capacity}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
