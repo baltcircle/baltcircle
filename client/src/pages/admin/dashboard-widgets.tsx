@@ -22,12 +22,12 @@ export function StatusChip({ tone, icon, label, value, testId }: {
   tone: string; icon: React.ReactNode; label: string; value: number; testId: string;
 }) {
   return (
-    <div className={`inline-flex flex-col items-center gap-0.5 rounded-lg px-3 py-2 ${CHIP_TONE[tone] ?? CHIP_TONE.muted}`} data-testid={testId}>
+    <div className={`inline-flex flex-col items-center justify-center gap-0.5 rounded-lg px-3 py-2 min-w-[118px] ${CHIP_TONE[tone] ?? CHIP_TONE.muted}`} data-testid={testId}>
       <div className="flex items-center gap-1.5">
         {icon}
         <span className="font-display text-lg font-light leading-none">{value}</span>
       </div>
-      <div className="text-[10px] uppercase tracking-wider opacity-80 leading-none">{label}</div>
+      <div className="text-[10px] uppercase tracking-wider opacity-80 leading-none whitespace-nowrap">{label}</div>
     </div>
   );
 }

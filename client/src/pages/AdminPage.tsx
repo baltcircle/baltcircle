@@ -132,7 +132,7 @@ export function AdminPage() {
   const serviceOk = !needsAttention;
 
   return (
-    <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="admin-dashboard">
+    <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-[1600px] mx-auto" data-testid="admin-dashboard">
       {/* ---------- Service status header ---------- */}
       <header
         className="mb-6 rounded-xl border border-card-border bg-card p-5 lg:p-6"
@@ -221,8 +221,8 @@ export function AdminPage() {
         <OperationsMapPage embedded />
       </section>
 
-      {/* ---------- Compact alert toasts: 3 per row on large screens ---------- */}
-      <div className="grid lg:grid-cols-3 gap-4">
+      {/* ---------- Compact alert toasts: 4 per row on large screens ---------- */}
+      <div className="grid lg:grid-cols-4 gap-4">
         {/* ---------- Support inbox summary ---------- */}
         <Card className="p-5" data-testid="dashboard-support-inbox">
           <div className="flex items-center justify-between mb-3">
