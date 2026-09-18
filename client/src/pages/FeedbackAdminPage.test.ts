@@ -12,12 +12,9 @@ describe("FeedbackAdminPage", () => {
     expect(source).toContain('"/api/admin/feedback"');
   });
 
-  it("supports sorting by rating (\u0437\u0432\u0451\u0437\u0434\u044b) and category (\u043f\u0443\u043d\u043a\u0442\u044b)", () => {
-    expect(source).toContain('type SortKey = "date" | "rating" | "category"');
-    expect(source).toContain("toggleSort(\"rating\")");
-    expect(source).toContain("toggleSort(\"category\")");
-    expect(source).toContain("a.f.rating - b.f.rating");
-    expect(source).toContain("categoryKey.localeCompare(b.categoryKey");
+  it("sorts by date, toggled from the \u0414\u0430\u0442\u0430 header", () => {
+    expect(source).toContain('setDateDir((d) => (d === "asc" ? "desc" : "asc"))');
+    expect(source).toContain("(a.createdAt - b.createdAt) * dir");
   });
 
   it("shows an empty state distinguishing no-data from no-search-results", () => {
@@ -30,11 +27,16 @@ describe("FeedbackAdminPage", () => {
     expect(source).toContain("<TablePager");
   });
 
-  it("filters by \u043f\u0443\u043d\u043a\u0442\u044b via a Select, like the Maintenance status filter", () => {
-    expect(source).toContain('data-testid="select-feedback-category"');
-    expect(source).toContain('<SelectItem value="all">\u0412\u0441\u0435 \u043f\u0443\u043d\u043a\u0442\u044b</SelectItem>');
+  it("filters by \u041f\u0443\u043d\u043a\u0442\u044b and \u041e\u0446\u0435\u043d\u043a\u0430 via Selects embedded in the column headers, like the Maintenance status filter", () => {
+    expect(source).toContain('testId="select-feedback-category"');
+    expect(source).toContain('allLabel="\u0412\u0441\u0435 \u043f\u0443\u043d\u043a\u0442\u044b"');
     expect(source).toContain("categoryOptions.map");
     expect(source).toContain("labels.includes(categoryFilter)");
+    expect(source).toContain('testId="select-feedback-rating"');
+    expect(source).toContain('allLabel="\u0412\u0441\u0435 \u043e\u0446\u0435\u043d\u043a\u0438"');
+    expect(source).toContain("String(f.rating) !== ratingFilter");
+    expect(source).toContain("function FilterSelectHead");
+    expect(source).toContain("data-testid={testId}");
   });
 });
 

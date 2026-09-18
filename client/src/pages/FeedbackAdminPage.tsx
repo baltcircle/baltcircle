@@ -9,7 +9,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Table, TableBody, TableHead, TableHeader, TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Search, AlertTriangle, ArrowUp, ArrowDown } from "lucide-react";
 import { TablePager, useClientPagination } from "@/components/table-pager";
@@ -17,22 +17,24 @@ import { FeedbackRowItem } from "./feedback-admin/FeedbackRow";
 
 const FEEDBACK_KEY = ["/api/admin/feedback"];
 
-type SortKey = "date" | "rating" | "category";
 type SortDir = "asc" | "desc";
+
+const RATING_OPTIONS = ["5", "4", "3", "2", "1"];
 
 export function FeedbackAdminPage() {
   const feedbackQ = useQuery<AdminFeedbackRow[]>({ queryKey: FEEDBACK_KEY });
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
-  const [sortKey, setSortKey] = useState<SortKey>("date");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [ratingFilter, setRatingFilter] = useState<string>("all");
+  const [dateDir, setDateDir] = useState<SortDir>("desc");
 
   const rows = feedbackQ.data ?? [];
 
   // Every distinct "Пункты" label actually present in the loaded feedback,
   // in the same shape the table cell renders them ("Поддержка" for support
   // rows, formatted reason labels otherwise) — powers the filter dropdown
-  // below, analogous to the Status filter on the Maintenance page.
+  // embedded in the column header, analogous to the Status filter on the
+  // Maintenance page.
   const categoryOptions = useMemo(() => {
     const labels = new Set<string>();
     for (const f of rows) {
@@ -45,6 +47,7 @@ export function FeedbackAdminPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((f) => {
+      if (ratingFilter !== "all" && String(f.rating) !== ratingFilter) return false;
       if (categoryFilter !== "all") {
         const labels = f.kind === "support" ? ["Поддержка"] : formatFeedbackReasons(f.rating, f.reasons);
         if (!labels.includes(categoryFilter)) return false;
@@ -57,54 +60,20 @@ export function FeedbackAdminPage() {
         (f.comment ?? "").toLowerCase().includes(q)
       );
     });
-  }, [rows, search, categoryFilter]);
+  }, [rows, search, categoryFilter, ratingFilter]);
 
   const sorted = useMemo(() => {
-    const withKeys = filtered.map((f) => ({
-      f,
-      // Sort by the first formatted category label so rows with no reason
-      // ("—") consistently sort to one end regardless of direction. Support
-      // rows always sort under the fixed "Поддержка" label, ride rows keep
-      // the existing per-reason label.
-      categoryKey: f.kind === "support" ? "Поддержка" : (formatFeedbackReasons(f.rating, f.reasons)[0] ?? ""),
-    }));
-    const dir = sortDir === "asc" ? 1 : -1;
-    withKeys.sort((a, b) => {
-      if (sortKey === "rating") return (a.f.rating - b.f.rating) * dir;
-      if (sortKey === "category") return a.categoryKey.localeCompare(b.categoryKey, "ru") * dir;
-      return (a.f.createdAt - b.f.createdAt) * dir;
-    });
-    return withKeys.map((w) => w.f);
-  }, [filtered, sortKey, sortDir]);
+    const dir = dateDir === "asc" ? 1 : -1;
+    return [...filtered].sort((a, b) => (a.createdAt - b.createdAt) * dir);
+  }, [filtered, dateDir]);
 
   const { page, setPage, pageCount, pageItems } = useClientPagination(sorted);
-
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir(key === "date" ? "desc" : "asc");
-    }
-  };
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-feedback">
       <h1 className="font-display text-2xl lg:text-3xl font-light mb-6 text-center">Отзывы</h1>
 
-      <div className="flex items-end justify-end gap-4 mb-2">
-        <div className="w-56">
-          <div className="text-xs text-muted-foreground mb-1">Пункты</div>
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger data-testid="select-feedback-category"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Все пункты</SelectItem>
-              {categoryOptions.map((label) => (
-                <SelectItem key={label} value={label}>{label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <div className="flex items-center justify-end gap-4 mb-2">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -130,9 +99,9 @@ export function FeedbackAdminPage() {
               Повторить
             </Button>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : rows.length === 0 ? (
           <div className="p-10 text-center text-sm text-muted-foreground" data-testid="feedback-empty">
-            {rows.length === 0 ? "Отзывов пока нет." : "Ничего не найдено по запросу."}
+            Отзывов пока нет.
           </div>
         ) : (
           <Table data-testid="feedback-table">
@@ -140,20 +109,64 @@ export function FeedbackAdminPage() {
               <TableRow>
                 <TableHead className="text-center">Райдер</TableHead>
                 <TableHead className="text-center">Велосипед</TableHead>
-                <SortableHead label="Оценка" active={sortKey === "rating"} dir={sortDir} onClick={() => toggleSort("rating")} testId="sort-feedback-rating" className="justify-center" />
-                <SortableHead label="Пункты" active={sortKey === "category"} dir={sortDir} onClick={() => toggleSort("category")} testId="sort-feedback-category" className="justify-center" />
+                <FilterSelectHead
+                  value={ratingFilter}
+                  onChange={setRatingFilter}
+                  allLabel="Все оценки"
+                  options={RATING_OPTIONS.map((r) => ({ value: r, label: r }))}
+                  testId="select-feedback-rating"
+                />
+                <FilterSelectHead
+                  value={categoryFilter}
+                  onChange={setCategoryFilter}
+                  allLabel="Все пункты"
+                  options={categoryOptions.map((label) => ({ value: label, label }))}
+                  testId="select-feedback-category"
+                />
                 <TableHead className="text-center">Комментарий</TableHead>
-                <SortableHead label="Дата" active={sortKey === "date"} dir={sortDir} onClick={() => toggleSort("date")} testId="sort-feedback-date" className="justify-center" />
+                <SortableHead label="Дата" active dir={dateDir} onClick={() => setDateDir((d) => (d === "asc" ? "desc" : "asc"))} testId="sort-feedback-date" className="justify-center" />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pageItems.map((f) => <FeedbackRowItem key={`${f.kind}-${f.id}`} f={f} />)}
+              {pageItems.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="p-10 text-center text-sm text-muted-foreground" data-testid="feedback-empty">
+                    Ничего не найдено по запросу.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                pageItems.map((f) => <FeedbackRowItem key={`${f.kind}-${f.id}`} f={f} />)
+              )}
             </TableBody>
           </Table>
         )}
         <TablePager page={page} pageCount={pageCount} total={sorted.length} onPage={setPage} testid="feedback-pager" />
       </Card>
     </div>
+  );
+}
+
+// Table header cell whose content is a Select instead of plain text — used to
+// filter directly from the column (Оценка, Пункты), one-to-one with the
+// Status filter dropdown pattern used on the Maintenance page.
+function FilterSelectHead({ value, onChange, allLabel, options, testId }: {
+  value: string; onChange: (v: string) => void; allLabel: string;
+  options: { value: string; label: string }[]; testId: string;
+}) {
+  return (
+    <TableHead className="text-center">
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="h-8 w-auto min-w-[7rem] mx-auto text-xs" data-testid={testId}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">{allLabel}</SelectItem>
+          {options.map((o) => (
+            <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </TableHead>
   );
 }
 
