@@ -10,12 +10,13 @@ import {
   Wrench,
   Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity,
   LifeBuoy, MessageSquare, AlertOctagon, ShieldAlert, PowerOff, Unlock,
+  BatteryWarning,
 } from "lucide-react";
 import { useSupportUnread } from "@/hooks/use-support-unread";
 import { playSupportChime, primeAudio } from "@/lib/support-notify";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { OperationsMapPage } from "./OperationsMapPage";
-import { deriveMetrics, deriveAlerts, fmtNow } from "./admin/metrics";
+import { deriveMetrics, fmtNow } from "./admin/metrics";
 import { StatusChip } from "./admin/dashboard-widgets";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -119,9 +120,16 @@ export function AdminPage() {
   const m = useMemo(() => deriveMetrics({ bikes, users, rides, tickets, mapObjects, parkings }), [
     bikes, users, rides, tickets, mapObjects, parkings,
   ]);
-  const alerts = useMemo(() => deriveAlerts(m), [m]);
 
-  const serviceOk = alerts.length === 0;
+  // Статус шапки завязан на неподтверждённых (не квитированных) тостах под картой:
+  // открытые без присмотра, падения, кража, автооффлайн по низкому заряду.
+  const totalUnackedAlerts =
+    unattendedUnlockAlerts.length + fallAlerts.length + theftAlerts.length + offlineAlerts.length;
+  // Серьёзно: больше двух неподтверждённых любого рода, либо единственный — но кража.
+  const hasSeriousAlert =
+    totalUnackedAlerts > 2 || (totalUnackedAlerts === 1 && theftAlerts.length === 1);
+  const needsAttention = totalUnackedAlerts > 0;
+  const serviceOk = !needsAttention;
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="admin-dashboard">
@@ -130,13 +138,22 @@ export function AdminPage() {
         className="mb-6 rounded-xl border border-card-border bg-card p-5 lg:p-6"
         data-testid="dashboard-status-header"
       >
-        <div className="flex items-start justify-between flex-wrap gap-4">
+        <div className="flex items-start flex-wrap gap-4">
           <div>
             <div className="flex items-center gap-3">
               {serviceOk ? (
                 <span className="inline-flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
                   <CheckCircle2 className="w-6 h-6" />
-                  <span className="font-display text-2xl lg:text-3xl font-light">Сервис в норме</span>
+                  <span className="font-display text-2xl lg:text-3xl font-light">
+                    Всё под контролем
+                  </span>
+                </span>
+              ) : hasSeriousAlert ? (
+                <span className="inline-flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                  <ShieldAlert className="w-6 h-6" />
+                  <span className="font-display text-2xl lg:text-3xl font-light">
+                    Критическая ситуация — требуется немедленное вмешательство
+                  </span>
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-2 text-amber-600 dark:text-amber-400">
@@ -152,7 +169,7 @@ export function AdminPage() {
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 flex-1">
             <StatusChip
               tone="emerald"
               icon={<CheckCircle2 className="w-3.5 h-3.5" />}
@@ -173,6 +190,13 @@ export function AdminPage() {
               label="Бронь"
               value={m.reserved}
               testId="status-reserved"
+            />
+            <StatusChip
+              tone={m.lowBattery > 0 ? "amber" : "muted"}
+              icon={<BatteryWarning className="w-3.5 h-3.5" />}
+              label="Заряд < 25%"
+              value={m.lowBattery}
+              testId="status-low-battery"
             />
             <StatusChip
               tone="muted"
