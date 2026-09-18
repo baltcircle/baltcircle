@@ -5,9 +5,9 @@ import type { Bike, User, Ride, Ticket, MapObject, Parking, SupportTicketWithUse
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { fmtRelative, fmtRub } from "@/lib/format";
+import { fmtRelative } from "@/lib/format";
 import {
-  Users as UsersIcon, Wrench,
+  Wrench,
   Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity,
   LifeBuoy, MessageSquare, AlertOctagon, ShieldAlert, PowerOff, Unlock,
 } from "lucide-react";
@@ -16,7 +16,7 @@ import { playSupportChime, primeAudio } from "@/lib/support-notify";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
 import { OperationsMapPage } from "./OperationsMapPage";
 import { deriveMetrics, deriveAlerts, fmtNow } from "./admin/metrics";
-import { StatusChip, SummaryRow, RideStatusBadge } from "./admin/dashboard-widgets";
+import { StatusChip } from "./admin/dashboard-widgets";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -121,10 +121,7 @@ export function AdminPage() {
   ]);
   const alerts = useMemo(() => deriveAlerts(m), [m]);
 
-  const loading = bikesQ.isLoading || ridesQ.isLoading || ticketsQ.isLoading;
-  const critical = alerts.filter(a => a.severity === "critical").length;
   const serviceOk = alerts.length === 0;
-  const userById = useMemo(() => new Map(users.map(u => [u.id, u])), [users]);
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="admin-dashboard">
@@ -171,6 +168,13 @@ export function AdminPage() {
               testId="status-rented"
             />
             <StatusChip
+              tone="violet"
+              icon={<BikeIcon className="w-3.5 h-3.5" />}
+              label="Бронь"
+              value={m.reserved}
+              testId="status-reserved"
+            />
+            <StatusChip
               tone="muted"
               icon={<Activity className="w-3.5 h-3.5" />}
               label="Поездок сегодня"
@@ -183,13 +187,6 @@ export function AdminPage() {
               label="Сервисные заявки"
               value={m.openTickets}
               testId="status-open-tickets"
-            />
-            <StatusChip
-              tone={openSupport.length > 0 ? "amber" : "muted"}
-              icon={<LifeBuoy className="w-3.5 h-3.5" />}
-              label="Обращения в поддержку"
-              value={openSupport.length}
-              testId="status-open-support"
             />
           </div>
         </div>
@@ -449,83 +446,6 @@ export function AdminPage() {
             </div>
           )}
         </Card>
-      </div>
-
-      <div className="grid lg:grid-cols-3 gap-4 mt-4">
-        {/* ---------- Recent rides ---------- */}
-        <Card className="p-5 lg:col-span-2" data-testid="dashboard-recent-rides">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display text-lg font-light flex items-center gap-2">
-              <Activity className="w-4 h-4 text-primary" />Последние поездки
-            </h2>
-            <Link href="/admin/rides" className="text-xs text-primary hover:underline" data-testid="link-rides-detail">
-              Все поездки
-            </Link>
-          </div>
-          {loading ? (
-            <div className="text-sm text-muted-foreground py-6">Загружаем данные…</div>
-          ) : rides.length === 0 ? (
-            <div className="text-sm text-muted-foreground py-6">Поездок пока нет.</div>
-          ) : (
-            <div className="space-y-1.5">
-              {rides.slice(0, 6).map(r => (
-                <div
-                  key={r.id}
-                  className="flex items-center gap-3 text-sm py-1.5 border-b border-card-border/50 last:border-0"
-                  data-testid={`dashboard-ride-${r.id}`}
-                >
-                  <span className="font-mono text-xs w-16 shrink-0">{r.bikeId}</span>
-                  <span className="flex-1 min-w-0 truncate text-muted-foreground">
-                    {userById.get(r.userId)?.name ?? r.userId}
-                  </span>
-                  <RideStatusBadge status={r.status} />
-                  <span className="w-20 text-right font-mono text-xs">{fmtRub(r.cost)}</span>
-                  <span className="w-24 text-right text-xs text-muted-foreground hidden sm:block">
-                    {fmtRelative(r.startedAt)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-
-        {/* ---------- Fleet + Users & map summary ---------- */}
-        <div className="space-y-4">
-          <Card className="p-5" data-testid="dashboard-fleet-summary">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-display text-lg font-light flex items-center gap-2">
-                <BikeIcon className="w-4 h-4 text-primary" />Флот
-              </h2>
-              <Link href="/admin/bikes" className="text-xs text-primary hover:underline" data-testid="link-fleet-detail">
-                Управление
-              </Link>
-            </div>
-            <div className="space-y-2 text-sm">
-              <SummaryRow label="Доступно" value={m.available} tone="emerald" />
-              <SummaryRow label="В аренде" value={m.rented} tone="sky" />
-              <SummaryRow label="Бронь" value={m.reserved} />
-              <SummaryRow label="Сервис" value={m.maintenance} tone="rose" />
-              <SummaryRow label="Оффлайн" value={m.offline} />
-              <SummaryRow label="Низкий заряд (<25%)" value={m.lowBattery} tone={m.lowBattery > 0 ? "amber" : undefined} />
-            </div>
-          </Card>
-          <Card className="p-5" data-testid="dashboard-users-summary">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-display text-lg font-light flex items-center gap-2">
-                <UsersIcon className="w-4 h-4 text-primary" />Пользователи
-              </h2>
-              <Link href="/admin/users" className="text-xs text-primary hover:underline" data-testid="link-users-detail">
-                Все
-              </Link>
-            </div>
-            <div className="space-y-2 text-sm">
-              <SummaryRow label="Всего" value={m.totalUsers} />
-              <SummaryRow label="Новых сегодня" value={m.newUsersToday} tone={m.newUsersToday > 0 ? "emerald" : undefined} />
-              <SummaryRow label="Операторов / админов" value={m.staffCount} />
-              <SummaryRow label="Заблокировано" value={m.blockedUsers} tone={m.blockedUsers > 0 ? "rose" : undefined} />
-            </div>
-          </Card>
-        </div>
       </div>
     </div>
   );
