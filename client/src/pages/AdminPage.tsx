@@ -169,7 +169,7 @@ export function AdminPage() {
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-2 flex-1">
+          <div className="flex flex-wrap gap-2 flex-1 justify-end">
             <StatusChip
               tone="emerald"
               icon={<CheckCircle2 className="w-3.5 h-3.5" />}
