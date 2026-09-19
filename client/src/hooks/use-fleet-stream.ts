@@ -12,6 +12,8 @@ export function useFleetStream() {
     es.onmessage = () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/bikes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
+      // Старт/конец аренды меняет и список поездок, и счётчики вкладок.
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/rides"] });
       // «Занято» парковок считается от велосипедов → обновляем и их.
       queryClient.invalidateQueries({ queryKey: ["/api/parkings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/parkings"] });

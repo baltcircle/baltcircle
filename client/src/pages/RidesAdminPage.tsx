@@ -18,6 +18,7 @@ import { Search, AlertTriangle } from "lucide-react";
 import { TablePager, useClientPagination } from "@/components/table-pager";
 import { RideRowItem } from "./rides-admin/RideRow";
 import { cleanErr } from "@/lib/api-error";
+import { useFleetStream } from "@/hooks/use-fleet-stream";
 
 const RIDES_KEY = ["/api/admin/rides"];
 
@@ -34,7 +35,13 @@ const TABS: { id: RideTab; label: string; testId: string }[] = [
 
 export function RidesAdminPage() {
   const toast = useToast();
-  const ridesQ = useQuery<AdminRide[]>({ queryKey: RIDES_KEY });
+  useFleetStream();
+  const ridesQ = useQuery<AdminRide[]>({
+    queryKey: RIDES_KEY,
+    // Recover after a suspended tab or a temporary network interruption.
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
+  });
   const [tab, setTab] = useState<RideTab>("active");
   const [search, setSearch] = useState("");
   // The ride awaiting end confirmation (drives the alert dialog).
