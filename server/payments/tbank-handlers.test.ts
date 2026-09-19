@@ -704,14 +704,14 @@ describe("handleAddCardNotification unmatched-notification guard", () => {
       Pan: "430000******0777",
     });
 
-    expect(storageMock.findActiveCardDuplicate).toHaveBeenCalledWith("user-1", "0777", "visa", 6);
+    expect(storageMock.findActiveCardDuplicate).toHaveBeenCalledWith("user-1", "card-duplicate", null, 6);
     expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(6, {
       status: "failed",
       lastErrorCode: "DUPLICATE_CARD",
       lastErrorMessage: "Эта карта уже привязана к вашему аккаунту.",
       lastErrorDetails: null,
     });
-    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("last4=0777"), "tbank");
+    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("duplicate-card bind attempt"), "tbank");
   });
 
   it("honors a late AddCard success for the superseded row identified by RequestKey", async () => {
@@ -769,15 +769,28 @@ describe("card-binding duplicate protection", () => {
     );
     await handleInitBindingNotification(
       { ...pendingInitMethod, id: 139, paymentId: "verification-payment-2" },
-      { Status: "CONFIRMED", PaymentId: "pay-2", RebillId: "rebill-2", CardId: "card-2", Pan: "555555******4444" },
+      { Status: "CONFIRMED", PaymentId: "pay-2", RebillId: "rebill-2", CardId: "card-2", Pan: "430000******0777" },
     );
 
     expect(storageMock.updatePaymentMethod).toHaveBeenNthCalledWith(
       1, 138, expect.objectContaining({ status: "active", label: "*0777", brand: "visa" }),
     );
     expect(storageMock.updatePaymentMethod).toHaveBeenNthCalledWith(
-      2, 139, expect.objectContaining({ status: "active", label: "*4444", brand: "mastercard" }),
+      2, 139, expect.objectContaining({ status: "active", label: "*0777", brand: "visa" }),
     );
+    expect(storageMock.findActiveCardDuplicate).toHaveBeenNthCalledWith(1, "user-1", "card-1", "rebill-1", 138);
+    expect(storageMock.findActiveCardDuplicate).toHaveBeenNthCalledWith(2, "user-1", "card-2", "rebill-2", 139);
+  });
+
+  it("checks provider identifiers even when the bank omits the masked PAN", async () => {
+    storageMock.findActiveCardDuplicate.mockResolvedValue({ id: 137 });
+    await handleInitBindingNotification(pendingInitMethod, {
+      Status: "CONFIRMED", CardId: "card-1", RebillId: "rebill-new",
+    });
+    expect(storageMock.findActiveCardDuplicate).toHaveBeenCalledWith("user-1", "card-1", "rebill-new", 138);
+    expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(138, expect.objectContaining({
+      status: "failed", lastErrorCode: "DUPLICATE_CARD",
+    }));
   });
 
   it("fails a duplicate Init binding and triggers a verification-charge refund", async () => {

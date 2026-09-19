@@ -137,8 +137,8 @@ export interface IPaymentMethodStorage {
   // карту несколько раз при том, что разных карт у райдера может быть несколько.
   findActiveCardDuplicate(
     userId: string,
-    last4: string,
-    brand: string | null,
+    cardId: string | null,
+    rebillId: string | null,
     excludeMethodId?: number,
   ): Promise<PaymentMethod | undefined>;
   // T-Bank ride payment orders (hosted pay-then-start AND saved-card charge)

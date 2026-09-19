@@ -108,7 +108,7 @@ describe("PaymentMethodsPage binding controls", () => {
     expect(pageSource).not.toContain("{m.status === \"failed\" && err && (");
   });
 
-  it("does not show a toast for any terminal card-bind failure", () => {
+  it("keeps generic failures silent and separately notifies only tracked duplicate cards", () => {
     const fetchedFailureEffect = pageSource.slice(
       pageSource.indexOf("// A webhook can update the list"),
       pageSource.indexOf("// Start a real T-Bank card binding"),
@@ -124,6 +124,9 @@ describe("PaymentMethodsPage binding controls", () => {
     expect(pollingFailureEffect).not.toContain("toast.toast");
     expect(pageSource).not.toContain('title: "Привязка не удалась"');
     expect(pageSource).not.toContain("shouldNotifyBindingFailure");
+    expect(pageSource).toContain("cardBindingNotices.track(data.methodId)");
+    expect(pageSource).toContain("if (cardBindingNotices.consume(method))");
+    expect(pageSource).toContain('title: "Карта уже привязана"');
   });
 
   it("silently polls each supported pending binding route on a short fixed interval", () => {

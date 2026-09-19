@@ -8,7 +8,7 @@ import {
 import type { TbankConfig } from "../../tbank";
 import {
   bindingErrorPatch, refundVerificationCharge, maskPan, cardBrand,
-  extractLast4FromLabel, terminalBindingFailurePatch,
+  terminalBindingFailurePatch,
 } from "../../payments/tbank-handlers";
 
 // A state check is on the synchronous request path when a rider returns to the
@@ -146,10 +146,9 @@ export async function reconcilePendingCardBinding(
   if (outcome === "active") {
     const label = pan ? maskPan(pan) : method.label === "Карта (привязывается…)" ? "Карта" : method.label;
     const brand = pan ? cardBrand(pan) ?? method.brand : method.brand;
-    const last4 = extractLast4FromLabel(label);
-    const duplicate = last4
-      ? await storage.findActiveCardDuplicate(method.userId, last4, brand, method.id)
-      : undefined;
+    const duplicate = await storage.findActiveCardDuplicate(
+      method.userId, cardId || method.cardId, rebillId || method.rebillId, method.id,
+    );
     if (duplicate) {
       await storage.updatePaymentMethod(method.id, {
         status: "failed",

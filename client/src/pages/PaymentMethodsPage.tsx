@@ -25,6 +25,7 @@ import {
   isOpenablePayload,
 } from "./payment-methods/binding-utils";
 import { SbpBindModal } from "./payment-methods/SbpBindModal";
+import { createCardBindingNotices } from "./payment-methods/card-binding-notices";
 
 const METHODS_KEY = ["/api/payment-methods"];
 const SBP_BANKS_KEY = ["/api/payments/tbank/sbp-banks"];
@@ -48,6 +49,10 @@ export function PaymentMethodsPage() {
   const [tbankBind, setTbankBind] = useState<{ methodId: number; url: string } | null>(null);
   const timedOutBindingIds = useRef(new Set<number>());
   const pendingBindingIds = useRef(new Set<number>());
+  const [cardBindingNotices] = useState(() => {
+    try { return createCardBindingNotices(window.sessionStorage); }
+    catch { return createCardBindingNotices(); }
+  });
   const lastPendingPollAt = useRef(0);
   // Попап, открытый СИНХРОННО в самом click-хендлере (см. handleAddCard) —
   // до await мутации. Браузеры считают попап "легитимным", только если
@@ -112,6 +117,18 @@ export function PaymentMethodsPage() {
   const cfgQ = useQuery<TbankConfigResponse>({ queryKey: TBANK_CONFIG_KEY });
   const tbankConfigured = cfgQ.data?.configured === true;
 
+  useEffect(() => {
+    for (const method of methods) {
+      if (method.type === "card" && method.status === "pending") cardBindingNotices.track(method.id);
+      if (cardBindingNotices.consume(method)) {
+        toast.toast({
+          title: "Карта уже привязана",
+          description: "Эта карта уже привязана к вашему аккаунту. Используйте её для оплаты.",
+        });
+      }
+    }
+  }, [methods, cardBindingNotices, toast.toast]);
+
   // A webhook can update the list between poll responses. Detect a pending →
   // failed transition in fetched data too, so the binding modal reflects the
   // authoritative terminal state. Terminal bind failures update an open binding
@@ -151,6 +168,7 @@ export function PaymentMethodsPage() {
       };
     },
     onSuccess: (data) => {
+      if (typeof data.methodId === "number") cardBindingNotices.track(data.methodId);
       queryClient.invalidateQueries({ queryKey: METHODS_KEY });
       if (data.paymentUrl && typeof data.methodId === "number") {
         // Открываем hosted-форму T-Bank в отдельном ПОПАПе (T-Bank блокирует

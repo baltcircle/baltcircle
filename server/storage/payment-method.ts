@@ -404,28 +404,33 @@ export function PaymentMethodMixin<TBase extends Constructor>(Base: TBase) {
     // must belong to the rider and be active with a RebillId; otherwise the most
     // recent qualifying card is returned. Returns undefined when no usable saved
     // card exists (the caller then falls back to the hosted payment flow).
-    // Detect a physical-card duplicate just before activating a pending binding.
-    // label is always produced by maskPan() as "*XXXX", so a four-digit suffix
-    // is a safe fingerprint without a schema change. Known brands refine the match;
-    // legacy rows with an unknown brand still match by last4 to avoid false
-    // negatives. An unknown candidate brand also falls back to last4 alone.
+    // Only provider identifiers prove a duplicate. Masked PAN/brand may collide
+    // across unrelated cards. Never compare encrypted tokens directly or log them.
     async findActiveCardDuplicate(
       userId: string,
-      last4: string,
-      brand: string | null,
+      cardId: string | null,
+      rebillId: string | null,
       excludeMethodId?: number,
     ) {
+      const card = cardId?.trim();
+      const rebill = rebillId?.trim();
+      if (!card && !rebill) return undefined;
+      const cardMatch = card ? sql`${paymentMethods.cardId} = ${card}` : null;
+      const rebillMatch = rebill
+        ? sql`${paymentMethods.rebillIdHash} = ${hashTokenForLookup(rebill)}`
+        : null;
+      const identityMatch = cardMatch && rebillMatch
+        ? sql`(${cardMatch} OR ${rebillMatch})`
+        : (cardMatch ?? rebillMatch)!;
       const excludeSql = excludeMethodId != null
         ? sql` AND ${paymentMethods.id} != ${excludeMethodId}`
-        : sql``;
-      const brandSql = brand != null
-        ? sql` AND (${paymentMethods.brand} = ${brand} OR ${paymentMethods.brand} IS NULL)`
         : sql``;
       return decryptPaymentMethodRow((await db.select().from(paymentMethods)
         .where(sql`${paymentMethods.userId} = ${userId}
           AND ${paymentMethods.type} = 'card'
+          AND ${paymentMethods.provider} = 'tbank'
           AND ${paymentMethods.status} = 'active'
-          AND ${paymentMethods.label} LIKE ${`%${last4}`}${brandSql}${excludeSql}`)
+          AND ${identityMatch}${excludeSql}`)
         .orderBy(desc(paymentMethods.createdAt))
         .limit(1))[0] as PaymentMethod | undefined);
     }

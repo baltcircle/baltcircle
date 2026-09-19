@@ -272,7 +272,7 @@ describe("T-Bank polling activation duplicate protection", () => {
 
     await post.get("/api/payment-methods/:id/refresh")!({ session: { userId: "user-1" }, params: { id: "10" } }, res);
 
-    expect(storageMock.findActiveCardDuplicate).toHaveBeenCalledWith("user-1", "0777", "visa", 10);
+    expect(storageMock.findActiveCardDuplicate).toHaveBeenCalledWith("user-1", "card-10", "rebill-10", 10);
     expect(storageMock.updatePaymentMethod).toHaveBeenCalledWith(10, {
       status: "failed",
       lastErrorCode: "DUPLICATE_CARD",

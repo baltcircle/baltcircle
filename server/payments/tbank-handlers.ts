@@ -549,12 +549,11 @@ export async function handleInitBindingNotification(
   if (outcome === "active") {
     const label = pan ? maskPan(pan) : "Карта";
     const brand = pan ? cardBrand(pan) ?? method.brand : method.brand;
-    const last4 = extractLast4FromLabel(label);
-    const duplicate = last4
-      ? await storage.findActiveCardDuplicate(method.userId, last4, brand, method.id)
-      : undefined;
+    const duplicate = await storage.findActiveCardDuplicate(
+      method.userId, cardId || method.cardId, rebillId || method.rebillId, method.id,
+    );
     if (duplicate) {
-      log(`[tbank] rejected duplicate-card bind attempt userId=${method.userId} last4=${last4}`, "tbank");
+      log(`[tbank] rejected duplicate-card bind attempt methodId=${method.id}`, "tbank");
       await storage.updatePaymentMethod(method.id, {
         status: "failed",
         paymentId: paymentId || method.paymentId,
@@ -673,12 +672,11 @@ export async function handleAddCardNotification(body: Record<string, unknown>): 
   if (outcome === "active") {
     const label = pan ? maskPan(pan) : "Карта";
     const brand = pan ? cardBrand(pan) ?? method.brand : method.brand;
-    const last4 = extractLast4FromLabel(label);
-    const duplicate = last4
-      ? await storage.findActiveCardDuplicate(method.userId, last4, brand, method.id)
-      : undefined;
+    const duplicate = await storage.findActiveCardDuplicate(
+      method.userId, cardId || method.cardId, rebillId || method.rebillId, method.id,
+    );
     if (duplicate) {
-      log(`[tbank] rejected duplicate-card bind attempt userId=${method.userId} last4=${last4}`, "tbank");
+      log(`[tbank] rejected duplicate-card bind attempt methodId=${method.id}`, "tbank");
       await storage.updatePaymentMethod(method.id, {
         status: "failed",
         lastErrorCode: "DUPLICATE_CARD",
