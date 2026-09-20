@@ -1,6 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { Logo } from "./Logo";
 import { AdminDataSync } from "./AdminDataSync";
+import { isNavItemActive } from "@/lib/navigation";
 import { useTheme } from "@/lib/theme";
 import { useAppViewport } from "@/hooks/use-app-viewport";
 import { useCurrentUser } from "@/hooks/use-current-user";
@@ -61,8 +62,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Where the operator entry points should land. Mechanics can't open the
   // dashboard, so send them to the first section they're allowed to see.
   const opsHome = opsNav[0]?.href ?? "/admin";
-  const matchActive = (href: string) =>
-    href === "/" ? loc === "/" : loc === href || loc.startsWith(href + "/");
+  const matchActive = (href: string) => isNavItemActive(loc, href);
 
   // The customer map page is a single-screen, non-scrolling layout: lock the
   // shell to the exact visible viewport and clip overflow. All other routes
