@@ -16,7 +16,9 @@ const { pool, bootstrapReady } = await import("../server/db/bootstrap");
 const { ridesPage, activeAdminRides, usersPage, staffUsers, feedbackPage, rideStats } = await import("../server/storage/admin-read");
 try {
   await bootstrapReady;
-  await pool.query("TRUNCATE users, bikes RESTART IDENTITY CASCADE");
+  // Conversations intentionally have no FK to users, so CASCADE alone does
+  // not clear them. Include them explicitly to make repeat runs deterministic.
+  await pool.query("TRUNCATE users, bikes, support_conversations RESTART IDENTITY CASCADE");
   await pool.query(`INSERT INTO users(id,name,phone,created_at)
     SELECT 'fixture-'||g, CASE WHEN g=1 THEN 'Old_% needle' ELSE 'Rider '||g END,
       '+710000'||lpad(g::text,5,'0'),g FROM generate_series(1,5002) g`);
