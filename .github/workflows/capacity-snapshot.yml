@@ -57,3 +57,75 @@ jobs:
             } finally { await client.end(); }
           })();
           NODE
+      - name: Disk inventory and sanitized application statistics
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== Disk and inode capacity ==="
+          df -h /
+          df -i /
+          echo "=== Docker aggregate (no volume removal) ==="
+          timeout 30 docker system df
+          echo "=== Known storage directories, aggregate bytes only ==="
+          for dir in /var/lib/docker /var/log /home/yc-user/osm /home/yc-user/uploads /home/yc-user/actions-runner /opt/actions-runner; do
+            if sudo test -d "$dir"; then
+              sudo timeout 20 du -sx --block-size=1 "$dir" || true
+            fi
+          done
+          sudo journalctl --disk-usage
+          echo "=== Container log limit and size ==="
+          docker inspect baltcircle-mvp --format '{{json .HostConfig.LogConfig}}'
+          LOG_PATH=$(docker inspect baltcircle-mvp --format '{{.LogPath}}')
+          if [ -n "$LOG_PATH" ]; then sudo stat --printf='current_log_bytes=%s\n' "$LOG_PATH"; fi
+          echo "=== Last 15m application logs: counts and durations only, capped at 20000 lines ==="
+          docker logs --since 15m --tail 20000 baltcircle-mvp 2>&1 | python3 -c '
+          import sys, json, collections
+          levels=collections.Counter(); statuses=collections.Counter(); durations=[]; unparsed=0; lines=0
+          for line in sys.stdin:
+              lines+=1
+              try:
+                  row=json.loads(line)
+                  if not isinstance(row,dict): raise ValueError()
+                  level=row.get("level")
+                  if isinstance(level,int): levels[str(level)]+=1
+                  status=row.get("status")
+                  if isinstance(status,int) and 100<=status<=599: statuses[str(status)]+=1
+                  ms=row.get("durationMs")
+                  if isinstance(ms,(int,float)) and ms>=0: durations.append(ms)
+              except (ValueError,TypeError): unparsed+=1
+          durations.sort()
+          def pct(p): return durations[min(len(durations)-1,int((len(durations)-1)*p))] if durations else None
+          print(json.dumps({"lines":lines,"unparsed":unparsed,"levels":levels,"http_status":statuses,"timed_requests":len(durations),"p50_ms":pct(.5),"p95_ms":pct(.95),"p99_ms":pct(.99),"max_ms":max(durations) if durations else None}))
+          '
+      - name: PostgreSQL aggregate counters and session maintenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i baltcircle-mvp node <<'NODE'
+          const { Client } = require('pg');
+          (async () => {
+            const c = new Client({connectionString:process.env.DATABASE_URL, statement_timeout:5000, connectionTimeoutMillis:5000});
+            try {
+              await c.connect();
+              await c.query('SET default_transaction_read_only = on');
+              const show = async (name,sql) => {
+                try { console.log(JSON.stringify({[name]:(await c.query(sql)).rows})); }
+                catch(e) {console.log(JSON.stringify({[name]:{unavailable:true,code:/^[0-9A-Z]{5}$/.test(e.code||'')?e.code:'unknown'}}));}
+              };
+              await show('session_aggregate',`SELECT count(*)::int AS total, count(*) FILTER (WHERE expire<now())::int AS expired FROM public.session`);
+              await show('largest_tables',`SELECT relname,pg_total_relation_size(relid)::text AS bytes,n_live_tup,n_dead_tup,seq_scan,idx_scan,last_autovacuum,last_autoanalyze FROM pg_stat_user_tables WHERE schemaname='public' ORDER BY pg_total_relation_size(relid) DESC LIMIT 8`);
+              await show('connection_states',`SELECT state,wait_event_type,count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() GROUP BY state,wait_event_type`);
+              await show('long_transactions',`SELECT count(*)::int AS older_than_30s FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND xact_start<now()-interval '30 seconds'`);
+              await show('session_indexes',`SELECT indexrelname,idx_scan FROM pg_stat_user_indexes WHERE schemaname='public' AND relname='session'`);
+              await show('query_stats_available',`SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname='pg_stat_statements') AS available`);
+              for(let sample=0;sample<2;sample++){
+                await show('database_counters_'+sample,`SELECT now() AS sampled_at,xact_commit,xact_rollback,blks_read,blks_hit,temp_bytes,deadlocks,stats_reset FROM pg_stat_database WHERE datname=current_database()`);
+                await show('session_writes_'+sample,`SELECT now() AS sampled_at,n_tup_ins,n_tup_upd,n_tup_del,n_dead_tup FROM pg_stat_user_tables WHERE schemaname='public' AND relname='session'`);
+                if(sample===0) await new Promise(r=>setTimeout(r,30000));
+              }
+            } catch(e) {
+              console.log(JSON.stringify({db_audit_unavailable:true,code:/^[0-9A-Z]{5}$/.test(e.code||'')?e.code:'unknown'}));
+              process.exitCode=1;
+            } finally {await c.end();}
+          })();
+          NODE
