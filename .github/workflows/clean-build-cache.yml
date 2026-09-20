@@ -1,0 +1,59 @@
+name: Clean unused build cache (preserve application and data)
+on:
+  workflow_dispatch: {}
+permissions: {}
+concurrency:
+  # Never prune while a production deployment is building its image.
+  group: baltcircle-production
+  cancel-in-progress: false
+jobs:
+  cleanup:
+    environment: production
+    runs-on: [self-hosted, baltcircle-prod]
+    timeout-minutes: 10
+    steps:
+      - name: Preserve running and rollback images; prune unused build cache only
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE=$(docker inspect baltcircle-mvp --format '{{.Config.Image}}')
+          ROLLBACK="${IMAGE}-rollback"
+          # Fail closed: do not start cleanup if the rollback image is missing.
+          docker image inspect "$ROLLBACK" --format 'rollback={{.Id}}'
+          test "$(docker inspect baltcircle-mvp --format '{{.State.Running}}')" = true
+          BEFORE=$(mktemp)
+          AFTER=$(mktemp)
+          MAGIC=$(mktemp)
+          trap 'rm -f "$BEFORE" "$AFTER" "$MAGIC"' EXIT
+          snapshot() {
+            docker inspect baltcircle-mvp --format 'app={{.Id}} image={{.Image}} started={{.State.StartedAt}} restarts={{.RestartCount}}'
+            docker image inspect "$IMAGE" "$ROLLBACK" --format 'protected_image={{.Id}}'
+            docker volume ls --format 'volume={{.Name}}' | sort
+            for f in /home/yc-user/osm/*.pmtiles; do
+              sudo stat -L --printf='map=%n inode=%i bytes=%s modified=%Y\n' "$f"
+            done
+          }
+          snapshot > "$BEFORE"
+          echo "=== Disk before ==="
+          df -B1 --output=size,used,avail,pcent /
+          docker system df
+          # Does not prune images, containers or volumes. Retain 3GB of cache
+          # so routine rebuilds need not start completely cold.
+          docker builder prune --all --force --keep-storage 3GB
+          snapshot > "$AFTER"
+          diff -u "$BEFORE" "$AFTER"
+          echo "PASS: application, rollback image, volumes and map metadata unchanged"
+          echo "=== Disk after ==="
+          df -B1 --output=size,used,avail,pcent /
+          docker system df
+          for host in takeride.ru www.takeride.ru; do
+            status=$(curl --silent --show-error --max-time 15 -o /dev/null -w '%{http_code}' "https://$host/api/bikes")
+            test "$status" = 200
+            echo "PASS: $host API HTTP 200"
+          done
+          for file in kaliningrad.pmtiles addresses.pmtiles; do
+            status=$(curl --silent --show-error --max-time 15 --max-filesize 7 --range 0-6 -o "$MAGIC" -w '%{http_code}' "https://takeride.ru/$file")
+            test "$status" = 206
+            test "$(cat "$MAGIC")" = PMTiles
+            echo "PASS: $file HTTP 206 and valid magic"
+          done

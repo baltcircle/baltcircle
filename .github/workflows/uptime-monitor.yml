@@ -3,8 +3,9 @@ name: Uptime Monitor
 # Audit HIGH #23 (zero-budget variant) — the app runs on a single Yandex
 # Cloud VM with no failover (explicit decision: horizontal scaling is
 # deferred to 1-2 months before launch, no extra compute spend for now).
-# This workflow can't remove that single point of failure, but it makes an
-# outage visible within minutes instead of relying on someone noticing.
+# This is a best-effort external fallback, not a five-minute SLA.
+# Scheduled runs were observed hours apart despite the requested interval;
+# an independent uptime provider is required for reliable polling cadence.
 #
 # Runs on a GitHub-hosted runner (NOT the self-hosted baltcircle-prod
 # runner) on purpose: if the prod VM itself is down, a check running ON
@@ -13,7 +14,7 @@ name: Uptime Monitor
 # external health check. Free for public repos (unlimited Actions minutes).
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "2-59/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -28,6 +29,7 @@ jobs:
   check:
     name: Check production health
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - name: Probe takeride.ru
         id: probe
@@ -97,6 +99,16 @@ jobs:
             --json number --jq '.[0].number // ""')
           echo "issue_number=$num" >> "$GITHUB_OUTPUT"
 
+      - name: Ensure incident label exists
+        if: steps.probe.outputs.healthy == '0' && steps.find.outputs.issue_number == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Idempotent recovery: a deleted/missing label must not prevent
+          # recording the next outage. No user data enters the issue.
+          gh label create incident --repo "${{ github.repository }}" \
+            --color B60205 --description "Production availability incident" --force
+
       - name: Open incident issue
         if: steps.probe.outputs.healthy == '0' && steps.find.outputs.issue_number == ''
         env:
@@ -121,13 +133,8 @@ jobs:
 
           Этот issue закроется автоматически, когда мониторинг снова увидит здоровый ответ."
 
-      - name: Add follow-up comment on continued outage
-        if: steps.probe.outputs.healthy == '0' && steps.find.outputs.issue_number != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh issue comment "${{ steps.find.outputs.issue_number }}" --repo "${{ github.repository }}" \
-            --body "⏱️ Всё ещё недоступен: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+      # Keep one incident open during an outage. Do not send a comment/email
+      # on every poll; recovery below still closes the incident explicitly.
 
       - name: Close incident issue on recovery
         if: steps.probe.outputs.healthy == '1' && steps.find.outputs.issue_number != ''
@@ -139,5 +146,5 @@ jobs:
           gh issue close "${{ steps.find.outputs.issue_number }}" --repo "${{ github.repository }}"
 
       - name: Fail the run if unhealthy
-        if: steps.probe.outputs.healthy == '0'
+        if: always() && steps.probe.outputs.healthy == '0'
         run: exit 1
