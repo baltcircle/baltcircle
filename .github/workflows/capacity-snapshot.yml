@@ -1,0 +1,59 @@
+name: Capacity snapshot (read-only)
+on:
+  workflow_dispatch: {}
+permissions: {}
+jobs:
+  snapshot:
+    environment: production
+    runs-on: [self-hosted, baltcircle-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Aggregate resources only (no identities or application logs)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== UTC / CPU count / memory bytes ==="
+          date -u +%FT%TZ
+          nproc
+          free -b
+          echo "=== Root disk aggregate ==="
+          df -B1 --output=size,used,avail,pcent /
+          echo "=== Container limits and lifecycle ==="
+          docker inspect baltcircle-mvp --format 'MemoryLimit={{.HostConfig.Memory}} NanoCPUs={{.HostConfig.NanoCpus}} OOMKilled={{.State.OOMKilled}} RestartCount={{.RestartCount}} StartedAt={{.State.StartedAt}}'
+          echo "=== Host CPU / memory / IO sample (first line since boot) ==="
+          vmstat 1 10
+          echo "=== Container resource samples, 12 over roughly 2 minutes ==="
+          for i in $(seq 1 12); do
+            date -u +%FT%TZ
+            docker stats --no-stream --format 'CPU={{.CPUPerc}} RAM={{.MemUsage}} RAMPercent={{.MemPerc}} PIDs={{.PIDs}}' baltcircle-mvp
+            awk '/^MemAvailable:|^SwapFree:/{print}' /proc/meminfo
+            sleep 8
+          done
+          echo "=== Established connections: aggregate count only ==="
+          for port in 443 5000 5100; do
+            count=$(ss -Htn state established "( sport = :$port )" | wc -l)
+            printf 'port=%s count=%s\n' "$port" "$count"
+          done
+          echo "=== Database aggregate / read-only query ==="
+          docker exec -i baltcircle-mvp node <<'NODE'
+          const { Client } = require('pg');
+          (async () => {
+            const client = new Client({ connectionString: process.env.DATABASE_URL, statement_timeout: 5000 });
+            try {
+              await client.connect();
+              await client.query('BEGIN READ ONLY');
+              const result = await client.query(`SELECT
+                (SELECT count(*)::int FROM bikes WHERE archived_at IS NULL) AS bikes,
+                (SELECT count(*)::int FROM rides WHERE status IN ('active','paused')) AS active_rides,
+                (SELECT count(*)::int FROM rides) AS total_rides,
+                (SELECT count(*)::int FROM pg_stat_activity WHERE datname=current_database()) AS db_connections,
+                (SELECT count(*)::int FROM pg_stat_activity WHERE datname=current_database() AND state='active') AS db_active_connections,
+                pg_database_size(current_database()) AS database_bytes,
+                current_setting('max_connections') AS max_connections`);
+              console.log(JSON.stringify(result.rows[0]));
+              await client.query('ROLLBACK');
+            } catch (error) {
+              console.log(JSON.stringify({ database_snapshot_unavailable: true, error_code: error.code || 'unknown' }));
+            } finally { await client.end(); }
+          })();
+          NODE
