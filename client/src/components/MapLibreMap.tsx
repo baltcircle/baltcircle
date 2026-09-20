@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Bike, MapObject, Parking, Ride, Ticket } from "@shared/schema";
@@ -115,7 +115,7 @@ export function MapLibreMap({
   // GeoJSON-оверлеи (saved-objects/ride-tracks/editor-draft) не переживают
   // диффовый setStyle и должны быть перезаписаны через setData повторно.
   const [styleVersion, setStyleVersion] = useState(0);
-  const appliedInitialThemeRef = useRef(false);
+  const appliedThemeRef = useRef<typeof theme | null>(null);
   // HTML markers (bikes/parkings/ride starts/tickets) are managed imperatively;
   // routes/zones/tracks go through GeoJSON sources. Kept in a ref so the render
   // effect can clear the previous batch before drawing the next.
@@ -223,6 +223,7 @@ export function MapLibreMap({
         trackResize: true,
         interactive,
       });
+      appliedThemeRef.current = themeRef.current;
       map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
       // Static previews (interactive=false): also hard-disable gestures so a
       // wrapping scroll container isn't hijacked by the map.
@@ -427,23 +428,15 @@ export function MapLibreMap({
   }, [center]);
 
   // ── THEME: пересобираем style.json и переключаем карту при смене темы UI ───
-  // Первый прогон после ready пропускаем — карта уже инициализирована с нужной
-  // темой через themeRef в initMap(). diff:true меняет только paint-свойства
-  // (цвета/opacity), id источников/слоев не трогаются — живые GeoJSON-источники
-  // (saved-objects/ride-tracks/editor-draft/user-location) переживают свитч не
-  // теряя setData. styleVersion — защитный ре-синк на случай, если diff всё же
-  // пересобрал источник.
-  useEffect(() => {
-    if (!ready) return;
-    if (!appliedInitialThemeRef.current) {
-      appliedInitialThemeRef.current = true;
-      return;
-    }
+  // Перед paint, в том числе под профилем. Сравниваем фактически применённую
+  // тему: пользователь мог переключить её, пока карта ещё загружалась.
+  // diff сохраняет источники; styleVersion страхует их пересоздание.
+  useLayoutEffect(() => {
+    if (!ready || appliedThemeRef.current === theme) return;
     const map = mapRef.current;
     const params = tileParamsRef.current;
     if (!map || !params) return;
     const nextStyle = buildStyle(params.tileSource, params.minzoom, params.maxzoom, theme);
-    map.setStyle(nextStyle as any, { diff: true });
     const onStyleLoad = () => {
       // Blue-dot переживает диф лишь если источник не пересобрался — восстанавливаем
       // на всякий случай из последней известной GPS-точки (heading сбросится до
@@ -463,6 +456,8 @@ export function MapLibreMap({
       setStyleVersion((v) => v + 1);
     };
     map.once("style.load", onStyleLoad);
+    map.setStyle(nextStyle as any, { diff: true });
+    appliedThemeRef.current = theme;
     return () => { try { map.off("style.load", onStyleLoad); } catch { /* ignore */ } };
   }, [theme, ready]);
 

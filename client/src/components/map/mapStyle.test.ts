@@ -46,6 +46,10 @@ describe.each<MapTheme>(["light", "dark"])("street labels in %s theme", (theme) 
     expect(validateStyleMin(style)).toEqual([]);
   });
 
+  it("switches theme colours without a delayed paint transition", () => {
+    expect(style.transition).toEqual({ duration: 0, delay: 0 });
+  });
+
   it("loads the deduplicated address archive without reusing the old cache", () => {
     expect(ADDR_URL).toBe("/addresses-v2.pmtiles");
     expect(style.sources.addr).toMatchObject({ type: "vector", url: `pmtiles://${ADDR_URL}` });
