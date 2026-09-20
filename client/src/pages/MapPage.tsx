@@ -28,7 +28,7 @@ import { useRideTrackPoll } from "@/hooks/use-ride-track-poll";
 import { useRideGuard } from "@/hooks/use-ride-guard";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Menu, MapPin } from "lucide-react";
+import { Menu, Navigation } from "lucide-react";
 import { useDrawerState } from "./map/use-drawer-state";
 import { useGeolocation } from "./map/use-geolocation";
 import { usePaymentBanner } from "./map/use-payment-banner";
@@ -755,7 +755,7 @@ export function MapPage() {
           onClick={() => setDrawerOpen(true)}
           aria-label="Открыть меню"
           data-testid="home-menu-button"
-          className="w-12 h-12 rounded-full bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
+          className="w-12 h-12 rounded-2xl bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
         >
           <Menu className="w-5 h-5" />
         </button>
@@ -774,9 +774,9 @@ export function MapPage() {
           onClick={handleGeolocate}
           aria-label="Моё местоположение"
           data-testid="home-geolocate-button"
-          className="self-end w-12 h-12 rounded-full bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
+          className="self-end w-12 h-12 rounded-2xl bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
         >
-          <MapPin className="w-5 h-5" />
+          <Navigation className="w-5 h-5" fill="currentColor" />
         </button>
 
         {/* Reservation banners render alongside EITHER branch below — a rider

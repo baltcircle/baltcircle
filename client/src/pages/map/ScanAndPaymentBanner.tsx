@@ -21,7 +21,7 @@ export function ScanAndPaymentBanner({
         onClick={onScan}
         aria-label={isRegistered ? "Сканировать QR" : "Сканировать QR (нужна регистрация)"}
         data-testid="home-primary-scan"
-        className="w-full h-14 rounded-full bg-primary hover:opacity-90 text-black font-medium text-lg flex items-center justify-between px-6 shadow-lg active:scale-[0.98] transition-all"
+        className="w-full h-14 rounded-2xl bg-primary hover:opacity-90 text-black font-medium text-lg flex items-center justify-between px-6 shadow-lg active:scale-[0.98] transition-all"
       >
         <span>Сканировать</span>
         <QrCode className="w-6 h-6" />
