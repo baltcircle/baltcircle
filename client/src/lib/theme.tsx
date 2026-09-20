@@ -1,4 +1,4 @@
-import { createContext, useContext, useLayoutEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 type Theme = "light" | "dark";
 export type ThemeMode = "light" | "dark" | "system";
@@ -12,23 +12,13 @@ function systemPrefersDark() {
 
 function readStoredMode(): ThemeMode {
   if (typeof window === "undefined") return "system";
-  try {
-    const stored = window.localStorage?.getItem(STORAGE_KEY);
-    return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
-  } catch {
-    return "system";
-  }
+  const stored = window.localStorage?.getItem(STORAGE_KEY);
+  return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
 }
 
 function resolve(mode: ThemeMode): Theme {
   if (mode === "system") return systemPrefersDark() ? "dark" : "light";
   return mode;
-}
-
-function applyDocumentTheme(theme: Theme) {
-  const root = document.documentElement;
-  root.classList.toggle("dark", theme === "dark");
-  root.style.colorScheme = theme;
 }
 
 const ThemeContext = createContext<{
@@ -44,20 +34,18 @@ const ThemeContext = createContext<{
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [{ mode, theme }, setSelection] = useState(() => {
-    const mode = readStoredMode();
-    return { mode, theme: resolve(mode) };
-  });
+  const [mode, setModeState] = useState<ThemeMode>(readStoredMode);
+  const [theme, setTheme] = useState<Theme>(() => resolve(readStoredMode()));
 
-  // Apply the initial/system theme before paint. Mode and resolved theme are
-  // one state, so the map cannot receive a new mode with the previous theme.
-  useLayoutEffect(() => {
+  // Apply the resolved theme to <html> and keep it in sync with both the
+  // chosen mode and — when mode is "system" — the live OS preference.
+  useEffect(() => {
     const apply = () => {
       const resolved = resolve(mode);
-      applyDocumentTheme(resolved);
-      setSelection((current) => current.mode === mode && current.theme === resolved
-        ? current
-        : { mode, theme: resolved });
+      setTheme(resolved);
+      const root = document.documentElement;
+      if (resolved === "dark") root.classList.add("dark");
+      else root.classList.remove("dark");
     };
     apply();
 
@@ -68,16 +56,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [mode]);
 
   const setMode = (next: ThemeMode) => {
-    const resolved = resolve(next);
-    // Update the live drawer/document in this handler, not a later effect.
-    // React consumers (including the mounted map) receive both values together.
-    applyDocumentTheme(resolved);
-    setSelection({ mode: next, theme: resolved });
-    try {
-      window.localStorage?.setItem(STORAGE_KEY, next);
-    } catch {
-      // A blocked/full store must not prevent switching for this session.
-    }
+    setModeState(next);
+    window.localStorage?.setItem(STORAGE_KEY, next);
   };
 
   // toggle flips the resolved theme into an explicit light/dark mode.

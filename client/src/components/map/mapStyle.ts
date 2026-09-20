@@ -154,8 +154,6 @@ export const buildStyle = (
   const RU = ["coalesce", ["get", "name:ru"], ["get", "name"], ["get", "name:en"]];
   return {
     version: 8,
-    // Theme changes must not leave the map fading through the old palette.
-    transition: { duration: 0, delay: 0 },
     glyphs: "/glyphs/{fontstack}/{range}.pbf",
     sources: {
       pm: tileSource.type === "pmtiles"

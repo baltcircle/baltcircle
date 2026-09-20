@@ -4,7 +4,6 @@ import path from "node:path";
 // Unit-test runner. Tests are colocated next to the code (*.test.ts) and mock the
 // database layer, so no live Postgres is required to run them (audit H5).
 export default defineConfig({
-  esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
     include: ["{server,shared,client}/**/*.test.ts"],
