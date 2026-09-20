@@ -96,7 +96,7 @@ export function ParkingsTable({
           {grouped.map(([city, rows]) => (
             <Fragment key={`grp-${city}`}>
               <TableRow className="bg-muted/50 hover:bg-muted/50" data-testid={`parking-city-group-${city}`}>
-                <TableCell colSpan={4} className="py-2 text-left">
+                <TableCell colSpan={4} className="py-2 text-center">
                   <span className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-black dark:text-white">
                     {city}
                     <span className="font-bold normal-case tracking-normal">{rows.length}</span>

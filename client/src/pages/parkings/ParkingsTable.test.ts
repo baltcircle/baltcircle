@@ -5,11 +5,11 @@ import { describe, expect, it } from "vitest";
 const source = readFileSync(resolve(process.cwd(), "client/src/pages/parkings/ParkingsTable.tsx"), "utf8");
 
 describe("parking city headings", () => {
-  it("left-aligns city group labels without changing column alignment", () => {
+  it("centers city group labels without changing column alignment", () => {
     const groupCell = source.match(/data-testid=\{`parking-city-group-\$\{city\}`\}>\s*<TableCell([^>]*)>/)?.[1];
     expect(groupCell).toBeDefined();
-    expect(groupCell).toContain("text-left");
-    expect(groupCell).not.toContain("text-center");
+    expect(groupCell).toContain("text-center");
+    expect(groupCell).not.toContain("text-left");
     expect(source).toContain('<TableHead className="text-center">Название</TableHead>');
     expect(source).toContain('<TableHead className="text-center">Занято / Вмест.</TableHead>');
   });
