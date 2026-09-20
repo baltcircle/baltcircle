@@ -43,7 +43,7 @@ jobs:
               await client.connect();
               await client.query('BEGIN READ ONLY');
               const result = await client.query(`SELECT
-                (SELECT count(*)::int FROM bikes WHERE archived_at IS NULL) AS bikes,
+                (SELECT count(*)::int FROM bikes) AS bikes,
                 (SELECT count(*)::int FROM rides WHERE status IN ('active','paused')) AS active_rides,
                 (SELECT count(*)::int FROM rides) AS total_rides,
                 (SELECT count(*)::int FROM pg_stat_activity WHERE datname=current_database()) AS db_connections,
