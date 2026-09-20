@@ -20,6 +20,7 @@ export function useCurrentUser() {
   // narrows them down from there. `canManageStaff` mirrors the user-management
   // gate (operator/admin only — mechanics never manage users).
   return {
+    query,
     user,
     role,
     isRegistered: !!user,

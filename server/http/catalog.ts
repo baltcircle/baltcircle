@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { storage, bikeEvents, BIKE_EVENT_CHANNEL } from "../storage";
+import { fleetDataEvents, publicCatalogEvents } from "../storage/events";
 import { z } from "zod";
 import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
 import {
@@ -159,18 +160,33 @@ export function registerCatalogRoutes(app: Express): void {
     res.flushHeaders?.();
     let closed = false;
     const onTick = () => { if (!closed) res.write(`data: tick\n\n`); };
+    const catalog = () => { if (!closed) res.write("event: catalog\ndata: {}\n\n"); };
+    let telemetryTimer: ReturnType<typeof setTimeout> | undefined;
+    const telemetry = () => {
+      if (closed || telemetryTimer) return;
+      telemetryTimer = setTimeout(() => {
+        telemetryTimer = undefined;
+        if (!closed) res.write("event: telemetry\ndata: {}\n\n");
+      }, 5000);
+    };
     bikeEvents.on(BIKE_EVENT_CHANNEL, onTick);
+    publicCatalogEvents.on("change", catalog);
+    fleetDataEvents.on("telemetry", telemetry);
     // Начальный пинг, чтобы клиент сразу подтянул актуальное состояние.
     res.write(`data: tick\n\n`);
-    const heartbeat = setInterval(() => { if (!closed) res.write(": ping\n\n"); }, 25000);
+    const heartbeat = setInterval(() => { if (!closed) res.write("event: heartbeat\ndata: {}\n\n"); }, 25000);
     const cleanup = () => {
       if (closed) return;
       closed = true;
       clearInterval(heartbeat);
+      clearTimeout(telemetryTimer);
       bikeEvents.off(BIKE_EVENT_CHANNEL, onTick);
+      publicCatalogEvents.off("change", catalog);
+      fleetDataEvents.off("telemetry", telemetry);
     };
     req.on("close", cleanup);
     res.on("error", cleanup);
+    res.on("close", cleanup);
   });
 
   app.get("/api/bikes/:id", async (req, res) => {

@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useTheme } from "@/lib/theme";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, announceSessionChange } from "@/lib/queryClient";
 import { CURRENT_USER_KEY } from "@/hooks/use-current-user";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 import type { User as UserType } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { PhoneChangeModal } from "@/components/PhoneChangeModal";
@@ -20,7 +21,7 @@ import { ThemeSection } from "./settings/ThemeSection";
 
 export function SettingsPage() {
   const toast = useToast();
-  const { user, isRegistered } = useCurrentUser();
+  const { user, isRegistered, query: userQ } = useCurrentUser();
   const { mode, setMode } = useTheme();
 
   const [name, setName] = useState(user?.name ?? "");
@@ -32,10 +33,10 @@ export function SettingsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   useEffect(() => {
-    if (user) {
+    if (user && !editingName) {
       setName(user.name ?? "");
     }
-  }, [user]);
+  }, [user, editingName]);
 
   const saveMut = useMutation<UserType, Error, { name: string }>({
     mutationFn: async (patch) => {
@@ -58,6 +59,7 @@ export function SettingsPage() {
       await apiRequest("POST", "/api/auth/logout");
     },
     onSuccess: () => {
+      announceSessionChange();
       queryClient.clear();
       window.location.assign("/");
     },
@@ -71,6 +73,7 @@ export function SettingsPage() {
       await apiRequest("DELETE", "/api/account");
     },
     onSuccess: () => {
+      announceSessionChange();
       queryClient.clear();
       window.location.assign("/");
     },
@@ -105,6 +108,7 @@ export function SettingsPage() {
 
       {/* Content */}
       <div className="flex-1 flex flex-col px-4 pt-6 pb-4 gap-3 min-h-0">
+        <QueryErrorNotice query={userQ} />
 
         {/* User data */}
         <ProfileSection

@@ -1,7 +1,12 @@
 import type { SupportMessage } from "@shared/schema";
+import { useRef, useState } from "react";
+import { queryClient } from "@/lib/queryClient";
+import { CHAT_KEY } from "./utils";
 import { fmtTime } from "./utils";
 
 export function MessageBubble({ message }: { message: SupportMessage }) {
+  const lastRefresh = useRef(0);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const isUser = message.senderRole === "user";
   const isSystem = message.senderRole === "system";
   const isBot = message.senderRole === "bot";
@@ -37,9 +42,22 @@ export function MessageBubble({ message }: { message: SupportMessage }) {
               src={message.attachmentUrl}
               alt="Вложение"
               className="max-w-full max-h-64 rounded-lg object-cover"
+              onLoad={() => setFailedUrl(null)}
+              onError={() => {
+                setFailedUrl(message.attachmentUrl);
+                // Renew expired signed URLs, but never loop on a broken object.
+                if (Date.now() - lastRefresh.current < 60_000) return;
+                lastRefresh.current = Date.now();
+                void queryClient.invalidateQueries({ queryKey: CHAT_KEY });
+              }}
             />
           </a>
         )}
+        {failedUrl === message.attachmentUrl && failedUrl && <div role="status" className="text-xs">
+          Вложение не загрузилось. <button className="underline" onClick={() => {
+            void queryClient.invalidateQueries({ queryKey: CHAT_KEY });
+          }}>Повторить</button>
+        </div>}
         {message.body && (
           <div className="text-sm whitespace-pre-wrap break-words leading-snug">{message.body}</div>
         )}

@@ -21,6 +21,8 @@ class FakeEventSource {
   onmessage: (() => void) | null = null;
   onerror: (() => void) | null = null;
   close = vi.fn();
+  listeners = new Map<string, () => void>();
+  addEventListener(name: string, handler: () => void) { this.listeners.set(name, handler); }
 
   constructor(public url: string) {
     FakeEventSource.instances.push(this);
@@ -33,6 +35,8 @@ describe("fleet stream updates admin rides", () => {
     FakeEventSource.instances = [];
     mocks.cleanup = undefined;
     vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("document", Object.assign(new EventTarget(), { visibilityState: "visible" }));
+    vi.stubGlobal("window", new EventTarget());
   });
 
   afterEach(() => {
@@ -47,7 +51,7 @@ describe("fleet stream updates admin rides", () => {
 
     for (let tick = 0; tick < 3; tick++) {
       mocks.invalidateQueries.mockClear();
-      stream.onmessage?.();
+      stream.listeners.get("message")?.();
       expect(mocks.invalidateQueries).toHaveBeenCalledWith({
         queryKey: ["/api/admin/rides"],
       });

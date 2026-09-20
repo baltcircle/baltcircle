@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -74,6 +75,9 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
     if (open) {
       setTariff("h1");
       setManualMethodId(null);
+      for (const key of [TBANK_CONFIG_KEY, PAYMENT_METHODS_KEY, RESERVATION_ACTIVE_KEY, ["/api/rides/active"]]) {
+        void queryClient.invalidateQueries({ queryKey: key });
+      }
     }
   }, [open]);
 
@@ -302,21 +306,23 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
   });
 
   const submitting = payMut.isPending || chargeMut.isPending;
+  const bookingReady = [activeReservationQ, activeRidesQ].every((q) => !q.isError && !q.isPending && !q.isFetching);
+  const paymentReady = bookingReady && [methodsQ, configQ].every((q) => !q.isError && !q.isPending && !q.isFetching);
   // "available" bikes can always be started; a "reserved" bike can ONLY be
   // started by the rider who holds that exact reservation (storage.startRide
   // enforces the same ownership gate server-side — this is just the UI mirror).
   const canPay = !!bike && (bike.status === "available" || hasReservationForThisBike)
-    && paymentsConfigured && useSavedCard && !submitting;
+    && paymentsConfigured && useSavedCard && !submitting && paymentReady;
   const canBook = !!bike && bike.status === "available"
-    && !atCombinedCap && !hasReservationForThisBike && !bookMut.isPending;
+    && !atCombinedCap && !hasReservationForThisBike && !bookMut.isPending && bookingReady;
   const canStartTestRide = canStartTest && !!bike
     && (bike.status === "available" || hasReservationForThisBike) && !testMut.isPending
-    && testMinutesValid;
+    && testMinutesValid && bookingReady;
 
   function onPrimary() {
     // Гатится через canPay: без привязанного способа оплаты кнопка дизаблена, так
     // что hosted-оплата (payMut) больше не затрагивается отсюда.
-    if (useSavedCard) chargeMut.mutate();
+    if (canPay && useSavedCard) chargeMut.mutate();
   }
 
   return (
@@ -382,12 +388,14 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
           <div className="text-[11px] text-muted-foreground flex items-center gap-1.5" data-testid="rental-payment-loading">
             <Loader2 className="w-3 h-3 animate-spin" /> Проверяем оплату…
           </div>
-        ) : !paymentsConfigured ? (
+        ) : !configQ.isError && !paymentsConfigured ? (
           <div className="rounded-md bg-destructive/10 text-destructive text-xs p-2.5 flex items-start gap-1.5" data-testid="rental-payment-unconfigured">
             <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
             <span>Платежи настраиваются. Попробуйте позже.</span>
           </div>
         ) : null}
+        {[methodsQ, configQ, activeReservationQ, activeRidesQ].filter((q) => q.isError).slice(0, 1)
+          .map((q) => <QueryErrorNotice key="rental-error" query={q} />)}
 
         {/* Payment method picker: только сохранённые способы оплаты — никакого “hosted”-варианта
             с переходом на форму Т-Банка: без привязанного способа оплаты сканирование QR
@@ -425,7 +433,7 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
             райдер до этого модального окна не дойдёт (QR-сканер гатит доступ отдельно).
             Страхует на случай, если модалка всё же открылась таким райдером — не даёт тихо
             улететь в hosted-оплату без выбора и объясняет, что нужно сделать. */}
-        {paymentsConfigured && activeMethods.length === 0 && (
+        {paymentsConfigured && !methodsQ.isError && !methodsQ.isPending && activeMethods.length === 0 && (
           <div className="rounded-md bg-muted/60 text-muted-foreground text-xs p-2.5 flex items-start gap-1.5" data-testid="rental-no-payment-method">
             <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
             <span>Сначала привяжите карту или счёт в настройках профиля — без сохранённого способа оплаты начать аренду нельзя.</span>
@@ -557,4 +565,3 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
     </Dialog>
   );
 }
-

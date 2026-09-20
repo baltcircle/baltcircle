@@ -54,7 +54,7 @@ jobs:
         run: npx tsc --noEmit
       - name: Unit tests
         run: npm test
-      - name: Administrative data integration checks
+      - name: Administrative and rider data integration checks
         env:
           ADMIN_DATA_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/takeride_admin_test
         run: npx tsx script/check-admin-data.ts

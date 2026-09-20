@@ -2,33 +2,43 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Ride } from "@shared/schema";
 import { SSE_STALE_THRESHOLD_MS } from "@shared/geo";
-import { API_BASE } from "@/lib/queryClient";
-import { RESERVATION_ACTIVE_KEY } from "@/lib/payment";
+import { API_BASE, getSessionGeneration } from "@/lib/queryClient";
+import { useCurrentUser } from "./use-current-user";
+import { rideLifecycle, refreshRideDependents } from "@/lib/rider-freshness";
 import { isStreamStale } from "./sse-watchdog";
 
 export const ACTIVE_RIDE_KEY = ["/api/rides/active"] as const;
-const BIKES_KEY = ["/api/bikes"] as const;
 
 // How often the watchdog re-checks staleness. Comfortably under
 // SSE_STALE_THRESHOLD_MS so detection latency stays close to the threshold
 // itself rather than adding a second poll-sized delay on top of it.
 const WATCHDOG_POLL_MS = 10 * 1000;
 
-// Subscribes to the server's active-ride SSE stream and mirrors each pushed
-// snapshot into the react-query cache under ACTIVE_RIDE_KEY. Pages keep reading
-// useQuery(["/api/rides/active"]) unchanged — the data now arrives via push
-// instead of a 4s poll, so one open EventSource replaces the request storm.
-//
-// EventSource sends the session cookie automatically (same-origin) and
-// auto-reconnects on drop, so no manual retry/backoff is needed. On every
-// pushed change we also invalidate the bikes list so the map reflects the
-// bike's new position/status without polling /api/bikes either.
+// One account-bound stream is mounted by MapPage. HTTP polling is an independent
+// fallback. Lifecycle invalidation also observes HTTP/mutation writes, and does
+// not refresh history on every track point.
 export function useActiveRideStream(): void {
   const qc = useQueryClient();
+  const { user } = useCurrentUser();
+  const userId = user?.id;
 
   useEffect(() => {
-    let es: EventSource | null = null;
+    if (!userId) return;
+    const generation = getSessionGeneration();
+    let lifecycle: string | undefined;
     let disposed = false;
+    // Includes HTTP fallback and local mutation updates, not just SSE events.
+    const unsubscribe = qc.getQueryCache().subscribe((event) => {
+      if (event.query.queryKey[0] !== ACTIVE_RIDE_KEY[0] || event.type !== "updated") return;
+      const rides = event.query.state.data as Ride[] | undefined;
+      if (!rides || disposed || generation !== getSessionGeneration()) return;
+      const next = rideLifecycle(rides);
+      if (lifecycle !== next) {
+        lifecycle = next;
+        refreshRideDependents(qc);
+      }
+    });
+    let es: EventSource | null = null;
     let lastActivityAt = Date.now();
 
     // EventSource has no per-request auth header; the session travels on the
@@ -41,6 +51,7 @@ export function useActiveRideStream(): void {
       const next = new EventSource(url, { withCredentials: true });
 
       next.onmessage = (ev) => {
+        if (disposed || es !== next || generation !== getSessionGeneration()) return;
         lastActivityAt = Date.now();
         let rides: Ride[];
         try {
@@ -48,23 +59,18 @@ export function useActiveRideStream(): void {
         } catch {
           return; // ignore a malformed frame; the next event re-syncs
         }
+        if (!Array.isArray(rides)) return;
+        // Cancel older HTTP snapshots before publishing the newer stream state.
+        void qc.cancelQueries({ queryKey: ACTIVE_RIDE_KEY });
         qc.setQueryData(ACTIVE_RIDE_KEY, rides);
-        // A ride change moved/freed a bike → refresh the map's bike layer.
-        qc.invalidateQueries({ queryKey: BIKES_KEY });
-        // A ride starting claims its reservation (active → claimed); a ride
-        // ending can free up the rider's combined reservation+ride budget for
-        // a NEW booking. Either way the reservation banner's cache can go
-        // stale here, and — unlike BIKES_KEY above — nothing else reliably
-        // invalidates it on every ride-start path (pay / saved-card / test
-        // ride / QR-claim), so without this the banner for an already-claimed
-        // reservation could keep showing until an unrelated refetch happens.
-        qc.invalidateQueries({ queryKey: RESERVATION_ACTIVE_KEY });
       };
 
       // Named heartbeat event pushed every SSE_HEARTBEAT_INTERVAL_MS by the
       // server (server/http/rides.ts). No payload we act on — it only proves
       // the connection is alive end-to-end, feeding the watchdog below.
-      next.addEventListener("heartbeat", () => { lastActivityAt = Date.now(); });
+      next.addEventListener("heartbeat", () => {
+        if (!disposed && es === next) lastActivityAt = Date.now();
+      });
 
       // On error the browser reconnects on its own; nothing to do but let the
       // cache hold the last known snapshot until the stream resumes.
@@ -105,10 +111,11 @@ export function useActiveRideStream(): void {
 
     return () => {
       disposed = true;
+      unsubscribe();
       clearInterval(watchdog);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("online", onOnline);
       es?.close();
     };
-  }, [qc]);
+  }, [qc, userId]);
 }

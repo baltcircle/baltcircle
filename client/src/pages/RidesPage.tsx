@@ -1,6 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import type { RiderHistoryPage } from "@shared/rider-data";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
+import { Button } from "@/components/ui/button";
 import { OverlayShell } from "@/components/OverlayShell";
-import type { RideWithFeedback } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { fmtDateFull, fmtDistanceKm, fmtTimeOnly, fmtRub, fmtRideTariff } from "@/lib/format";
 import { apiRequest } from "@/lib/queryClient";
@@ -15,12 +17,14 @@ export function RidesPage() {
   const { user, isRegistered, isLoading: isAuthLoading } = useCurrentUser();
   const userId = user?.id;
 
-  const ridesQ = useQuery<RideWithFeedback[]>({
-    queryKey: ["/api/rides", { userId, limit: 40 }],
-    queryFn: async () => {
-      const res = await apiRequest("GET", `/api/rides?userId=${encodeURIComponent(userId!)}&limit=40`);
+  const ridesQ = useInfiniteQuery({
+    queryKey: ["/api/rider/history", userId],
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam, signal }): Promise<RiderHistoryPage> => {
+      const res = await apiRequest("GET", `/api/rider/history${pageParam ? `?before=${encodeURIComponent(pageParam)}` : ""}`, undefined, undefined, signal);
       return res.json();
     },
+    getNextPageParam: (last) => last.nextBefore,
     enabled: isRegistered && !!userId,
   });
 
@@ -51,19 +55,20 @@ export function RidesPage() {
     );
   }
 
-  const rides = ridesQ.data ?? [];
+  const rides = ridesQ.data?.pages.flatMap((page) => page.items) ?? [];
   const isLoadingRides = ridesQ.isLoading;
 
   return (
     <OverlayShell title="История поездок">
       <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-rides">
+        <QueryErrorNotice query={ridesQ} />
         {isLoadingRides && (
           <Card className="p-10 text-center text-muted-foreground" data-testid="loading-rides">
             <div>Загружаем историю…</div>
           </Card>
         )}
 
-        {!isLoadingRides && rides.length === 0 && (
+        {!isLoadingRides && !ridesQ.isError && rides.length === 0 && (
           <Card className="p-10 text-center text-muted-foreground" data-testid="empty-rides">
             <Route className="w-10 h-10 mx-auto opacity-40 mb-3" />
             <div>Пока нет завершённых поездок.</div>
@@ -114,6 +119,12 @@ export function RidesPage() {
             </Card>
           ))}
         </div>
+        {ridesQ.hasNextPage && (
+          <Button className="mt-4 w-full" variant="outline" disabled={ridesQ.isFetching}
+            onClick={() => void ridesQ.fetchNextPage()}>
+            {ridesQ.isFetching ? "Загрузка…" : "Показать ещё"}
+          </Button>
+        )}
       </div>
     </OverlayShell>
   );

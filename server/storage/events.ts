@@ -32,6 +32,9 @@ export const fleetDataEvents = new EventEmitter();
 fleetDataEvents.setMaxListeners(0);
 fleetDataEvents.prependListener("telemetry", () => { fleetVersion += 1; });
 export function notifyFleetDataChanged() { fleetDataEvents.emit("telemetry"); }
+// Public invalidations contain no identities or operational data.
+export const publicCatalogEvents = new EventEmitter();
+publicCatalogEvents.setMaxListeners(0);
 
 // Pending-end bridge: a rider's
 // "завершить" request arms a short expectation (server/omni/pending-end-registry.ts)

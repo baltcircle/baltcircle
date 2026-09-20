@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
-import { apiRequest, errorMessage, queryClient } from "@/lib/queryClient";
+import { apiRequest, errorMessage, queryClient, acceptSessionUser } from "@/lib/queryClient";
 import { CURRENT_USER_KEY } from "@/hooks/use-current-user";
 import type { User } from "@shared/schema";
 import {
@@ -243,6 +243,7 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
         setError(null);
         return;
       }
+      acceptSessionUser(data.user, true);
       queryClient.setQueryData(CURRENT_USER_KEY, data.user);
       queryClient.invalidateQueries({ queryKey: CURRENT_USER_KEY });
       toast.toast({
@@ -267,6 +268,7 @@ export function AuthModal({ open, onOpenChange, onRegistered }: Props) {
       return res.json();
     },
     onSuccess: (user) => {
+      acceptSessionUser(user, true);
       queryClient.setQueryData(CURRENT_USER_KEY, user);
       queryClient.invalidateQueries({ queryKey: CURRENT_USER_KEY });
       toast.toast({

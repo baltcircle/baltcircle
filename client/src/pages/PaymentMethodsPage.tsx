@@ -27,6 +27,8 @@ import {
 import { SbpBindModal } from "./payment-methods/SbpBindModal";
 import { createCardBindingNotices } from "./payment-methods/card-binding-notices";
 
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
+
 const METHODS_KEY = ["/api/payment-methods"];
 const SBP_BANKS_KEY = ["/api/payments/tbank/sbp-banks"];
 // 1.5с вместо прежних 3с — основной рычаг ощутимой задержки появления
@@ -107,6 +109,7 @@ export function PaymentMethodsPage() {
   // всё равно переспрашивается, без ручного обновления страницы.
   const methodsQ = useQuery<PublicPaymentMethod[]>({
     queryKey: METHODS_KEY,
+    enabled: isRegistered,
     refetchOnWindowFocus: "always",
   });
   const methods = methodsQ.data ?? [];
@@ -437,6 +440,7 @@ export function PaymentMethodsPage() {
   }, [bindFrame?.methodId]);
 
   const busy =
+    methodsQ.isError || cfgQ.isError ||
     bindCardMut.isPending ||
     bindSbpMut.isPending ||
     unlinkMut.isPending ||
@@ -446,7 +450,7 @@ export function PaymentMethodsPage() {
   // configured, the rider isn't registered, or a request is in flight. Multiple
   // cards ARE allowed — no "already linked" short-circuit.
   const handleAddCard = () => {
-    if (userLoading || cfgQ.isLoading) return;
+    if (userLoading || cfgQ.isLoading || cfgQ.isError || methodsQ.isError) return;
     if (!tbankConfigured) {
       toast.toast({
         title: "Платежи настраиваются",
@@ -474,7 +478,7 @@ export function PaymentMethodsPage() {
   // allowed — no "already linked" short-circuit. The QR modal then walks the
   // rider through authorising the binding in their bank.
   const handleAddSbp = () => {
-    if (userLoading || cfgQ.isLoading) return;
+    if (userLoading || cfgQ.isLoading || cfgQ.isError || methodsQ.isError) return;
     if (!tbankConfigured) {
       toast.toast({
         title: "Платежи настраиваются",
@@ -509,6 +513,8 @@ export function PaymentMethodsPage() {
   return (
     <OverlayShell title="Способы оплаты">
       <div className="px-4 py-6 max-w-md mx-auto" data-testid="page-payment-methods">
+        <QueryErrorNotice query={methodsQ} />
+        <QueryErrorNotice query={cfgQ} />
         {/* Linked methods — profile-style rows */}
         <div
           className="rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800"
@@ -518,7 +524,7 @@ export function PaymentMethodsPage() {
             <div className="px-4 py-4 text-sm text-muted-foreground" data-testid="methods-loading">
               Загрузка…
             </div>
-          ) : visibleMethods.length === 0 ? (
+          ) : visibleMethods.length === 0 && !methodsQ.isError ? (
             <div className="px-4 py-4 text-sm text-muted-foreground" data-testid="methods-empty">
               Пока нет привязанных способов оплаты.
             </div>

@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
 import { AppShell } from "@/components/AppShell";
+import { SessionBoundary } from "@/components/SessionBoundary";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { AdminGuard } from "@/components/AdminGuard";
 import { MapPage } from "@/pages/MapPage";
@@ -421,9 +422,9 @@ function App() {
               чтобы не перезагружать приложение молча во время аренды. */}
           <UpdateBanner />
           <Router>
-            <AppShell>
+            <SessionBoundary><AppShell>
               <AppRouter />
-            </AppShell>
+            </AppShell></SessionBoundary>
           </Router>
         </TooltipProvider>
       </QueryClientProvider>

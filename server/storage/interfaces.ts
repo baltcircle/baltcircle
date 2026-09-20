@@ -187,7 +187,7 @@ export interface ISupportStorage {
   updateSupportTicket(id: number, patch: { status?: SupportTicketStatus }): Promise<SupportTicket | undefined>;
   // support chat (continuous conversation per rider)
   ensureSupportConversation(userId: string): Promise<SupportConversation>;
-  listSupportMessages(conversationId: number, opts?: { afterId?: number; limit?: number }): Promise<SupportMessage[]>;
+  listSupportMessages(conversationId: number, opts?: { afterId?: number; beforeId?: number; latest?: boolean; limit?: number }): Promise<SupportMessage[]>;
   appendSupportMessage(input: { conversationId: number; senderRole: SupportMessageRole; senderId: string | null; body: string; attachmentUrl?: string | null; attachmentMime?: string | null }): Promise<SupportMessage>;
   markSupportRead(conversationId: number, reader: "user" | "operator"): Promise<void>;
   setSupportMode(conversationId: number, mode: "bot" | "human"): Promise<void>;

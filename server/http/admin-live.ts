@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { ADMIN_TOPICS, type AdminTopic } from "@shared/admin-data";
 import { SSE_HEARTBEAT_INTERVAL_MS } from "@shared/geo";
 import { storage } from "../storage";
-import { bikeEvents, BIKE_EVENT_CHANNEL, fleetDataEvents } from "../storage/events";
+import { bikeEvents, BIKE_EVENT_CHANNEL, fleetDataEvents, publicCatalogEvents } from "../storage/events";
 import { requireRole } from "./context";
 import { mutationTopics } from "./admin-live-policy";
 
@@ -17,6 +17,7 @@ export function registerAdminLiveRoutes(app: Express) {
     res.once("finish", () => {
       const topics = mutationTopics(req.method, req.path, res.statusCode);
       if (topics.length) events.emit("change", topics);
+      if (topics.includes("parkings") || topics.includes("map")) publicCatalogEvents.emit("change");
     });
     next();
   });

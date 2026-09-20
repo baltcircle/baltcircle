@@ -8,7 +8,8 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useEffect, useState, useRef } from "react";
-import type { Ride } from "@shared/schema";
+import type { RiderStats } from "@shared/rider-data";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 
 interface Props {
   open: boolean;
@@ -85,17 +86,16 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
   const backdropTransitionCls = noTransition ? "" : "transition-opacity duration-300";
 
   const userId = user?.id ?? "";
-  const ridesQ = useQuery<Ride[]>({
-    queryKey: ["/api/rides", { userId, limit: 100 }],
-    queryFn: async () => {
-      const res = await apiRequest("GET", `/api/rides?userId=${encodeURIComponent(userId)}&limit=100`);
+  const ridesQ = useQuery<RiderStats>({
+    queryKey: ["/api/rider/stats", userId],
+    queryFn: async ({ signal }) => {
+      const res = await apiRequest("GET", "/api/rider/stats", undefined, undefined, signal);
       return res.json();
     },
-    enabled: isRegistered && !!userId,
+    enabled: open && isRegistered && !!userId,
   });
 
-  const rides = ridesQ.data ?? [];
-  const totalKm = (rides.reduce((sum, r) => sum + (r.distanceM ?? 0), 0) / 1000).toFixed(1);
+  const totalKm = ridesQ.data ? (ridesQ.data.distanceM / 1000).toFixed(1) : "—";
   const profileCard = (
     <>
       <div className="flex items-start justify-between gap-2">
@@ -125,7 +125,7 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
         <div className="flex items-center gap-2">
           <Bike className="w-7 h-7 text-primary shrink-0" strokeWidth={2.5} />
           <div>
-            <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums leading-none">{rides.length}</p>
+            <p className="text-2xl font-semibold text-sidebar-foreground tabular-nums leading-none">{ridesQ.data?.rides ?? "—"}</p>
             <p className="text-xs text-sidebar-foreground/70 uppercase tracking-wide mt-1">Поездки</p>
           </div>
         </div>
@@ -174,6 +174,7 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
             {profileCard}
           </button>
         )}
+        {open && isRegistered && <div className="mx-4"><QueryErrorNotice query={ridesQ} /></div>}
 
         {/* Divider */}
         <div className="mx-4 mt-3 mb-2 h-px bg-sidebar-foreground/15" />

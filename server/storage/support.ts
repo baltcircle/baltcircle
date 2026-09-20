@@ -3,7 +3,7 @@ import type {
   SupportTicket, SupportTicketWithUser, SupportTicketStatus, SupportConversation,
   SupportMessage, SupportMessageRole, AdminSupportConversationRow,
 } from "@shared/schema";
-import { eq, desc, gt, and, asc, sql } from "drizzle-orm";
+import { eq, desc, gt, lt, and, asc, sql } from "drizzle-orm";
 import { db } from "../db/bootstrap";
 import type { Constructor } from "./mixin";
 import type { ISupportStorage } from "./interfaces";
@@ -69,15 +69,16 @@ export function SupportMixin<TBase extends Constructor>(Base: TBase) {
     }
 
     /** Retrieve chat history for a conversation, oldest first (chronological). */
-    async listSupportMessages(conversationId: number, opts?: { afterId?: number; limit?: number }): Promise<SupportMessage[]> {
+    async listSupportMessages(conversationId: number, opts?: { afterId?: number; beforeId?: number; latest?: boolean; limit?: number }): Promise<SupportMessage[]> {
       const conds: any[] = [eq(supportMessages.conversationId, conversationId)];
       if (opts?.afterId && Number.isFinite(opts.afterId)) {
         conds.push(gt(supportMessages.id, opts.afterId));
       }
+      if (opts?.beforeId) conds.push(lt(supportMessages.id, opts.beforeId));
       const limit = Math.min(Math.max(opts?.limit ?? 200, 1), 500);
       return (await db.select().from(supportMessages)
         .where(conds.length > 1 ? and(...conds) : conds[0])
-        .orderBy(asc(supportMessages.id))
+        .orderBy(opts?.latest ? desc(supportMessages.id) : asc(supportMessages.id))
         .limit(limit)) as SupportMessage[];
     }
 

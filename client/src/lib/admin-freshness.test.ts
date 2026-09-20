@@ -22,7 +22,7 @@ describe("admin freshness", () => {
     queryClient.setQueryData(["/api/admin/users"], [], { updatedAt: 1 });
     queryClient.setQueryData(["/api/payment-methods"], [], { updatedAt: 1 });
     const a = new QueryObserver(queryClient, { queryKey: ["/api/admin/users"], queryFn: adminFetch, staleTime: Infinity });
-    const b = new QueryObserver(queryClient, { queryKey: ["/api/payment-methods"], queryFn: riderFetch });
+    const b = new QueryObserver(queryClient, { queryKey: ["/api/payment-methods"], queryFn: riderFetch, refetchOnMount: false });
     const stopA = a.subscribe(() => {}), stopB = b.subscribe(() => {});
     await refreshAdminData(queryClient);
     expect(adminFetch).toHaveBeenCalledOnce();

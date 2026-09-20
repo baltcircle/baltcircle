@@ -11,6 +11,7 @@ import { RentalStartModal } from "@/components/RentalStartModal";
 import { AuthModal } from "@/components/AuthModal";
 import { QrScanModal } from "@/components/QrScanModal";
 import { DrawerMenu } from "@/components/DrawerMenu";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 import { IosInstallSheet } from "@/components/IosInstallSheet";
 import { PushOptInSheet } from "@/components/PushOptInSheet";
 import { markIosInstallHintShown, shouldAutoShowIosInstallHint, isStandalone } from "@/lib/pwa";
@@ -55,17 +56,18 @@ function patchActiveRide(old: Ride[] | undefined, updated: Ride): Ride[] {
 export function MapPage() {
   const toast = useToast();
   const [, navigate] = useLocation();
+  const { isRegistered, isLoading: userLoading, query: userQ } = useCurrentUser();
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
   const mapObjectsQ = useQuery<MapObject[]>({ queryKey: ["/api/map-objects"] });
   const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
   const activeQ = useQuery<Ride[]>({
     queryKey: ACTIVE_RIDES_KEY,
+    enabled: isRegistered,
   });
   // Live active-ride updates via SSE (replaces the old 4s poll).
   useActiveRideStream();
   // Живое обновление доступности велосипедов на карте (статусы).
   useFleetStream();
-  const { isRegistered, isLoading: userLoading } = useCurrentUser();
 
   const activeRides = activeQ.data ?? [];
   // Фиксированные "слоты" по позиции в массиве (не по фокусу) — трекер/поллер
@@ -170,7 +172,7 @@ export function MapPage() {
   const { drawerOpen, setDrawerOpen, drawerMountedOpen, drawerInstantTick } = useDrawerState();
   const { geoCenter, lastPosRef, handleGeolocate } = useGeolocation();
   const { showPaymentBanner, dismissPaymentBanner } = usePaymentBanner(isRegistered, activeRides.length > 0);
-  const { reservations, cancelling, cancelReservation, onExpire: onReservationExpire } =
+  const { reservations, cancelling, cancelReservation, onExpire: onReservationExpire, query: reservationQ } =
     useReservationBanner(isRegistered);
 
   // Rider-facing map must never surface a bike a customer couldn't rent right
@@ -587,11 +589,6 @@ export function MapPage() {
     queryKey: PAYMENT_METHODS_KEY,
     enabled: activeRides.length > 0,
   });
-  const extendActiveMethods = (paymentMethodsQ.data ?? []).filter(
-    (m) => m.status === "active" && m.provider === "tbank"
-      && ((m.type === "card" && m.hasRebillId) || (m.type === "sbp" && m.hasAccountToken)),
-  );
-
   // Extending a ride charges the rider's SAVED card/SBP method when one
   // exists — the wallet-balance route (`/api/rides/:id/extend`) previously
   // failed with "Недостаточно средств на балансе" for riders who never top
@@ -600,7 +597,11 @@ export function MapPage() {
   // pure fallback, not a behavior change for them.
   const extendMut = useMutation({
     mutationFn: async ({ rideId, tariff }: { rideId: number; tariff: Tariff["id"] }) => {
-      const method = extendActiveMethods[0];
+      // Never infer "no cards" from a failed/stale cache and silently charge a
+      // different source. Revalidate immediately before choosing the payment path.
+      const methods = await queryClient.fetchQuery<PublicPaymentMethod[]>({ queryKey: PAYMENT_METHODS_KEY, staleTime: 0 });
+      const method = methods.find((m) => m.status === "active" && m.provider === "tbank"
+        && ((m.type === "card" && m.hasRebillId) || (m.type === "sbp" && m.hasAccountToken)));
       if (!method) {
         const res = await apiRequest("POST", `/api/rides/${rideId}/extend`, { tariff });
         return { kind: "wallet" as const, ride: (await res.json()) as Ride };
@@ -689,6 +690,12 @@ export function MapPage() {
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
+      {[userQ, activeQ, bikesQ, parkingsQ, mapObjectsQ, reservationQ, paymentMethodsQ]
+        .filter((q) => q.isError).slice(0, 1).map((q) => (
+          <div key="data-error" className="absolute z-30 left-3 right-20 top-3 bg-background/95 rounded-xl">
+            <QueryErrorNotice query={q} />
+          </div>
+        ))}
       {/* Map — заливает весь физический экран, включая зоны safe-area
        * (status bar сверху и home-indicator снизу). Карта течёт под ними,
        * без плоских голубых полос backdrop-а. Важно: в iOS standalone (PWA)

@@ -60,6 +60,7 @@ export function useReservationBanner(isRegistered: boolean) {
   };
 
   return {
+    query: reservationsQ,
     reservations: reservationsQ.data ?? [],
     cancelling: cancelMut.isPending,
     cancelReservation: (id: number) => cancelMut.mutate(id),

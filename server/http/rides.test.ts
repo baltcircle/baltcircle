@@ -95,6 +95,7 @@ function response() {
     write(chunk: string) { this.written.push(chunk); return true; },
     flushHeaders() {},
     on(event: string, cb: () => void) { this.listeners[event] = cb; },
+    end() { this.ended = true; this.listeners.close?.(); },
   };
   return res;
 }
@@ -190,11 +191,12 @@ describe("GET /api/rides/active/stream (SSE)", () => {
     const { get } = routeApp();
     storageMock.getActiveRides.mockResolvedValue([{ id: 7, userId: "user-1" }]);
     const res = response();
-    const req = { session: { userId: "user-1" }, on: vi.fn() };
+    storageMock.getUser.mockResolvedValue({ id: "user-1", role: "rider" });
+    const req = { session: { userId: "user-1", reload: (cb: () => void) => cb() }, on: vi.fn() };
 
     await get.get("/api/rides/active/stream")!(req, res);
     // The initial push is fire-and-forget (`void push()`); flush microtasks.
-    await Promise.resolve(); await Promise.resolve();
+    await vi.waitFor(() => expect(res.written.some((chunk: string) => chunk.includes('"id":7'))).toBe(true));
 
     expect(res.headers["Content-Type"]).toBe("text/event-stream");
     expect(rideEvents.listenerCount("user-1")).toBe(1);
@@ -211,14 +213,15 @@ describe("GET /api/rides/active/stream (SSE)", () => {
     const { get } = routeApp();
     storageMock.getActiveRides.mockResolvedValueOnce([{ id: 1 }]).mockResolvedValueOnce([]);
     const res = response();
-    const req = { session: { userId: "user-2" }, on: vi.fn() };
+    storageMock.getUser.mockResolvedValue({ id: "user-2", role: "rider" });
+    const req = { session: { userId: "user-2", reload: (cb: () => void) => cb() }, on: vi.fn() };
 
     await get.get("/api/rides/active/stream")!(req, res);
-    await Promise.resolve(); await Promise.resolve();
+    await vi.waitFor(() => expect(res.written.some((chunk: string) => chunk.includes('"id":1'))).toBe(true));
     res.written.length = 0;
 
     rideEvents.emit("user-2");
-    await Promise.resolve(); await Promise.resolve();
+    await vi.waitFor(() => expect(res.written.some((chunk: string) => chunk.includes("data: []"))).toBe(true));
     expect(res.written.some((chunk: string) => chunk.includes("data:"))).toBe(true);
 
     const closeCb = req.on.mock.calls.find((c: any[]) => c[0] === "close")?.[1];

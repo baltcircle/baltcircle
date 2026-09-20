@@ -15,6 +15,8 @@ import {
   PREVIEW_URL_TTL_SECONDS, MESSAGE_URL_TTL_SECONDS,
 } from "../storage/object-storage";
 import { logger } from "../logger";
+import { historyCursor, supportPage } from "@shared/rider-data";
+import { streamSessionValid } from "./stream-session";
 
 const pinSupportConversationSchema = z.object({ pinned: z.boolean() });
 
@@ -120,8 +122,15 @@ export function registerSupportChatRoutes(app: Express): void {
 
   // История сообщений своего разговора + метаданные (unread).
   app.get("/api/support/chat", requireAuth, async (req, res) => {
+    const before = historyCursor(req.query.before);
+    if (req.query.before !== undefined && before === undefined) return res.status(400).json({ error: "Некорректный курсор" });
     const uid = riderId(req);
     const conv = await storage.ensureSupportConversation(uid);
+    if (req.query.page === "latest") {
+      const rows = await storage.listSupportMessages(conv.id, { latest: true, beforeId: before, limit: 51 });
+      const page = supportPage(rows, 50);
+      return res.json({ conversation: conv, ...page, messages: await resolveOutgoingMessages(page.messages) });
+    }
     const after = Number.parseInt(String(req.query.after ?? ""), 10);
     const rawMessages = await storage.listSupportMessages(conv.id, {
       afterId: Number.isFinite(after) && after > 0 ? after : undefined,
@@ -433,6 +442,7 @@ export function registerSupportChatRoutes(app: Express): void {
 
 // SSE helper. Подписывается на shared EventEmitter по каналу channelKey.
 function setupSse(res: Response, req: Request, channelKey: string): void {
+  const actorId = req.session?.userId;
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache, no-transform",
@@ -442,9 +452,11 @@ function setupSse(res: Response, req: Request, channelKey: string): void {
   res.flushHeaders?.();
 
   let closed = false;
-  const onEvent = (payload: unknown) => {
+  const onEvent = async (payload: unknown) => {
     if (closed) return;
     try {
+      if (!await streamSessionValid(req, actorId)) { res.end(); return; }
+      if (closed) return;
       res.write(`data: ${JSON.stringify(payload)}\n\n`);
     } catch { /* сокет уже закрыт — почистит cleanup */ }
   };
@@ -453,8 +465,10 @@ function setupSse(res: Response, req: Request, channelKey: string): void {
   // Стартовый ping чтобы клиент понял что соединение живо.
   res.write(": ok\n\n");
 
-  const heartbeat = setInterval(() => {
-    if (!closed) res.write(": ping\n\n");
+  const heartbeat = setInterval(async () => {
+    if (closed) return;
+    if (!await streamSessionValid(req, actorId)) { res.end(); return; }
+    if (!closed) res.write("event: heartbeat\ndata: {}\n\n");
   }, 25000);
 
   const cleanup = () => {
@@ -465,6 +479,7 @@ function setupSse(res: Response, req: Request, channelKey: string): void {
   };
   req.on("close", cleanup);
   res.on("error", cleanup);
+  res.on("close", cleanup);
 }
 
 // Экспортируем директорию для использования в static-сервере.

@@ -72,6 +72,57 @@ try {
   assert.ok(searched.categories?.includes("legacy_reason"));
   assert.equal((await feedbackPage({ category: "does-not-exist" })).total, 0);
   assert.equal((await feedbackPage({ search: "%' OR 1=1 --" })).total, 0);
+  // Rider regressions share the same guarded, disposable PostgreSQL fixtures.
+  const { riderHistory, riderStats } = await import("../server/storage/rider-read");
+  const { SupportMixin } = await import("../server/storage/support");
+  const { supportPage, rideHistoryCursor } = await import("../shared/rider-data");
+  await pool.query("UPDATE rides SET distance_m=1000 WHERE status='completed'");
+  assert.deepEqual(await riderStats("fixture-1"), { rides: 601, distanceM: 600000 });
+  assert.deepEqual(await riderStats("fixture-2"), { rides: 0, distanceM: 0 });
+  await pool.query("UPDATE rides SET is_test=true WHERE id=1");
+  assert.equal((await riderStats("fixture-1")).rides, 600);
+  const rideIds = new Set<number>();
+  let rideBefore: ReturnType<typeof rideHistoryCursor>;
+  do {
+    const page = await riderHistory("fixture-1", rideBefore);
+    assert.ok(page.items.length <= 40);
+    for (const ride of page.items) {
+      assert.equal(ride.userId, "fixture-1");
+      assert.equal(ride.isTest, false);
+      assert.ok(!rideIds.has(ride.id));
+      rideIds.add(ride.id);
+    }
+    rideBefore = rideHistoryCursor(page.nextBefore);
+  } while (rideBefore);
+  assert.equal(rideIds.size, 600);
+  assert.equal((await riderHistory("fixture-2")).items.length, 0);
+  assert.equal((await riderHistory("' OR 1=1 --")).items.length, 0);
+
+  const supportStorage = new (SupportMixin(class {}))();
+  const conv = await supportStorage.ensureSupportConversation("fixture-1");
+  await pool.query(`INSERT INTO support_messages(conversation_id,sender_role,body,created_at)
+    SELECT $1,'operator','Message '||g,g FROM generate_series(1,357) g`, [conv.id]);
+  const messageIds = new Set<number>();
+  let before: number | undefined;
+  let previousId = Infinity;
+  do {
+    const rows = await supportStorage.listSupportMessages(conv.id, { latest: true, beforeId: before, limit: 51 });
+    const page = supportPage(rows, 50);
+    if (!before) assert.equal(page.messages.at(-1)!.body, "Message 357");
+    assert.ok(page.messages.every((m, i) => i === 0 || m.id > page.messages[i - 1].id));
+    for (const message of page.messages) {
+      assert.equal(message.conversationId, conv.id);
+      assert.ok(message.id < previousId);
+      assert.ok(!messageIds.has(message.id));
+      messageIds.add(message.id);
+    }
+    previousId = page.messages[0]?.id ?? previousId;
+    before = page.nextBefore ?? undefined;
+  } while (before);
+  assert.equal(messageIds.size, 357);
+  const other = await supportStorage.ensureSupportConversation("fixture-2");
+  assert.equal((await supportStorage.listSupportMessages(other.id, { latest: true })).length, 0);
+  console.log("PASS rider: all 600 non-test rides, full totals, 357 chat messages, cursor uniqueness and owner isolation.");
   console.log("PASS: 5002 users, 601 rides, 1200 merged feedback; complete search, counts, stable pages, old active ride, staff, filters and parameterization.");
 } finally {
   await pool.end();

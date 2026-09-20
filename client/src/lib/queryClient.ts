@@ -3,6 +3,28 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 export { errorMessage } from "./error-message";
 
 export const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+let sessionGeneration = 0;
+export const getSessionGeneration = () => sessionGeneration;
+const SESSION_NOTICE = "takeride-session-changed";
+export function announceSessionChange() {
+  try { localStorage.setItem(SESSION_NOTICE, crypto.randomUUID()); } catch { /* private browsing */ }
+}
+export function resetSessionData() {
+  sessionGeneration += 1;
+  const predicate = (q: { queryKey: readonly unknown[] }) => q.queryKey[0] !== "/api/users/current";
+  void queryClient.cancelQueries({ predicate });
+  queryClient.removeQueries({ predicate });
+  csrfToken = null;
+  csrfTokenPromise = null;
+}
+export function acceptSessionUser(user: { id: string } | null, broadcast = false) {
+  if (broadcast) void queryClient.cancelQueries({ queryKey: ["/api/users/current"] });
+  const previous = queryClient.getQueryData<{ id: string } | null>(["/api/users/current"]);
+  if (previous !== undefined && previous?.id !== user?.id) {
+    resetSessionData();
+  }
+  if (broadcast) announceSessionChange();
+}
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -34,13 +56,14 @@ async function getCsrfToken(forceRefresh = false): Promise<string> {
   }
   if (csrfToken) return csrfToken;
   if (!csrfTokenPromise) {
+    const generation = sessionGeneration;
     csrfTokenPromise = fetchCsrfToken()
       .then((token) => {
-        csrfToken = token;
+        if (generation === sessionGeneration) csrfToken = token;
         return token;
       })
       .finally(() => {
-        csrfTokenPromise = null;
+        if (generation === sessionGeneration) csrfTokenPromise = null;
       });
   }
   return csrfTokenPromise;
@@ -65,11 +88,16 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
   extraHeaders?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<Response> {
+  const generation = sessionGeneration;
   const needsCsrf = !SAFE_METHODS.has(method.toUpperCase());
 
-  const send = async (token?: string) =>
-    fetch(`${API_BASE}${url}`, {
+  const send = async (token?: string) => {
+    // A session can change while the CSRF request is in flight. Never send an
+    // old account's mutation with the replacement account's browser cookie.
+    if (generation !== sessionGeneration) throw new Error("Сессия изменилась. Повторите действие.");
+    return fetch(`${API_BASE}${url}`, {
       method,
       headers: {
         ...(data ? { "Content-Type": "application/json" } : {}),
@@ -78,7 +106,9 @@ export async function apiRequest(
       },
       body: data ? JSON.stringify(data) : undefined,
       credentials: "include",
+      signal,
     });
+  };
 
   let res = await send(needsCsrf ? await getCsrfToken() : undefined);
 
@@ -87,6 +117,13 @@ export async function apiRequest(
   }
 
   await throwIfResNotOk(res);
+  if (generation !== sessionGeneration) throw new Error("Сессия изменилась. Повторите действие.");
+  const json = res.json.bind(res);
+  res.json = async () => {
+    const data = await json();
+    if (generation !== sessionGeneration) throw new Error("Сессия изменилась. Повторите действие.");
+    return data;
+  };
   return res;
 }
 
@@ -95,9 +132,11 @@ export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
-  async ({ queryKey }) => {
+  async ({ queryKey, signal }) => {
+    const generation = sessionGeneration;
     const res = await fetch(`${API_BASE}${queryKey.join("/")}`, {
       credentials: "include",
+      signal,
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
@@ -105,7 +144,10 @@ export const getQueryFn: <T>(options: {
     }
 
     await throwIfResNotOk(res);
-    return await res.json();
+    const data = await res.json();
+    if (generation !== sessionGeneration) throw new Error("Сессия изменилась");
+    if (queryKey[0] === "/api/users/current") acceptSessionUser(data);
+    return data;
   };
 
 export const queryClient = new QueryClient({
@@ -113,8 +155,9 @@ export const queryClient = new QueryClient({
     queries: {
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
-      refetchOnWindowFocus: false,
-      staleTime: Infinity,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: "always",
+      staleTime: 15_000,
       retry: false,
     },
     mutations: {
@@ -123,7 +166,7 @@ export const queryClient = new QueryClient({
   },
 });
 
-// Keep the rider application's caching policy unchanged. Administrative lists
+// Administrative lists
 // and their nested pages/details must revalidate after leaving/reopening them.
 for (const path of [
   "/api/admin/users", "/api/admin/rides", "/api/admin/ride-stats", "/api/admin/feedback",
@@ -136,3 +179,22 @@ for (const path of [
     refetchOnReconnect: "always",
   });
 }
+
+// HTTP is an independent recovery path: a healthy SSE heartbeat is not proof
+// that a database snapshot succeeded. Poll only mounted/enabled visible queries.
+for (const path of ["/api/bikes", "/api/parkings", "/api/map-objects", "/api/rides",
+  "/api/rider/history", "/api/rider/stats", "/api/reservations/active",
+  "/api/payment-methods", "/api/wallet", "/api/payments", "/api/support/chat"]) {
+  queryClient.setQueryDefaults([path], {
+    staleTime: 10_000, refetchOnMount: "always", refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always", refetchInterval: 30_000,
+  });
+}
+for (const path of ["/api/rides/active", "/api/reservations/active"]) {
+  queryClient.setQueryDefaults([path], { staleTime: 0, refetchInterval: 10_000 });
+}
+queryClient.setQueryDefaults(["/api/users/current"], { refetchInterval: 30_000 });
+queryClient.setQueryDefaults(["/api/payments/tbank/config"], {
+  staleTime: 15_000, refetchOnMount: "always", refetchInterval: 60_000,
+  refetchOnWindowFocus: "always", refetchOnReconnect: "always",
+});

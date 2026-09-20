@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { streamSessionValid } from "./stream-session";
 import { storage, rideEvents } from "../storage";
 import { feedbackPage } from "../storage/admin-read";
 import { z } from "zod";
@@ -77,6 +78,7 @@ export function registerRideRoutes(app: Express): void {
   // no ws dependency.
   app.get("/api/rides/active/stream", async (req, res) => {
     const uid = riderId(req);
+    const actorId = req.session?.userId;
 
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -99,6 +101,7 @@ export function registerRideRoutes(app: Express): void {
       if (sending) { dirty = true; return; }
       sending = true;
       try {
+        if (!await streamSessionValid(req, actorId)) { res.end(); return; }
         const rides = await storage.getActiveRides(uid);
         if (closed) return;
         res.write(`data: ${JSON.stringify(rides)}\n\n`);
@@ -123,8 +126,13 @@ export function registerRideRoutes(app: Express): void {
     // use to detect a connection that is dead end-to-end but never fired
     // onerror (mobile OS/carrier NAT killing an idle TCP session without a
     // clean close) — see use-active-ride-stream.tsx's watchdog.
-    const heartbeat = setInterval(() => {
-      if (!closed) res.write(`event: heartbeat\ndata: ${Date.now()}\n\n`);
+    const heartbeat = setInterval(async () => {
+      if (closed) return;
+      if (!await streamSessionValid(req, actorId)) { res.end(); return; }
+      if (!closed) {
+        res.write(`event: heartbeat\ndata: ${Date.now()}\n\n`);
+        void push();
+      }
     }, SSE_HEARTBEAT_INTERVAL_MS);
 
     const cleanup = () => {
@@ -135,6 +143,7 @@ export function registerRideRoutes(app: Express): void {
     };
     req.on("close", cleanup);
     res.on("error", cleanup);
+    res.on("close", cleanup);
   });
   app.post("/api/rides/start", async (req, res) => {
     const schema = z.object({ bikeId: z.string(), tariff: z.enum(["h1", "h2", "h3", "m1"]) });

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { OverlayShell } from "@/components/OverlayShell";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useInfiniteQuery } from "@tanstack/react-query";
+import type { SupportPage as SupportPageData } from "@shared/rider-data";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
+import { Button } from "@/components/ui/button";
+import { openLiveStream } from "@/lib/live-stream";
 import type { SupportMessage } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { apiRequest, queryClient, API_BASE } from "@/lib/queryClient";
@@ -8,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { LifeBuoy } from "lucide-react";
 import { BOT_GREETING, SUPPORT_SESSION_CLOSED_NOTE } from "@shared/support-faq";
-import { CHAT_KEY, MAX_FILE_BYTES, type ChatState, fmtDay, fileToBase64 } from "./support/utils";
+import { CHAT_KEY, MAX_FILE_BYTES, fmtDay, fileToBase64 } from "./support/utils";
 import { MessageBubble } from "./support/MessageBubble";
 import { SupportQuickActions } from "./support/SupportQuickActions";
 import { ChatInputForm } from "./support/ChatInputForm";
@@ -35,10 +39,26 @@ function markNoteRated(id: number) {
 
 export function SupportPage() {
   const toast = useToast();
-  const { isRegistered } = useCurrentUser();
+  const { user, isRegistered } = useCurrentUser();
 
-  const chatQ = useQuery<ChatState>({ queryKey: CHAT_KEY, enabled: isRegistered });
-  const messages = chatQ.data?.messages ?? [];
+  const chatQ = useInfiniteQuery({
+    queryKey: [...CHAT_KEY, "pages", user?.id],
+    initialPageParam: null as number | null,
+    queryFn: async ({ pageParam, signal }): Promise<SupportPageData> =>
+      (await apiRequest("GET", `/api/support/chat?page=latest${pageParam ? `&before=${pageParam}` : ""}`,
+        undefined, undefined, signal)).json(),
+    getNextPageParam: (last) => last.nextBefore,
+    enabled: isRegistered,
+    refetchInterval: 15_000,
+  });
+  const messages = useMemo(() => {
+    const byId = new Map<number, SupportMessage>();
+    for (const page of chatQ.data?.pages ?? []) for (const message of page.messages) byId.set(message.id, message);
+    return Array.from(byId.values()).sort((a, b) => a.id - b.id);
+  }, [chatQ.data]);
+  const refreshChat = () => queryClient.invalidateQueries({ queryKey: CHAT_KEY });
+  const newestMessageId = messages.at(-1)?.id;
+  const hasOperator = messages.some((m) => m.senderRole === "operator");
 
   const [text, setText] = useState("");
   const [attachment, setAttachment] = useState<{ url: string; previewUrl: string; mime: string; localName: string } | null>(null);
@@ -54,33 +74,30 @@ export function SupportPage() {
   // Автоскролл вниз при новом сообщении
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length]);
+  }, [newestMessageId]);
 
   // SSE стрим новых сообщений от оператора
   useEffect(() => {
     if (!isRegistered) return;
-    const es = new EventSource(`${API_BASE}/api/support/chat/stream`, { withCredentials: true });
-    es.onmessage = (evt) => {
-      try {
-        const msg = JSON.parse(evt.data) as SupportMessage;
-        queryClient.setQueryData<ChatState>(CHAT_KEY, (prev) => {
-          if (!prev) return prev;
-          if (prev.messages.some((m) => m.id === msg.id)) return prev;
-          return { ...prev, messages: [...prev.messages, msg] };
-        });
-      } catch { /* ignore */ }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const sync = () => {
+      // Collapse a bot reply/user message burst. Cancel even an initial GET:
+      // otherwise its older snapshot could swallow the event before cache exists.
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        void queryClient.cancelQueries({ queryKey: CHAT_KEY }).then(refreshChat);
+      }, 100);
     };
-    es.onerror = () => { /* EventSource сам переподключится */ };
-    return () => es.close();
-  }, [isRegistered]);
+    const close = openLiveStream(`${API_BASE}/api/support/chat/stream`, { message: sync }, sync);
+    return () => { clearTimeout(timer); close(); };
+  }, [isRegistered, user?.id]);
 
   // Пометка прочитанным при открытии/новых сообщениях от оператора
   useEffect(() => {
     if (!isRegistered) return;
-    const hasOperator = messages.some((m) => m.senderRole === "operator");
     if (!hasOperator) return;
     apiRequest("POST", "/api/support/chat/read", {}).catch(() => {});
-  }, [isRegistered, messages.length]);
+  }, [isRegistered, hasOperator, newestMessageId]);
 
   const sendMut = useMutation<SupportMessage, Error, string | void>({
     mutationFn: async (override) => {
@@ -91,12 +108,8 @@ export function SupportPage() {
       });
       return res.json();
     },
-    onSuccess: (msg) => {
-      queryClient.setQueryData<ChatState>(CHAT_KEY, (prev) => {
-        if (!prev) return prev;
-        if (prev.messages.some((m) => m.id === msg.id)) return prev;
-        return { ...prev, messages: [...prev.messages, msg] };
-      });
+    onSuccess: () => {
+      void refreshChat();
       setText("");
       setAttachment(null);
     },
@@ -151,26 +164,16 @@ export function SupportPage() {
   // Тихое закрытие раунда: бот справился, админку не уведомляем.
   const resolveMut = useMutation<SupportMessage, Error, void>({
     mutationFn: async () => (await apiRequest("POST", "/api/support/chat/resolve", {})).json(),
-    onSuccess: (msg) => {
-      queryClient.setQueryData<ChatState>(CHAT_KEY, (prev) => {
-        if (!prev) return prev;
-        if (prev.messages.some((m) => m.id === msg.id)) return prev;
-        return { ...prev, messages: [...prev.messages, msg] };
-      });
+    onSuccess: () => {
+      void refreshChat();
     },
   });
 
   // Явный вызов живого оператора — с уведомлением админки.
   const escalateMut = useMutation<{ message: SupportMessage | null; alreadyHuman: boolean }, Error, void>({
     mutationFn: async () => (await apiRequest("POST", "/api/support/chat/escalate", {})).json(),
-    onSuccess: (res) => {
-      queryClient.setQueryData<ChatState>(CHAT_KEY, (prev) => {
-        if (!prev) return prev;
-        const withMode = { ...prev, conversation: { ...prev.conversation, mode: "human" as const } };
-        if (!res.message) return withMode;
-        if (withMode.messages.some((m) => m.id === res.message!.id)) return withMode;
-        return { ...withMode, messages: [...withMode.messages, res.message] };
-      });
+    onSuccess: () => {
+      void refreshChat();
     },
   });
 
@@ -195,7 +198,7 @@ export function SupportPage() {
   // последним в списке будет уже не bot-сообщение, и кнопки сами исчезнут.
   const lastMessage = messages[messages.length - 1];
   const showQuickActions =
-    !!lastMessage && lastMessage.senderRole === "bot" && chatQ.data?.conversation.mode === "bot";
+    !chatQ.isError && !!lastMessage && lastMessage.senderRole === "bot" && chatQ.data?.pages[0]?.conversation.mode === "bot";
 
   // Карточку рейтинга всегда показываем по содержимому последнего сообщения,
   // а не по отдельному эфемерному SSE-событию: если оно пропадёт при разрыве
@@ -237,18 +240,21 @@ export function SupportPage() {
           style={{ paddingBottom: inputHeight + 12 }}
           data-testid="support-chat-messages"
         >
+          <QueryErrorNotice query={chatQ} />
+          {chatQ.hasNextPage && <Button variant="outline" disabled={chatQ.isFetching}
+            onClick={() => void chatQ.fetchNextPage()}>Загрузить предыдущие сообщения</Button>}
           {chatQ.isLoading ? (
             <div className="text-xs text-muted-foreground text-center py-8">Загрузка чата…</div>
           ) : (
             <>
               {/* Приветствие бота — всегда первым, не хранится в БД. FAQ теперь
                   скрыт внутри свободного текста: бот сам разбирает вопрос. */}
-              <div className="flex justify-start">
+              {chatQ.data && !chatQ.hasNextPage && <div className="flex justify-start">
                 <div className="max-w-[80%] rounded-2xl rounded-bl-md bg-muted px-3 py-2">
                   <div className="text-[10px] font-medium opacity-70 mb-0.5">Бот поддержки</div>
                   <div className="text-sm whitespace-pre-wrap break-words leading-snug">{BOT_GREETING}</div>
                 </div>
-              </div>
+              </div>}
               {grouped.map((g, gi) => (
                 <div key={gi} className="space-y-1.5">
                   <div className="text-[10px] uppercase tracking-widest text-muted-foreground text-center py-1">

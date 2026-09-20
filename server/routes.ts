@@ -16,6 +16,7 @@ import { registerAccountRoutes } from "./http/account";
 import { registerReservationRoutes } from "./http/reservations";
 import { registerAdminLiveRoutes } from "./http/admin-live";
 import { registerAdminDataRoutes } from "./http/admin-data";
+import { registerRiderDataRoutes } from "./http/rider-data";
 
 // Thin aggregator: the API is split into per-domain route modules under
 // server/http/*, each exporting a register<Domain>Routes(app) function that
@@ -25,6 +26,7 @@ import { registerAdminDataRoutes } from "./http/admin-data";
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   registerAdminLiveRoutes(app);
   registerAdminDataRoutes(app);
+  registerRiderDataRoutes(app);
   registerAuthRoutes(app);
   registerAccountRoutes(app);
   registerPaymentRoutes(app);

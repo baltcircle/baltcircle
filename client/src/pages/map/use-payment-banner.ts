@@ -11,7 +11,7 @@ export function usePaymentBanner(isRegistered: boolean, hasActiveRide: boolean) 
     queryKey: ["/api/payment-methods"],
     enabled: isRegistered,
   });
-  const hasCard = (methodsQ.data?.length ?? 0) > 0;
+  const hasCard = (methodsQ.data ?? []).some((m) => m.status === "active");
   const [paymentBannerDismissed, setPaymentBannerDismissed] = useState(
     () => sessionStorage.getItem(PAYMENT_BANNER_KEY) === "1"
   );
@@ -21,7 +21,7 @@ export function usePaymentBanner(isRegistered: boolean, hasActiveRide: boolean) 
   };
   // Не показываем баннер, пока способы оплаты ещё грузятся — иначе при reload
   // он мигает (hasCard=false до ответа, затем исчезает).
-  const methodsReady = !methodsQ.isLoading && methodsQ.isFetched;
+  const methodsReady = !methodsQ.isLoading && methodsQ.isFetched && !methodsQ.isError;
   const showPaymentBanner =
     isRegistered && methodsReady && !hasCard && !paymentBannerDismissed && !hasActiveRide;
 

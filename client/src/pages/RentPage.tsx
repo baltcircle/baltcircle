@@ -10,17 +10,15 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { AuthModal } from "@/components/AuthModal";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 import { QrCode, Camera, MapPin, Clock, Sparkles } from "lucide-react";
 
 export function RentPage() {
   const [loc, navigate] = useLocation();
   const toast = useToast();
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
-  const activeQ = useQuery<Ride[]>({ queryKey: ["/api/rides/active"] });
-  // Live active-ride updates via SSE (replaces the old 4s poll).
-  useActiveRideStream();
   const { isRegistered } = useCurrentUser();
+  const activeQ = useQuery<Ride[]>({ queryKey: ["/api/rides/active"], enabled: isRegistered });
 
   const [scanState, setScanState] = useState<"idle" | "scanning" | "success" | "error">("idle");
   const [code, setCode] = useState("");
@@ -56,6 +54,10 @@ export function RentPage() {
   });
 
   function startScan(skipGate = false) {
+    if (bikesQ.isError || (isRegistered && (activeQ.isError || activeQ.isPending))) {
+      toast.toast({ title: "Данные поездок недоступны", description: "Повторите загрузку перед началом поездки.", variant: "destructive" });
+      return;
+    }
     // Registration gate: unregistered riders must register before scanning.
     // skipGate is used to resume right after a successful registration, when
     // the cached isRegistered flag may not have refreshed in this closure yet.
@@ -97,6 +99,8 @@ export function RentPage() {
       onRegistered={() => startScan(true)}
     />
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-5xl mx-auto" data-testid="page-rent">
+      <QueryErrorNotice query={activeQ} />
+      <QueryErrorNotice query={bikesQ} />
       <header className="mb-6">
         <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Аренда</div>
         <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Сканируйте QR-код на руле</h1>
