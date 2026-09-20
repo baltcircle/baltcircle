@@ -1,7 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { AdminFeedbackRow } from "@shared/schema";
-import { formatFeedbackReasons } from "@shared/feedback";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -12,7 +10,8 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Search, AlertTriangle, ArrowUp, ArrowDown } from "lucide-react";
-import { TablePager, useClientPagination } from "@/components/table-pager";
+import { TablePager } from "@/components/table-pager";
+import { useAdminPage } from "@/hooks/use-admin-page";
 import { FeedbackRowItem } from "./feedback-admin/FeedbackRow";
 
 const FEEDBACK_KEY = ["/api/admin/feedback"];
@@ -22,52 +21,17 @@ type SortDir = "asc" | "desc";
 const RATING_OPTIONS = ["5", "4", "3", "2", "1"];
 
 export function FeedbackAdminPage() {
-  const feedbackQ = useQuery<AdminFeedbackRow[]>({ queryKey: FEEDBACK_KEY });
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [ratingFilter, setRatingFilter] = useState<string>("all");
   const [dateDir, setDateDir] = useState<SortDir>("desc");
 
-  const rows = feedbackQ.data ?? [];
-
-  // Every distinct "Пункты" label actually present in the loaded feedback,
-  // in the same shape the table cell renders them ("Поддержка" for support
-  // rows, formatted reason labels otherwise) — powers the filter dropdown
-  // embedded in the column header, analogous to the Status filter on the
-  // Maintenance page.
-  const categoryOptions = useMemo(() => {
-    const labels = new Set<string>();
-    for (const f of rows) {
-      if (f.kind === "support") { labels.add("Поддержка"); continue; }
-      for (const label of formatFeedbackReasons(f.rating, f.reasons)) labels.add(label);
-    }
-    return Array.from(labels).sort((a, b) => a.localeCompare(b, "ru"));
-  }, [rows]);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return rows.filter((f) => {
-      if (ratingFilter !== "all" && String(f.rating) !== ratingFilter) return false;
-      if (categoryFilter !== "all") {
-        const labels = f.kind === "support" ? ["Поддержка"] : formatFeedbackReasons(f.rating, f.reasons);
-        if (!labels.includes(categoryFilter)) return false;
-      }
-      if (!q) return true;
-      return (
-        (f.userName ?? "").toLowerCase().includes(q) ||
-        (f.userPhone ?? "").toLowerCase().includes(q) ||
-        (f.bikeId ?? "").toLowerCase().includes(q) ||
-        (f.comment ?? "").toLowerCase().includes(q)
-      );
+  const { query: feedbackQ, page, setPage, pageCount, pageItems, total } =
+    useAdminPage<AdminFeedbackRow>(FEEDBACK_KEY[0], {
+      search, category: categoryFilter, rating: ratingFilter, direction: dateDir,
     });
-  }, [rows, search, categoryFilter, ratingFilter]);
-
-  const sorted = useMemo(() => {
-    const dir = dateDir === "asc" ? 1 : -1;
-    return [...filtered].sort((a, b) => (a.createdAt - b.createdAt) * dir);
-  }, [filtered, dateDir]);
-
-  const { page, setPage, pageCount, pageItems } = useClientPagination(sorted);
+  const categoryOptions = feedbackQ.data?.categories ?? [];
+  const hasFilters = !!search || categoryFilter !== "all" || ratingFilter !== "all";
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-feedback">
@@ -99,7 +63,7 @@ export function FeedbackAdminPage() {
               Повторить
             </Button>
           </div>
-        ) : rows.length === 0 ? (
+        ) : total === 0 && !hasFilters ? (
           <div className="p-10 text-center text-sm text-muted-foreground" data-testid="feedback-empty">
             Отзывов пока нет.
           </div>
@@ -140,7 +104,7 @@ export function FeedbackAdminPage() {
             </TableBody>
           </Table>
         )}
-        <TablePager page={page} pageCount={pageCount} total={sorted.length} onPage={setPage} testid="feedback-pager" />
+        <TablePager page={page} pageCount={pageCount} total={total} onPage={setPage} testid="feedback-pager" />
       </Card>
     </div>
   );

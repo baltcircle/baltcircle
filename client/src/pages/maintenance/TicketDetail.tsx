@@ -5,6 +5,7 @@ import { TICKET_PRIORITIES, TICKET_STATUSES } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { errorMessage } from "@/lib/error-message";
 import { Button } from "@/components/ui/button";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
@@ -23,7 +24,7 @@ export function TicketDetail({ id, onClose, toast }: {
   toast: ReturnType<typeof useToast>;
 }) {
   const detailQ = useQuery<TicketWithComments>({
-    queryKey: [`/api/tickets/${id}`],
+    queryKey: ["/api/tickets", id],
     enabled: id != null,
   });
   const [comment, setComment] = useState("");
@@ -33,7 +34,6 @@ export function TicketDetail({ id, onClose, toast }: {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/tickets"] });
     queryClient.invalidateQueries({ queryKey: ["/api/bikes"] });
-    if (id != null) queryClient.invalidateQueries({ queryKey: [`/api/tickets/${id}`] });
   };
 
   const patchMut = useMutation({
@@ -64,10 +64,11 @@ export function TicketDetail({ id, onClose, toast }: {
             {t ? (t.title || KIND_LABEL[t.kind] || t.kind) : "Заявка"}
           </DialogTitle>
           <DialogDescription>
-            {t ? `${t.bikeId} · ${KIND_LABEL[t.kind] ?? t.kind}` : "Загрузка…"}
+            {t ? `${t.bikeId} · ${KIND_LABEL[t.kind] ?? t.kind}` : detailQ.isError ? "Данные недоступны" : "Загрузка…"}
           </DialogDescription>
         </DialogHeader>
 
+        <QueryErrorNotice query={detailQ} />
         {t && (
           <div className="space-y-4">
             <div className="text-sm whitespace-pre-wrap">{t.message}</div>

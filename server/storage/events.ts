@@ -23,6 +23,16 @@ export const bikeEvents = new EventEmitter();
 bikeEvents.setMaxListeners(0);
 export const BIKE_EVENT_CHANNEL = "fleet";
 
+// Monotonic cache generation: raw SQL writers (OMNI) cannot reach the storage
+// instance, but must invalidate cached rows BEFORE any HTTP/SSE listener reads.
+let fleetVersion = 0;
+export const getFleetVersion = () => fleetVersion;
+bikeEvents.prependListener(BIKE_EVENT_CHANNEL, () => { fleetVersion += 1; });
+export const fleetDataEvents = new EventEmitter();
+fleetDataEvents.setMaxListeners(0);
+fleetDataEvents.prependListener("telemetry", () => { fleetVersion += 1; });
+export function notifyFleetDataChanged() { fleetDataEvents.emit("telemetry"); }
+
 // Pending-end bridge: a rider's
 // "завершить" request arms a short expectation (server/omni/pending-end-registry.ts)
 // instead of settling immediately, because ending must wait for the OMNI

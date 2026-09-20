@@ -1,5 +1,5 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { useState } from "react";
 import type { AdminRide } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card } from "@/components/ui/card";
@@ -15,16 +15,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Search, AlertTriangle } from "lucide-react";
-import { TablePager, useClientPagination } from "@/components/table-pager";
+import { TablePager } from "@/components/table-pager";
+import { useAdminPage } from "@/hooks/use-admin-page";
+import { useClock } from "@/hooks/use-clock";
 import { RideRowItem } from "./rides-admin/RideRow";
 import { cleanErr } from "@/lib/api-error";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
 
 const RIDES_KEY = ["/api/admin/rides"];
-
-// Seed-юзеры из bootstrap.ts (populateDemoData). Скрываем их поездки из
-// админ-истории, чтобы показывать только реальные аренды.
-const DEMO_USER_IDS = new Set(["demo", "user-2", "user-3", "user-4", "user-5"]);
 
 type RideTab = "active" | "completed";
 
@@ -36,14 +34,11 @@ const TABS: { id: RideTab; label: string; testId: string }[] = [
 export function RidesAdminPage() {
   const toast = useToast();
   useFleetStream();
-  const ridesQ = useQuery<AdminRide[]>({
-    queryKey: RIDES_KEY,
-    // Recover after a suspended tab or a temporary network interruption.
-    refetchOnWindowFocus: "always",
-    refetchOnReconnect: "always",
-  });
   const [tab, setTab] = useState<RideTab>("active");
   const [search, setSearch] = useState("");
+  const { query: ridesQ, page, setPage, pageCount, pageItems, total } =
+    useAdminPage<AdminRide>(RIDES_KEY[0], { status: tab, search });
+  const now = useClock(1000, tab === "active");
   // The ride awaiting end confirmation (drives the alert dialog).
   const [pendingEnd, setPendingEnd] = useState<AdminRide | null>(null);
 
@@ -66,31 +61,7 @@ export function RidesAdminPage() {
     },
   });
 
-  // Отменённые поездки никогда не попадают в админ-историю поездок —
-  // включены только активные и завершённые.
-  const rides = useMemo(
-    () => (ridesQ.data ?? []).filter((r) => !DEMO_USER_IDS.has(r.userId) && r.status !== "cancelled"),
-    [ridesQ.data],
-  );
-
-  const counts = useMemo(() => ({
-    active: rides.filter((r) => r.status === "active").length,
-    completed: rides.filter((r) => r.status === "completed").length,
-  }), [rides]);
-
-  const filtered = useMemo(() => {
-    const byTab = rides.filter((r) => r.status === tab);
-    const q = search.trim().toLowerCase();
-    if (!q) return byTab;
-    return byTab.filter((r) =>
-      (r.userName ?? "").toLowerCase().includes(q) ||
-      (r.userPhone ?? "").toLowerCase().includes(q) ||
-      r.bikeId.toLowerCase().includes(q) ||
-      r.userId.toLowerCase().includes(q),
-    );
-  }, [rides, tab, search]);
-
-  const { page, setPage, pageCount, pageItems } = useClientPagination(filtered);
+  const counts = ridesQ.data?.counts ?? { active: 0, completed: 0 };
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-rides">
@@ -137,9 +108,9 @@ export function RidesAdminPage() {
               Повторить
             </Button>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : total === 0 ? (
           <div className="p-10 text-center text-sm text-muted-foreground" data-testid="rides-empty">
-            {rides.length === 0
+            {(counts.active + counts.completed) === 0 && !search.trim()
               ? "Поездок пока нет."
               : search.trim()
                 ? "Ничего не найдено по запросу."
@@ -164,6 +135,7 @@ export function RidesAdminPage() {
                 <RideRowItem
                   key={r.id}
                   r={r}
+                  now={now}
                   onEnd={() => setPendingEnd(r)}
                   busy={endMut.isPending}
                 />
@@ -171,7 +143,7 @@ export function RidesAdminPage() {
             </TableBody>
           </Table>
         )}
-        <TablePager page={page} pageCount={pageCount} total={filtered.length} onPage={setPage} testid="rides-pager" />
+        <TablePager page={page} pageCount={pageCount} total={total} onPage={setPage} testid="rides-pager" />
       </Card>
 
       <AlertDialog open={!!pendingEnd} onOpenChange={(o) => { if (!o) setPendingEnd(null); }}>

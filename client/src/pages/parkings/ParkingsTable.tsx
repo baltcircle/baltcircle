@@ -70,10 +70,13 @@ export function ParkingsTable({
     },
     onError: (err: any) => {
       // 409 means bikes referenced it and it was archived instead.
+      const archived = /^409:/.test(String(err?.message));
       queryClient.invalidateQueries({ queryKey: ADMIN_PARKINGS_KEY });
+      queryClient.invalidateQueries({ queryKey: ["/api/parkings"] });
       toast.toast({
-        title: "Переведена в архив",
-        description: err?.message?.replace(/^\d+:\s*/, "") ?? "К парковке привязаны велосипеды",
+        title: archived ? "Переведена в архив" : "Не удалось удалить парковку",
+        description: err?.message?.replace(/^\d+:\s*/, "") ?? "Проверьте соединение и повторите попытку",
+        variant: archived ? "default" : "destructive",
       });
     },
   });

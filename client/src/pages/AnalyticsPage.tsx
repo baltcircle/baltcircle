@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useClock } from "@/hooks/use-clock";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -88,7 +89,8 @@ interface AdminAnalytics {
 
 export function AnalyticsPage() {
   const [period, setPeriod] = useState<PeriodId>("30d");
-  const now = Date.now();
+  const clock = useClock(30_000);
+  const now = startOfDay(clock);
   const [customFrom, setCustomFrom] = useState(() => toDateInput(now - 7 * DAY));
   const [customTo, setCustomTo] = useState(() => toDateInput(now));
 
@@ -101,8 +103,7 @@ export function AnalyticsPage() {
     const from = startOfDay(new Date(customFrom + "T00:00:00").getTime());
     const to = endOfDay(new Date(customTo + "T00:00:00").getTime());
     return { from, to };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, customFrom, customTo]);
+  }, [period, customFrom, customTo, now]);
 
   const validCustom = range.from <= range.to;
 
@@ -337,13 +338,15 @@ export function AnalyticsPage() {
 /* ---------- Export bar (client-side CSV from existing admin endpoints) ---------- */
 function ExportBar() {
   const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const run = async (key: string, fn: () => Promise<void>) => {
     setBusy(key);
+    setError(null);
     try {
       await fn();
     } catch {
-      // surface nothing fancy; the button just re-enables
+      setError("Не удалось выгрузить данные. Повторите попытку.");
     } finally {
       setBusy(null);
     }
@@ -380,7 +383,12 @@ function ExportBar() {
 
   const exportUsers = () =>
     run("users", async () => {
-      const rows = (await (await apiRequest("GET", "/api/admin/users")).json()) as User[];
+      const rows: User[] = [];
+      for (let offset = 0; ; offset += 200) {
+        const page = await (await apiRequest("GET", `/api/admin/users/page?limit=200&offset=${offset}`)).json() as { items: User[]; total: number };
+        rows.push(...page.items);
+        if (rows.length >= page.total || page.items.length < 200) break;
+      }
       downloadCsv("users.csv", rows, [
         { header: "ID", value: (u) => u.id },
         { header: "Имя", value: (u) => u.name },
@@ -423,6 +431,7 @@ function ExportBar() {
   return (
     <div>
       <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground mb-2">Экспорт CSV</div>
+      {error && <div role="alert" className="text-sm text-destructive mb-2">{error}</div>}
       <div className="flex flex-wrap gap-2">
         <ExportButton onClick={exportRides} busy={busy === "rides"} testId="analytics-export-rides">Поездки</ExportButton>
         <ExportButton onClick={exportUsers} busy={busy === "users"} testId="analytics-export-users">Пользователи</ExportButton>

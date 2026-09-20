@@ -6,7 +6,7 @@
 // which is exactly what every mixin is.
 import type { Bike, User, UserRole } from "@shared/schema";
 import { findNearestParkingWithinRadius } from "@shared/geo";
-import { bikeEvents, BIKE_EVENT_CHANNEL } from "./events";
+import { bikeEvents, BIKE_EVENT_CHANNEL, notifyFleetDataChanged } from "./events";
 import type { IBikeStorage, IParkingStorage } from "./interfaces";
 
 // ---------- Admin phone / role resolution ----------
@@ -15,7 +15,7 @@ import type { IBikeStorage, IParkingStorage } from "./interfaces";
 // hardcoded: with the env unset the set is empty and no one is auto-promoted.
 // Each entry is normalized the same way rider phones are, so "8…" / "+7…" /
 // spaced forms all match. This is a stopgap until a proper role-admin UI exists.
-function adminPhoneSet(): Set<string> {
+export function adminPhoneSet(): Set<string> {
   const raw = process.env.ADMIN_PHONE_NUMBERS || "";
   return new Set(
     raw
@@ -75,6 +75,7 @@ export class BaseStorage {
   readonly bikesCacheTtlMs = 3000;
   _bikesCache: Bike[] | null = null;
   _bikesCacheAt = 0;
+  _bikesCacheVersion = -1;
 
   // Drop the cached bike rows so the next listBikes() re-reads from the DB.
   // Call after ANY write that can change a bike's row (status/position/CRUD).
@@ -85,6 +86,7 @@ export class BaseStorage {
     this._bikesCache = null;
     this._bikesCacheAt = 0;
     if (!opts?.silent) bikeEvents.emit(BIKE_EVENT_CHANNEL);
+    else notifyFleetDataChanged();
   }
 
   // Normalize an optional string field: trim, and treat "" as null so blank

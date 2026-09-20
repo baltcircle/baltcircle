@@ -14,7 +14,7 @@ describe("FeedbackAdminPage", () => {
 
   it("sorts by date, toggled from the \u0414\u0430\u0442\u0430 header", () => {
     expect(source).toContain('setDateDir((d) => (d === "asc" ? "desc" : "asc"))');
-    expect(source).toContain("(a.createdAt - b.createdAt) * dir");
+    expect(source).toContain("direction: dateDir");
   });
 
   it("shows an empty state distinguishing no-data from no-search-results", () => {
@@ -22,8 +22,9 @@ describe("FeedbackAdminPage", () => {
     expect(source).toContain("\u041d\u0438\u0447\u0435\u0433\u043e \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e \u043f\u043e \u0437\u0430\u043f\u0440\u043e\u0441\u0443.");
   });
 
-  it("paginates client-side over the fetched list", () => {
-    expect(source).toContain("useClientPagination(sorted)");
+  it("paginates the complete server-side merged list", () => {
+    expect(source).toContain("useAdminPage<AdminFeedbackRow>");
+    expect(source).not.toContain("useClientPagination");
     expect(source).toContain("<TablePager");
   });
 
@@ -31,10 +32,10 @@ describe("FeedbackAdminPage", () => {
     expect(source).toContain('testId="select-feedback-category"');
     expect(source).toContain('allLabel="\u0412\u0441\u0435 \u043f\u0443\u043d\u043a\u0442\u044b"');
     expect(source).toContain("categoryOptions.map");
-    expect(source).toContain("labels.includes(categoryFilter)");
+    expect(source).toContain("category: categoryFilter");
     expect(source).toContain('testId="select-feedback-rating"');
     expect(source).toContain('allLabel="\u0412\u0441\u0435 \u043e\u0446\u0435\u043d\u043a\u0438"');
-    expect(source).toContain("String(f.rating) !== ratingFilter");
+    expect(source).toContain("rating: ratingFilter");
     expect(source).toContain("function FilterSelectHead");
     expect(source).toContain("data-testid={testId}");
   });

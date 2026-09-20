@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 import { useGeolocation } from "./map/use-geolocation";
 import {
   Eraser,
@@ -183,6 +184,10 @@ export function MapEditorPage() {
 
   return (
     <div className="relative h-[calc(100dvh-56px)] lg:h-[calc(100dvh)] w-full overflow-hidden bg-background" data-testid="page-map-editor">
+      {(objectsQ.isError || parkingsQ.isError) && <div className="absolute top-2 left-4 right-4 z-50">
+        <QueryErrorNotice query={objectsQ} />
+        <QueryErrorNotice query={parkingsQ} />
+      </div>}
       {/* Карта во весь экран */}
       <MapLibreMap
         parkings={mapParkings}
@@ -327,4 +332,3 @@ export function MapEditorPage() {
     </div>
   );
 }
-

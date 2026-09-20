@@ -64,6 +64,18 @@ describe("fleet stream updates admin rides", () => {
     mocks.cleanup = undefined;
   });
 
+  it("shares one connection between mounted map and admin subscribers", () => {
+    useFleetStream();
+    const firstCleanup = mocks.cleanup!;
+    useFleetStream();
+    expect(FakeEventSource.instances).toHaveLength(1);
+    firstCleanup();
+    expect(FakeEventSource.instances[0].close).not.toHaveBeenCalled();
+    mocks.cleanup?.();
+    expect(FakeEventSource.instances[0].close).toHaveBeenCalledOnce();
+    mocks.cleanup = undefined;
+  });
+
   it("subscribes the rides page and refreshes when returning to the tab", () => {
     const page = readFileSync(
       new URL("../pages/RidesAdminPage.tsx", import.meta.url),
@@ -71,7 +83,9 @@ describe("fleet stream updates admin rides", () => {
     );
     expect(page).toContain('import { useFleetStream } from "@/hooks/use-fleet-stream"');
     expect(page).toContain("useFleetStream();");
-    expect(page).toContain('refetchOnWindowFocus: "always"');
-    expect(page).toContain('refetchOnReconnect: "always"');
+    expect(page).toContain("useAdminPage");
+    const hook = readFileSync(new URL("./use-admin-page.ts", import.meta.url), "utf8");
+    expect(hook).toContain('refetchOnWindowFocus: "always"');
+    expect(hook).toContain('refetchOnReconnect: "always"');
   });
 });

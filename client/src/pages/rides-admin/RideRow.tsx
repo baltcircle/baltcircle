@@ -5,11 +5,11 @@ import { TableCell, TableRow } from "@/components/ui/table";
 import { StopCircle, FlaskConical } from "lucide-react";
 import { fmtDate, fmtRub, fmtDuration, fmtRideTariff, fmtRideRating } from "@/lib/format";
 
-export function RideRowItem({ r, onEnd, busy }: { r: AdminRide; onEnd: () => void; busy: boolean }) {
+export function RideRowItem({ r, onEnd, busy, now }: { r: AdminRide; onEnd: () => void; busy: boolean; now: number }) {
   const active = r.status === "active";
   // Hourly prepaid model: the ride cost is fixed at start (tariff price paid up
   // front, in kopecks), so no live per-minute estimate is needed.
-  const elapsedMs = (r.endedAt ?? Date.now()) - r.startedAt;
+  const elapsedMs = Math.max(0, (r.endedAt ?? now) - r.startedAt);
 
   return (
     <TableRow data-testid={`ride-row-${r.id}`} className={active ? "" : "opacity-90"}>

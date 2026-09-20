@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { storage, rideEvents } from "../storage";
+import { feedbackPage } from "../storage/admin-read";
 import { z } from "zod";
 import { TARIFFS, tariffPriceKopecks, realToMap, SSE_HEARTBEAT_INTERVAL_MS } from "@shared/geo";
 import { mergeRideTrack, type TrackPoint } from "@shared/rideTrack";
@@ -15,7 +16,7 @@ import {
   adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
   createRideFeedbackSchema, startTestRideSchema,
 } from "@shared/schema";
-import type { PaymentMethod, PaymentOrder, Ride, AdminFeedbackRow } from "@shared/schema";
+import type { PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
 import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./../sms";
 import {
   getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
@@ -312,22 +313,12 @@ export function registerRideRoutes(app: Express): void {
   // Admin Reviews list: every submitted post-ride feedback PLUS every
   // support-chat rating (submitted after an operator closes a session),
   // merged newest-first and tagged with a `kind` discriminant so the client
-  // can show "Поддержка" for support rows. Sorting/filtering happen
-  // client-side over this full list, mirroring /api/admin/rides.
+  // can show "Поддержка" for support rows. Kept for legacy array clients;
+  // the admin UI uses /feedback/page with SQL filtering and a total envelope.
   app.get("/api/admin/feedback", requireRole("operator", "admin"), async (req, res) => {
-    const { limit, offset } = parsePageParams(req);
-    const [rideRows, supportRows, rideTotal, supportTotal] = await Promise.all([
-      storage.listRideFeedback({ limit, offset }),
-      storage.listSupportFeedback({ limit, offset }),
-      storage.countRideFeedback(),
-      storage.countSupportFeedback(),
-    ]);
-    const merged: AdminFeedbackRow[] = [
-      ...rideRows.map((r) => ({ ...r, kind: "ride" as const })),
-      ...supportRows.map((r) => ({ ...r, kind: "support" as const })),
-    ].sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
-    res.setHeader("X-Total-Count", String(rideTotal + supportTotal));
-    res.json(merged);
+    const page = await feedbackPage({ ...req.query, limit: req.query.limit ?? "200" });
+    res.setHeader("X-Total-Count", String(page.total));
+    res.json(page.items);
   });
   // Manually finish any active ride. Reuses the shared endRide() (which settles
   // cost, frees the bike and charges the wallet) but, unlike the rider endpoint,

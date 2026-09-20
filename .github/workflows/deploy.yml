@@ -29,6 +29,19 @@ jobs:
   test:
     name: Type-check, unit tests, dependency audit
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: takeride_admin_test
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -41,6 +54,10 @@ jobs:
         run: npx tsc --noEmit
       - name: Unit tests
         run: npm test
+      - name: Administrative data integration checks
+        env:
+          ADMIN_DATA_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/takeride_admin_test
+        run: npx tsx script/check-admin-data.ts
       - name: Dependency vulnerability audit
         # 2026-09-04: registry.npmjs.org's legacy audit endpoint
         # (/-/npm/v1/security/audits/quick) has started intermittently

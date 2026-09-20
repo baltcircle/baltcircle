@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 import { useSearch } from "wouter";
 import type { Bike, Ticket, User } from "@shared/schema";
 import { TICKET_PRIORITIES, TICKET_STATUSES } from "@shared/schema";
@@ -33,7 +34,7 @@ export function MaintenancePage() {
   // Staff names to suggest as assignees. Only operators/admins may read the
   // users list, so the query is gated to them; mechanics keep plain free text.
   // The input stays free text either way — this only offers autocomplete.
-  const staffQ = useQuery<User[]>({ queryKey: ["/api/admin/users"], enabled: canManageStaff });
+  const staffQ = useQuery<Pick<User, "id" | "name" | "role">[]>({ queryKey: ["/api/admin/users", "staff"], enabled: canManageStaff });
   const assigneeOptions = useMemo(
     () =>
       (staffQ.data ?? [])
@@ -166,8 +167,9 @@ export function MaintenancePage() {
 
       {/* Ticket list */}
       <div className="space-y-2" data-testid="ticket-list">
+        <QueryErrorNotice query={ticketsQ} />
         {ticketsQ.isLoading && <div className="text-sm text-muted-foreground py-8 text-center">Загрузка…</div>}
-        {!ticketsQ.isLoading && filtered.length === 0 && (
+        {ticketsQ.isSuccess && filtered.length === 0 && (
           <div className="text-sm text-muted-foreground py-12 text-center" data-testid="tickets-empty">
             Заявок не найдено
           </div>

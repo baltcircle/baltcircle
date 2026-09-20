@@ -1,5 +1,5 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { useState } from "react";
 import type { AdminUser, UserRole } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useCurrentUser } from "@/hooks/use-current-user";
@@ -15,7 +15,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Search, Users, Ban, AlertTriangle } from "lucide-react";
-import { TablePager, useClientPagination } from "@/components/table-pager";
+import { TablePager } from "@/components/table-pager";
+import { useAdminPage } from "@/hooks/use-admin-page";
 import { UserRowItem } from "./users-admin/UserRow";
 import { cleanErr } from "@/lib/api-error";
 
@@ -26,8 +27,9 @@ export function UsersPage() {
   // The signed-in operator/admin — used to gate who may assign the admin role
   // (mirrors the server-side rule so the UI doesn't offer a forbidden action).
   const { role: actorRole, user: actor } = useCurrentUser();
-  const usersQ = useQuery<AdminUser[]>({ queryKey: USERS_KEY });
   const [search, setSearch] = useState("");
+  const { query: usersQ, page, setPage, pageCount, pageItems, total } =
+    useAdminPage<AdminUser>(USERS_KEY[0], { search });
   const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
 
   const roleMut = useMutation({
@@ -67,19 +69,7 @@ export function UsersPage() {
     onError: (e: Error) => toast.toast({ title: "Не удалось удалить аккаунт", description: cleanErr(e), variant: "destructive" }),
   });
 
-  const users = usersQ.data ?? [];
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter((u) =>
-      u.name.toLowerCase().includes(q) ||
-      u.phone.toLowerCase().includes(q) ||
-      (u.email ?? "").toLowerCase().includes(q),
-    );
-  }, [users, search]);
-
-  const blockedCount = users.filter((u) => u.blockedAt).length;
-  const { page, setPage, pageCount, pageItems } = useClientPagination(filtered);
+  const blockedCount = usersQ.data?.counts?.blocked ?? 0;
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-users">
@@ -87,7 +77,7 @@ export function UsersPage() {
 
       <div className="flex items-end justify-between flex-wrap gap-4 mb-2">
         <div className="flex items-center gap-2 pl-4 text-sm text-muted-foreground" data-testid="users-summary">
-          <span className="inline-flex items-center gap-1.5"><Users className="w-4 h-4" /> Всего: {users.length}</span>
+          <span className="inline-flex items-center gap-1.5"><Users className="w-4 h-4" /> {search ? "Найдено" : "Всего"}: {usersQ.isSuccess ? total : "—"}</span>
           {blockedCount > 0 && (
             <span className="inline-flex items-center gap-1.5 text-destructive">
               <Ban className="w-4 h-4" /> заблокировано: {blockedCount}
@@ -119,9 +109,9 @@ export function UsersPage() {
               Повторить
             </Button>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : total === 0 ? (
           <div className="p-10 text-center text-sm text-muted-foreground" data-testid="users-empty">
-            {users.length === 0 ? "Пока нет зарегистрированных пользователей." : "Никто не найден по запросу."}
+            {!search ? "Пока нет зарегистрированных пользователей." : "Никто не найден по запросу."}
           </div>
         ) : (
           <Table data-testid="users-table">
@@ -153,7 +143,7 @@ export function UsersPage() {
             </TableBody>
           </Table>
         )}
-        <TablePager page={page} pageCount={pageCount} total={filtered.length} onPage={setPage} testid="users-pager" />
+        <TablePager page={page} pageCount={pageCount} total={total} onPage={setPage} testid="users-pager" />
       </Card>
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>

@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef } from "react";
 import { Link } from "wouter";
-import type { Bike, User, Ride, Ticket, MapObject, Parking, SupportTicketWithUser, Alert } from "@shared/schema";
+import type { Bike, Ticket, SupportTicketWithUser, Alert } from "@shared/schema";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,20 +20,21 @@ import { deriveMetrics, fmtNow } from "./admin/metrics";
 import { StatusChip } from "./admin/dashboard-widgets";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useClock } from "@/hooks/use-clock";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 
 export function AdminPage() {
-  // Pull from existing endpoints. /api/admin/users is staff-protected; the rest
-  // are public reads already used elsewhere in the operator UI. No new backend
-  // surface is needed to assemble the dashboard.
+  // Fetch only data used by the summary; the operations map owns its layers.
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/bikes"] });
   useFleetStream(); // живое обновление счётчиков статусов
-  const usersQ = useQuery<User[]>({ queryKey: ["/api/admin/users"] });
-  const ridesQ = useQuery<Ride[]>({ queryKey: ["/api/rides"] });
+  const clock = useClock(30_000);
+  const dayStart = new Date(clock).setHours(0, 0, 0, 0);
+  const dayEnd = new Date(clock).setHours(23, 59, 59, 999);
+  const rideStatsQ = useQuery<{ ridesToday: number }>({
+    queryKey: ["/api/admin/ride-stats", dayStart, dayEnd],
+    queryFn: async () => (await apiRequest("GET", `/api/admin/ride-stats?from=${dayStart}&to=${dayEnd}`)).json(),
+  });
   const ticketsQ = useQuery<Ticket[]>({ queryKey: ["/api/tickets"] });
-  const mapQ = useQuery<MapObject[]>({ queryKey: ["/api/map-objects"] });
-  // Public endpoint returns active, non-archived parkings only — exactly the
-  // count riders can see on the map.
-  const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/parkings"] });
   // Rider help requests submitted from the /support page. Separate from
   // mechanic tickets (/api/tickets) which describe bike issues.
   const supportQ = useQuery<SupportTicketWithUser[]>({ queryKey: ["/api/admin/support/tickets"] });
@@ -43,11 +44,7 @@ export function AdminPage() {
   const fleetAlertsQ = useQuery<Alert[]>({ queryKey: ["/api/admin/alerts"] });
 
   const bikes = bikesQ.data ?? [];
-  const users = usersQ.data ?? [];
-  const rides = ridesQ.data ?? [];
   const tickets = ticketsQ.data ?? [];
-  const mapObjects = mapQ.data ?? [];
-  const parkings = parkingsQ.data ?? [];
   const supportTickets = supportQ.data ?? [];
   const openSupport = supportTickets.filter(t => t.status !== "resolved");
 
@@ -117,8 +114,8 @@ export function AdminPage() {
     if (hasNew) playSupportChime();
   }, [fleetAlertsQ.data, unattendedUnlockAlerts]);
 
-  const m = useMemo(() => deriveMetrics({ bikes, users, rides, tickets, mapObjects, parkings }), [
-    bikes, users, rides, tickets, mapObjects, parkings,
+  const m = useMemo(() => deriveMetrics({ bikes, users: [], rides: [], tickets, mapObjects: [], parkings: [] }), [
+    bikes, tickets,
   ]);
 
   // Статус шапки завязан на неподтверждённых (не квитированных) тостах под картой:
@@ -129,10 +126,16 @@ export function AdminPage() {
   const hasSeriousAlert =
     totalUnackedAlerts > 2 || (totalUnackedAlerts === 1 && theftAlerts.length === 1);
   const needsAttention = totalUnackedAlerts > 0;
-  const serviceOk = !needsAttention;
+  const alertsKnown = fleetAlertsQ.isSuccess && !fleetAlertsQ.isError;
+  const serviceOk = alertsKnown && !needsAttention;
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-[1600px] mx-auto" data-testid="admin-dashboard">
+      <QueryErrorNotice query={bikesQ} />
+      <QueryErrorNotice query={ticketsQ} />
+      <QueryErrorNotice query={rideStatsQ} />
+      <QueryErrorNotice query={supportQ} />
+      <QueryErrorNotice query={fleetAlertsQ} />
       {/* ---------- Service status header ---------- */}
       <header
         className="mb-6 rounded-xl border border-card-border bg-card p-5 lg:p-6"
@@ -141,7 +144,14 @@ export function AdminPage() {
         <div className="flex items-start flex-wrap gap-4">
           <div>
             <div className="flex items-center gap-3">
-              {serviceOk ? (
+              {!alertsKnown ? (
+                <span className="inline-flex items-center gap-2 text-amber-600">
+                  <AlertTriangle className="w-6 h-6" />
+                  <span className="font-display text-2xl font-light">
+                    {fleetAlertsQ.isError ? "Состояние сервиса неизвестно: ошибка загрузки" : "Проверяем состояние сервиса…"}
+                  </span>
+                </span>
+              ) : serviceOk ? (
                 <span className="inline-flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
                   <CheckCircle2 className="w-6 h-6" />
                   <span className="font-display text-2xl lg:text-3xl font-light">
@@ -174,42 +184,42 @@ export function AdminPage() {
               tone="emerald"
               icon={<CheckCircle2 className="w-3.5 h-3.5" />}
               label="Доступно"
-              value={m.available}
+              value={bikesQ.isSuccess ? m.available : "—"}
               testId="status-available"
             />
             <StatusChip
               tone="sky"
               icon={<BikeIcon className="w-3.5 h-3.5" />}
               label="В аренде"
-              value={m.rented}
+              value={bikesQ.isSuccess ? m.rented : "—"}
               testId="status-rented"
             />
             <StatusChip
               tone="violet"
               icon={<BikeIcon className="w-3.5 h-3.5" />}
               label="Бронь"
-              value={m.reserved}
+              value={bikesQ.isSuccess ? m.reserved : "—"}
               testId="status-reserved"
             />
             <StatusChip
               tone={m.lowBattery > 0 ? "amber" : "muted"}
               icon={<BatteryWarning className="w-3.5 h-3.5" />}
               label="Заряд < 25%"
-              value={m.lowBattery}
+              value={bikesQ.isSuccess ? m.lowBattery : "—"}
               testId="status-low-battery"
             />
             <StatusChip
               tone="muted"
               icon={<Activity className="w-3.5 h-3.5" />}
               label="Поездок сегодня"
-              value={m.ridesToday}
+              value={rideStatsQ.isSuccess ? rideStatsQ.data.ridesToday : "—"}
               testId="status-rides-today"
             />
             <StatusChip
               tone={m.openTickets > 0 ? "amber" : "muted"}
               icon={<Wrench className="w-3.5 h-3.5" />}
               label="Сервисные заявки"
-              value={m.openTickets}
+              value={ticketsQ.isSuccess ? m.openTickets : "—"}
               testId="status-open-tickets"
             />
           </div>
@@ -244,6 +254,8 @@ export function AdminPage() {
           </div>
           {supportQ.isLoading ? (
             <div className="text-sm text-muted-foreground py-4" data-testid="dashboard-support-loading">Загружаем…</div>
+          ) : supportQ.isError ? (
+            <div role="alert" className="text-sm text-destructive py-4">Не удалось обновить обращения.</div>
           ) : openSupport.length === 0 ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground py-4" data-testid="dashboard-support-empty">
               <CheckCircle2 className="w-4 h-4 text-emerald-500" />

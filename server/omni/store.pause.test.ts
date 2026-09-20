@@ -30,6 +30,7 @@ vi.mock("./pause-registry", () => ({
 }));
 vi.mock("../storage/events", () => ({
   rideEvents: { emit: rideEventsEmitMock },
+  notifyFleetDataChanged: vi.fn(),
 }));
 
 import { PgOmniStore } from "./store";

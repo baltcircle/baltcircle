@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import type { AdminSupportConversationRow } from "@shared/schema";
 import { useSupportUnread } from "@/hooks/use-support-unread";
 import { Card } from "@/components/ui/card";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 import { MessageSquare } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { INBOX_KEY } from "./support-chats/utils";
@@ -51,7 +52,7 @@ export function AdminSupportChatsPage() {
           содержимому чата, и вся страница тянулась вместо внутреннего скролла в
           ChatList/AdminChatPanel. На мобильной вёрстке (одна колонка) остаётся min-h. */}
       <div className="grid gap-4 lg:grid-cols-[320px_1fr] min-h-[70vh] lg:h-[70vh]">
-        <ChatList
+        {inboxQ.isError ? <QueryErrorNotice query={inboxQ} /> : <ChatList
           rows={rows}
           filtered={filtered}
           isLoading={inboxQ.isLoading}
@@ -60,7 +61,7 @@ export function AdminSupportChatsPage() {
           selectedId={selectedId}
           setSelectedId={setSelectedId}
           onTogglePin={(id, pinned) => pinMut.mutate({ id, pinned })}
-        />
+        />}
 
         {/* Панель чата */}
         <Card className="flex flex-col overflow-hidden" data-testid="admin-support-chat-panel">

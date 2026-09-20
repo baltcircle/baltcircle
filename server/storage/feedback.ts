@@ -54,7 +54,7 @@ export function FeedbackMixin<TBase extends Constructor>(Base: TBase) {
       const limit = opts?.limit ?? 500;
       const offset = opts?.offset ?? 0;
       const rows = (await db.select().from(rideFeedback)
-        .orderBy(desc(rideFeedback.createdAt))
+        .orderBy(desc(rideFeedback.createdAt), desc(rideFeedback.id))
         .limit(limit)
         .offset(offset)) as RideFeedback[];
       if (rows.length === 0) return [];
@@ -100,7 +100,7 @@ export function FeedbackMixin<TBase extends Constructor>(Base: TBase) {
       const limit = opts?.limit ?? 500;
       const offset = opts?.offset ?? 0;
       const rows = (await db.select().from(supportFeedback)
-        .orderBy(desc(supportFeedback.createdAt))
+        .orderBy(desc(supportFeedback.createdAt), desc(supportFeedback.id))
         .limit(limit)
         .offset(offset)) as SupportFeedback[];
       if (rows.length === 0) return [];

@@ -41,8 +41,10 @@ const rideEvents = vi.hoisted(() => {
 });
 const sendToUserAsyncMock = vi.hoisted(() => vi.fn());
 const logMock = vi.hoisted(() => vi.fn());
+const feedbackPageMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../storage", () => ({ storage: storageMock, rideEvents }));
+vi.mock("../storage/admin-read", () => ({ feedbackPage: feedbackPageMock }));
 vi.mock("../index", () => ({ log: logMock }));
 vi.mock("../push", () => ({ sendToUserAsync: sendToUserAsyncMock }));
 // Real context helpers (riderId/isStaffSession/canManageRide) are exercised
@@ -618,19 +620,28 @@ describe("GET /api/admin/rides", () => {
 });
 
 describe("GET /api/admin/feedback", () => {
+  it("applies offset to the merged result rather than independently skipping both sources", async () => {
+    const { get } = routeApp();
+    feedbackPageMock.mockResolvedValue({ total: 4, items: [{ id: 2, createdAt: 200 }, { id: 2, createdAt: 100 }] });
+    const res = response();
+    await get.get("/api/admin/feedback")!({ query: { limit: "2", offset: "2" } }, res);
+    expect(feedbackPageMock).toHaveBeenCalledWith({ limit: "2", offset: "2" });
+    expect(storageMock.listRideFeedback).not.toHaveBeenCalled();
+    expect(storageMock.listSupportFeedback).not.toHaveBeenCalled();
+    expect(res.body.map((row: { createdAt: number }) => row.createdAt)).toEqual([200, 100]);
+  });
   it("merges ride and support feedback, newest first, tagged with kind", async () => {
     const { get } = routeApp();
-    storageMock.countRideFeedback.mockResolvedValue(42);
-    storageMock.countSupportFeedback.mockResolvedValue(3);
-    storageMock.listRideFeedback.mockResolvedValue([{ id: 1, rating: 5, createdAt: 100 }]);
-    storageMock.listSupportFeedback.mockResolvedValue([{ id: 1, rating: 4, createdAt: 200 }]);
+    feedbackPageMock.mockResolvedValue({ total: 45, items: [
+      { id: 1, rating: 4, createdAt: 200, kind: "support" },
+      { id: 1, rating: 5, createdAt: 100, kind: "ride" },
+    ] });
     const res = response();
 
     await get.get("/api/admin/feedback")!({ query: { limit: "10", offset: "0" } }, res);
 
     expect(res.headers["X-Total-Count"]).toBe("45");
-    expect(storageMock.listRideFeedback).toHaveBeenCalledWith({ limit: 10, offset: 0 });
-    expect(storageMock.listSupportFeedback).toHaveBeenCalledWith({ limit: 10, offset: 0 });
+    expect(feedbackPageMock).toHaveBeenCalledWith({ limit: "10", offset: "0" });
     expect(res.body).toEqual([
       { id: 1, rating: 4, createdAt: 200, kind: "support" },
       { id: 1, rating: 5, createdAt: 100, kind: "ride" },

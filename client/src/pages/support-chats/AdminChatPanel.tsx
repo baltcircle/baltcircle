@@ -4,6 +4,7 @@ import type { AdminSupportConversationRow, SupportMessage } from "@shared/schema
 import { apiRequest, queryClient, API_BASE } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Send, Paperclip, X as XIcon, User as UserIcon, Phone, Loader2, LogOut,
@@ -19,7 +20,7 @@ export function AdminChatPanel({
   row: AdminSupportConversationRow | null;
 }) {
   const toast = useToast();
-  const chatQ = useQuery<ChatState>({ queryKey: chatKey(conversationId) });
+  const chatQ = useQuery<ChatState>({ queryKey: chatKey(conversationId), refetchInterval: 30_000 });
   const messages = chatQ.data?.messages ?? [];
 
   const [text, setText] = useState("");
@@ -38,6 +39,7 @@ export function AdminChatPanel({
       `${API_BASE}/api/admin/support/chats/${conversationId}/stream`,
       { withCredentials: true },
     );
+    es.onopen = () => { void queryClient.invalidateQueries({ queryKey: chatKey(conversationId) }); };
     es.onmessage = (evt) => {
       try {
         const msg = JSON.parse(evt.data) as SupportMessage;
@@ -201,9 +203,10 @@ export function AdminChatPanel({
 
       {/* Сообщения */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3" data-testid="admin-support-chat-messages">
+        <QueryErrorNotice query={chatQ} />
         {chatQ.isLoading ? (
           <div className="text-xs text-muted-foreground text-center py-8">Загрузка…</div>
-        ) : messages.length === 0 ? (
+        ) : messages.length === 0 && !chatQ.isError ? (
           <div className="text-xs text-muted-foreground text-center py-8">Сообщений пока нет.</div>
         ) : (
           grouped.map((g, gi) => (

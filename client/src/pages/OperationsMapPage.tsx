@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { Bike, Parking, AdminRide, Ticket, MapObject, Alert } from "@shared/schema";
 import { TICKET_CLOSED_STATUSES } from "@shared/schema";
 import { Button } from "@/components/ui/button";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 import { MapLibreMap, type MapLayers } from "@/components/MapLibreMap";
 import { useGeolocation } from "./map/use-geolocation";
 import {
@@ -33,7 +34,7 @@ const LAYER_DEFS: { key: LayerKey; label: string; testId: string; icon: typeof B
 export function OperationsMapPage({ embedded = false }: { embedded?: boolean } = {}) {
   const bikesQ = useQuery<Bike[]>({ queryKey: ["/api/admin/bikes"], refetchInterval: LAYER_POLL_MS });
   const parkingsQ = useQuery<Parking[]>({ queryKey: ["/api/admin/parkings"], refetchInterval: LAYER_POLL_MS });
-  const ridesQ = useQuery<AdminRide[]>({ queryKey: ["/api/admin/rides"], refetchInterval: LAYER_POLL_MS });
+  const ridesQ = useQuery<AdminRide[]>({ queryKey: ["/api/admin/rides", "active"], refetchInterval: LAYER_POLL_MS });
   const ticketsQ = useQuery<Ticket[]>({ queryKey: ["/api/tickets"], refetchInterval: LAYER_POLL_MS });
   const objectsQ = useQuery<MapObject[]>({ queryKey: ["/api/admin/map-objects"], refetchInterval: LAYER_POLL_MS });
   const alertsQ = useQuery<Alert[]>({ queryKey: ["/api/admin/alerts"], refetchInterval: LAYER_POLL_MS });
@@ -96,6 +97,8 @@ export function OperationsMapPage({ embedded = false }: { embedded?: boolean } =
       )}
 
       {/* Layer toggles */}
+      {[bikesQ, parkingsQ, ridesQ, ticketsQ, objectsQ, alertsQ].map((query, i) =>
+        <QueryErrorNotice key={i} query={query} />)}
       <div className="flex flex-wrap items-center gap-2 mb-4" data-testid="operations-layer-toggles">
         {LAYER_DEFS.map((def) => {
           const Icon = def.icon;

@@ -19,7 +19,7 @@ const CHIP_TONE: Record<string, string> = {
 };
 
 export function StatusChip({ tone, icon, label, value, testId }: {
-  tone: string; icon: React.ReactNode; label: string; value: number; testId: string;
+  tone: string; icon: React.ReactNode; label: string; value: number | string; testId: string;
 }) {
   return (
     <div className={`inline-flex flex-col items-center justify-center gap-0.5 rounded-lg px-3 py-2 min-w-[118px] ${CHIP_TONE[tone] ?? CHIP_TONE.muted}`} data-testid={testId}>

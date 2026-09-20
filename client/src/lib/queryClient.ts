@@ -122,3 +122,17 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+// Keep the rider application's caching policy unchanged. Administrative lists
+// and their nested pages/details must revalidate after leaving/reopening them.
+for (const path of [
+  "/api/admin/users", "/api/admin/rides", "/api/admin/ride-stats", "/api/admin/feedback",
+  "/api/admin/analytics", "/api/admin/bikes", "/api/admin/parkings", "/api/admin/map-objects",
+  "/api/admin/alerts", "/api/admin/support/chats", "/api/admin/support/tickets", "/api/tickets",
+]) {
+  queryClient.setQueryDefaults([path], {
+    staleTime: 10_000,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
+  });
+}

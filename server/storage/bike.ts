@@ -9,6 +9,7 @@ import { MAP_W, MAP_H, realToMap, GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS } from
 import { db, pool } from "../db/bootstrap";
 import { getLockGateway } from "../omni/gateway";
 import type { Constructor } from "./mixin";
+import { getFleetVersion } from "./events";
 import type { IBikeStorage, IParkingStorage } from "./interfaces";
 
 // Postgres unique-violation. Two operators can pick the same freshly
@@ -82,13 +83,19 @@ async function resolveLockPositionForBikeStatusChange(
 
 export function BikeMixin<TBase extends Constructor>(Base: TBase) {
   return class extends Base implements IBikeStorage {
-    async listBikes(this: { bikesCacheTtlMs: number; _bikesCache: Bike[] | null; _bikesCacheAt: number }, opts?: { includeArchived?: boolean }) {
+    async listBikes(this: { bikesCacheTtlMs: number; _bikesCache: Bike[] | null; _bikesCacheAt: number; _bikesCacheVersion?: number }, opts?: { includeArchived?: boolean }) {
       const now = Date.now();
+      const version = getFleetVersion();
       let rows = this._bikesCache;
-      if (!rows || now - this._bikesCacheAt >= this.bikesCacheTtlMs) {
+      if (!rows || this._bikesCacheVersion !== version || now - this._bikesCacheAt >= this.bikesCacheTtlMs) {
         rows = (await db.select().from(bikes)) as Bike[];
-        this._bikesCache = rows;
-        this._bikesCacheAt = now;
+        // A write while SELECT was in flight must not repopulate the cache
+        // with its pre-write snapshot.
+        if (getFleetVersion() === version) {
+          this._bikesCache = rows;
+          this._bikesCacheAt = now;
+          this._bikesCacheVersion = version;
+        }
       }
       if (opts?.includeArchived) return rows;
       return rows.filter((b) => b.status !== "archived");

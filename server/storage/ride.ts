@@ -1342,7 +1342,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
     async listAdminRides(opts?: { limit?: number; offset?: number }) {
       const limit = opts?.limit ?? 200;
       const offset = opts?.offset ?? 0;
-      const rows = (await db.select().from(rides).orderBy(desc(rides.startedAt)).limit(limit).offset(offset)) as Ride[];
+      const rows = (await db.select().from(rides).orderBy(desc(rides.startedAt), desc(rides.id)).limit(limit).offset(offset)) as Ride[];
       const userIds = Array.from(new Set(rows.map((r) => r.userId)));
       const riders = userIds.length
         ? ((await db.select().from(users).where(inArray(users.id, userIds))) as User[])

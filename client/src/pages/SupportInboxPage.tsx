@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 import type { SupportTicketWithUser, SupportTicketStatus } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -110,6 +111,8 @@ export function SupportInboxPage() {
         <Card className="p-8 text-sm text-muted-foreground text-center" data-testid="support-loading">
           Загружаем заявки…
         </Card>
+      ) : listQ.isError ? (
+        <QueryErrorNotice query={listQ} />
       ) : filtered.length === 0 ? (
         <Card className="p-8 text-center" data-testid="support-empty">
           <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto mb-2" />

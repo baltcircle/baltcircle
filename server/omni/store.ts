@@ -27,7 +27,7 @@ import {
   LOCK_MOVEMENT_ALARM, type LockMovementAlarmPayload,
   bikeAutoOfflineEvents, BIKE_AUTO_OFFLINE,
   bikeTheftEvents, BIKE_AUTO_LOST, type BikeAutoLostPayload,
-  bikeEvents, BIKE_EVENT_CHANNEL,
+  bikeEvents, BIKE_EVENT_CHANNEL, notifyFleetDataChanged,
 } from "../storage/events";
 
 
@@ -164,6 +164,12 @@ export class PgOmniStore implements OmniStore {
   }
 
   async persistLockReport(imei: string, message: OmniMessage, at: number): Promise<boolean> {
+    const accepted = await this.persistLockReportData(imei, message, at);
+    if (accepted) notifyFleetDataChanged();
+    return accepted;
+  }
+
+  private async persistLockReportData(imei: string, message: OmniMessage, at: number): Promise<boolean> {
     // Audit F-08: reports for one IMEI are decoded in arrival order but their
     // async DB writes race in the pool, so an earlier (older) report's
     // UPDATE can complete after a later (newer) one's. GREATEST() alone kept
@@ -578,6 +584,7 @@ export class PgOmniStore implements OmniStore {
       params,
     );
 
+    notifyFleetDataChanged();
     // Auto-offline (rental spec addendum, 2026-09): only bikes that actually
     // reported a battery reading in this flush can have newly crossed the
     // threshold, so scope the follow-up write to just those ids instead of
@@ -627,19 +634,22 @@ export class PgOmniStore implements OmniStore {
         WHERE lock_imei = $1 AND (lock_last_seen IS NULL OR lock_last_seen <= $3)`,
       [imei, online, at],
     );
+    notifyFleetDataChanged();
   }
 
   async resetAllLocksOffline(): Promise<void> {
     await pool.query(`UPDATE locks SET status = 'offline', updated_at = $1 WHERE status = 'active'`, [Date.now()]);
     await pool.query("UPDATE bikes SET lock_online = FALSE WHERE lock_online = TRUE");
+    notifyFleetDataChanged();
   }
 
   async markLocksOfflineBefore(before: number): Promise<void> {
-    await pool.query(
+    const result = await pool.query(
       `UPDATE locks SET status = 'offline', updated_at = $2
         WHERE status = 'active' AND last_seen_at IS NOT NULL AND last_seen_at < $1`,
       [before, Date.now()],
     );
+    if (result.rowCount) notifyFleetDataChanged();
   }
 }
 

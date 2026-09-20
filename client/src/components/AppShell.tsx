@@ -1,5 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { Logo } from "./Logo";
+import { AdminDataSync } from "./AdminDataSync";
 import { useTheme } from "@/lib/theme";
 import { useAppViewport } from "@/hooks/use-app-viewport";
 import { useCurrentUser } from "@/hooks/use-current-user";
@@ -255,6 +256,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           isCustomerMap ? "min-h-0 overflow-hidden" : ""
         }`}
       >
+        {isAdmin && isStaff && <AdminDataSync />}
         {children}
       </main>
 

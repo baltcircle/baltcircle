@@ -14,6 +14,8 @@ import { registerTileRoutes } from "./http/tiles";
 import { registerPushRoutes } from "./http/push";
 import { registerAccountRoutes } from "./http/account";
 import { registerReservationRoutes } from "./http/reservations";
+import { registerAdminLiveRoutes } from "./http/admin-live";
+import { registerAdminDataRoutes } from "./http/admin-data";
 
 // Thin aggregator: the API is split into per-domain route modules under
 // server/http/*, each exporting a register<Domain>Routes(app) function that
@@ -21,6 +23,8 @@ import { registerReservationRoutes } from "./http/reservations";
 // Registration order preserves the original single-file order so route-shadowing
 // behaviour (e.g. specific paths before parameterised ones) is unchanged.
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  registerAdminLiveRoutes(app);
+  registerAdminDataRoutes(app);
   registerAuthRoutes(app);
   registerAccountRoutes(app);
   registerPaymentRoutes(app);

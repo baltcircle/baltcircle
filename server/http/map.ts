@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { parseTimestamp } from "@shared/admin-data";
 import { storage } from "../storage";
 import { z } from "zod";
 import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
@@ -70,12 +71,8 @@ export function registerMapRoutes(app: Express): void {
   // `from`/`to` are unix-ms bounds (inclusive); defaults to the last 30 days.
   app.get("/api/admin/analytics", requireRole("operator", "admin"), async (req, res) => {
     const now = Date.now();
-    const parseTs = (v: unknown, fallback: number) => {
-      const n = Number(v);
-      return Number.isFinite(n) && n > 0 ? n : fallback;
-    };
-    const from = parseTs(req.query.from, now - 30 * 24 * 60 * 60 * 1000);
-    const to = parseTs(req.query.to, now);
+    const from = parseTimestamp(req.query.from, now - 30 * 24 * 60 * 60 * 1000);
+    const to = parseTimestamp(req.query.to, now);
     if (from > to) return res.status(400).json({ error: "Некорректный диапазон дат" });
     res.json(await storage.adminAnalytics({ from, to }));
   });
