@@ -68,6 +68,8 @@ const LIGHT_COLORS = {
   roadOutline:     "#b0b8c0", // eased back up from #98a0a8 (too dark) — still noticeably darker than Apple's literal near-white sample so roads keep standing out on land/urban
   roadOutlineOpacity: 0.9,
   roadMinor:       "#b0b8c0", // same hue as roadOutline — Apple differentiates classes by width, not colour
+  roadLabelText:   "#465260",
+  roadLabelHalo:   "#f4f0eb",
   houseNumber:     "#1D1E5D", // house-number labels (z16+) — brand blue, rendered at 0.55 opacity
   cycleway:        "#2563EB", // dedicated cycleways (highway=cycleway) — saturated blue, distinct from water #8ddbf6
   hospital:        "#f0e2e2", // landuse=hospital — soft pink patch (unchanged, pre-existing; Apple has no fill for hospital, just a POI pin)
@@ -106,6 +108,8 @@ const DARK_COLORS = {
   roadOutline:     "#7889a1", // Apple's single road hue (all classes)
   roadOutlineOpacity: 0.4,
   roadMinor:       "#7889a1", // same hue as roadOutline — Apple differentiates classes by width, not colour
+  roadLabelText:   "#e5edf7",
+  roadLabelHalo:   "#263445",
   houseNumber:     "#aebbd5",
   cycleway:        "#3b82f6",
   hospital:        "#5c3a48", // dark rose-mauve — reads as "medical/pink" family, mirrors light theme's soft-pink intent instead of a muddy brown
@@ -430,21 +434,6 @@ export const buildStyle = (
         },
       },
 
-      // ── ROAD NAMES ────────────────────────────────────────────────────────────
-      {
-        id: "road-labels", type: "symbol", source: "pm", "source-layer": "roads", minzoom: 12,
-        filter: ["in", ["get", "kind"], ["literal", ["highway", "major_road", "medium_road", "minor_road"]]],
-        layout: {
-          "text-field": RU,
-          "text-font": ["Noto Sans Regular"],
-          "text-size": ["interpolate", ["linear"], ["zoom"], 12, 10, 14, 12],
-          "symbol-placement": "line",
-          "text-max-angle": 30,
-          "text-padding": 5,
-        },
-        paint: { "text-color": COLORS.roadOutline },
-      },
-
       // ── WATER NAMES (polygons: bays, lagoons, lakes) ──────────────────────────
       {
         id: "water-labels", type: "symbol", source: "pm", "source-layer": "water", minzoom: 9,
@@ -576,6 +565,27 @@ export const buildStyle = (
           "line-width": 3,
           "line-opacity": 0.9,
           "line-dasharray": [2, 2],
+        },
+      },
+
+      // Street names must sit above every road/route/zone, not just base roads.
+      // An opaque halo separates glyphs from lines without moving their labels.
+      {
+        id: "road-labels", type: "symbol", source: "pm", "source-layer": "roads", minzoom: 12,
+        filter: ["in", ["get", "kind"], ["literal", ["highway", "major_road", "medium_road", "minor_road"]]],
+        layout: {
+          "text-field": RU,
+          "text-font": ["Noto Sans Regular"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 12, 10, 14, 12],
+          "symbol-placement": "line",
+          "text-max-angle": 30,
+          "text-padding": 5,
+        },
+        paint: {
+          "text-color": COLORS.roadLabelText,
+          "text-halo-color": COLORS.roadLabelHalo,
+          "text-halo-width": 1.5,
+          "text-halo-blur": 0,
         },
       },
 
