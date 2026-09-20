@@ -1,6 +1,6 @@
-import { bikes, rides, payments, parkings, ridePoints, users, locks, reservations, rideFeedback } from "@shared/schema";
+import { bikes, rides, payments, parkings, rideLockPoints, users, locks, reservations, rideFeedback } from "@shared/schema";
 import type { Ride, AdminRide, RideWithFeedback, User, Parking, Bike, Lock, Reservation, PaymentMethod, PaymentOrder } from "@shared/schema";
-import { eq, sql, and, desc, asc, inArray, count } from "drizzle-orm";
+import { eq, sql, and, desc, asc, inArray, count, getTableColumns } from "drizzle-orm";
 import {
   TARIFFS, tariffPriceKopecks, tariffDurationMs, realToMap,
   findNearestParkingWithinRadius, findNearestParkingWithinRadiusFromRealCoords,
@@ -202,11 +202,8 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
     }
 
     // ---- ride GPS points (append-only, avoids O(N^2) track rewrites) ----
-    // Live points go to their own ride_points table so each appended point is a
-    // single INSERT instead of parsing + re-stringifying the whole track JSON.
-    // rides.track stays the canonical stored track, finalised once in endRide.
-    // (The old standalone insertRidePoint() helper was folded into
-    // appendRidePoint()'s transaction — see the audit note there.)
+    // Lock fixes are projected atomically into ride_lock_points by PostgreSQL.
+    // rides.track is a completion snapshot, never an active phone fallback.
 
     // Audit HIGH #15: this used to always run on the global `pool` (a plain
     // pool.query), even when called from inside an already-open `db.transaction`
@@ -228,24 +225,19 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       executor: { execute: (query: ReturnType<typeof sql>) => Promise<{ rows: unknown[] }> } = db,
     ): Promise<[number, number, number][]> {
       const result = await executor.execute(
-        sql`SELECT x, y, t FROM ride_points WHERE ride_id = ${rideId} ORDER BY id`,
+        sql`SELECT x, y, t FROM ride_lock_points WHERE ride_id = ${rideId} ORDER BY t, id`,
       );
       const rows = result.rows as { x: number; y: number; t: number }[];
       return rows.map((p) => [p.x, p.y, p.t]);
     }
 
-    // Return the ride with its live track hydrated from ride_points. Only active
-    // rides read from ride_points (the authoritative live track); a finished
+    // Return the ride with its live track hydrated from ride_lock_points. A finished
     // ride already has its track flushed into rides.track by endRide, so we leave
     // it untouched even though its point rows may linger.
-    //
-    // Public rather than private: appendRidePoint references this through its
-    // own explicit `this: {...}` structural parameter type (same rule).
     async hydrateTrack(ride: Ride | undefined): Promise<Ride | undefined> {
       if (!ride) return ride;
       if (ride.status !== "active") return ride;
       const pts = await this.loadRidePoints(ride.id);
-      if (pts.length === 0) return ride;
       return { ...ride, track: JSON.stringify(pts) };
     }
 
@@ -452,7 +444,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             }
 
             const startedAt = Date.now();
-            const track: [number, number, number][] = [[startLng, startLat, startedAt]];
+            const track: [number, number, number][] = [];
             // paidUntilAt is the authoritative billing deadline going forward
             // (extended by /rides/:id/extend and by pause grace); startParkingId
             // uses the just-computed geofence match (freshest available signal)
@@ -477,9 +469,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
               status: "rented",
               lat: startLat, lng: startLng, parkingId: startParkingMatch.id,
             } as any).where(eq(bikes.id, bikeId));
-            // Seed the append-only points table with the start point so the live
-            // track (hydrated from ride_points) is never empty for a fresh ride.
-            await tx.execute(sql`INSERT INTO ride_points (ride_id, x, y, t) VALUES (${row.id}, ${startLng}, ${startLat}, ${startedAt})`);
+            // No synthetic/phone seed: wait for this ride's first lock fix.
             if (claimedReservationId != null) {
               await tx.update(reservations)
                 .set({ status: "claimed", claimedRideId: row.id } as any)
@@ -620,60 +610,12 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
     }
 
     async appendRidePoint(
-      this: {
-        invalidateBikesCache(opts?: { silent?: boolean }): void;
-        hydrateTrack(ride: Ride | undefined): Promise<Ride | undefined>;
-      },
-      rideId: number,
-      x: number,
-      y: number,
+      _rideId: number,
+      _x: number,
+      _y: number,
     ) {
-      // Atomic: the read-last-point → compute-distance → insert-point →
-      // update-distance sequence used to run as four independent statements on
-      // the default pool (audit: appendRidePoint неатомарен). A phone sending
-      // points on a flaky connection retries, and two points for the same ride
-      // can be in flight at once; both would read the same "last" point, each
-      // compute a distance delta from it, and whichever UPDATE commits last
-      // would clobber the other's distanceM instead of the two deltas
-      // accumulating. `.for("update")` on the ride row serialises writers for
-      // THIS ride only (other rides' points are untouched, so this isn't a
-      // global bottleneck) and keeps the read+insert+update on one snapshot.
-      const result = await db.transaction(async (tx) => {
-        const r = (await tx.select().from(rides).where(eq(rides.id, rideId)).for("update").limit(1))[0] as Ride | undefined;
-        if (!r || r.status !== "active") return undefined;
-        // Distance delta is computed from the LAST stored point only — a single
-        // indexed row read, not a parse of the whole track. Then we append one
-        // row instead of rewriting the entire track JSON (was O(N^2) per ride).
-        const last = (await tx.execute(
-          sql`SELECT x, y, t FROM ride_points WHERE ride_id = ${rideId} ORDER BY id DESC LIMIT 1`,
-        )).rows[0] as { x: number; y: number; t: number } | undefined;
-        const px = last ? last.x : r.startLng;
-        const py = last ? last.y : r.startLat;
-        const dx = x - px, dy = y - py;
-        const dMap = Math.sqrt(dx * dx + dy * dy);
-        // 1 map unit ≈ 30 metres (≈30km coastal span across 1000 units, demo scale)
-        const addedMeters = dMap * 30;
-        const newDistance = r.distanceM + addedMeters;
-        const now = Date.now();
-        await tx.execute(sql`INSERT INTO ride_points (ride_id, x, y, t) VALUES (${rideId}, ${x}, ${y}, ${now})`);
-        // Hourly prepaid model: cost is fixed at start (tariff price) and only
-        // changes on overage in endRide. Live points update the distance only —
-        // never the price. rides.track is finalised once in endRide.
-        await tx.update(rides).set({ distanceM: newDistance }).where(eq(rides.id, rideId));
-        await tx.update(bikes).set({ lat: y, lng: x, lastSeen: now, idleHours: 0 } as any)
-          /* position-only во время поездки — fleet-событие не нужно (silent ниже) */
-          .where(eq(bikes.id, r.bikeId));
-        return r;
-      });
-      if (!result) return undefined;
-      // Position changed → invalidate the map list and push the owning rider a
-      // fresh active-ride snapshot (new track point) over SSE. silent: статус не
-      // меняется, не будим fleet-стрим на каждую GPS-точку.
-      this.invalidateBikesCache({ silent: true });
-      rideEvents.emit(result.userId, "point" as RideEventReason);
-      return this.hydrateTrack(
-        (await db.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride,
-      );
+      // Fail closed for internal/legacy callers as well as the removed HTTP API.
+      return undefined;
     }
 
     // ---- onboard bike tracker telemetry (independent of the rider's phone) ----
@@ -775,12 +717,10 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
         const r = (await tx.select().from(rides).where(eq(rides.id, rideId)).for("update").limit(1))[0] as Ride | undefined;
         if (!r || r.status !== "active") return undefined;
         // Flush the append-only points into the canonical rides.track ONCE, at
-        // completion. Fall back to the legacy in-row track for rides that started
-        // before the ride_points migration and never got any point rows.
+        // completion. Missing lock fixes mean an empty route, not phone fallback.
         // Pass `tx` — see the audit HIGH #15 note on loadRidePoints above.
         const pts: [number, number, number][] = await this.loadRidePoints(rideId, tx);
-        const track: [number, number, number][] =
-          pts.length > 0 ? pts : (JSON.parse(r.track) as [number, number, number][]);
+        const track: [number, number, number][] = pts;
         const last = track[track.length - 1];
         const endedAt = Date.now();
         const bike = (await tx.select().from(bikes).where(eq(bikes.id, r.bikeId)).limit(1))[0] as Bike | undefined;
@@ -843,8 +783,8 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           finalLat = synced.y;
           finalLng = synced.x;
         } else {
-          finalLat = last[1];
-          finalLng = last[0];
+          finalLat = last?.[1] ?? bike?.lat ?? r.startLat;
+          finalLng = last?.[0] ?? bike?.lng ?? r.startLng;
           parkingMatch = findNearestParkingWithinRadius(finalLat, finalLng, parkingRowsForEnd);
         }
 
@@ -1257,19 +1197,20 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
     }
 
     async getRide(rideId: number) {
-      return this.hydrateTrack(
-        (await db.select().from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride | undefined,
-      );
+      // Authorization/mutations need metadata, never thousands of track rows.
+      return (await db.select({
+        ...getTableColumns(rides), track: sql<string>`'[]'`,
+      }).from(rides).where(eq(rides.id, rideId)).limit(1))[0] as Ride | undefined;
     }
 
     // Up to MAX_ACTIVE_RIDES_PER_USER (2) rows, ordered by slot (1 then 2) so
     // callers that pick "the first/focused ride" get a stable, deterministic
     // choice rather than DB-order-dependent luck.
     async getActiveRides(userId: string): Promise<Ride[]> {
-      const rows = (await db.select().from(rides)
+      const rows = (await db.select({ ...getTableColumns(rides), track: sql<string>`'[]'` }).from(rides)
         .where(sql`${rides.userId} = ${userId} AND ${rides.status} = 'active'`)
         .orderBy(asc(rides.activeSlot))) as Ride[];
-      return this.hydrateTracks(rows);
+      return rows;
     }
 
     // Audit MEDIUM: hydrateTrack used to be called once per row (Promise.all
@@ -1312,15 +1253,15 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       return rows.map((r) => ({ ...r, rating: ratingByRide.get(r.id) ?? null }));
     }
 
-    // Batch variant of hydrateTrack: fetches ride_points for every active ride
+    // Batch variant of hydrateTrack: fetches lock points for every active ride
     // in `rows` with a single query instead of one query per ride.
     private async hydrateTracks(rows: Ride[]): Promise<Ride[]> {
       const activeIds = rows.filter((r) => r.status === "active").map((r) => r.id);
       if (activeIds.length === 0) return rows;
-      const pointRows = (await db.select({ rideId: ridePoints.rideId, x: ridePoints.x, y: ridePoints.y, t: ridePoints.t })
-        .from(ridePoints)
-        .where(inArray(ridePoints.rideId, activeIds))
-        .orderBy(asc(ridePoints.rideId), asc(ridePoints.id))) as { rideId: number; x: number; y: number; t: number }[];
+      const pointRows = (await db.select({ rideId: rideLockPoints.rideId, x: rideLockPoints.x, y: rideLockPoints.y, t: rideLockPoints.t })
+        .from(rideLockPoints)
+        .where(inArray(rideLockPoints.rideId, activeIds))
+        .orderBy(asc(rideLockPoints.rideId), asc(rideLockPoints.t), asc(rideLockPoints.id))) as { rideId: number; x: number; y: number; t: number }[];
       const pointsByRide = new Map<number, [number, number, number][]>();
       for (const p of pointRows) {
         const arr = pointsByRide.get(p.rideId) ?? [];
@@ -1329,7 +1270,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
       }
       return rows.map((r) => {
         const pts = pointsByRide.get(r.id);
-        return pts && pts.length > 0 ? { ...r, track: JSON.stringify(pts) } : r;
+        return r.status === "active" ? { ...r, track: JSON.stringify(pts ?? []) } : r;
       });
     }
 

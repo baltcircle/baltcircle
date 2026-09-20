@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Ride } from "@shared/schema";
 import { SSE_STALE_THRESHOLD_MS } from "@shared/geo";
-import { API_BASE, getSessionGeneration } from "@/lib/queryClient";
+import { API_BASE, getSessionGeneration, markActiveRideSnapshot } from "@/lib/queryClient";
 import { useCurrentUser } from "./use-current-user";
 import { rideLifecycle, refreshRideDependents } from "@/lib/rider-freshness";
 import { isStreamStale } from "./sse-watchdog";
@@ -60,6 +60,7 @@ export function useActiveRideStream(): void {
           return; // ignore a malformed frame; the next event re-syncs
         }
         if (!Array.isArray(rides)) return;
+        markActiveRideSnapshot();
         // Cancel older HTTP snapshots before publishing the newer stream state.
         void qc.cancelQueries({ queryKey: ACTIVE_RIDE_KEY });
         qc.setQueryData(ACTIVE_RIDE_KEY, rides);
@@ -74,13 +75,14 @@ export function useActiveRideStream(): void {
 
       // On error the browser reconnects on its own; nothing to do but let the
       // cache hold the last known snapshot until the stream resumes.
-      next.onerror = () => { /* auto-reconnect handled by EventSource */ };
+      next.onerror = () => { if (es === next) markActiveRideSnapshot(0); };
 
       es = next;
     };
 
     const reconnect = () => {
       if (disposed) return;
+      markActiveRideSnapshot(0);
       es?.close();
       connect();
     };
@@ -111,6 +113,7 @@ export function useActiveRideStream(): void {
 
     return () => {
       disposed = true;
+      markActiveRideSnapshot(0);
       unsubscribe();
       clearInterval(watchdog);
       document.removeEventListener("visibilitychange", onVisibility);

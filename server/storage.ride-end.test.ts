@@ -129,7 +129,7 @@ function makeLock(overrides: Record<string, unknown> = {}) {
 // that array's existing assertions count wallet-mutation side effects only.
 function isRidePointsQuery(query: unknown): boolean {
   const chunks = (query as { queryChunks?: { value?: unknown[] }[] })?.queryChunks ?? [];
-  return chunks.some((c) => Array.isArray(c?.value) && c.value.some((v) => typeof v === "string" && v.includes("ride_points")));
+  return chunks.some((c) => Array.isArray(c?.value) && c.value.some((v) => typeof v === "string" && v.includes("ride_lock_points")));
 }
 
 // Builds a tx mock whose select() calls resolve in order from `selectQueue`
@@ -309,7 +309,7 @@ describe("endRide — track source", () => {
     expect((rideUpdate!.patch as any).track).toBe(JSON.stringify([[10, 20, NOW.getTime()]]));
   });
 
-  it("falls back to the legacy in-row track when there are no ride_points rows", async () => {
+  it("does not resurrect phone coordinates when no lock points exist", async () => {
     const activeRide = makeRide({ track: JSON.stringify([[5, 6, NOW.getTime() - HOUR - 1]]) });
     const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
     const { tx, calls } = makeTx([[activeRide], [makeBike()], [], [completedRide]]);
@@ -318,8 +318,9 @@ describe("endRide — track source", () => {
     await storage.endRide(activeRide.id);
 
     const rideUpdate = calls.update.find((c) => c.patch && "endLat" in (c.patch as object));
-    expect((rideUpdate!.patch as any).endLat).toBe(6);
-    expect((rideUpdate!.patch as any).endLng).toBe(5);
+    expect((rideUpdate!.patch as any).endLat).toBe(activeRide.startLat);
+    expect((rideUpdate!.patch as any).endLng).toBe(activeRide.startLng);
+    expect((rideUpdate!.patch as any).track).toBe("[]");
   });
 });
 

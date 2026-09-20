@@ -4,6 +4,8 @@ export { errorMessage } from "./error-message";
 
 export const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 let sessionGeneration = 0;
+let activeRideSnapshotAt = 0;
+export function markActiveRideSnapshot(at = Date.now()) { activeRideSnapshotAt = at; }
 export const getSessionGeneration = () => sessionGeneration;
 const SESSION_NOTICE = "takeride-session-changed";
 export function announceSessionChange() {
@@ -11,6 +13,7 @@ export function announceSessionChange() {
 }
 export function resetSessionData() {
   sessionGeneration += 1;
+  activeRideSnapshotAt = 0;
   const predicate = (q: { queryKey: readonly unknown[] }) => q.queryKey[0] !== "/api/users/current";
   void queryClient.cancelQueries({ predicate });
   queryClient.removeQueries({ predicate });
@@ -134,6 +137,14 @@ export const getQueryFn: <T>(options: {
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey, signal }) => {
     const generation = sessionGeneration;
+    // Only a successfully decoded SSE snapshot suppresses a redundant poll.
+    // Heartbeats never update this clock; missed DB reads still recover by HTTP.
+    if (queryKey.length === 1 && queryKey[0] === "/api/rides/active"
+      && Date.now() - activeRideSnapshotAt < 10_000
+      && !queryClient.getQueryState(queryKey)?.isInvalidated) {
+      const cached = queryClient.getQueryData(queryKey);
+      if (cached !== undefined) return cached;
+    }
     const res = await fetch(`${API_BASE}${queryKey.join("/")}`, {
       credentials: "include",
       signal,

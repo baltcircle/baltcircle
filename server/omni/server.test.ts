@@ -953,10 +953,12 @@ describe("telemetry persistence", () => {
     device.sendPosition(54.9442, 20.1561, { satellites: 9, at });
 
     await waitFor(() => store.rowsFor("D0").length === 1);
-    // The telemetry row (ride-track history) still records the raw fix —
-    // only the *live* current-position update is withheld.
+    // Keep WGS84 diagnostics, but exclude rejected fixes from both the live
+    // position and the durable route projection.
     const row = store.rowsFor("D0")[0];
-    expect(row.x).not.toBeNull();
+    expect(row.x).toBeNull();
+    expect(row.y).toBeNull();
+    expect(row.lat).not.toBeNull();
     const update = store.live.find((u) => u.bikeId === "bike-a" && u.t === at);
     expect(update).toBeDefined();
     expect(update?.x).toBeUndefined();

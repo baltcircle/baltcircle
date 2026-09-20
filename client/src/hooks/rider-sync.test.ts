@@ -53,6 +53,38 @@ function mount() {
   }
 }
 describe("rider data freshness regressions", () => {
+  it("skips only fresh SSE duplicates and preserves HTTP recovery and invalidation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-20T12:00:00Z"));
+    resetSessionData();
+    const queryKey = ["/api/rides/active"];
+    queryClient.setQueryData(["/api/users/current"], { id: "rider" });
+    useActiveRideStream();
+    mount();
+    const es = FakeStream.instances[0];
+    const snapshot = [{ id: 7, status: "active", distanceM: 10 }];
+    es.onmessage!({ data: JSON.stringify(snapshot) });
+    const fetchMock = vi.fn().mockImplementation(async () => new Response("[]"));
+    vi.stubGlobal("fetch", fetchMock);
+    const read = () => getQueryFn({ on401: "throw" })({
+      queryKey, signal: new AbortController().signal, client: queryClient, meta: undefined,
+    });
+    expect(await read()).toEqual(snapshot);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await queryClient.invalidateQueries({ queryKey });
+    expect(await read()).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    es.onmessage!({ data: JSON.stringify(snapshot) });
+    vi.advanceTimersByTime(10_001);
+    es.listeners.get("heartbeat")?.();
+    expect(await read()).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    es.onmessage!({ data: JSON.stringify(snapshot) });
+    resetSessionData();
+    queryClient.setQueryData(queryKey, ["replacement-account"]);
+    expect(await read()).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
   it.each(["/api/rider/history", "/api/rider/stats", "/api/support/chat", "/api/map-objects",
     "/api/reservations/active", "/api/payment-methods"])("%s revalidates on reopening, focus and reconnect", async (path) => {
     const queryKey = [path];

@@ -4,7 +4,7 @@ import { storage, rideEvents } from "../storage";
 import { feedbackPage } from "../storage/admin-read";
 import { z } from "zod";
 import { TARIFFS, tariffPriceKopecks, realToMap, SSE_HEARTBEAT_INTERVAL_MS } from "@shared/geo";
-import { mergeRideTrack, type TrackPoint } from "@shared/rideTrack";
+import { lockTrackPage, legacyLockTrack } from "../storage/lock-track";
 import { timingSafeEqual } from "node:crypto";
 import {
   insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
@@ -104,7 +104,7 @@ export function registerRideRoutes(app: Express): void {
         if (!await streamSessionValid(req, actorId)) { res.end(); return; }
         const rides = await storage.getActiveRides(uid);
         if (closed) return;
-        res.write(`data: ${JSON.stringify(rides)}\n\n`);
+        if (res.write(`data: ${JSON.stringify(rides)}\n\n`) === false) res.end();
       } catch {
         // A transient read error shouldn't kill the stream; the next event or
         // the client's reconnect will re-sync.
@@ -128,9 +128,9 @@ export function registerRideRoutes(app: Express): void {
     // clean close) — see use-active-ride-stream.tsx's watchdog.
     const heartbeat = setInterval(async () => {
       if (closed) return;
-      if (!await streamSessionValid(req, actorId)) { res.end(); return; }
       if (!closed) {
         res.write(`event: heartbeat\ndata: ${Date.now()}\n\n`);
+        // push validates the session once; never double-read it per heartbeat.
         void push();
       }
     }, SSE_HEARTBEAT_INTERVAL_MS);
@@ -174,15 +174,8 @@ export function registerRideRoutes(app: Express): void {
     res.json(r);
   });
   app.post("/api/rides/:id/point", async (req, res) => {
-    const schema = z.object({ x: z.number(), y: z.number() });
-    const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-    const ride = await storage.getRide(Number(req.params.id));
-    if (!ride) return res.status(404).json({ error: "Поездка не активна" });
-    if (!(await canManageRide(req, ride))) return res.status(403).json({ error: "Нет доступа" });
-    const r = await storage.appendRidePoint(Number(req.params.id), parsed.data.x, parsed.data.y);
-    if (!r) return res.status(404).json({ error: "Поездка не активна" });
-    res.json(r);
+    // Old tabs must fail closed without touching GPS, distance or bike position.
+    res.status(410).json({ error: "GPS телефона больше не принимается. Обновите приложение.", code: "PHONE_TRACKING_REMOVED" });
   });
   // Pause is gated on the OMNI lock's own physical-closure report (see
   // server/omni/pause-registry.ts) — this endpoint only ARMS the expectation
@@ -261,26 +254,19 @@ export function registerRideRoutes(app: Express): void {
     if ("error" in r) return res.status(400).json(r);
     res.json(r);
   });
-  // Authoritative track for a ride, built from the bike's onboard OMNI lock when
-  // it is reporting (survives phone screen-lock) and falling back to the phone
-  // track otherwise. The rider (or staff) polls this during an active ride so a
-  // locked phone no longer drops part of the saved route. `source` tells the
-  // client which feed won so it can label/behave accordingly.
-  //
-  // Lock positions arrive over TCP (server/omni/), not through this process, so
-  // the read is a plain query — getBikeTelemetry already filters out the
-  // positionless status rows the locks also write.
+  // Durable lock-only route; authorization precedes both cursor and legacy reads.
   app.get("/api/rides/:id/track", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: "Некорректная поездка" });
     const ride = await storage.getRide(Number(req.params.id));
     if (!ride) return res.status(404).json({ error: "Поездка не найдена" });
     if (!(await canManageRide(req, ride))) return res.status(403).json({ error: "Нет доступа" });
-    const fromT = ride.startedAt;
-    const toT = ride.endedAt ?? Date.now();
-    const tracker = await storage.getBikeTelemetry(ride.bikeId, fromT, toT);
-    let phone: TrackPoint[] = [];
-    try { phone = JSON.parse(ride.track) as TrackPoint[]; } catch { /* corrupt/empty track → treat as no phone points */ }
-    const merged = mergeRideTrack({ tracker, phone });
-    res.json(merged);
+    if (req.query?.after === undefined) return res.json(await legacyLockTrack(ride.id));
+    const raw = req.query.after;
+    if (typeof raw !== "string" || !/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+      return res.status(400).json({ error: "Некорректный курсор" });
+    }
+    res.json(await lockTrackPage(ride.id, Number(raw)));
   });
   // Manual/third-party tracker ingestion. The OMNI locks do NOT use this: they
   // speak a raw TCP protocol and are handled by the ingest process in

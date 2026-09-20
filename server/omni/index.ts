@@ -39,7 +39,7 @@ async function main(): Promise<void> {
     host: process.env.LOCK_GATEWAY_HOST || "0.0.0.0",
     maxConnections: envInt("OMNI_MAX_CONNECTIONS", 500),
     idleTimeoutMs: envInt("OMNI_IDLE_TIMEOUT_MS", 15 * 60_000),
-    maxNewConnectionsPerIp: envInt("OMNI_MAX_NEW_CONNECTIONS_PER_IP", 20),
+    maxNewConnectionsPerIp: envInt("OMNI_MAX_NEW_CONNECTIONS_PER_IP", 300),
     newConnectionWindowMs: envInt("OMNI_NEW_CONNECTION_WINDOW_MS", 60_000),
     maxFramesPerSecond: envInt("OMNI_MAX_FRAMES_PER_SECOND", 5),
     frameBucketCapacity: envInt("OMNI_FRAME_BUCKET_CAPACITY", 20),

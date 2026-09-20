@@ -10,17 +10,15 @@ import { useEffect, useRef } from "react";
  * Раньше тут же был тост о разрыве телефонного трекинга (сворачивание
  * приложения / блокировка экрана). Убран по продуктовому решению:
  * авторитетный источник трека — бортовой трекер замка, а не GPS телефона
- * (см. use-ride-track-poll → MergedTrack.source === "tracker"), поэтому уход телефона
+ * (см. use-ride-track-poll), поэтому уход телефона
  * в фон никак не влияет на записанный маршрут, и тост только вводил пользователя
  * в заблуждение (“трекинг приостановлен” при сворачивании приложения, хотя
- * реальный трек нигде не терялся). Удалён полностью. `trackedByLock` и
- * `notePoint()` оставлены в сигнатуре как no-op для совместимости с вызовающим кодом
- * (MapPage), чтобы не трогать лишние места.
+ * реальный трек нигде не терялся).
  *
  * Рендер трека рвёт линию сам по timestamp'ам точек (см. segmentTrack) — этот
  * хук отвечает только за wake lock.
  */
-export function useRideGuard(active: boolean, _trackedByLock: boolean = false) {
+export function useRideGuard(active: boolean) {
   // WakeLockSentinel типизирован не во всех окружениях — держим как any.
   const wakeLockRef = useRef<any>(null);
 
@@ -68,8 +66,4 @@ export function useRideGuard(active: boolean, _trackedByLock: boolean = false) {
     };
   }, [active]);
 
-  /** no-op: оставлено для совместимости со вызывающим кодом (MapPage). */
-  const notePoint = () => {};
-
-  return { notePoint };
 }

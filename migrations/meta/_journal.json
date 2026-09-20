@@ -134,6 +134,20 @@
       "when": 1789641618895,
       "tag": "0018_renumber_parking_codes_by_city",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789926934522,
+      "tag": "0019_lock_only_ride_tracks",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1789927367703,
+      "tag": "0020_lock_route_guards",
+      "breakpoints": true
     }
   ]
 }

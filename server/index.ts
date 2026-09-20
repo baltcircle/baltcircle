@@ -354,6 +354,10 @@ app.use((req, res, next) => {
     host: process.env.LOCK_GATEWAY_HOST || "0.0.0.0",
     maxConnections: gatewayInt("OMNI_MAX_CONNECTIONS", 500),
     idleTimeoutMs: gatewayInt("OMNI_IDLE_TIMEOUT_MS", 15 * 60_000),
+    maxNewConnectionsPerIp: gatewayInt("OMNI_MAX_NEW_CONNECTIONS_PER_IP", 300),
+    newConnectionWindowMs: gatewayInt("OMNI_NEW_CONNECTION_WINDOW_MS", 60_000),
+    maxFramesPerSecond: gatewayInt("OMNI_MAX_FRAMES_PER_SECOND", 5),
+    frameBucketCapacity: gatewayInt("OMNI_FRAME_BUCKET_CAPACITY", 20),
     statusMinIntervalMs: gatewayInt("OMNI_STATUS_MIN_INTERVAL_MS", 60_000),
     writer: {
       flushIntervalMs: gatewayInt("OMNI_FLUSH_INTERVAL_MS", 2_000),

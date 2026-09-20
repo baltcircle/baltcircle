@@ -23,7 +23,6 @@ import { markPushOptInShown, shouldAutoShowPushOptIn } from "@/lib/push-optin";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useActiveRideStream } from "@/hooks/use-active-ride-stream";
 import { useFleetStream } from "@/hooks/use-fleet-stream";
-import { useActiveRideTracker } from "@/hooks/use-active-ride-tracker";
 import { useRideTrackPoll } from "@/hooks/use-ride-track-poll";
 import { useRideGuard } from "@/hooks/use-ride-guard";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -109,35 +108,16 @@ export function MapPage() {
     return ids;
   }, [activeRides]);
 
-  // GPS-трекер активной аренды: слушает onUserLocation от MapLibreMap и шлёт
-  // точки на /api/rides/{id}/point (тротлинг 3с + фильтр GPS-дребезга <5м).
-  // Всегда ровно два вызова хука (см. rules-of-hooks) — по одному на слот.
-  const rideTrackerA = useActiveRideTracker(rideSlotA);
-  const rideTrackerB = useActiveRideTracker(rideSlotB);
-  const focusedTracker = focusedRide?.id === rideSlotB?.id ? rideTrackerB : rideTrackerA;
-
-  // Авторитетный трек поездки от бортового трекера велосипеда (репортит даже при
-  // заблокированном телефоне). Пока трекер отдаёт точки — рисуем маршрут по ним;
-  // если трекера нет/молчит, сервер вернёт source:"phone" и мы падаем обратно на
-  // трек из телефона (текущее поведение, без регресса). Опрашиваем оба слота —
-  // на карте рисуем маршрут только сфокусированной поездки.
+  // Только GPS замка. Телефон используется локально для кнопки геолокации.
   const trackPollA = useRideTrackPoll(rideSlotA?.id);
   const trackPollB = useRideTrackPoll(rideSlotB?.id);
   const focusedTrackPoll = focusedRide?.id === rideSlotB?.id ? trackPollB : trackPollA;
-  // Пока замок активно отдаёт свой трек — разрыв телефонного GPS (экран заблокирован,
-  // вкладка в фоне) никак не влияет на записанный маршрут — не пугаем об этом тостом.
-  const trackedByLock = focusedTrackPoll.data?.source === "tracker";
-
-  // Screen Wake Lock + уведомление о разрывах трекинга на время активной аренды.
-  const rideGuard = useRideGuard(activeRides.length > 0, trackedByLock);
+  useRideGuard(activeRides.length > 0);
+  const lockTrackJson = useMemo(() => JSON.stringify(focusedTrackPoll.data?.points ?? []), [focusedTrackPoll.data?.points]);
   const displayRide = useMemo<Ride | null>(() => {
     if (!focusedRide) return null;
-    const merged = focusedTrackPoll.data;
-    if (merged?.source === "tracker" && merged.points.length > 1) {
-      return { ...focusedRide, track: JSON.stringify(merged.points) };
-    }
-    return focusedRide;
-  }, [focusedRide, focusedTrackPoll.data]);
+    return { ...focusedRide, track: lockTrackJson };
+  }, [focusedRide, lockTrackJson]);
 
   // Пока своя аренда на паузе — её маркер должен красится как «Бронь», а не
   // как обычная «В аренде» (bike-status lifecycle: пауза — состояние Ride,
@@ -730,15 +710,6 @@ export function MapPage() {
           followUser={false}
           onUserLocation={(lat, lng) => {
             lastPosRef.current = { lat, lng };
-            // Телефон физически может быть только у одного велосипеда — шлём
-            // GPS только на трекер СФОКУСИРОВАННОЙ поездки; у второй поездки
-            // расстояние считается по её собственному бортовому трекеру
-            // (see use-ride-track-poll), фолбэк на "чужой" телефонный GPS
-            // испортил бы её маршрут.
-            if (focusedRide) {
-              focusedTracker.push(lat, lng);
-              rideGuard.notePoint();
-            }
           }}
           className="w-full h-full"
         />

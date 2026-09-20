@@ -17,6 +17,7 @@ import { registerReservationRoutes } from "./http/reservations";
 import { registerAdminLiveRoutes } from "./http/admin-live";
 import { registerAdminDataRoutes } from "./http/admin-data";
 import { registerRiderDataRoutes } from "./http/rider-data";
+import { createStreamLimiter } from "./http/stream-limits";
 
 // Thin aggregator: the API is split into per-domain route modules under
 // server/http/*, each exporting a register<Domain>Routes(app) function that
@@ -24,6 +25,7 @@ import { registerRiderDataRoutes } from "./http/rider-data";
 // Registration order preserves the original single-file order so route-shadowing
 // behaviour (e.g. specific paths before parameterised ones) is unchanged.
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  app.use(createStreamLimiter());
   registerAdminLiveRoutes(app);
   registerAdminDataRoutes(app);
   registerRiderDataRoutes(app);

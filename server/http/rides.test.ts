@@ -42,6 +42,8 @@ const rideEvents = vi.hoisted(() => {
 const sendToUserAsyncMock = vi.hoisted(() => vi.fn());
 const logMock = vi.hoisted(() => vi.fn());
 const feedbackPageMock = vi.hoisted(() => vi.fn());
+const lockTracks = vi.hoisted(() => ({ legacyLockTrack: vi.fn(), lockTrackPage: vi.fn() }));
+vi.mock("../storage/lock-track", () => lockTracks);
 
 vi.mock("../storage", () => ({ storage: storageMock, rideEvents }));
 vi.mock("../storage/admin-read", () => ({ feedbackPage: feedbackPageMock }));
@@ -381,7 +383,7 @@ describe("POST /api/rides/:id/extend validation", () => {
 });
 
 describe("POST /api/rides/:id/point", () => {
-  it("validates numeric coordinates", async () => {
+  it("rejects even malformed legacy phone writes without a DB read", async () => {
     const { post } = routeApp();
     const res = response();
 
@@ -389,10 +391,11 @@ describe("POST /api/rides/:id/point", () => {
       { params: { id: "1" }, body: { x: "not-a-number", y: 2 }, session: {} }, res,
     );
 
-    expect(res.code).toBe(400);
+    expect(res.code).toBe(410);
+    expect(storageMock.getRide).not.toHaveBeenCalled();
   });
 
-  it("404s when appendRidePoint finds no active ride to append to", async () => {
+  it("never calls the legacy writer", async () => {
     const { post } = routeApp();
     storageMock.getRide.mockResolvedValue({ id: 1, userId: "demo" });
     storageMock.appendRidePoint.mockResolvedValue(undefined);
@@ -402,10 +405,11 @@ describe("POST /api/rides/:id/point", () => {
       { params: { id: "1" }, body: { x: 1, y: 2 }, session: {} }, res,
     );
 
-    expect(res.code).toBe(404);
+    expect(res.code).toBe(410);
+    expect(storageMock.appendRidePoint).not.toHaveBeenCalled();
   });
 
-  it("appends a point for an owned ride and returns the updated ride", async () => {
+  it("rejects phone points even from the ride owner", async () => {
     const { post } = routeApp();
     storageMock.getRide.mockResolvedValue({ id: 1, userId: "demo" });
     storageMock.appendRidePoint.mockResolvedValue({ id: 1, track: "[[1,2]]" });
@@ -415,8 +419,8 @@ describe("POST /api/rides/:id/point", () => {
       { params: { id: "1" }, body: { x: 1, y: 2 }, session: {} }, res,
     );
 
-    expect(storageMock.appendRidePoint).toHaveBeenCalledWith(1, 1, 2);
-    expect(res.body).toEqual({ id: 1, track: "[[1,2]]" });
+    expect(storageMock.appendRidePoint).not.toHaveBeenCalled();
+    expect(res.body.code).toBe("PHONE_TRACKING_REMOVED");
   });
 });
 
@@ -517,29 +521,29 @@ describe("GET /api/rides/:id/track", () => {
       id: 1, userId: "demo", bikeId: "bike-1", startedAt: 0, endedAt: 1000,
       track: JSON.stringify([[1, 1, 500]]),
     });
-    storageMock.getBikeTelemetry.mockResolvedValue([[2, 2, 600], [3, 3, 700]]);
+    lockTracks.legacyLockTrack.mockResolvedValue({ source: "tracker", points: [[2, 2, 600], [3, 3, 700]] });
     const res = response();
 
     await get.get("/api/rides/:id/track")!({ params: { id: "1" }, session: {} }, res);
 
-    expect(storageMock.getBikeTelemetry).toHaveBeenCalledWith("bike-1", 0, 1000);
+    expect(lockTracks.legacyLockTrack).toHaveBeenCalledWith(1);
     expect(res.code).toBe(200);
     expect(res.body).toMatchObject({ source: "tracker" });
   });
 
-  it("falls back to the phone track when the tracker has fewer than 2 points", async () => {
+  it("never falls back to phone coordinates when lock GPS is absent", async () => {
     const { get } = routeApp();
     storageMock.getRide.mockResolvedValue({
       id: 1, userId: "demo", bikeId: "bike-1", startedAt: 0, endedAt: 1000,
       track: JSON.stringify([[1, 1, 500], [2, 2, 600]]),
     });
-    storageMock.getBikeTelemetry.mockResolvedValue([]);
+    lockTracks.legacyLockTrack.mockResolvedValue({ source: "tracker", points: [] });
     const res = response();
 
     await get.get("/api/rides/:id/track")!({ params: { id: "1" }, session: {} }, res);
 
     expect(res.code).toBe(200);
-    expect(res.body).toMatchObject({ source: "phone" });
+    expect(res.body).toEqual({ source: "tracker", points: [] });
   });
 
   it("treats a corrupt phone track as empty instead of throwing", async () => {
@@ -547,12 +551,26 @@ describe("GET /api/rides/:id/track", () => {
     storageMock.getRide.mockResolvedValue({
       id: 1, userId: "demo", bikeId: "bike-1", startedAt: 0, endedAt: 1000, track: "not-json",
     });
-    storageMock.getBikeTelemetry.mockResolvedValue([]);
+    lockTracks.legacyLockTrack.mockResolvedValue({ source: "tracker", points: [] });
     const res = response();
 
     await get.get("/api/rides/:id/track")!({ params: { id: "1" }, session: {} }, res);
 
     expect(res.code).toBe(200);
+  });
+
+  it("validates cursors and uses bounded pages only after ownership checks", async () => {
+    const { get } = routeApp();
+    storageMock.getRide.mockResolvedValue({ id: 1, userId: "demo" });
+    const invalid = response();
+    await get.get("/api/rides/:id/track")!({ params: { id: "1" }, session: {}, query: { after: "-1" } }, invalid);
+    expect(invalid.code).toBe(400);
+    const page = { source: "tracker", items: [], nextCursor: 12, hasMore: false };
+    lockTracks.lockTrackPage.mockResolvedValue(page);
+    const res = response();
+    await get.get("/api/rides/:id/track")!({ params: { id: "1" }, session: {}, query: { after: "12" } }, res);
+    expect(lockTracks.lockTrackPage).toHaveBeenCalledWith(1, 12);
+    expect(res.body).toEqual(page);
   });
 });
 

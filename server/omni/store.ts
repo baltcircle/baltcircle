@@ -538,6 +538,15 @@ export class PgOmniStore implements OmniStore {
       `INSERT INTO bike_telemetry (${TELEMETRY_COLUMNS.join(",")}) VALUES ${tuples.join(",")}`,
       params,
     );
+    // The database projection has committed route + distance before notifying.
+    // One metadata read per batch, not one full-route read per GPS fix.
+    const bikeIds = Array.from(new Set(rows.filter((r) => r.x != null && r.y != null).map((r) => r.bikeId)));
+    if (bikeIds.length) {
+      const active = await pool.query<{ user_id: string }>(
+        "SELECT DISTINCT user_id FROM rides WHERE bike_id=ANY($1::text[]) AND status='active'", [bikeIds],
+      );
+      for (const ride of active.rows) rideEvents.emit(ride.user_id, "point");
+    }
   }
 
   /**

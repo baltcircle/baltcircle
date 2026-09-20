@@ -177,7 +177,7 @@ export class OmniTcpServer {
       idleTimeoutMs: options.idleTimeoutMs ?? 15 * 60_000,
       handshakeTimeoutMs: options.handshakeTimeoutMs ?? 60_000,
       maxFrameBytes: options.maxFrameBytes ?? 4096,
-      maxNewConnectionsPerIp: options.maxNewConnectionsPerIp ?? 20,
+      maxNewConnectionsPerIp: options.maxNewConnectionsPerIp ?? 300,
       newConnectionWindowMs: options.newConnectionWindowMs ?? 60_000,
       maxFramesPerSecond: options.maxFramesPerSecond ?? 5,
       frameBucketCapacity: options.frameBucketCapacity ?? 20,
@@ -564,6 +564,10 @@ export class OmniTcpServer {
     if (message.type === "position" && !positionAccepted && built.live) {
       delete built.live.x;
       delete built.live.y;
+      // Keep raw WGS84 diagnostics, but rejected fixes must not enter a route
+      // or distance projection merely because raw telemetry retained them.
+      built.row.x = null;
+      built.row.y = null;
     }
 
     // One-shot post-status-change parking recompute (bike-status lifecycle

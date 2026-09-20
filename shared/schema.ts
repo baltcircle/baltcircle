@@ -808,10 +808,13 @@ export const rides = pgTable("rides", {
   // user" unique index when two-bikes-per-rider shipped. Null for every
   // historical/non-active row.
   activeSlot: integer("active_slot"),
+  // False only for historical rides completed before lock-only tracking.
+  lockTrackOnly: boolean("lock_track_only").notNull().default(true),
 }, (t) => [
   index("idx_rides_user_status").on(t.userId, t.status),
   index("idx_rides_user").on(t.userId),
   index("idx_rides_bike").on(t.bikeId),
+  index("idx_rides_bike_started").on(t.bikeId, t.startedAt.desc()),
   index("idx_rides_started").on(t.startedAt),
   index("idx_rides_user_started").on(t.userId, t.startedAt.desc()),
   // Backs the reservation-expiry / overage-notification sweep's scan for
@@ -848,6 +851,21 @@ export const ridePoints = pgTable("ride_points", {
   index("idx_ride_points_ride").on(t.rideId, t.id),
 ]);
 export type RidePoint = typeof ridePoints.$inferSelect;
+
+// Immutable lock-only route, retained independently of raw telemetry cleanup.
+// Legacy phone points remain in ride_points for historical/audit purposes only.
+export const rideLockPoints = pgTable("ride_lock_points", {
+  id: serial("id").primaryKey(),
+  rideId: integer("ride_id").notNull().references(() => rides.id, { onDelete: "cascade" }),
+  x: doublePrecision("x").notNull(),
+  y: doublePrecision("y").notNull(),
+  lat: doublePrecision("lat").notNull(),
+  lng: doublePrecision("lng").notNull(),
+  t: bigint("t", { mode: "number" }).notNull(),
+}, (t) => [
+  index("idx_ride_lock_points_cursor").on(t.rideId, t.id),
+  uniqueIndex("idx_ride_lock_points_fix").on(t.rideId, t.t, t.lat, t.lng),
+]);
 
 // A ride enriched with the rider's display name/phone for the admin rides
 // table. Identity is resolved server-side from the users table; an unknown or
