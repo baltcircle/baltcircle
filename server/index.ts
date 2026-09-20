@@ -2,7 +2,7 @@ import "dotenv/config";
 import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
 import session from "express-session";
-import connectPgSimple from "connect-pg-simple";
+import { SessionStore } from "./session-store";
 import { pool, bootstrapReady, storage } from "./storage";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
@@ -84,7 +84,6 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 // and redeploys — a registered rider stays logged in across deploys without
 // re-registering.
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
-const PgStore = connectPgSimple(session);
 
 // Session signing secret. The dev default is a public string and must NEVER be
 // used in production — signing sessions with a known secret lets anyone forge a
@@ -106,7 +105,7 @@ app.use(
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
-    store: new PgStore({
+    store: new SessionStore({
       pool,
       // connect-pg-simple creates the `session` table on first use if missing.
       createTableIfMissing: true,

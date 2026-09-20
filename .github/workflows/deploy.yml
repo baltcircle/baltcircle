@@ -69,6 +69,10 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/takeride_admin_test
         run: npx tsx script/test-lock-tracks.ts
+      - name: Session write and expiry regressions
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/takeride_admin_test
+        run: npx tsx script/test-session-store.ts
       - name: Dependency vulnerability audit
         # 2026-09-04: registry.npmjs.org's legacy audit endpoint
         # (/-/npm/v1/security/audits/quick) has started intermittently
