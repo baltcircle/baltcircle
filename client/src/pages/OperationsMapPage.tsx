@@ -8,7 +8,7 @@ import { MapLibreMap, type MapLayers } from "@/components/MapLibreMap";
 import { useGeolocation } from "./map/use-geolocation";
 import {
   Bike as BikeIcon, MapPin, Route, Wrench,
-  ParkingCircle,
+  ParkingCircle, Navigation,
 } from "lucide-react";
 import { DetailCard, type Selection } from "./operations-map/DetailCard";
 
@@ -138,15 +138,15 @@ export function OperationsMapPage({ embedded = false }: { embedded?: boolean } =
             onSelectTicket={(id) => setSelection({ kind: "ticket", id })}
           />
           {/* Тот же стиль, что на пользовательской карте (MapPage.tsx) и редакторе карты
-           * (MapEditorPage.tsx) — круглая bg-primary с MapPin вместо вторичной кнопки. */}
+           * (MapEditorPage.tsx): скруглённый прямоугольник с заполненной стрелкой. */}
           <button
             type="button"
             onClick={handleGeolocate}
             aria-label="Моя геопозиция"
             data-testid="button-operations-geolocate"
-            className="absolute bottom-4 right-4 z-10 w-12 h-12 rounded-full bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
+            className="absolute bottom-4 right-4 z-10 w-12 h-12 rounded-2xl bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
           >
-            <MapPin className="w-5 h-5" />
+            <Navigation className="w-5 h-5" fill="currentColor" />
           </button>
         </div>
 

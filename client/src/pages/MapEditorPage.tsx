@@ -16,7 +16,7 @@ import {
   Undo2,
   Pencil,
   X,
-  MapPin,
+  Navigation,
 } from "lucide-react";
 import { ADMIN_OBJECTS_KEY, TYPE_OPTIONS, type ObjType } from "./map-editor/types";
 import { SavedObjectsPanel } from "./map-editor/SavedObjectsPanel";
@@ -216,11 +216,11 @@ export function MapEditorPage() {
         aria-label="Моя геопозиция"
         data-testid="button-editor-geolocate"
         className={[
-          "absolute bottom-4 z-20 w-12 h-12 rounded-full bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all duration-200",
+          "absolute bottom-4 z-20 w-12 h-12 rounded-2xl bg-primary text-black shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all duration-200",
           panelOpen ? "right-[348px]" : "right-4",
         ].join(" ")}
       >
-        <MapPin className="w-5 h-5" />
+        <Navigation className="w-5 h-5" fill="currentColor" />
       </button>
 
       {/* ── Нижний плавающий тулбар: рисование ─────────────────────────────── */}
