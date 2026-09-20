@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 import type { StyleSpecification, SymbolLayerSpecification } from "maplibre-gl";
-import { buildStyle, type MapTheme } from "./mapStyle";
+import { ADDR_URL, buildStyle, type MapTheme } from "./mapStyle";
 
 function luminance(hex: string) {
   const rgb = hex.slice(1).match(/../g)!.map((channel) => {
@@ -44,5 +44,12 @@ describe.each<MapTheme>(["light", "dark"])("street labels in %s theme", (theme) 
   it("produces a valid MapLibre style with a single street-label layer", () => {
     expect(style.layers.filter((layer) => layer.id === "road-labels")).toHaveLength(1);
     expect(validateStyleMin(style)).toEqual([]);
+  });
+
+  it("loads the deduplicated address archive without reusing the old cache", () => {
+    expect(ADDR_URL).toBe("/addresses-v2.pmtiles");
+    expect(style.sources.addr).toMatchObject({ type: "vector", url: `pmtiles://${ADDR_URL}` });
+    const numbers = style.layers.find((layer) => layer.id === "house-numbers") as SymbolLayerSpecification;
+    expect(numbers.layout?.["text-allow-overlap"]).toBe(false);
   });
 });

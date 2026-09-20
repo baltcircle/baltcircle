@@ -1,6 +1,6 @@
 name: Generate Address Tiles
-# Builds addresses.pmtiles (OSM house numbers) into /home/yc-user/osm, served by
-# the app at /addresses.pmtiles. Kept separate from pmtiles-gen.yml so the heavy
+# Builds addresses-v2.pmtiles (deduplicated house numbers) into /home/yc-user/osm.
+# Kept separate from pmtiles-gen.yml so the heavy
 # 571 MB region extract and the ~1 MB address overlay regenerate independently.
 on:
   workflow_dispatch:

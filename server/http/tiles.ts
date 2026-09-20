@@ -141,6 +141,7 @@ export function registerTileRoutes(app: Express): void {
   // Base map tiles (571 MB Protomaps extract) + address overlay (~1 MB OSM housenumbers).
   app.get("/kaliningrad.pmtiles", servePmtiles("kaliningrad.pmtiles"));
   app.get("/addresses.pmtiles", servePmtiles("addresses.pmtiles"));
+  app.get("/addresses-v2.pmtiles", servePmtiles("addresses-v2.pmtiles"));
 
   // ── OSM Tile Proxy (legacy fallback — kept while tileserver still runs) ──
   // Proxies /tiles/* to local tileserver-gl (port 8080).

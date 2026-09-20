@@ -131,7 +131,8 @@ function getColors(theme: MapTheme) {
 
 // PMTiles file served same-origin via Express (Range request support, no CORS).
 const PMTILES_URL = "/kaliningrad.pmtiles";
-const ADDR_URL = "/addresses.pmtiles";
+// Versioned after building-level deduplication; bypass old 24h browser caches.
+const ADDR_URL = "/addresses-v2.pmtiles";
 
 // REAL_CENTER (54.945, 20.275) сидит в Акватории севернее Аммониевой косы —
 // при zoom=10 на портретном экране верхняя половина вьюа — открытое море,
