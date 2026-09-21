@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { OverlayShell } from "@/components/OverlayShell";
 import { useMutation, useInfiniteQuery } from "@tanstack/react-query";
 import type { SupportPage as SupportPageData } from "@shared/rider-data";
-import { QueryErrorNotice } from "@/components/QueryErrorNotice";
+import { RiderQueryErrorNotice } from "@/components/QueryErrorNotice";
 import { Button } from "@/components/ui/button";
 import { openLiveStream } from "@/lib/live-stream";
 import type { SupportMessage } from "@shared/schema";
@@ -240,7 +240,7 @@ export function SupportPage() {
           style={{ paddingBottom: inputHeight + 12 }}
           data-testid="support-chat-messages"
         >
-          <QueryErrorNotice query={chatQ} />
+          <RiderQueryErrorNotice query={chatQ} message="Не удалось загрузить переписку. Попробуйте ещё раз." />
           {chatQ.hasNextPage && <Button variant="outline" disabled={chatQ.isFetching}
             onClick={() => void chatQ.fetchNextPage()}>Загрузить предыдущие сообщения</Button>}
           {chatQ.isLoading ? (

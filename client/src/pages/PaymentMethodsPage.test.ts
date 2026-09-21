@@ -17,6 +17,13 @@ const pageSource = readFileSync(resolve(process.cwd(), "client/src/pages/Payment
 const utilsSource = readFileSync(resolve(process.cwd(), "client/src/pages/payment-methods/binding-utils.ts"), "utf8");
 
 describe("PaymentMethodsPage binding controls", () => {
+  it("uses rider notices and lets a failed background refresh be retried on intent", () => {
+    expect(pageSource).toContain("RiderQueryErrorNotice");
+    expect(pageSource).not.toMatch(/const busy =\s*methodsQ\.isError/);
+    expect(pageSource.match(/if \(retryPaymentDataIfNeeded\(\)\) return;/g)).toHaveLength(2);
+    expect(pageSource).toContain("Не удалось подготовить оплату");
+  });
+
   it("does not render the relocated consent or cancellation disclosures", () => {
     expect(pageSource).not.toContain("autoChargeConsent");
     expect(pageSource).not.toContain('data-testid="checkbox-autocharge-consent"');

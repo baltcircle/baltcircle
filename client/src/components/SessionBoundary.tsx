@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useCurrentUser, CURRENT_USER_KEY } from "@/hooks/use-current-user";
 import { queryClient, resetSessionData } from "@/lib/queryClient";
-import { QueryErrorNotice } from "@/components/QueryErrorNotice";
+import { RiderQueryErrorNotice } from "@/components/QueryErrorNotice";
 
 export function SessionBoundary({ children }: { children: ReactNode }) {
   const { user, query } = useCurrentUser();
@@ -30,9 +30,9 @@ export function SessionBoundary({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!query.isError && query.dataUpdatedAt > verifiedAt.current) setCheckingSession(false);
   }, [query.dataUpdatedAt, query.isError]);
-  if (checkingSession && query.isError) return <div className="p-6"><QueryErrorNotice query={query} /></div>;
+  if (checkingSession && query.isError) return <div className="p-6"><RiderQueryErrorNotice query={query} blocking message="Не удалось проверить аккаунт. Попробуйте ещё раз." /></div>;
   if (query.isPending || checkingSession) return <div role="status" className="p-6">Загрузка аккаунта…</div>;
-  if (query.isError && query.data === undefined) return <div className="p-6"><QueryErrorNotice query={query} /></div>;
+  if (query.isError && query.data === undefined) return <div className="p-6"><RiderQueryErrorNotice query={query} blocking message="Не удалось загрузить аккаунт. Попробуйте ещё раз." /></div>;
   // Remount local state only on identity changes, never on navigation/refetch.
   return <div key={identity.epoch} className="contents">{children}</div>;
 }

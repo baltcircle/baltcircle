@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { AuthModal } from "@/components/AuthModal";
 import { useCurrentUser } from "@/hooks/use-current-user";
-import { QueryErrorNotice } from "@/components/QueryErrorNotice";
+import { RiderQueryErrorNotice } from "@/components/QueryErrorNotice";
 import { QrCode, Camera, MapPin, Clock, Sparkles } from "lucide-react";
 
 export function RentPage() {
@@ -99,8 +99,8 @@ export function RentPage() {
       onRegistered={() => startScan(true)}
     />
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-5xl mx-auto" data-testid="page-rent">
-      <QueryErrorNotice query={activeQ} />
-      <QueryErrorNotice query={bikesQ} />
+      <RiderQueryErrorNotice query={activeQ} blocking message="Не удалось проверить текущую поездку. Попробуйте ещё раз." />
+      <RiderQueryErrorNotice query={bikesQ} blocking message="Не удалось проверить доступность велосипедов. Попробуйте ещё раз." />
       <header className="mb-6">
         <div className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Аренда</div>
         <h1 className="font-display text-2xl lg:text-3xl font-light mt-1">Сканируйте QR-код на руле</h1>

@@ -4,7 +4,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { useTheme } from "@/lib/theme";
 import { apiRequest, queryClient, announceSessionChange } from "@/lib/queryClient";
 import { CURRENT_USER_KEY } from "@/hooks/use-current-user";
-import { QueryErrorNotice } from "@/components/QueryErrorNotice";
+import { RiderQueryErrorNotice } from "@/components/QueryErrorNotice";
 import type { User as UserType } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { PhoneChangeModal } from "@/components/PhoneChangeModal";
@@ -108,7 +108,7 @@ export function SettingsPage() {
 
       {/* Content */}
       <div className="flex-1 flex flex-col px-4 pt-6 pb-4 gap-3 min-h-0">
-        <QueryErrorNotice query={userQ} />
+        <RiderQueryErrorNotice query={userQ} message="Не удалось загрузить профиль. Попробуйте ещё раз." />
 
         {/* User data */}
         <ProfileSection

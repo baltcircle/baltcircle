@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import type { RiderHistoryPage } from "@shared/rider-data";
-import { QueryErrorNotice } from "@/components/QueryErrorNotice";
+import { RiderQueryErrorNotice } from "@/components/QueryErrorNotice";
 import { Button } from "@/components/ui/button";
 import { OverlayShell } from "@/components/OverlayShell";
 import { Card } from "@/components/ui/card";
@@ -61,14 +61,14 @@ export function RidesPage() {
   return (
     <OverlayShell title="История поездок">
       <div className="px-4 py-6 max-w-2xl mx-auto" data-testid="page-rides">
-        <QueryErrorNotice query={ridesQ} />
+        <RiderQueryErrorNotice query={ridesQ} message="Не удалось загрузить историю поездок. Попробуйте ещё раз." />
         {isLoadingRides && (
           <Card className="p-10 text-center text-muted-foreground" data-testid="loading-rides">
             <div>Загружаем историю…</div>
           </Card>
         )}
 
-        {!isLoadingRides && !ridesQ.isError && rides.length === 0 && (
+        {!isLoadingRides && ridesQ.data !== undefined && rides.length === 0 && (
           <Card className="p-10 text-center text-muted-foreground" data-testid="empty-rides">
             <Route className="w-10 h-10 mx-auto opacity-40 mb-3" />
             <div>Пока нет завершённых поездок.</div>

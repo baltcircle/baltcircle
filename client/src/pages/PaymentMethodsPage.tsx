@@ -27,7 +27,7 @@ import {
 import { SbpBindModal } from "./payment-methods/SbpBindModal";
 import { createCardBindingNotices } from "./payment-methods/card-binding-notices";
 
-import { QueryErrorNotice } from "@/components/QueryErrorNotice";
+import { RiderQueryErrorNotice } from "@/components/QueryErrorNotice";
 
 const METHODS_KEY = ["/api/payment-methods"];
 const SBP_BANKS_KEY = ["/api/payments/tbank/sbp-banks"];
@@ -440,17 +440,31 @@ export function PaymentMethodsPage() {
   }, [bindFrame?.methodId]);
 
   const busy =
-    methodsQ.isError || cfgQ.isError ||
     bindCardMut.isPending ||
     bindSbpMut.isPending ||
     unlinkMut.isPending ||
     redirecting;
 
+  // Background refresh errors stay quiet. On an explicit binding attempt,
+  // retry the failed checks instead of silently disabling the action forever.
+  // Do not start a binding until both queries have recovered.
+  const retryPaymentDataIfNeeded = () => {
+    if (!methodsQ.isError && !cfgQ.isError) return false;
+    if (methodsQ.isError) void methodsQ.refetch();
+    if (cfgQ.isError) void cfgQ.refetch();
+    toast.toast({
+      title: "Не удалось подготовить оплату",
+      description: "Повторите попытку через несколько секунд.",
+    });
+    return true;
+  };
+
   // Guard the "Add card" action: don't offer the flow when acquiring isn't
   // configured, the rider isn't registered, or a request is in flight. Multiple
   // cards ARE allowed — no "already linked" short-circuit.
   const handleAddCard = () => {
-    if (userLoading || cfgQ.isLoading || cfgQ.isError || methodsQ.isError) return;
+    if (userLoading || cfgQ.isLoading || methodsQ.isLoading) return;
+    if (retryPaymentDataIfNeeded()) return;
     if (!tbankConfigured) {
       toast.toast({
         title: "Платежи настраиваются",
@@ -478,7 +492,8 @@ export function PaymentMethodsPage() {
   // allowed — no "already linked" short-circuit. The QR modal then walks the
   // rider through authorising the binding in their bank.
   const handleAddSbp = () => {
-    if (userLoading || cfgQ.isLoading || cfgQ.isError || methodsQ.isError) return;
+    if (userLoading || cfgQ.isLoading || methodsQ.isLoading) return;
+    if (retryPaymentDataIfNeeded()) return;
     if (!tbankConfigured) {
       toast.toast({
         title: "Платежи настраиваются",
@@ -513,8 +528,8 @@ export function PaymentMethodsPage() {
   return (
     <OverlayShell title="Способы оплаты">
       <div className="px-4 py-6 max-w-md mx-auto" data-testid="page-payment-methods">
-        <QueryErrorNotice query={methodsQ} />
-        <QueryErrorNotice query={cfgQ} />
+        <RiderQueryErrorNotice query={methodsQ} message="Не удалось загрузить способы оплаты. Попробуйте ещё раз." />
+        <RiderQueryErrorNotice query={cfgQ} message="Оплата временно недоступна. Попробуйте ещё раз." />
         {/* Linked methods — profile-style rows */}
         <div
           className="rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-800"
@@ -557,7 +572,7 @@ export function PaymentMethodsPage() {
                       </div>
                       <button
                         type="button"
-                        disabled={busy}
+                        disabled={busy || methodsQ.isError || cfgQ.isError}
                         onClick={() => unlinkMut.mutate(m.id)}
                         data-testid={`button-unlink-${m.id}`}
                         title="Отвязать"

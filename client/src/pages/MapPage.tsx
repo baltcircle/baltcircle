@@ -11,7 +11,7 @@ import { RentalStartModal } from "@/components/RentalStartModal";
 import { AuthModal } from "@/components/AuthModal";
 import { QrScanModal } from "@/components/QrScanModal";
 import { DrawerMenu } from "@/components/DrawerMenu";
-import { QueryErrorNotice } from "@/components/QueryErrorNotice";
+import { RiderQueryErrorNotice } from "@/components/QueryErrorNotice";
 import { IosInstallSheet } from "@/components/IosInstallSheet";
 import { PushOptInSheet } from "@/components/PushOptInSheet";
 import { markIosInstallHintShown, shouldAutoShowIosInstallHint, isStandalone } from "@/lib/pwa";
@@ -671,9 +671,9 @@ export function MapPage() {
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden" style={{height: "100%"}} data-testid="map-page">
       {[userQ, activeQ, bikesQ, parkingsQ, mapObjectsQ, reservationQ, paymentMethodsQ]
-        .filter((q) => q.isError).slice(0, 1).map((q) => (
+        .filter((q) => q.isError && q.data === undefined).slice(0, 1).map((q) => (
           <div key="data-error" className="absolute z-30 left-3 right-20 top-3 bg-background/95 rounded-xl">
-            <QueryErrorNotice query={q} />
+            <RiderQueryErrorNotice query={q} message="Не удалось загрузить данные для карты. Попробуйте ещё раз." />
           </div>
         ))}
       {/* Map — заливает весь физический экран, включая зоны safe-area

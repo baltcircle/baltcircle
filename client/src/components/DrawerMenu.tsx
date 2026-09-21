@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useEffect, useState, useRef } from "react";
 import type { RiderStats } from "@shared/rider-data";
-import { QueryErrorNotice } from "@/components/QueryErrorNotice";
+import { RiderQueryErrorNotice } from "@/components/QueryErrorNotice";
 
 interface Props {
   open: boolean;
@@ -174,7 +174,7 @@ export function DrawerMenu({ open, onClose, mountedOpen = false, instantTick = 0
             {profileCard}
           </button>
         )}
-        {open && isRegistered && <div className="mx-4"><QueryErrorNotice query={ridesQ} /></div>}
+        {open && isRegistered && <div className="mx-4"><RiderQueryErrorNotice query={ridesQ} message="Не удалось загрузить статистику поездок. Попробуйте ещё раз." /></div>}
 
         {/* Divider */}
         <div className="mx-4 mt-3 mb-2 h-px bg-sidebar-foreground/15" />

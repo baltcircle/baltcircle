@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { QueryErrorNotice } from "@/components/QueryErrorNotice";
+import { RiderQueryErrorNotice } from "@/components/QueryErrorNotice";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -395,7 +395,7 @@ export function RentalStartModal({ open, onOpenChange, bike }: Props) {
           </div>
         ) : null}
         {[methodsQ, configQ, activeReservationQ, activeRidesQ].filter((q) => q.isError).slice(0, 1)
-          .map((q) => <QueryErrorNotice key="rental-error" query={q} />)}
+          .map((q) => <RiderQueryErrorNotice key="rental-error" query={q} blocking message="Не удалось подготовить поездку. Попробуйте ещё раз." />)}
 
         {/* Payment method picker: только сохранённые способы оплаты — никакого “hosted”-варианта
             с переходом на форму Т-Банка: без привязанного способа оплаты сканирование QR
