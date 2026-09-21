@@ -23,6 +23,17 @@ jobs:
               if (target.rows.length !== 1) throw new Error('target-count');
               const id = target.rows[0].id;
               const print = async (label, sql, args = [id]) => console.log(label, JSON.stringify((await c.query(sql, args)).rows));
+              await print('device_health', `SELECT battery,
+                maintenance_reason='auto:low_battery' AS low_battery_auto_offline,
+                to_timestamp(last_seen/1000.0) AS bike_last_seen,
+                to_timestamp(lock_last_seen/1000.0) AS lock_last_seen
+                FROM bikes WHERE id=$1`);
+              await print('fix_validity', `SELECT to_timestamp(t/1000.0) AS utc, satellites, hdop,
+                lat=0 AND lng=0 AS zero_coordinates,
+                abs(lat)<1 AND abs(lng)<1 AS near_zero_coordinates,
+                x IS NOT NULL AS plotted
+                FROM bike_telemetry WHERE bike_id=$1 AND lat IS NOT NULL
+                ORDER BY t DESC LIMIT 25`);
               await print('gps_hourly', `SELECT to_char(to_timestamp(t/1000.0) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24') AS utc_hour,
                 count(*) AS reports, count(lat) AS fixes, count(x) AS plotted,
                 count(*) FILTER (WHERE satellites=0 AND lat IS NOT NULL) AS zero_satellite_fixes,
