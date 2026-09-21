@@ -23,6 +23,24 @@ jobs:
               if (target.rows.length !== 1) throw new Error('target-count');
               const id = target.rows[0].id;
               const print = async (label, sql, args = [id]) => console.log(label, JSON.stringify((await c.query(sql, args)).rows));
+              await print('gps_hourly', `SELECT to_char(to_timestamp(t/1000.0) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24') AS utc_hour,
+                count(*) AS reports, count(lat) AS fixes, count(x) AS plotted,
+                count(*) FILTER (WHERE satellites=0 AND lat IS NOT NULL) AS zero_satellite_fixes,
+                count(*) FILTER (WHERE lat IS NULL) AS no_fix,
+                min(hdop) AS min_hdop, max(hdop) AS max_hdop
+                FROM bike_telemetry WHERE bike_id=$1 AND cmd IN ('D0','D1')
+                  AND t >= (extract(epoch from now())*1000 - 48*3600000)
+                GROUP BY 1 ORDER BY 1`);
+              await print('ride_windows', `SELECT status, is_test,
+                to_timestamp(started_at/1000.0) AS started_utc,
+                to_timestamp(ended_at/1000.0) AS ended_utc,
+                to_timestamp(physically_locked_at/1000.0) AS closed_utc,
+                (SELECT count(*) FROM ride_lock_points p WHERE p.ride_id=r.id) AS projected_points
+                FROM rides r WHERE bike_id=$1 ORDER BY started_at DESC LIMIT 10`);
+              await print('last_good_fixes', `SELECT to_timestamp(t/1000.0) AS utc,
+                satellites, hdop, x IS NOT NULL AS plotted
+                FROM bike_telemetry WHERE bike_id=$1 AND lat IS NOT NULL
+                ORDER BY t DESC LIMIT 25`);
               await print('state', `SELECT b.status, b.lock_online, l.last_lock_state, l.last_signal_strength,
                 l.last_battery_voltage,
                 to_timestamp(l.last_seen_at / 1000.0) AS last_report_utc,
@@ -81,11 +99,25 @@ jobs:
               "omni: rejected low-accuracy GPS fix (hdop exceeds MAX_ACCEPTABLE_HDOP)":"accuracy_rejection",
               "omni: rejected implausible GPS fix (jump exceeds MAX_PLAUSIBLE_GPS_JUMP_M)":"jump_rejection",
               "gps-sync: tracking interval updated":"tracking_sync",
-              "rejecting invalid payload":"invalid_payload"
+              "rejecting invalid payload":"invalid_payload",
+              "lock connected":"connected",
+              "replacing stale socket":"reconnect",
+              "sent experimental D1 tracking-stop probe":"diagnostic_stop",
+              "sent experimental D1 tracking-interval probe":"diagnostic_interval"
             };
-            const counts={},sync=[];
+            const counts={},sync=[],positions=[];
+            let nofix=0,valid=0;
             for await(const line of readline.createInterface({input:process.stdin})){
               let o;try{o=JSON.parse(line)}catch{continue}
+              if(o.imei===imei && o.msg==="omni-diag frame" && o.detail?.type==="position"){
+                if(o.detail.valid)valid++;else nofix++;
+                positions.push({
+                  at:typeof o.time==="number"?o.time:null,
+                  valid:o.detail.valid===true,
+                  tracking:o.detail.tracking===true,
+                  satellites:typeof o.detail.fix?.satellites==="number"?o.detail.fix.satellites:null
+                });
+              }
               const label=labels[o.msg];
               if(!label || (o.imei!==imei && label!=="batch_error"))continue;
               counts[label]=(counts[label]||0)+1;
@@ -95,6 +127,10 @@ jobs:
                 sent:o.sent===true
               });
             }
-            console.log(JSON.stringify({counts,last_tracking_sync:sync.slice(-8)}));
+            const keys=["OMNI_MAX_FRAMES_PER_SECOND","OMNI_FRAME_BUCKET_CAPACITY","OMNI_STATUS_MIN_INTERVAL_MS","OMNI_FLUSH_INTERVAL_MS","OMNI_MAX_BATCH_ROWS","OMNI_DIAG_SEND_D1_SECONDS"];
+            const numericConfig={};
+            for(const k of keys)numericConfig[k]=/^[0-9]+$/.test(process.env[k]||"")?Number(process.env[k]):null;
+            console.log(JSON.stringify({counts,numericConfig,diagnostic_target_matches:process.env.OMNI_DIAG_IMEI===imei,
+              raw_position_counts:{valid,nofix},last_raw_positions:positions.slice(-12),last_tracking_sync:sync}));
           })().catch(()=>{console.log("{\"log_diagnostic_failed\":true}");process.exitCode=1});
           '
