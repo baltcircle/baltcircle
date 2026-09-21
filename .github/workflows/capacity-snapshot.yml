@@ -1,4 +1,4 @@
-name: Capacity snapshot (read-only)
+name: GPS snapshot (read-only, redacted)
 on:
   workflow_dispatch: {}
 permissions: {}
@@ -6,54 +6,95 @@ jobs:
   snapshot:
     environment: production
     runs-on: [self-hosted, baltcircle-prod]
-    timeout-minutes: 5
+    timeout-minutes: 3
     steps:
-      - name: Aggregate resources only (no identities or application logs)
+      - name: GPS health only (no coordinates or identities)
         shell: bash
         run: |
           set -euo pipefail
-          echo "=== UTC / CPU count / memory bytes ==="
-          date -u +%FT%TZ
-          nproc
-          free -b
-          echo "=== Root disk aggregate ==="
-          df -B1 --output=size,used,avail,pcent /
-          echo "=== Container limits and lifecycle ==="
-          docker inspect baltcircle-mvp --format 'MemoryLimit={{.HostConfig.Memory}} NanoCPUs={{.HostConfig.NanoCpus}} OOMKilled={{.State.OOMKilled}} RestartCount={{.RestartCount}} StartedAt={{.State.StartedAt}}'
-          echo "=== Host CPU / memory / IO sample (first line since boot) ==="
-          vmstat 1 10
-          echo "=== Container resource samples, 12 over roughly 2 minutes ==="
-          for i in $(seq 1 12); do
-            date -u +%FT%TZ
-            docker stats --no-stream --format 'CPU={{.CPUPerc}} RAM={{.MemUsage}} RAMPercent={{.MemPerc}} PIDs={{.PIDs}}' baltcircle-mvp
-            awk '/^MemAvailable:|^SwapFree:/{print}' /proc/meminfo
-            sleep 8
-          done
-          echo "=== Established connections: aggregate count only ==="
-          for port in 443 5000 5100; do
-            count=$(ss -Htn state established "( sport = :$port )" | wc -l)
-            printf 'port=%s count=%s\n' "$port" "$count"
-          done
-          echo "=== Database aggregate / read-only query ==="
           docker exec -i baltcircle-mvp node <<'NODE'
           const { Client } = require('pg');
           (async () => {
-            const client = new Client({ connectionString: process.env.DATABASE_URL, statement_timeout: 5000 });
+            const c = new Client({ connectionString: process.env.DATABASE_URL, statement_timeout: 8000 });
             try {
-              await client.connect();
-              await client.query('BEGIN READ ONLY');
-              const result = await client.query(`SELECT
-                (SELECT count(*)::int FROM bikes) AS bikes,
-                (SELECT count(*)::int FROM rides WHERE status IN ('active','paused')) AS active_rides,
-                (SELECT count(*)::int FROM rides) AS total_rides,
-                (SELECT count(*)::int FROM pg_stat_activity WHERE datname=current_database()) AS db_connections,
-                (SELECT count(*)::int FROM pg_stat_activity WHERE datname=current_database() AND state='active') AS db_active_connections,
-                pg_database_size(current_database()) AS database_bytes,
-                current_setting('max_connections') AS max_connections`);
-              console.log(JSON.stringify(result.rows[0]));
-              await client.query('ROLLBACK');
-            } catch (error) {
-              console.log(JSON.stringify({ database_snapshot_unavailable: true, error_code: error.code || 'unknown' }));
-            } finally { await client.end(); }
+              await c.connect();
+              await c.query('BEGIN READ ONLY');
+              const target = await c.query("SELECT id FROM bikes WHERE regexp_replace(upper(id), '[^A-Z0-9]', '', 'g') = $1", ['BC002']);
+              if (target.rows.length !== 1) throw new Error('target-count');
+              const id = target.rows[0].id;
+              const print = async (label, sql, args = [id]) => console.log(label, JSON.stringify((await c.query(sql, args)).rows));
+              await print('state', `SELECT b.status, b.lock_online, l.last_lock_state, l.last_signal_strength,
+                l.last_battery_voltage,
+                to_timestamp(l.last_seen_at / 1000.0) AS last_report_utc,
+                to_timestamp(l.last_location_at / 1000.0) AS last_fix_utc,
+                round((extract(epoch from now()) * 1000 - l.last_seen_at) / 1000) AS report_age_seconds,
+                round((extract(epoch from now()) * 1000 - l.last_location_at) / 1000) AS fix_age_seconds,
+                l.last_latitude IS NOT NULL AND l.last_longitude IS NOT NULL AS has_coordinates,
+                (SELECT count(*) FROM rides r WHERE r.bike_id=b.id AND r.status='active') AS active_rides,
+                (SELECT bool_or(r.physically_locked_at IS NOT NULL) FROM rides r WHERE r.bike_id=b.id AND r.status='active') AS active_ride_closed,
+                (SELECT bool_or(r.is_test) FROM rides r WHERE r.bike_id=b.id AND r.status='active') AS active_ride_is_test
+                FROM bikes b LEFT JOIN locks l ON l.imei=b.lock_imei WHERE b.id=$1`);
+              await print('gps_recent', `SELECT to_timestamp(t/1000.0) AS utc, cmd, satellites, hdop,
+                lat IS NOT NULL AND lng IS NOT NULL AS has_fix,
+                x IS NOT NULL AND y IS NOT NULL AS accepted
+                FROM bike_telemetry WHERE bike_id=$1 AND cmd IN ('D0','D1')
+                ORDER BY t DESC LIMIT 20`);
+              await print('gps_by_day', `SELECT date_trunc('day', to_timestamp(t/1000.0)) AS utc_day,
+                count(*) AS reports, count(lat) AS fixes,
+                count(*) FILTER (WHERE lat IS NOT NULL AND (hdop IS NULL OR hdop<=10)) AS usable_accuracy,
+                count(*) FILTER (WHERE hdop>10) AS rejected_accuracy,
+                min(hdop) AS min_hdop, max(hdop) AS max_hdop,
+                min(satellites) AS min_satellites, max(satellites) AS max_satellites
+                FROM bike_telemetry WHERE bike_id=$1 AND cmd IN ('D0','D1')
+                  AND t >= (extract(epoch from now())*1000 - 7*86400000)
+                GROUP BY 1 ORDER BY 1 DESC`);
+              await print('telemetry_last_hour', `SELECT cmd, count(*) AS reports,
+                to_timestamp(max(t)/1000.0) AS latest_utc,
+                max(satellites) AS max_satellites
+                FROM bike_telemetry WHERE bike_id=$1 AND t >= (extract(epoch from now())*1000-3600000)
+                GROUP BY cmd ORDER BY cmd`);
+              await c.query('ROLLBACK');
+            } catch (e) {
+              console.log(JSON.stringify({ diagnostic_failed: true, code: /^[0-9A-Z]{5}$/.test(e.code || '') ? e.code : 'unknown' }));
+              process.exitCode = 1;
+            } finally { await c.end(); }
           })();
           NODE
+      - name: Sanitized gateway log counters
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker logs baltcircle-mvp --since 4h 2>&1 | docker exec -i baltcircle-mvp node -e '
+          const {Client}=require("pg");
+          const readline=require("readline");
+          (async()=>{
+            const c=new Client({connectionString:process.env.DATABASE_URL,statement_timeout:5000});
+            await c.connect();
+            await c.query("BEGIN READ ONLY");
+            const q=await c.query("SELECT lock_imei FROM bikes WHERE id=$1",["BC-002"]);
+            const imei=q.rows[0]?.lock_imei;
+            await c.query("ROLLBACK"); await c.end();
+            if(!imei)throw Error("missing");
+            const labels={
+              "failed to persist lock report":"persist_error",
+              "telemetry batch write failed":"batch_error",
+              "omni: rejected low-accuracy GPS fix (hdop exceeds MAX_ACCEPTABLE_HDOP)":"accuracy_rejection",
+              "omni: rejected implausible GPS fix (jump exceeds MAX_PLAUSIBLE_GPS_JUMP_M)":"jump_rejection",
+              "gps-sync: tracking interval updated":"tracking_sync",
+              "rejecting invalid payload":"invalid_payload"
+            };
+            const counts={},sync=[];
+            for await(const line of readline.createInterface({input:process.stdin})){
+              let o;try{o=JSON.parse(line)}catch{continue}
+              const label=labels[o.msg];
+              if(!label || (o.imei!==imei && label!=="batch_error"))continue;
+              counts[label]=(counts[label]||0)+1;
+              if(label==="tracking_sync")sync.push({
+                at:typeof o.time==="number"?o.time:null,
+                interval_seconds:typeof o.intervalSeconds==="number"?o.intervalSeconds:null,
+                sent:o.sent===true
+              });
+            }
+            console.log(JSON.stringify({counts,last_tracking_sync:sync.slice(-8)}));
+          })().catch(()=>{console.log("{\"log_diagnostic_failed\":true}");process.exitCode=1});
+          '
