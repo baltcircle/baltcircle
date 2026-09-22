@@ -17,6 +17,7 @@ describe("iOS viewport after an SBP app handoff", () => {
   it("marks the SBP handoff and consumes it on restore for an explicit root repaint", () => {
     expect(page).toContain("markSbpAppHandoff()");
     expect(hook).toContain("consumeSbpAppHandoff()");
-    expect(hook).toContain("repairSbpViewport");
+    expect(hook).toContain("createSbpViewportRecovery(handoff)");
+    expect(hook).toContain("continueSbpViewportRecovery(sbpRestore)");
   });
 });
