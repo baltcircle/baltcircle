@@ -26,6 +26,7 @@ import {
 } from "./payment-methods/binding-utils";
 import { SbpBindModal } from "./payment-methods/SbpBindModal";
 import { createCardBindingNotices } from "./payment-methods/card-binding-notices";
+import { markSbpAppHandoff } from "@/lib/sbp-app-handoff";
 
 import { RiderQueryErrorNotice } from "@/components/QueryErrorNotice";
 
@@ -239,6 +240,7 @@ export function PaymentMethodsPage() {
       if (bank && isOpenablePayload(data.qrPayload) && detectSbpDeviceType() === "mobile") {
         setSbpModalOpen(false);
         setSbpBinding(null);
+        markSbpAppHandoff();
         window.location.assign(data.qrPayload);
         return;
       }

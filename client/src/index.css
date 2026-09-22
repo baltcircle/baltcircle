@@ -229,7 +229,10 @@
    * and /admin/* keep normal document scrolling. */
   html.route-locked,
   body.route-locked {
-    height: 100%;
+    /* Do not inherit a stale percentage-height containing block after iOS
+     * returns from an external bank app. Inner content uses visualViewport. */
+    height: 100vh;
+    min-height: 100vh;
     overflow: hidden;
     overscroll-behavior: none;
     position: relative;

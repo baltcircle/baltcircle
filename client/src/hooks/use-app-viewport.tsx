@@ -1,5 +1,9 @@
 import { useEffect, useRef } from "react";
 import {
+  consumeSbpAppHandoff, noteSbpAppHidden, repairSbpViewport,
+  type SbpViewportSnapshot,
+} from "@/lib/sbp-app-handoff";
+import {
   nextAppHeight,
   readViewportSample,
   type AppHeightState,
@@ -34,8 +38,13 @@ export function useAppViewport(enabled: boolean) {
     const root = document.documentElement;
     const vv = window.visualViewport;
     const timers = new Set<ReturnType<typeof setTimeout>>();
+    let sbpRestore: (SbpViewportSnapshot & { until: number }) | null = null;
+    let frameId = 0;
 
     const apply = () => {
+      if (sbpRestore) {
+        if (Date.now() > sbpRestore.until || repairSbpViewport(sbpRestore)) sbpRestore = null;
+      }
       const sample = readViewportSample(window);
 
       const state = nextAppHeight(heightRef.current, sample);
@@ -60,8 +69,11 @@ export function useAppViewport(enabled: boolean) {
     // Метрики после восстановления из фона устаканиваются не сразу и без
     // гарантированного события — поэтому добираем несколькими замерами.
     const applySoon = () => {
+      timers.forEach(clearTimeout);
+      timers.clear();
+      cancelAnimationFrame(frameId);
       apply();
-      requestAnimationFrame(apply);
+      frameId = requestAnimationFrame(apply);
       for (const delay of [150, 400, 900]) {
         const t = setTimeout(() => {
           timers.delete(t);
@@ -72,7 +84,12 @@ export function useAppViewport(enabled: boolean) {
     };
 
     const onRestore = () => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible") {
+        noteSbpAppHidden();
+        return;
+      }
+      const handoff = consumeSbpAppHandoff();
+      if (handoff) sbpRestore = { ...handoff, until: Date.now() + 1500 };
       applySoon();
     };
 
@@ -83,6 +100,7 @@ export function useAppViewport(enabled: boolean) {
     window.addEventListener("resize", apply);
     window.addEventListener("orientationchange", applySoon);
     window.addEventListener("pageshow", onRestore);
+    window.addEventListener("pagehide", noteSbpAppHidden);
     window.addEventListener("focus", onRestore);
     document.addEventListener("visibilitychange", onRestore);
 
@@ -94,11 +112,13 @@ export function useAppViewport(enabled: boolean) {
     return () => {
       timers.forEach(clearTimeout);
       timers.clear();
+      cancelAnimationFrame(frameId);
       vv?.removeEventListener("resize", apply);
       vv?.removeEventListener("scroll", apply);
       window.removeEventListener("resize", apply);
       window.removeEventListener("orientationchange", applySoon);
       window.removeEventListener("pageshow", onRestore);
+      window.removeEventListener("pagehide", noteSbpAppHidden);
       window.removeEventListener("focus", onRestore);
       document.removeEventListener("visibilitychange", onRestore);
       root.classList.remove("route-locked");

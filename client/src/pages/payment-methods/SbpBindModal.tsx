@@ -4,6 +4,7 @@ import { BikeQr } from "@/components/BikeQr";
 import type { SbpBank } from "@shared/sbp";
 import { SbpBankPicker } from "./SbpBankPicker";
 import { type SbpBinding, isOpenablePayload } from "./binding-utils";
+import { markSbpAppHandoff } from "@/lib/sbp-app-handoff";
 
 // Modal walking the rider through an SBP account binding.
 //
@@ -130,6 +131,7 @@ export function SbpBindModal({
               {canOpen && binding.bankName && (
                 <a
                   href={binding.payload}
+                  onClick={() => markSbpAppHandoff()}
                   target="_blank"
                   rel="noopener noreferrer"
                   data-testid="button-open-in-bank"
@@ -159,6 +161,7 @@ export function SbpBindModal({
               {canOpen && !binding.bankName && (
                 <a
                   href={binding.payload}
+                  onClick={() => markSbpAppHandoff()}
                   target="_blank"
                   rel="noopener noreferrer"
                   data-testid="button-open-in-bank"
