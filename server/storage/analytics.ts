@@ -160,7 +160,7 @@ export function AnalyticsMixin<TBase extends Constructor>(Base: TBase) {
       );
       const parkingUsage = (await this.listParkings())
         .map((p) => ({
-          id: p.id, name: p.name, capacity: p.capacity, occupied: p.occupied,
+          id: p.id, name: p.name, city: p.city, capacity: p.capacity, occupied: p.occupied,
           rideStarts: parkingRideCounts.get(p.id) ?? 0,
         }))
         .sort((a, b) => b.rideStarts - a.rideStarts);

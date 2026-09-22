@@ -4,6 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PARKING_CITIES } from "@shared/schema";
+import { filterParkingUsage } from "./analytics-parking";
 import {
   Table, TableHeader, TableBody, TableHead, TableRow, TableCell,
 } from "@/components/ui/table";
@@ -83,12 +86,13 @@ interface AdminAnalytics {
     byKind: { kind: string; c: number }[];
     repeatedProblemBikes: { bike_id: string; tickets: number; open: number }[];
   };
-  parkingUsage: { id: string; name: string; capacity: number; occupied: number; rideStarts: number }[];
+  parkingUsage: { id: string; name: string; city: string; capacity: number; occupied: number; rideStarts: number }[];
   feedbackCounts: { r1: number; r2: number; r3: number; r4: number; r5: number };
 }
 
 export function AnalyticsPage() {
   const [period, setPeriod] = useState<PeriodId>("30d");
+  const [parkingCity, setParkingCity] = useState("all");
   const clock = useClock(30_000);
   const now = startOfDay(clock);
   const [customFrom, setCustomFrom] = useState(() => toDateInput(now - 7 * DAY));
@@ -120,6 +124,7 @@ export function AnalyticsPage() {
   });
 
   const a = q.data;
+  const parkingRows = filterParkingUsage(a?.parkingUsage ?? [], parkingCity);
 
   return (
     <div className="px-4 lg:px-10 py-6 lg:py-10 max-w-7xl mx-auto" data-testid="page-admin-analytics">
@@ -230,10 +235,9 @@ export function AnalyticsPage() {
             )}
           </Card>
 
-          {/* Feedback counts + parking usage side by side */}
-          <div className="grid md:grid-cols-2 gap-6 mb-6">
-            <Card className="p-5" data-testid="analytics-feedback">
-              <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
+          {/* Compact feedback summary */}
+            <Card className="p-3 mb-6 w-full max-w-xs [&_th]:h-8 [&_th]:px-2 [&_td]:px-2 [&_td]:py-1" data-testid="analytics-feedback">
+              <h2 className="font-display text-base font-light flex items-center gap-2 mb-2">
                 <Star className="w-4 h-4 text-primary" />Отзывы о поездках
               </h2>
               <Table>
@@ -268,15 +272,25 @@ export function AnalyticsPage() {
               </Table>
             </Card>
 
-            <Card className="p-5" data-testid="analytics-parking">
-              <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
-                <MapPin className="w-4 h-4 text-primary" />Парковки
-              </h2>
-              {a.parkingUsage.length === 0 ? (
-                <EmptyRow text="Парковки не настроены — данных нет." />
-              ) : a.parkingUsage.every((p) => p.rideStarts === 0) ? (
-                <div className="text-sm text-muted-foreground py-4" data-testid="analytics-parking-empty">
-                  За выбранный период стартов рядом с парковками не зафиксировано.
+          {/* Parking is the final, full-width block; city affects only this table. */}
+            <Card className="p-4 sm:p-5 w-full" data-testid="analytics-parking">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-3">
+                <h2 className="font-display text-lg font-light flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-primary" />Парковки
+                </h2>
+                <Select value={parkingCity} onValueChange={setParkingCity}>
+                  <SelectTrigger aria-label="Город парковок" data-testid="analytics-parking-city" className="w-auto max-w-full min-h-11 gap-2 border-0 bg-transparent px-2 font-display text-lg font-light">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Все города</SelectItem>
+                    {PARKING_CITIES.map((city) => <SelectItem key={city} value={city}>{city}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              {parkingRows.length === 0 ? (
+                <div data-testid="analytics-parking-empty">
+                  <EmptyRow text={parkingCity === "all" ? "Парковки не настроены — данных нет." : "В выбранном городе пока нет парковок."} />
                 </div>
               ) : (
                 <Table>
@@ -288,7 +302,7 @@ export function AnalyticsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {a.parkingUsage.slice(0, 15).map((p) => (
+                    {parkingRows.map((p) => (
                       <TableRow key={p.id} data-testid={`analytics-parking-${p.id}`}>
                         <TableCell className="text-center">{p.name}</TableCell>
                         <TableCell className="text-center font-mono">{p.rideStarts}</TableCell>
@@ -299,36 +313,6 @@ export function AnalyticsPage() {
                 </Table>
               )}
             </Card>
-          </div>
-
-          {/* Repeated-problem bikes — always last */}
-          <Card className="p-5" data-testid="analytics-repeated-bikes">
-            <h2 className="font-display text-lg font-light flex items-center gap-2 mb-3">
-              <AlertTriangle className="w-4 h-4 text-destructive" />Повторяющиеся проблемы
-            </h2>
-            {a.service.repeatedProblemBikes.length === 0 ? (
-              <EmptyRow text="Нет велосипедов с несколькими заявками." />
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-center">Велосипед</TableHead>
-                    <TableHead className="text-center">Заявок всего</TableHead>
-                    <TableHead className="text-center">Открытых</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {a.service.repeatedProblemBikes.map((b) => (
-                    <TableRow key={b.bike_id} data-testid={`analytics-repeated-bike-${b.bike_id}`}>
-                      <TableCell className="font-mono text-center">{b.bike_id}</TableCell>
-                      <TableCell className="text-center font-mono">{b.tickets}</TableCell>
-                      <TableCell className="text-center font-mono">{b.open}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </Card>
         </>
       )}
     </div>

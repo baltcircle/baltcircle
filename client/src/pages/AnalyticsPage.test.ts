@@ -43,18 +43,25 @@ describe("AnalyticsPage layout", () => {
     expect(source).not.toContain("analytics-kpi-active-rides");
   });
 
-  it("places \u041e\u0442\u0437\u044b\u0432\u044b \u043e \u043f\u043e\u0435\u0437\u0434\u043a\u0430\u0445 and \u041f\u0430\u0440\u043a\u043e\u0432\u043a\u0438 side by side in a two-column grid", () => {
+  it("keeps feedback compact and parking full width below it", () => {
     const feedbackIdx = source.indexOf('data-testid="analytics-feedback"');
     const parkingIdx = source.indexOf('data-testid="analytics-parking"');
-    const gridIdx = source.lastIndexOf('grid md:grid-cols-2 gap-6 mb-6', feedbackIdx);
     expect(feedbackIdx).toBeGreaterThan(-1);
     expect(parkingIdx).toBeGreaterThan(feedbackIdx);
-    expect(gridIdx).toBeGreaterThan(-1);
+    expect(source).toContain('w-full max-w-xs');
+    expect(source).not.toContain('grid md:grid-cols-2 gap-6 mb-6');
   });
 
-  it("renders \u041f\u043e\u0432\u0442\u043e\u0440\u044f\u044e\u0449\u0438\u0435\u0441\u044f \u043f\u0440\u043e\u0431\u043b\u0435\u043c\u044b as the last card on the page", () => {
-    const repeatedIdx = source.indexOf('data-testid="analytics-repeated-bikes"');
+  it("removes repeated problems and leaves parking as the last card", () => {
     const parkingIdx = source.indexOf('data-testid="analytics-parking"');
-    expect(repeatedIdx).toBeGreaterThan(parkingIdx);
+    expect(source).not.toContain('analytics-repeated-bikes');
+    expect(source.slice(parkingIdx, source.indexOf('function ExportBar')).indexOf('<Card')).toBe(-1);
+  });
+
+  it("offers an accessible city selector and renders filtered parking rows without a hidden limit", () => {
+    expect(source).toContain('aria-label="Город парковок"');
+    expect(source).toContain('value="all">Все города');
+    expect(source).toContain('parkingRows.map');
+    expect(source).not.toContain('parkingUsage.slice(0, 15)');
   });
 });
