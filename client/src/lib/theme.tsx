@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useLayoutEffect, useState } from "react";
+import { applyThemeChrome } from "./theme-chrome";
 
 type Theme = "light" | "dark";
 export type ThemeMode = "light" | "dark" | "system";
@@ -12,8 +13,12 @@ function systemPrefersDark() {
 
 function readStoredMode(): ThemeMode {
   if (typeof window === "undefined") return "system";
-  const stored = window.localStorage?.getItem(STORAGE_KEY);
-  return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+  try {
+    const stored = window.localStorage?.getItem(STORAGE_KEY);
+    return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+  } catch {
+    return "system";
+  }
 }
 
 function resolve(mode: ThemeMode): Theme {
@@ -39,13 +44,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   // Apply the resolved theme to <html> and keep it in sync with both the
   // chosen mode and — when mode is "system" — the live OS preference.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const apply = () => {
       const resolved = resolve(mode);
       setTheme(resolved);
-      const root = document.documentElement;
-      if (resolved === "dark") root.classList.add("dark");
-      else root.classList.remove("dark");
+      applyThemeChrome(resolved);
     };
     apply();
 
@@ -56,8 +59,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [mode]);
 
   const setMode = (next: ThemeMode) => {
+    // Paint the guard, html backdrop and browser chrome in the same event,
+    // without waiting for navigation or an effect after the next frame.
+    const resolved = resolve(next);
+    applyThemeChrome(resolved);
+    setTheme(resolved);
     setModeState(next);
-    window.localStorage?.setItem(STORAGE_KEY, next);
+    try { window.localStorage?.setItem(STORAGE_KEY, next); } catch { /* storage may be blocked */ }
   };
 
   // toggle flips the resolved theme into an explicit light/dark mode.

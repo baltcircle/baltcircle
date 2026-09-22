@@ -149,18 +149,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           пикселей и ИГНОРИРУЕТ theme-color, когда сверху лежит
           затемняющий overlay (бургер-меню, модалки). Эта полоска
           лежит ПОВЕРХ всех overlay (z=2147483647) → Safari всегда видит
-          воду и не меняет цвет полосы. pointer-events:none — не блокирует
-          клики. Высота = safe-area-inset-top (0 в обычном браузере). */}
+          воду текущей темы. pointer-events:none — не блокирует
+          клики. Сохраняем высоту защитной полосы 5px. */}
       {isCustomerMap && (
         <div
           aria-hidden="true"
+          data-testid="status-bar-guard"
           style={{
             position: "fixed",
             top: 0,
             left: 0,
             right: 0,
             height: "5px",
-            backgroundColor: "#9fc9e0",
+            backgroundColor: "var(--map-water)",
             zIndex: 2147483647,
             pointerEvents: "none",
           }}

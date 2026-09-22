@@ -1,5 +1,6 @@
 import * as maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
+import { MAP_WATER_COLORS } from "@/lib/theme-chrome";
 
 // maplibre-gl is bundled by Vite, so its web-worker is emitted same-origin and
 // loaded automatically — no CDN, no cross-origin Worker, no setWorkerUrl hacks.
@@ -58,7 +59,7 @@ export type MapTheme = "light" | "dark";
 // below is our own reasonable tint since our renderer needs one.
 const LIGHT_COLORS = {
   land:            "#e0f0c1", // base green — grass/farmland (Apple's dominant countryside tone)
-  water:           "#8ddbf6", // sea/lake/river — flat, matches Apple's Standard style exactly
+  water:           MAP_WATER_COLORS.light, // shared with browser chrome
   forest:          "#c2e5a8", // forest/park — Apple's second, darker green
   grass:           "#e0f0c1", // collapsed onto `land` — Apple treats grass/meadow as the same base green
   farmland:        "#e0f0c1", // collapsed onto `land` — same reasoning
@@ -98,7 +99,7 @@ const LIGHT_COLORS = {
 // highway and a bare residential street at identical rgb(120,138,161).
 const DARK_COLORS = {
   land:            "#316d56", // base green — grass/farmland/scrub (Apple's dominant countryside tone)
-  water:           "#213782", // sea/lake/river — flat, matches Apple's Standard style exactly
+  water:           MAP_WATER_COLORS.dark, // shared with browser chrome
   forest:          "#0c625e", // forest/park — Apple's second, more teal-leaning green
   grass:           "#316d56", // collapsed onto `land` — Apple treats grass/meadow as the same base green
   farmland:        "#316d56", // collapsed onto `land` — same reasoning
