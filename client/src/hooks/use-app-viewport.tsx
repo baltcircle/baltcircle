@@ -1,8 +1,7 @@
 import { useEffect, useRef } from "react";
 import {
-  consumeSbpAppHandoff, noteSbpAppHidden,
-  createSbpViewportRecovery, continueSbpViewportRecovery,
-  type SbpViewportRecovery,
+  consumeSbpAppHandoff, noteSbpAppHidden, repairSbpViewport,
+  type SbpViewportSnapshot,
 } from "@/lib/sbp-app-handoff";
 import {
   nextAppHeight,
@@ -39,11 +38,13 @@ export function useAppViewport(enabled: boolean) {
     const root = document.documentElement;
     const vv = window.visualViewport;
     const timers = new Set<ReturnType<typeof setTimeout>>();
-    let sbpRestore: SbpViewportRecovery | null = null;
+    let sbpRestore: (SbpViewportSnapshot & { until: number }) | null = null;
     let frameId = 0;
 
     const apply = () => {
-      if (sbpRestore && continueSbpViewportRecovery(sbpRestore)) sbpRestore = null;
+      if (sbpRestore) {
+        if (Date.now() > sbpRestore.until || repairSbpViewport(sbpRestore)) sbpRestore = null;
+      }
       const sample = readViewportSample(window);
 
       const state = nextAppHeight(heightRef.current, sample);
@@ -73,7 +74,7 @@ export function useAppViewport(enabled: boolean) {
       cancelAnimationFrame(frameId);
       apply();
       frameId = requestAnimationFrame(apply);
-      for (const delay of [150, 400, 900, 1500]) {
+      for (const delay of [150, 400, 900]) {
         const t = setTimeout(() => {
           timers.delete(t);
           apply();
@@ -88,7 +89,7 @@ export function useAppViewport(enabled: boolean) {
         return;
       }
       const handoff = consumeSbpAppHandoff();
-      if (handoff) sbpRestore = createSbpViewportRecovery(handoff);
+      if (handoff) sbpRestore = { ...handoff, until: Date.now() + 1500 };
       applySoon();
     };
 

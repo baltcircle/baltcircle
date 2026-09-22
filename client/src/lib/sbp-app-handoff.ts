@@ -3,45 +3,6 @@ export interface SbpViewportSnapshot {
   width: number;
 }
 
-export interface SbpViewportRecovery extends SbpViewportSnapshot {
-  attempts: number;
-  nextAttemptAt: number;
-  until: number;
-}
-
-const MAX_RECOVERY_ATTEMPTS = 4;
-const RECOVERY_INTERVAL_MS = 150;
-const RECOVERY_WINDOW_MS = 2000;
-
-export function createSbpViewportRecovery(
-  snapshot: SbpViewportSnapshot, now = Date.now(),
-): SbpViewportRecovery {
-  return { ...snapshot, attempts: 0, nextAttemptAt: now, until: now + RECOVERY_WINDOW_MS };
-}
-
-function viewportInteractionBusy(win: Window): boolean {
-  return win.document.visibilityState !== "visible"
-    || Math.abs((win.visualViewport?.scale ?? 1) - 1) > 0.01
-    || !!(win.document.activeElement as HTMLElement | null)
-      ?.matches("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
-}
-
-/** Returns true when recovery is complete or its bounded retry budget is exhausted. */
-export function continueSbpViewportRecovery(
-  recovery: SbpViewportRecovery, win: Window = window, now = Date.now(),
-): boolean {
-  if (now >= recovery.until
-    || recovery.attempts >= MAX_RECOVERY_ATTEMPTS
-    || Math.abs(win.innerWidth - recovery.width) > 2
-    || recovery.height - win.innerHeight <= 4) return true;
-  if (now < recovery.nextAttemptAt || viewportInteractionBusy(win)) return false;
-
-  // Set the guard before reflow/focus: these can synchronously emit resize events.
-  recovery.attempts++;
-  recovery.nextAttemptAt = now + RECOVERY_INTERVAL_MS;
-  return repairSbpViewport(recovery, win) || recovery.attempts >= MAX_RECOVERY_ATTEMPTS;
-}
-
 let pending: (SbpViewportSnapshot & { at: number; hidden: boolean }) | null = null;
 
 /** No bank URLs, payment identifiers or persistent storage are involved. */
@@ -81,9 +42,11 @@ export function consumeSbpAppHandoff(): SbpViewportSnapshot | null {
 export function repairSbpViewport(snapshot: SbpViewportSnapshot, win: Window = window): boolean {
   const doc = win.document;
   const focused = doc.activeElement as HTMLElement | null;
-  if (viewportInteractionBusy(win)
+  if (doc.visibilityState !== "visible"
     || Math.abs(win.innerWidth - snapshot.width) > 2
-    || snapshot.height - win.innerHeight <= 4) {
+    || snapshot.height - win.innerHeight <= 4
+    || Math.abs((win.visualViewport?.scale ?? 1) - 1) > 0.01
+    || focused?.matches("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) {
     return false;
   }
   const frame = doc.querySelector<HTMLElement>('[data-testid="customer-overlay-viewport"]');
@@ -106,6 +69,5 @@ export function repairSbpViewport(snapshot: SbpViewportSnapshot, win: Window = w
       el.scrollLeft = left;
     }
   }
-  // A first reflow can restore only part of the missing height on iOS.
-  return snapshot.height - win.innerHeight <= 4;
+  return true;
 }
