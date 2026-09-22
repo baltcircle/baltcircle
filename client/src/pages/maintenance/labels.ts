@@ -48,8 +48,8 @@ export const normStatus = (s: string) => (s === "open" ? "new" : s);
 export const isClosed = (s: string) => TICKET_CLOSED_STATUSES.includes(normStatus(s));
 
 export type CreateForm = {
-  bikeId: string; kind: string; priority: string; title: string; message: string; assignee: string;
+  bikeId: string; kind: string; priority: string; message: string; assignee: string;
 };
 export const emptyForm: CreateForm = {
-  bikeId: "", kind: "wheel_puncture", priority: "medium", title: "", message: "", assignee: "",
+  bikeId: "", kind: "wheel_puncture", priority: "medium", message: "", assignee: "",
 };

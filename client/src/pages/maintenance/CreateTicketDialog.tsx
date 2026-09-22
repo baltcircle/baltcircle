@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -25,10 +25,9 @@ export function CreateTicketDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="dialog-create-ticket" className="max-h-[90vh] overflow-y-auto">
+      <DialogContent data-testid="dialog-create-ticket" aria-describedby={undefined} className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-display font-light">Новая сервисная заявка</DialogTitle>
-          <DialogDescription>Создайте заявку на обслуживание велосипеда.</DialogDescription>
+          <DialogTitle className="font-display font-light text-xl text-center px-4 leading-snug">Новая сервисная заявка</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <div>
@@ -69,21 +68,13 @@ export function CreateTicketDialog({
             </div>
           </div>
           <div>
-            <div className="text-xs text-muted-foreground mb-1">Заголовок (необязательно)</div>
-            <Input
-              value={form.title}
-              onChange={(e) => setForm((s) => ({ ...s, title: e.target.value }))}
-              placeholder="Кратко"
-              data-testid="input-ticket-title"
-            />
-          </div>
-          <div>
-            <div className="text-xs text-muted-foreground mb-1">Описание</div>
+            <div className="text-xs text-muted-foreground mb-1">Описание (необязательно)</div>
             <Textarea
               rows={3}
               value={form.message}
               onChange={(e) => setForm((s) => ({ ...s, message: e.target.value }))}
               placeholder="Что произошло?"
+              maxLength={2000}
               data-testid="textarea-ticket-message"
             />
           </div>
@@ -110,7 +101,7 @@ export function CreateTicketDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-ticket-cancel">Отмена</Button>
           <Button
             onClick={onSubmit}
-            disabled={!form.bikeId.trim() || form.message.trim().length < 2 || submitting}
+            disabled={!form.bikeId.trim() || submitting}
             data-testid="button-submit-ticket"
           >
             Создать

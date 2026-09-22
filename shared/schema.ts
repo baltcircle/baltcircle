@@ -1024,7 +1024,7 @@ export const createTicketSchema = z.object({
   kind: z.enum(ALL_TICKET_KINDS as unknown as [string, ...string[]]).default("other"),
   priority: z.enum(TICKET_PRIORITIES).default("medium"),
   title: z.union([z.string().trim().max(120), z.literal("")]).optional(),
-  message: z.string().trim().min(2, "Опишите проблему").max(2000),
+  message: z.string().trim().max(2000).default(""),
   assignee: z.union([z.string().trim().max(80), z.literal("")]).optional(),
 });
 export type CreateTicketInput = z.infer<typeof createTicketSchema>;

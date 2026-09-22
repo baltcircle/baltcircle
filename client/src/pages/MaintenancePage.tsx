@@ -73,7 +73,6 @@ export function MaintenancePage() {
         bikeId: form.bikeId.trim(),
         kind: form.kind,
         priority: form.priority,
-        title: form.title.trim(),
         message: form.message.trim(),
         assignee: form.assignee.trim(),
       });

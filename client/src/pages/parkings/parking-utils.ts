@@ -9,7 +9,6 @@ export type ParkingFormState = {
   capacity: string;
   occupied: string;
   radius: string;
-  notes: string;
   // Stored in abstract map space (x = lng field, y = lat field).
   x: number;
   y: number;
@@ -17,5 +16,5 @@ export type ParkingFormState = {
 
 export const emptyParkingForm: ParkingFormState = {
   name: "", city: "", capacity: "10", occupied: "0", radius: "30",
-  notes: "", x: 500, y: 350,
+  x: 500, y: 350,
 };

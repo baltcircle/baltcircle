@@ -145,14 +145,12 @@ export function BikeFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="dialog-bike-form" className="max-h-[90vh] overflow-y-auto">
+      <DialogContent data-testid="dialog-bike-form" className="max-h-[90vh] overflow-y-auto" {...(editing ? { "aria-describedby": undefined } : {})}>
         <DialogHeader>
-          <DialogTitle className="font-display font-light">
+          <DialogTitle className="font-display font-light text-xl text-center px-4 leading-snug">
             {editing ? `Редактирование ${editing.id}` : "Новый велосипед"}
           </DialogTitle>
-          <DialogDescription>
-            {editing ? "Измените поля и сохраните." : "Заполните данные реального велосипеда."}
-          </DialogDescription>
+          {!editing && <DialogDescription>Заполните данные реального велосипеда.</DialogDescription>}
         </DialogHeader>
 
         <div className="space-y-3">

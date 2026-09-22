@@ -8,10 +8,9 @@ import { useToast } from "@/hooks/use-toast";
 import { MapLibreMap } from "@/components/MapLibreMap";
 import { Field } from "@/components/FormField";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -41,7 +40,6 @@ export function ParkingFormDialog({
       capacity: String(editing.capacity),
       occupied: String(editing.occupied),
       radius: String(editing.radius),
-      notes: editing.notes ?? "",
       x: editing.lng,
       y: editing.lat,
     } : emptyParkingForm);
@@ -132,7 +130,6 @@ export function ParkingFormDialog({
       // occupied больше не вводится вручную — считается на сервере от велосипедов.
       // status больше не отправляется вручную — сервер ставит "active" при создании
       // и управляет его дальше только через архив/восстановление.
-      notes: form.notes,
     };
     if (editing) {
       saveMut.mutate({ editingId: editing.id, body: common });
@@ -143,14 +140,11 @@ export function ParkingFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="dialog-parking-form" className="max-h-[92vh] overflow-y-auto w-[95vw] sm:max-w-[95vw] lg:max-w-6xl">
+      <DialogContent data-testid="dialog-parking-form" aria-describedby={undefined} className="max-h-[92vh] overflow-y-auto w-[95vw] sm:max-w-[95vw] lg:max-w-6xl">
         <DialogHeader>
-          <DialogTitle className="font-display font-light">
+          <DialogTitle className="font-display font-light text-xl text-center px-4 leading-snug">
             {editing ? `Редактирование ${editing.id}` : "Новая парковка"}
           </DialogTitle>
-          <DialogDescription>
-            Кликните по карте, чтобы выбрать точку.
-          </DialogDescription>
         </DialogHeader>
 
         <div className="grid md:grid-cols-3 gap-4">
@@ -224,15 +218,6 @@ export function ParkingFormDialog({
               </Field>
               <div />
             </div>
-            <Field label="Инструкции / заметки (необязательно)">
-              <Textarea
-                value={form.notes}
-                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-                rows={2}
-                data-testid="input-parking-notes"
-              />
-            </Field>
-
             {formError && (
               <div className="text-xs text-destructive" data-testid="parking-form-error">{formError}</div>
             )}
