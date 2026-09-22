@@ -23,7 +23,7 @@ interface OverlayShellProps {
 
 export function OverlayShell({ title, subtitle, children }: OverlayShellProps) {
   return (
-    // Высота задаётся родительским AppShell (через --visible-height),
+    // Высота задаётся CustomerOverlayViewport (через --visible-height),
     // бьём на 100% этой высоты, чтобы контент не уходил под URL-бар.
     <div className="flex flex-col bg-background text-foreground h-full">
       {/* Header — верхний отступ учитывает safe-area ПЛЮС запас под голубой
@@ -53,7 +53,7 @@ export function OverlayShell({ title, subtitle, children }: OverlayShellProps) {
           адрес-баром, напр. Яндекс) позволяют резиновую перетяжку страницы
           ниже реального контента, и под открытым полем ввода видна пустая
           область со скроллом. Скролл самого чата это не затрагивает. */}
-      <div className="flex-1 overflow-y-auto overscroll-y-contain">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain">
         {children}
       </div>
     </div>

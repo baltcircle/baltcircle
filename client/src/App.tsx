@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
 import { AppShell } from "@/components/AppShell";
+import { CustomerOverlayViewport } from "@/components/CustomerOverlayViewport";
 import { SessionBoundary } from "@/components/SessionBoundary";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { AdminGuard } from "@/components/AdminGuard";
@@ -249,8 +250,8 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
   if (!exiting) enteredRef.current = true;
 
   return (
-    <div
-      className={`fixed inset-0 z-50 ${enterCls}`}
+    <CustomerOverlayViewport
+      className={enterCls}
       ref={() => {
         if (skipEnter) {
           // Сброс после монтирования — через кадр, чтобы не мешать первому рендеру.
@@ -291,7 +292,7 @@ function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) 
         <Route path="/legal/consent"><Redirect to="/legal#consent" /></Route>
         <Route path="/legal/payment-terms"><Redirect to="/legal#payment-terms" /></Route>
       </Switch>
-    </div>
+    </CustomerOverlayViewport>
   );
 }
 
