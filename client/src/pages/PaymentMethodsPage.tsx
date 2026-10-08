@@ -66,6 +66,12 @@ export function PaymentMethodsPage() {
   // просто переводим уже открытое окно на него (popup.location.href), без
   // повторного window.open.
   const pendingPopupRef = useRef<Window | null>(null);
+  const sbpPopupRef = useRef<{
+    popup: Window | null;
+    cancelled: boolean;
+    ready: boolean;
+    methodId?: number;
+  } | null>(null);
 
   const POPUP_WIDTH = 430;
   const POPUP_HEIGHT = 760;
@@ -78,25 +84,26 @@ export function PaymentMethodsPage() {
   // рисует в нём лоадер в теме приложения (фон + акцент как на странице), чтобы
   // переход "наше окно → форма банка" не выглядел как две разные всплывашки —
   // визуально это один и тот же экран, который просто заполняется контентом.
-  const openPendingPopup = () => {
-    const popup = window.open("", "tbank-bind", popupFeatures());
+  const openPendingPopup = (target = "tbank-bind") => {
+    const popup = window.open("", target, popupFeatures());
     if (popup) {
       const dark = document.documentElement.classList.contains("dark");
       const bg = dark ? "#18181b" : "#ffffff";
       const fg = dark ? "#a1a1aa" : "#71717a";
       const ring = dark ? "#3f3f46" : "#e4e4e7";
       popup.document.write(
-        '<!doctype html><meta charset="utf-8"><title>Переход в банк…</title>' +
+        '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Переход в банк…</title>' +
           `<body style="margin:0;height:100vh;background:${bg};display:flex;` +
           "flex-direction:column;align-items:center;justify-content:center;gap:16px;" +
           `font-family:system-ui,-apple-system,sans-serif;color:${fg}">` +
-          `<div style="width:36px;height:36px;border-radius:50%;border:3px solid ${ring};` +
+          `<div id="bank-spinner" style="width:36px;height:36px;border-radius:50%;border:3px solid ${ring};` +
           `border-top-color:${fg};animation:spin 0.8s linear infinite"></div>` +
-          '<div style="font-size:14px">Открываем форму банка…</div>' +
-          "<style>@keyframes spin{to{transform:rotate(360deg)}}</style>",
+          '<div id="bank-status" role="status" style="font-size:14px">Открываем форму банка…</div>' +
+          "<style>@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){#bank-spinner{animation:none!important}}</style></body>",
       );
+      popup.document.close();
     }
-    pendingPopupRef.current = popup;
+    if (target === "tbank-bind") pendingPopupRef.current = popup;
     return popup;
   };
 
@@ -115,6 +122,40 @@ export function PaymentMethodsPage() {
   });
   const methods = methodsQ.data ?? [];
   const visibleMethods = visiblePaymentMethods(methods);
+
+  // SBP does not post a result through the popup. Returning to TakeRide or an
+  // authoritative terminal status closes it; the existing server polling stays.
+  useEffect(() => {
+    const onReturn = () => {
+      const attempt = sbpPopupRef.current;
+      if (document.visibilityState !== "visible" || !attempt?.ready) return;
+      attempt.popup?.close();
+      sbpPopupRef.current = null;
+      lastPendingPollAt.current = 0;
+      queryClient.invalidateQueries({ queryKey: METHODS_KEY });
+    };
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    return () => {
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+      const attempt = sbpPopupRef.current;
+      if (attempt) {
+        attempt.cancelled = true;
+        attempt.popup?.close();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const attempt = sbpPopupRef.current;
+    if (!attempt?.methodId) return;
+    const method = methods.find((m) => m.id === attempt.methodId);
+    if (method?.status === "active" || method?.status === "failed") {
+      attempt.popup?.close();
+      sbpPopupRef.current = null;
+    }
+  }, [methods]);
 
   // Probe whether real T-Bank acquiring is configured. When it is not, we show a
   // "Платежи настраиваются" notice instead of offering a flow that would 503.
@@ -225,25 +266,52 @@ export function PaymentMethodsPage() {
 
   const bindSbpMut = useMutation({
     mutationFn: async (bank: SbpBank | null) => {
+      const attempt = sbpPopupRef.current;
       const data = await startSbpBinding(bank?.id);
-      return { data, bank };
+      return { data, bank, attempt };
     },
-    onSuccess: ({ data, bank }) => {
+    onSuccess: ({ data, bank, attempt }) => {
       queryClient.invalidateQueries({ queryKey: METHODS_KEY });
-      // Райдер выбрал банк — значит payload это его deeplink, и тап по банку
-      // должен вести в приложение сразу, без промежуточного экрана
-      // подтверждения — закрываем модалку и сразу уводим. Фоновый polling
-      // pending-метода (см. эффект ниже) догонит статус сам — без тоста и без
-      // участия открытой модалки. Переход только на тач-устройствах: в
-      // десктопном браузере банковской схемы нет, там модалка остаётся со своей
-      // кнопкой/QR, как и раньше.
-      if (bank && isOpenablePayload(data.qrPayload) && detectSbpDeviceType() === "mobile") {
-        setSbpModalOpen(false);
-        setSbpBinding(null);
-        markSbpAppHandoff();
-        window.location.assign(data.qrPayload);
+      if (attempt?.cancelled || attempt?.popup?.closed) {
+        if (sbpPopupRef.current === attempt) sbpPopupRef.current = null;
         return;
       }
+      // Like card binding: navigate the loading window, never the PWA itself.
+      // A blocked popup falls back to the existing manual bank link / QR.
+      if (bank && isOpenablePayload(data.qrPayload) && detectSbpDeviceType() === "mobile") {
+        if (attempt?.popup) {
+          try {
+            // Native schemes may leave this document open. Replace the spinner
+            // with a manual continuation, so a blocked app launch cannot hang.
+            const doc = attempt.popup.document;
+            doc.getElementById("bank-spinner")?.remove();
+            const status = doc.getElementById("bank-status");
+            if (status) status.textContent = "Если банк не открылся, нажмите:";
+            const link = doc.createElement("a");
+            link.textContent = "Открыть банк";
+            link.href = data.qrPayload;
+            link.style.cssText = "color:inherit;font-size:16px;padding:12px";
+            doc.body.append(link);
+            const back = doc.createElement("button");
+            back.type = "button";
+            back.textContent = "Вернуться в TakeRide";
+            back.style.cssText = "color:inherit;background:none;border:0;font:inherit;padding:12px;cursor:pointer";
+            back.onclick = () => attempt.popup?.close();
+            doc.body.append(back);
+            attempt.methodId = data.methodId;
+            attempt.popup.location.href = data.qrPayload;
+            attempt.ready = true;
+            setSbpModalOpen(false);
+            setSbpBinding(null);
+            return;
+          } catch {
+            // Keep binding usable if the pre-opened window became inaccessible.
+            attempt.popup.close();
+          }
+        }
+      }
+      attempt?.popup?.close();
+      sbpPopupRef.current = null;
       setSbpBinding({
         methodId: data.methodId,
         payload: data.qrPayload,
@@ -251,8 +319,14 @@ export function PaymentMethodsPage() {
         ...(bank ? { bankName: bank.name } : {}),
       });
     },
-    onError: (e: Error) =>
-      toast.toast({ title: "Не удалось привязать счёт СБП", description: cleanErr(e), variant: "destructive" }),
+    onError: (e: Error) => {
+      const attempt = sbpPopupRef.current;
+      attempt?.popup?.close();
+      sbpPopupRef.current = null;
+      if (!attempt?.cancelled) {
+        toast.toast({ title: "Не удалось привязать счёт СБП", description: cleanErr(e), variant: "destructive" });
+      }
+    },
   });
 
   const unlinkMut = useMutation({
@@ -514,10 +588,24 @@ export function PaymentMethodsPage() {
     setSbpModalOpen(true);
   };
 
+  const handlePickSbpBank = (bank: SbpBank) => {
+    if (bindSbpMut.isPending || sbpPopupRef.current) return;
+    markSbpAppHandoff();
+    const popup = detectSbpDeviceType() === "mobile" ? openPendingPopup("sbp-bank") : null;
+    sbpPopupRef.current = { popup, cancelled: false, ready: false };
+    bindSbpMut.mutate(bank);
+  };
+
   const closeSbpModal = () => {
+    const attempt = sbpPopupRef.current;
+    if (attempt) {
+      attempt.cancelled = true;
+      attempt.popup?.close();
+    }
+    if (!bindSbpMut.isPending) sbpPopupRef.current = null;
     setSbpModalOpen(false);
     setSbpBinding(null);
-    bindSbpMut.reset();
+    if (!bindSbpMut.isPending) bindSbpMut.reset();
   };
 
   const cardBusy = redirecting || bindCardMut.isPending;
@@ -636,7 +724,7 @@ export function PaymentMethodsPage() {
           banksFailed={banksQ.isError}
           startingBankId={startingBankId}
           starting={bindSbpMut.isPending}
-          onPickBank={(bank) => bindSbpMut.mutate(bank)}
+          onPickBank={handlePickSbpBank}
           onUseQr={() => bindSbpMut.mutate(null)}
           onClose={closeSbpModal}
         />

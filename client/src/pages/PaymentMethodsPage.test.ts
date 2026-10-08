@@ -224,6 +224,32 @@ describe("СБП: выбор банка", () => {
     // deeplink из него всё равно открывается только по явному тапу.
     expect(detectSbpDeviceType()).toBe("mobile");
   });
+
+  it("открывает загрузочное окно по тапу до запроса и переводит в нём в выбранный банк", () => {
+    const picker = pageSource.slice(
+      pageSource.indexOf("const handlePickSbpBank = (bank: SbpBank) => {"),
+      pageSource.indexOf("const closeSbpModal = () => {"),
+    );
+    const onSuccess = pageSource.slice(pageSource.indexOf("onSuccess: ({ data, bank, attempt }) => {"));
+
+    expect(picker).toContain('openPendingPopup("sbp-bank")');
+    expect(picker.indexOf('openPendingPopup("sbp-bank")')).toBeLessThan(
+      picker.indexOf("bindSbpMut.mutate(bank)"),
+    );
+    expect(onSuccess).toContain("attempt.popup.location.href = data.qrPayload");
+    expect(onSuccess).not.toContain("window.location.assign(data.qrPayload)");
+    expect(onSuccess).toContain("attempt?.cancelled");
+    expect(onSuccess).toContain("attempt?.popup?.closed");
+  });
+
+  it("не переиспользует карточное окно для СБП и убирает загрузку после получения ссылки", () => {
+    expect(pageSource).toContain('if (target === "tbank-bind") pendingPopupRef.current = popup');
+    expect(pageSource).toContain('doc.getElementById("bank-spinner")?.remove()');
+    expect(pageSource).toContain('link.textContent = "Открыть банк"');
+    expect(pageSource).toContain('back.textContent = "Вернуться в TakeRide"');
+    expect(pageSource).toContain("if (!bindSbpMut.isPending) bindSbpMut.reset()");
+    expect(pageSource).toContain("attempt.cancelled = true");
+  });
 });
 
 describe("СБП: кнопка ведёт в список банков, а не сразу в QR", () => {
@@ -233,7 +259,7 @@ describe("СБП: кнопка ведёт в список банков, а не 
     // выбора банка, иначе deeplink выбранного банка получить неоткуда.
     const handler = pageSource.slice(
       pageSource.indexOf("const handleAddSbp = () => {"),
-      pageSource.indexOf("const closeSbpModal = () => {"),
+      pageSource.indexOf("const handlePickSbpBank = (bank: SbpBank) => {"),
     );
     expect(handler).toContain("setSbpModalOpen(true)");
     expect(handler).not.toContain("bindSbpMut.mutate(");
@@ -248,8 +274,8 @@ describe("СБП: кнопка ведёт в список банков, а не 
 
   it("автопереход в приложение банка — только по явному выбору и только на телефоне", () => {
     const onSuccess = pageSource.slice(
-      pageSource.indexOf("onSuccess: ({ data, bank }) => {"),
-      pageSource.indexOf("onError: (e: Error) =>\n      toast.toast({ title: \"Не удалось привязать счёт СБП\""),
+      pageSource.indexOf("onSuccess: ({ data, bank, attempt }) => {"),
+      pageSource.indexOf("const unlinkMut = useMutation"),
     );
     expect(onSuccess).toContain(
       'if (bank && isOpenablePayload(data.qrPayload) && detectSbpDeviceType() === "mobile")',
