@@ -14,7 +14,7 @@ export function AdminSupportChatsPage() {
   const inboxQ = useQuery<AdminSupportConversationRow[]>({
     queryKey: INBOX_KEY,
   });
-  const rows = inboxQ.data ?? [];
+  const rows = useMemo(() => inboxQ.data ?? [], [inboxQ.data]);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [query, setQuery] = useState("");

@@ -21,7 +21,7 @@ export function AdminChatPanel({
 }) {
   const toast = useToast();
   const chatQ = useQuery<ChatState>({ queryKey: chatKey(conversationId), refetchInterval: 30_000 });
-  const messages = chatQ.data?.messages ?? [];
+  const messages = useMemo(() => chatQ.data?.messages ?? [], [chatQ.data?.messages]);
 
   const [text, setText] = useState("");
   const [attachment, setAttachment] = useState<{ url: string; previewUrl: string; mime: string; localName: string } | null>(null);
