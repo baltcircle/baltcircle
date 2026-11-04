@@ -43,8 +43,8 @@ export function AdminPage() {
   // deriveAlerts(). Single endpoint returns all kinds; split by `kind` below.
   const fleetAlertsQ = useQuery<Alert[]>({ queryKey: ["/api/admin/alerts"] });
 
-  const bikes = bikesQ.data ?? [];
-  const tickets = ticketsQ.data ?? [];
+  const bikes = useMemo(() => bikesQ.data ?? [], [bikesQ.data]);
+  const tickets = useMemo(() => ticketsQ.data ?? [], [ticketsQ.data]);
   const supportTickets = supportQ.data ?? [];
   const openSupport = supportTickets.filter(t => t.status !== "resolved");
 

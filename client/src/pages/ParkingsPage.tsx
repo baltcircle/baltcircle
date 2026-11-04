@@ -19,7 +19,7 @@ export function ParkingsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Parking | null>(null);
 
-  const parkings = parkingsQ.data ?? [];
+  const parkings = useMemo(() => parkingsQ.data ?? [], [parkingsQ.data]);
 
   // С удалением статуса из UI каждая живая (не архивная) точка всегда
   // активна — сервер гарантирует это при создании/восстановлении.
