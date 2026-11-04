@@ -23,7 +23,7 @@ export function usePendingBikeScan({
   userLoading,
   isRegistered,
   bikes,
-  pendingScan,
+  pendingScan: pendingScanRef,
   setRegOpen,
   onBikeScanned,
 }: UsePendingBikeScanParams) {
@@ -52,7 +52,7 @@ export function usePendingBikeScan({
       return;
     }
     if (!isRegistered) {
-      pendingScan.current = true;
+      pendingScanRef.current = true;
       setRegOpen(true);
       return;
     }

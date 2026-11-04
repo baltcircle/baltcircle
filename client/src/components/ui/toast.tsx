@@ -140,11 +140,11 @@ const Toast = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof ToastPrimitives.Root> &
     VariantProps<typeof toastVariants>
 >(({ className, variant, ...props }, ref) => {
-  const swipe = useToastSwipeDismiss();
+  const { rootRef, onPointerDown, onPointerMove, onPointerUp } = useToastSwipeDismiss();
 
   // Прокидываем ref — и внешний клиентский, и наш внутренний для swipe.
   const setRefs = (el: HTMLLIElement | null) => {
-    swipe.rootRef.current = el;
+    rootRef.current = el;
     if (typeof ref === "function") ref(el);
     else if (ref) (ref as React.MutableRefObject<HTMLLIElement | null>).current = el;
   };
@@ -153,10 +153,10 @@ const Toast = React.forwardRef<
     <ToastPrimitives.Root
       ref={setRefs}
       className={cn(toastVariants({ variant }), className)}
-      onPointerDown={swipe.onPointerDown}
-      onPointerMove={swipe.onPointerMove}
-      onPointerUp={swipe.onPointerUp}
-      onPointerCancel={swipe.onPointerUp}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
       {...props}
     />
   )
