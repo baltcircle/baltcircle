@@ -105,7 +105,7 @@ export type OtpRequest = typeof otpRequests.$inferSelect;
 // the client via /verify's `status` field.
 export const otpStartSchema = z.object({
   phone: z
-    .string({ required_error: "Введите номер телефона" })
+    .string({ error: (issue) => issue.input === undefined ? "Введите номер телефона" : undefined })
     .trim()
     .min(1, "Введите номер телефона"),
 });
@@ -113,9 +113,9 @@ export type OtpStartInput = z.infer<typeof otpStartSchema>;
 
 // Step 2: verify the code the rider received by SMS.
 export const otpVerifySchema = z.object({
-  phone: z.string({ required_error: "Введите номер телефона" }).trim().min(1),
+  phone: z.string({ error: (issue) => issue.input === undefined ? "Введите номер телефона" : undefined }).trim().min(1),
   code: z
-    .string({ required_error: "Введите код из SMS" })
+    .string({ error: (issue) => issue.input === undefined ? "Введите код из SMS" : undefined })
     .trim()
     .regex(OTP_CODE_REGEX, OTP_CODE_MESSAGE),
 });
@@ -127,19 +127,19 @@ export type OtpVerifyInput = z.infer<typeof otpVerifySchema>;
 // profile fields and consent to finish creating the account.
 export const registerCompleteSchema = z.object({
   name: z
-    .string({ required_error: "Введите имя" })
+    .string({ error: (issue) => issue.input === undefined ? "Введите имя" : undefined })
     .trim()
     .min(2, "Имя должно содержать минимум 2 символа")
     .max(80, "Имя слишком длинное"),
   email: z
-    .string({ required_error: "Введите email" })
+    .string({ error: (issue) => issue.input === undefined ? "Введите email" : undefined })
     .trim()
     .toLowerCase()
     .min(1, "Введите email")
     .email("Введите корректный email")
     .max(120, "Слишком длинный email"),
   consent: z.literal(true, {
-    errorMap: () => ({ message: "Необходимо согласие на обработку персональных данных" }),
+    error: "Необходимо согласие на обработку персональных данных",
   }),
 });
 export type RegisterCompleteInput = z.infer<typeof registerCompleteSchema>;
@@ -163,7 +163,7 @@ export type PhoneChangeRequest = typeof phoneChangeRequests.$inferSelect;
 // Step 1: request a code sent to the new number.
 export const phoneChangeStartSchema = z.object({
   phone: z
-    .string({ required_error: "Введите номер телефона" })
+    .string({ error: (issue) => issue.input === undefined ? "Введите номер телефона" : undefined })
     .trim()
     .min(1, "Введите номер телефона"),
 });
@@ -172,7 +172,7 @@ export type PhoneChangeStartInput = z.infer<typeof phoneChangeStartSchema>;
 // Step 2: verify the code sent to the new number.
 export const phoneChangeVerifySchema = z.object({
   code: z
-    .string({ required_error: "Введите код из SMS" })
+    .string({ error: (issue) => issue.input === undefined ? "Введите код из SMS" : undefined })
     .trim()
     .regex(OTP_CODE_REGEX, OTP_CODE_MESSAGE),
 });
@@ -197,7 +197,7 @@ export type EmailChangeRequest = typeof emailChangeRequests.$inferSelect;
 // Step 1: request a code to a new email address.
 export const emailChangeStartSchema = z.object({
   email: z
-    .string({ required_error: "Введите email" })
+    .string({ error: (issue) => issue.input === undefined ? "Введите email" : undefined })
     .trim()
     .toLowerCase()
     .email("Введите корректный email")
@@ -208,7 +208,7 @@ export type EmailChangeStartInput = z.infer<typeof emailChangeStartSchema>;
 // Step 2: verify the code sent by email.
 export const emailChangeVerifySchema = z.object({
   code: z
-    .string({ required_error: "Введите код из письма" })
+    .string({ error: (issue) => issue.input === undefined ? "Введите код из письма" : undefined })
     .trim()
     .regex(OTP_CODE_REGEX, OTP_CODE_MESSAGE),
 });
@@ -639,7 +639,7 @@ const parkingIdRegex = /^[A-Za-z0-9-]{2,40}$/;
 export const adminCreateParkingSchema = z.object({
   id: z.union([z.string().trim().regex(parkingIdRegex, "Код: латиница, цифры и дефис (2–40 символов)"), z.literal("")]).optional(),
   name: z.string().trim().min(2, "Укажите название").max(120),
-  city: z.enum(PARKING_CITIES, { errorMap: () => ({ message: "Выберите город" }) }),
+  city: z.enum(PARKING_CITIES, { error: "Выберите город" }),
   lat: z.number().finite(),
   lng: z.number().finite(),
   capacity: z.number().int().min(0).max(1000).default(10),
@@ -1312,12 +1312,12 @@ export type SupportTicket = typeof supportTickets.$inferSelect;
 
 export const createSupportTicketSchema = z.object({
   subject: z
-    .string({ required_error: "Укажите тему обращения" })
+    .string({ error: (issue) => issue.input === undefined ? "Укажите тему обращения" : undefined })
     .trim()
     .min(3, "Тема должна содержать минимум 3 символа")
     .max(120, "Слишком длинная тема"),
   message: z
-    .string({ required_error: "Опишите вопрос" })
+    .string({ error: (issue) => issue.input === undefined ? "Опишите вопрос" : undefined })
     .trim()
     .min(5, "Опишите вопрос подробнее (минимум 5 символов)")
     .max(2000, "Сообщение слишком длинное"),
@@ -1328,7 +1328,7 @@ export const SUPPORT_TICKET_STATUSES = ["open", "resolved"] as const;
 export type SupportTicketStatus = typeof SUPPORT_TICKET_STATUSES[number];
 
 export const updateSupportTicketSchema = z.object({
-  status: z.enum(SUPPORT_TICKET_STATUSES, { required_error: "Укажите статус" }),
+  status: z.enum(SUPPORT_TICKET_STATUSES, { error: (issue) => issue.input === undefined ? "Укажите статус" : undefined }),
 });
 export type UpdateSupportTicketInput = z.infer<typeof updateSupportTicketSchema>;
 
