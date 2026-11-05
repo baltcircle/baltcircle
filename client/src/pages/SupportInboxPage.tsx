@@ -24,7 +24,7 @@ const STATUS_LABEL: Record<SupportTicketStatus, string> = {
 export function SupportInboxPage() {
   const toast = useToast();
   const listQ = useQuery<SupportTicketWithUser[]>({ queryKey: QUERY_KEY });
-  const tickets = listQ.data ?? [];
+  const tickets = useMemo(() => listQ.data ?? [], [listQ.data]);
 
   const [statusFilter, setStatusFilter] = useState<"all" | SupportTicketStatus>("open");
   const [query, setQuery] = useState("");

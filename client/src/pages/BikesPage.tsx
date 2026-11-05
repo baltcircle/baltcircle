@@ -42,7 +42,7 @@ export function BikesPage() {
   const [editing, setEditing] = useState<Bike | null>(null);
   const [qrBike, setQrBike] = useState<Bike | null>(null);
 
-  const bikes = bikesQ.data ?? [];
+  const bikes = useMemo(() => bikesQ.data ?? [], [bikesQ.data]);
   const parkings = parkingsQ.data ?? [];
 
   const filtered = useMemo(() => {

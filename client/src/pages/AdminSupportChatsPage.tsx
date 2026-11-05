@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { AdminSupportConversationRow } from "@shared/schema";
 import { useSupportUnread } from "@/hooks/use-support-unread";
@@ -7,6 +7,7 @@ import { QueryErrorNotice } from "@/components/QueryErrorNotice";
 import { MessageSquare } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { INBOX_KEY } from "./support-chats/utils";
+import { filterConversations, resolveConversationSelection } from "./support-chats/inbox-state";
 import { ChatList } from "./support-chats/ChatList";
 import { AdminChatPanel } from "./support-chats/AdminChatPanel";
 
@@ -14,7 +15,7 @@ export function AdminSupportChatsPage() {
   const inboxQ = useQuery<AdminSupportConversationRow[]>({
     queryKey: INBOX_KEY,
   });
-  const rows = inboxQ.data ?? [];
+  const rows = useMemo(() => inboxQ.data ?? [], [inboxQ.data]);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
@@ -22,21 +23,14 @@ export function AdminSupportChatsPage() {
   // Звуковое уведомление + inbox SSE + polling в одном месте.
   useSupportUnread();
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) => {
-      const hay = `${r.userName ?? ""} ${r.userPhone ?? ""} ${r.lastMessagePreview ?? ""}`.toLowerCase();
-      return hay.includes(q);
-    });
-  }, [rows, query]);
+  const filtered = useMemo(() => filterConversations(rows, query), [rows, query]);
 
-  // Автовыбор первого при загрузке
-  useEffect(() => {
-    if (selectedId == null && rows.length > 0) {
-      setSelectedId(rows[0].id);
-    }
-  }, [rows, selectedId]);
+  // Adjust only this component's state before committing its children.
+  // Persist the first selection: pinning, polling and filtering must not
+  // replace it, even if the selected row temporarily leaves the inbox.
+  if (selectedId === null && rows.length > 0) {
+    setSelectedId(resolveConversationSelection(selectedId, rows));
+  }
 
   const pinMut = useMutation<unknown, Error, { id: number; pinned: boolean }>({
     mutationFn: async ({ id, pinned }) =>

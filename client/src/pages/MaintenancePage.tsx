@@ -88,7 +88,7 @@ export function MaintenancePage() {
     onError: (e: any) => toast.toast({ title: "Не удалось создать заявку", description: String(e?.message ?? e), variant: "destructive" }),
   });
 
-  const tickets = ticketsQ.data ?? [];
+  const tickets = useMemo(() => ticketsQ.data ?? [], [ticketsQ.data]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return tickets.filter((t) => {
