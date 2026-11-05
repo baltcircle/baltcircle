@@ -26,8 +26,8 @@ export function registerOAuthProtection(app: Express): void {
     message: { error: "Слишком много запросов. Попробуйте позже." },
   });
 
-  // Registered before auth routes, including provider starts and callbacks.
-  app.use("/api/auth/yandex", flowLimiter);
-  app.use("/api/auth/vk", flowLimiter);
+  // One installation for both providers preserves their shared budget and
+  // gives static analysis an unambiguous middleware installation boundary.
+  app.use(["/api/auth/yandex", "/api/auth/vk"], flowLimiter);
   app.use("/api/users/me/oauth", identityLimiter);
 }
