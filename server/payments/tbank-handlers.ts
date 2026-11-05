@@ -2,9 +2,13 @@ import type { Response } from "express";
 import { storage } from "../storage";
 import type { PaymentMethod, PaymentOrder, WalletTopupOrder } from "@shared/schema";
 import {
-  classifyCardBinding, classifyInitBinding, classifyRidePayment,
-  classifyAccountBinding, isCancelledBindingStatus,
-  tbankInitBindCard, verifyNotificationToken, generateBindOrderId,
+  classifyCardBinding,
+  classifyInitBinding,
+  classifyRidePayment,
+  classifyAccountBinding,
+  isCancelledBindingStatus,
+  tbankInitBindCard,
+  generateBindOrderId,
   tbankRefundVerificationCharge,
 } from "../tbank";
 import type { TbankConfig } from "../tbank";

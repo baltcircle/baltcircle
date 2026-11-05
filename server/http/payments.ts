@@ -1,20 +1,15 @@
 import type { Express, Request, Response } from "express";
 import { storage } from "../storage";
 import { errMessage } from "../error-utils";
-import { z } from "zod";
-import { TARIFFS, tariffPriceKopecks, MAX_ACTIVE_RIDES_PER_USER } from "@shared/geo";
+import { TARIFFS, MAX_ACTIVE_RIDES_PER_USER } from "@shared/geo";
 import {
-  insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
-  adminSetRoleSchema, adminSetBlockedSchema,
-  phoneChangeStartSchema, phoneChangeVerifySchema,
-  linkPaymentMethodSchema, createSupportTicketSchema, rideInitPaymentSchema,
-  rideChargeSavedCardSchema, rideExtendSavedCardSchema, walletTopupInitSchema,
-  adminCreateBikeSchema, adminUpdateBikeSchema,
-  createTicketSchema, updateTicketSchema, addTicketCommentSchema,
-  adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
+  linkPaymentMethodSchema,
+  rideInitPaymentSchema,
+  rideChargeSavedCardSchema,
+  rideExtendSavedCardSchema,
+  walletTopupInitSchema,
 } from "@shared/schema";
 import type { PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
-import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./../sms";
 import {
   getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
   verifyNotificationToken,
@@ -33,9 +28,12 @@ import {
 } from "./../payments/tbank-handlers";
 import { log } from "./../index";
 import {
-  riderId, isStaffSession, canManageRide, actorName, clientIp,
-  requireRole, requireAuth, requireRoleWhenConfigured,
-  otpLimiter, paymentLimiter, tbankWebhookLimiter,
+  riderId,
+  clientIp,
+  requireRole,
+  requireAuth,
+  paymentLimiter,
+  tbankWebhookLimiter,
 } from "./context";
 import {
   reconcilePendingCardBinding, reconcilePendingCardBindingsForUser,

@@ -52,13 +52,6 @@ async function waitForServer(timeoutMs = 15000) {
   throw new Error("Server did not start in time");
 }
 
-async function stop(proc: ChildProcess) {
-  proc.kill("SIGTERM");
-  await new Promise<void>((resolve) => {
-    proc.on("exit", () => resolve());
-    setTimeout(resolve, 3000);
-  });
-}
 
 async function main() {
   DB_URL = (await createTestDb(NAME)).url;

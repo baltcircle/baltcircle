@@ -7,8 +7,21 @@ import { useAppViewport } from "@/hooks/use-app-viewport";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import type { UserRole } from "@shared/schema";
 import {
-  Map, QrCode, Route, ShieldCheck, Wrench, BarChart3,
-  Sun, Moon, Bike, ChevronRight, ArrowLeft, User, Users, MapPin, LifeBuoy, Star,
+  Map,
+  QrCode,
+  Route,
+  ShieldCheck,
+  Wrench,
+  BarChart3,
+  Sun,
+  Moon,
+  Bike,
+  ChevronRight,
+  ArrowLeft,
+  Users,
+  MapPin,
+  LifeBuoy,
+  Star,
 } from "lucide-react";
 
 interface NavItem {
