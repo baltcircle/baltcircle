@@ -44,6 +44,19 @@ describe("OAuth rate-limit boundaries", () => {
     expect(OAUTH_REQUESTS_PER_MINUTE).toBe(60);
   });
 
+  it("installs the shared provider limiter once for both prefixes", () => {
+    const use = vi.fn();
+    registerOAuthProtection({ use } as unknown as express.Express);
+    expect(use).toHaveBeenCalledTimes(2);
+    expect(use.mock.calls.map(([path]) => path)).toEqual([
+      ["/api/auth/yandex", "/api/auth/vk"],
+      "/api/users/me/oauth",
+    ]);
+    expect(typeof use.mock.calls[0][1]).toBe("function");
+    expect(typeof use.mock.calls[1][1]).toBe("function");
+    expect(use.mock.calls[0][1]).not.toBe(use.mock.calls[1][1]);
+  });
+
   it("shares the Yandex/VK flow budget and enforces it in production despite the bypass flag", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("DISABLE_RATE_LIMIT", "1");
@@ -56,6 +69,10 @@ describe("OAuth rate-limit boundaries", () => {
         const blocked = await request(base, path);
         expect(blocked.status).toBe(429);
         expect(blocked.retryAfter).not.toBeNull();
+      }
+      for (const provider of ["yandex", "vk"]) {
+        expect((await request(base, `/api/auth/${provider}/callback?code=test&state=test`)).status).toBe(429);
+        expect((await request(base, `/api/auth/${provider}/callback`, "HEAD")).status).toBe(429);
       }
       expect((await request(base, "/api/users/me/oauth")).status).toBe(204);
       expect((await request(base, "/api/auth/otp/start", "POST")).status).toBe(204);

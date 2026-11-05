@@ -7,15 +7,23 @@ import type { AddressInfo } from "node:net";
 import { readFileSync } from "node:fs";
 import { csrfSynchronisedProtection, generateToken } from "./csrf";
 
+// Simulate TLS termination at a trusted local proxy, not an HTTPS browser test.
+async function viaTlsProxy(url: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("x-forwarded-proto", "https");
+  return fetch(url, { ...init, headers });
+}
+
 async function withHttp(run: (base: string) => Promise<void>) {
   const app = express();
+  app.set("trust proxy", "loopback");
   app.use(express.json());
   app.use(session({
     name: "bc.sid",
     secret: "csrf-test",
     resave: false,
     saveUninitialized: false,
-    cookie: { httpOnly: true, sameSite: "lax", secure: false },
+    cookie: { httpOnly: true, sameSite: "lax", secure: true },
   }));
   app.get("/api/csrf-token", (req, res) => { res.json({ csrfToken: generateToken(req) }); });
   app.use(csrfSynchronisedProtection);
@@ -48,17 +56,21 @@ async function withHttp(run: (base: string) => Promise<void>) {
 }
 
 async function issue(base: string) {
-  const response = await fetch(base + "/api/csrf-token");
+  const response = await viaTlsProxy(base + "/api/csrf-token");
   expect(response.status).toBe(200);
   const body = await response.json() as { csrfToken: string };
-  const cookie = response.headers.get("set-cookie")?.split(";")[0] ?? "";
+  const setCookie = response.headers.get("set-cookie") ?? "";
+  expect(setCookie).toMatch(/;\s*Secure(?:;|$)/i);
+  expect(setCookie).toMatch(/;\s*HttpOnly(?:;|$)/i);
+  expect(setCookie).toMatch(/;\s*SameSite=Lax(?:;|$)/i);
+  const cookie = setCookie.split(";")[0];
   expect(cookie).not.toBe("");
   expect(body.csrfToken.length).toBeGreaterThan(0);
   return { cookie, token: body.csrfToken };
 }
 
 async function status(base: string, method: string, headers: Record<string, string> = {}, path = "/api/protected", body?: string) {
-  const response = await fetch(base + path, { method, headers, body });
+  const response = await viaTlsProxy(base + path, { method, headers, body });
   const code = response.status;
   if (code === 403) expect(await response.json()).toMatchObject({ code: "EBADCSRFTOKEN" });
   else await response.text();
@@ -76,6 +88,21 @@ describe("session-backed CSRF boundary", () => {
     expect(tokenAt).toBeGreaterThan(sessionAt);
     expect(protectionAt).toBeGreaterThan(tokenAt);
     expect(routesAt).toBeGreaterThan(protectionAt);
+  });
+
+  it("issues a Secure HttpOnly SameSite cookie behind the trusted TLS proxy fixture", async () => {
+    await withHttp(async (base) => { await issue(base); });
+  });
+
+  it.each([undefined, "http"])("does not issue a session cookie without forwarded HTTPS (%s)", async (protocol) => {
+    await withHttp(async (base) => {
+      const headers: Record<string, string> = {};
+      if (protocol) headers["x-forwarded-proto"] = protocol;
+      const response = await fetch(base + "/api/csrf-token", { headers });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("set-cookie")).toBeNull();
+      await response.text();
+    });
   });
 
   it("allows safe methods without creating a token requirement", async () => {
@@ -122,12 +149,14 @@ describe("session-backed CSRF boundary", () => {
   it("rejects the old token after session regeneration and accepts the new one", async () => {
     await withHttp(async (base) => {
       const before = await issue(base);
-      const response = await fetch(base + "/api/test-regenerate", {
+      const response = await viaTlsProxy(base + "/api/test-regenerate", {
         method: "POST", headers: { cookie: before.cookie, "x-csrf-token": before.token },
       });
       expect(response.status).toBe(200);
       const body = await response.json() as { csrfToken: string };
-      const cookie = response.headers.get("set-cookie")?.split(";")[0] ?? "";
+      const setCookie = response.headers.get("set-cookie") ?? "";
+      expect(setCookie).toMatch(/;\s*Secure(?:;|$)/i);
+      const cookie = setCookie.split(";")[0];
       expect(cookie).not.toBe("");
       expect(cookie).not.toBe(before.cookie);
       expect(body.csrfToken).not.toBe(before.token);
