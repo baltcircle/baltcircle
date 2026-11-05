@@ -120,10 +120,10 @@ export function parsePageParams(req: Request): { limit?: number; offset: number 
 // unauthenticated public POST endpoint that does HMAC verification and JSON
 // parsing before any auth check is still a volumetric-DoS target, so it gets
 // a ceiling far above anything real payment traffic could ever produce.
-// Set DISABLE_RATE_LIMIT=1 to bypass IP rate limiting. Used only by smoke tests,
-// which drive many registrations/payments from a single IP and would otherwise
-// trip the production limits. Never set in production.
-const rateLimitDisabled = () => process.env.DISABLE_RATE_LIMIT === "1";
+// DISABLE_RATE_LIMIT=1 is a smoke-test escape hatch outside production only.
+// In production every limiter stays enabled even if this flag is set by mistake.
+const rateLimitDisabled = () =>
+  process.env.NODE_ENV !== "production" && process.env.DISABLE_RATE_LIMIT === "1";
 export const otpLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
   max: 5, // 5 OTP requests per IP per window (start + verify share this)
