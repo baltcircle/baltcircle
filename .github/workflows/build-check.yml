@@ -11,15 +11,15 @@ jobs:
   # slipping through silently (audit H5). No secrets or DB required — tests mock
   # the storage layer.
   typecheck-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --engine-strict
       - name: Type check
         run: npx tsc --noEmit
       # Audit M12: eslint.config.js currently has 0 error-level violations
@@ -45,7 +45,7 @@ jobs:
     # build?), zero access to production. The prod self-hosted runner is now
     # only used by deploy.yml, which triggers on trusted `push` to `main`
     # after review, never on unreviewed PR branches.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # No `contents: write` — the build log is published as an Actions artifact
     # instead of being self-committed back into the repo (audit M1).
     steps:
