@@ -1,0 +1,88 @@
+name: Node LTS compatibility
+
+on: [pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-lts-compatibility-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node24-checks:
+    name: Node 24 install, native module, tests and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Record runtime versions
+        run: |
+          node --version
+          npm --version
+      - name: Install with strict engine compatibility
+        run: npm ci --engine-strict
+      - name: Exercise native SQLite module
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import Database from 'better-sqlite3';
+          const db = new Database(':memory:');
+          try {
+            db.exec('CREATE TABLE compatibility (value INTEGER NOT NULL)');
+            db.prepare('INSERT INTO compatibility (value) VALUES (?)').run(24);
+            assert.equal(db.prepare('SELECT value FROM compatibility').get().value, 24);
+          } finally {
+            db.close();
+          }
+          NODE
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test -- --maxWorkers=2
+      - name: Application build
+        run: npm run build
+
+  node24-container:
+    name: Verify actual Node 24 production image (not deployed)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify both base stages use the tested digest
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          refs = re.findall(r'^FROM (node:\S+)', Path('Dockerfile').read_text(), re.MULTILINE)
+          expected = 'node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9'
+          if refs != [expected, expected]:
+              raise SystemExit(f'Unexpected base references: {refs}')
+          PY
+      - name: Build the checked-in Dockerfile
+        run: docker build --build-arg BUILD_ID="$GITHUB_SHA" --tag baltcircle-node24:ci .
+      - name: Verify runtime and packaged files
+        run: |
+          docker run --rm --network none --entrypoint node baltcircle-node24:ci -e '
+            const assert = require("node:assert/strict");
+            const fs = require("node:fs");
+            assert.equal(process.versions.node.split(".")[0], "24");
+            assert.equal(process.getuid(), 1000);
+            for (const path of ["dist/index.cjs", "dist/omni.cjs", "migrations"]) {
+              assert.ok(fs.existsSync(path), `Missing ${path}`);
+            }
+            const bundle = process.env.NODE_EXTRA_CA_CERTS;
+            assert.ok(bundle, "NODE_EXTRA_CA_CERTS is missing");
+            assert.match(fs.readFileSync(bundle, "utf8"), /BEGIN CERTIFICATE/);
+            console.log(`Runtime verified: Node ${process.versions.node}, uid ${process.getuid()}`);
+          '

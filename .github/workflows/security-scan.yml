@@ -22,7 +22,7 @@ permissions:
 jobs:
   secret-scan:
     name: Secret scanning (gitleaks)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,14 +38,14 @@ jobs:
 
   dependency-audit:
     name: Dependency vulnerability audit (npm audit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --engine-strict
       - name: npm audit
         # See deploy.yml's matching step for context: registry.npmjs.org's
         # legacy audit endpoint intermittently returns 400/503 unrelated to
@@ -63,7 +63,7 @@ jobs:
 
   image-scan:
     name: Container image scan + SBOM
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       security-events: write # required to upload SARIF to the Security tab
       contents: read

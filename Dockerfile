@@ -2,9 +2,9 @@
 # Base image pinned by digest for reproducible builds (audit M4). Tag kept in the
 # comment for readability. To refresh after an upstream security update, resolve
 # the current digest with:
-#   docker buildx imagetools inspect node:20-bookworm-slim
+#   docker buildx imagetools inspect node:24-bookworm-slim
 # and replace the sha256 below (update both FROM lines to keep them in sync).
-FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS deps
+FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS deps
 WORKDIR /app
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/app/node_modules/.cache \
     npm run build
 RUN npm prune --omit=dev
 
-FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS runtime
+FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=5000
@@ -86,7 +86,7 @@ RUN mkdir -p /app/uploads && chown -R node:node /app/uploads
 # This process only ever runs `node dist/index.cjs` directly — npm/npx are
 # never invoked at runtime, they only matter at build time (already done in
 # the `deps`/`build` stages above) and in the throwaway migration container
-# in deploy.yml (a separate, unrelated node:20-bookworm-slim invocation).
+# in deploy.yml (a separate image invocation).
 # The bundled npm CLI ships its own vendored dependencies (tar, minimatch,
 # sigstore, ip-address, etc.) that are entirely unrelated to this app's
 # package.json/package-lock.json — Trivy flagged CVE-2026-59873 (tar,
