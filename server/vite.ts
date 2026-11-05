@@ -5,6 +5,7 @@ import viteConfig from "../vite.config";
 import fs from "node:fs";
 import path from "node:path";
 import { nanoid } from "nanoid";
+import { pageLimiter } from "./asset-security";
 
 const viteLogger = createLogger();
 
@@ -14,7 +15,6 @@ export async function setupVite(server: Server, app: Express) {
     hmr: { server, path: "/vite-hmr" },
     allowedHosts: true as const,
   };
-
   const vite = await createViteServer({
     ...viteConfig,
     configFile: false,
@@ -28,21 +28,12 @@ export async function setupVite(server: Server, app: Express) {
     server: serverOptions,
     appType: "custom",
   });
-
   app.use(vite.middlewares);
-
-  app.use("/{*path}", async (req, res, next) => {
+  app.use("/{*path}", pageLimiter, async (req, res, next) => {
     const url = req.originalUrl;
-
     try {
-      const clientTemplate = path.resolve(
-        import.meta.dirname,
-        "..",
-        "client",
-        "index.html",
-      );
-
-      // always reload the index.html file from disk incase it changes
+      const clientTemplate = path.resolve(import.meta.dirname, "..", "client", "index.html");
+      // Reload on navigation so edits to the development entrypoint are visible.
       let template = await fs.promises.readFile(clientTemplate, "utf-8");
       template = template.replace(
         `src="/src/main.tsx"`,
