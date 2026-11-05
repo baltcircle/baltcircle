@@ -1,6 +1,9 @@
 import type { RequestOptions } from "node:http";
 import rateLimit from "express-rate-limit";
 
+// Construct at runtime to preserve Unicode validation with the existing TS target.
+const FONT_STACK_PATTERN = new RegExp("^[\\p{L}\\p{N} ,_.-]{1,256}$", "u");
+
 // Only the path is client-controlled. Never parse it as a complete URL.
 export function glyphRequestOptions(requestPath: string): RequestOptions | null {
   if (requestPath.length > 4096) return null;
@@ -8,7 +11,7 @@ export function glyphRequestOptions(requestPath: string): RequestOptions | null 
   if (!match) return null;
   let font: string;
   try { font = decodeURIComponent(match[1]); } catch { return null; }
-  if (!/^[\p{L}\p{N} ,_.-]{1,256}$/u.test(font) || font === "." || font === "..") return null;
+  if (!FONT_STACK_PATTERN.test(font) || font === "." || font === "..") return null;
   const start = Number(match[2]);
   const end = Number(match[3]);
   if (!Number.isSafeInteger(start) || start < 0 || start % 256 !== 0 || end !== start + 255 || end > 65535) return null;
