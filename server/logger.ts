@@ -1,4 +1,5 @@
 import pino from "pino";
+import { sanitizeLogMessage } from "./log-safety";
 
 // Structured application logger (audit L6 — replaces ad-hoc console.*/self-made
 // log() without levels or structure). Emits JSON with levels; the level is
@@ -27,5 +28,5 @@ export const logger = pino({
 // call sites. Routes a plain message through pino at info level, tagged with the
 // calling subsystem (`source`) so log output stays greppable per module.
 export function log(message: string, source = "express") {
-  logger.info({ source }, message);
+  logger.info({ source: sanitizeLogMessage(source) }, sanitizeLogMessage(message));
 }

@@ -24,12 +24,13 @@ import {
   sortSbpBanks,
 } from "@shared/sbp";
 import { logger } from "./logger";
+import { sanitizeLogMessage } from "./log-safety";
 
 // Structured logger (audit L6). We import from ./logger, NOT ./index, because
 // importing index boots the HTTP server (top-level listen); ./logger has no such
 // side effect, so the token logic stays unit-testable in isolation.
 function log(message: string, source = "tbank"): void {
-  logger.info({ source }, message);
+  logger.info({ source: sanitizeLogMessage(source) }, sanitizeLogMessage(message));
 }
 
 const DEFAULT_API_BASE = "https://securepay.tinkoff.ru/v2";
