@@ -16,6 +16,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -50,35 +52,26 @@ jobs:
         run: npm run build
 
   node24-container:
-    name: Node 24 candidate container (not deployed)
+    name: Verify actual Node 24 production image (not deployed)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - name: Derive a temporary candidate Dockerfile
+        with:
+          persist-credentials: false
+      - name: Verify both base stages use the tested digest
         run: |
           python3 - <<'PY'
-          import os
-          import pathlib
+          from pathlib import Path
           import re
-          source = pathlib.Path('Dockerfile').read_text()
-          candidate, count = re.subn(
-              r'node:20-bookworm-slim@sha256:[a-f0-9]{64}',
-              'node:24-bookworm-slim',
-              source,
-          )
-          if count != 2:
-              raise SystemExit(f'Expected two pinned Node 20 stages, found {count}; review Dockerfile before proceeding')
-          target = pathlib.Path(os.environ['RUNNER_TEMP']) / 'Dockerfile.node24'
-          target.write_text(candidate)
+          refs = re.findall(r'^FROM (node:\S+)', Path('Dockerfile').read_text(), re.MULTILINE)
+          expected = 'node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9'
+          if refs != [expected, expected]:
+              raise SystemExit(f'Unexpected base references: {refs}')
           PY
-      - name: Build candidate image without changing production Dockerfile
-        run: |
-          docker build \
-            --file "$RUNNER_TEMP/Dockerfile.node24" \
-            --build-arg BUILD_ID="$GITHUB_SHA" \
-            --tag baltcircle-node24:ci .
-      - name: Verify candidate runtime and packaged files
+      - name: Build the checked-in Dockerfile
+        run: docker build --build-arg BUILD_ID="$GITHUB_SHA" --tag baltcircle-node24:ci .
+      - name: Verify runtime and packaged files
         run: |
           docker run --rm --network none --entrypoint node baltcircle-node24:ci -e '
             const assert = require("node:assert/strict");
@@ -91,5 +84,5 @@ jobs:
             const bundle = process.env.NODE_EXTRA_CA_CERTS;
             assert.ok(bundle, "NODE_EXTRA_CA_CERTS is missing");
             assert.match(fs.readFileSync(bundle, "utf8"), /BEGIN CERTIFICATE/);
-            console.log(`Candidate runtime verified: Node ${process.versions.node}, uid ${process.getuid()}`);
+            console.log(`Runtime verified: Node ${process.versions.node}, uid ${process.getuid()}`);
           '
