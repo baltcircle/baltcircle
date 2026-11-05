@@ -25,6 +25,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
+import { readMigrationAttachment } from "../server/local-attachment-file";
 import { isObjectStorageConfigured, putSupportAttachment } from "../server/storage/object-storage";
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -77,15 +78,16 @@ async function main() {
 
       try {
         const filePath = path.join(SUPPORT_DIR, filename);
-        const stat = await fs.stat(filePath);
-        if (!stat.isFile()) continue;
+        const attachment = await readMigrationAttachment(filePath, DRY_RUN);
+        if (!attachment) continue;
 
         if (DRY_RUN) {
-          console.log(`[dry-run] would upload ${filename} (${stat.size} bytes, ${mime}) -> ${newKey}`);
+          console.log(`[dry-run] would upload ${filename} (${attachment.size} bytes, ${mime}) -> ${newKey}`);
           continue;
         }
 
-        const buf = await fs.readFile(filePath);
+        const buf = attachment.data;
+        if (buf === undefined) throw new Error("Attachment bytes unavailable outside dry-run");
         await putSupportAttachment(newKey, buf, mime);
         uploaded++;
 

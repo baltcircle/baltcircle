@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import { logger, log } from "./logger";
+import { sanitizeLogMessage } from "./log-safety";
 import { OmniTcpServer } from "./omni/server";
 import { PgOmniStore } from "./omni/store";
 import { setLockGateway } from "./omni/gateway";
@@ -236,7 +237,7 @@ app.use((req, res, next) => {
         if (dump.length > 500) dump = dump.slice(0, 500) + "…";
         fields.body = dump;
       }
-      logger.info(fields, `${req.method} ${path} ${res.statusCode} in ${duration}ms`);
+      logger.info(fields, sanitizeLogMessage(`${req.method} ${path} ${res.statusCode} in ${duration}ms`));
     }
   });
 
