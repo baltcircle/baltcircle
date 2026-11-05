@@ -226,7 +226,6 @@ describe("startRide physical unlock gate (audit F-04)", () => {
 
   it("rolls back and refunds the internal wallet debit when the lock is not connected", async () => {
     const bike = makeBike({ lockImei: "868000000000001" });
-    const startedRide = makeRide({ cost: 35000 });
     const activeRideForRollback = makeRide({ cost: 35000, status: "active" });
     // startRide's own tx consumes 4 selects (bike, activeRideCheck, lockRow,
     // parkings); abortUnstartedRide's separate db.transaction call then reuses
@@ -248,7 +247,6 @@ describe("startRide physical unlock gate (audit F-04)", () => {
 
   it("rolls back the ride but does NOT touch the wallet for a prepaid (T-Bank) ride when unlock fails", async () => {
     const bike = makeBike({ lockImei: "868000000000001" });
-    const startedRide = makeRide({ cost: 35000 });
     const activeRideForRollback = makeRide({ cost: 35000, status: "active" });
     const { tx, calls } = makeTx([[bike], [], [], [makeParking()], [activeRideForRollback]]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
@@ -263,7 +261,6 @@ describe("startRide physical unlock gate (audit F-04)", () => {
 
   it("treats a throwing sendUnlockCommand the same as a rejected unlock", async () => {
     const bike = makeBike({ lockImei: "868000000000001" });
-    const startedRide = makeRide({ cost: 35000 });
     const activeRideForRollback = makeRide({ cost: 35000, status: "active" });
     const { tx } = makeTx([[bike], [], [], [makeParking()], [activeRideForRollback]]);
     dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));

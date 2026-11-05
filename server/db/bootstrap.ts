@@ -10,8 +10,11 @@
 // brought over once by the standalone data-migration script (scripts/migrate-
 // sqlite-to-pg.ts), not by this bootstrap.
 import {
-  PARKINGS, OPERATING_ZONE, SLOW_ZONES, FORBIDDEN_ZONES,
-  TARIFFS, tariffPriceKopecks, MAX_ACTIVE_RIDES_PER_USER,
+  PARKINGS,
+  OPERATING_ZONE,
+  SLOW_ZONES,
+  FORBIDDEN_ZONES,
+  MAX_ACTIVE_RIDES_PER_USER,
 } from "@shared/geo";
 import { logger } from "../logger";
 import { runSchemaMigrations } from "./migrate";

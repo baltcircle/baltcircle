@@ -128,13 +128,6 @@ function cookieFromSetCookie(setCookie: string | null): string | null {
   return setCookie.split(";")[0];
 }
 
-async function stop(proc: ChildProcess) {
-  proc.kill("SIGTERM");
-  await new Promise<void>((resolve) => {
-    proc.on("exit", () => resolve());
-    setTimeout(resolve, 3000);
-  });
-}
 
 const ROUTE = "/api/payments/tbank/ride/charge-saved-card";
 

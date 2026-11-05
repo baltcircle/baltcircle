@@ -2,43 +2,19 @@ import type { Express, Request, Response } from "express";
 import { storage, bikeEvents, BIKE_EVENT_CHANNEL } from "../storage";
 import { fleetDataEvents, publicCatalogEvents } from "../storage/events";
 import { z } from "zod";
-import { TARIFFS, tariffPriceKopecks } from "@shared/geo";
 import {
-  insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
-  adminSetRoleSchema, adminSetBlockedSchema,
-  phoneChangeStartSchema, phoneChangeVerifySchema,
-  linkPaymentMethodSchema, createSupportTicketSchema, rideInitPaymentSchema,
-  rideChargeSavedCardSchema,
-  adminCreateBikeSchema, adminUpdateBikeSchema,
-  createTicketSchema, updateTicketSchema, addTicketCommentSchema,
-  adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
-  adminCreateLockSchema, adminUpdateLockSchema,
+  adminCreateBikeSchema,
+  adminUpdateBikeSchema,
+  adminCreateParkingSchema,
+  adminUpdateParkingSchema,
+  adminCreateLockSchema,
+  adminUpdateLockSchema,
 } from "@shared/schema";
 import type { Bike, BikeStatus, PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
-import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./../sms";
-import {
-  getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
-  tbankGetAddCardState, classifyCardBinding, classifyInitBinding,
-  verifyNotificationToken,
-  tbankInitRidePayment, generateRideOrderId, classifyRidePayment,
-  tbankInitSavedCardCharge, tbankCharge, generateSavedCardRideOrderId,
-  tbankGetState,
-  tbankAddAccountQr, tbankGetAddAccountQrState,
-  generateSbpBindOrderId, extractQrPayload, classifyAccountBinding,
-} from "./../tbank";
 import type { TbankConfig } from "./../tbank";
-import {
-  startRideForPaidOrder, tbankErrorBody, handleTbankNotification,
-  bindingErrorPatch, refundVerificationCharge, bindViaVerificationPayment,
-  maskPan, cardBrand,
-} from "./../payments/tbank-handlers";
 import { log } from "./../index";
 import { getLockGateway } from "../omni/gateway";
-import {
-  riderId, isStaffSession, canManageRide, actorName, clientIp,
-  requireRole, requireAuth, requireRoleWhenConfigured,
-  otpLimiter, paymentLimiter, parsePageParams,
-} from "./context";
+import { riderId, isStaffSession, actorName, requireRole, parsePageParams } from "./context";
 
 // The OMNI lock's onboard shake/tamper sensor only arms while the shackle is
 // closed (confirmed empirically on a live test lock; the vendor protocol,

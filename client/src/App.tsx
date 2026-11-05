@@ -77,9 +77,6 @@ try {
 // должен быть мгновенным: overlay-контейнер остаётсь смонтирован, меняется только
 // внутренний <Switch>. Анимация slide-down/up включается только когда мы выходим
 // в non-overlay маршрут (карта, /admin/*, /login и т.п.).
-function isOverlayPath(path: string): boolean {
-  return OVERLAY_ROUTES.some((r) => path === r || path.startsWith(r + "/"));
-}
 
 function OverlayRouter({ loc, isOverlay }: { loc: string; isOverlay: boolean }) {
   const [, setLocation] = useLocation();

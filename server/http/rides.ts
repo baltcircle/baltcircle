@@ -3,45 +3,21 @@ import { streamSessionValid } from "./stream-session";
 import { storage, rideEvents } from "../storage";
 import { feedbackPage } from "../storage/admin-read";
 import { z } from "zod";
-import { TARIFFS, tariffPriceKopecks, realToMap, SSE_HEARTBEAT_INTERVAL_MS } from "@shared/geo";
+import { realToMap, SSE_HEARTBEAT_INTERVAL_MS } from "@shared/geo";
 import { lockTrackPage, legacyLockTrack } from "../storage/lock-track";
 import { timingSafeEqual } from "node:crypto";
-import {
-  insertMapObjectSchema, otpStartSchema, otpVerifySchema, updateProfileSchema,
-  adminSetRoleSchema, adminSetBlockedSchema,
-  phoneChangeStartSchema, phoneChangeVerifySchema,
-  linkPaymentMethodSchema, createSupportTicketSchema, rideInitPaymentSchema,
-  rideChargeSavedCardSchema,
-  adminCreateBikeSchema, adminUpdateBikeSchema,
-  createTicketSchema, updateTicketSchema, addTicketCommentSchema,
-  adminCreateParkingSchema, adminUpdateParkingSchema, updateMapObjectSchema,
-  createRideFeedbackSchema, startTestRideSchema,
-} from "@shared/schema";
+import { createRideFeedbackSchema, startTestRideSchema } from "@shared/schema";
 import type { PaymentMethod, PaymentOrder, Ride } from "@shared/schema";
-import { sendOtpSms, getSmsDiagnostics, smsProvider, getSigmaSmsSendingStatus } from "./../sms";
-import {
-  getTbankConfig, getTbankDiagnostics, isTbankConfigured, tbankAddCard,
-  tbankGetAddCardState, classifyCardBinding, classifyInitBinding,
-  verifyNotificationToken,
-  tbankInitRidePayment, generateRideOrderId, classifyRidePayment,
-  tbankInitSavedCardCharge, tbankCharge, generateSavedCardRideOrderId,
-  tbankGetState,
-  tbankAddAccountQr, tbankGetAddAccountQrState,
-  generateSbpBindOrderId, extractQrPayload, classifyAccountBinding,
-} from "./../tbank";
 import type { TbankConfig } from "./../tbank";
-import {
-  startRideForPaidOrder, tbankErrorBody, handleTbankNotification,
-  bindingErrorPatch, refundVerificationCharge, bindViaVerificationPayment,
-  maskPan, cardBrand,
-} from "./../payments/tbank-handlers";
-import { log } from "./../index";
 import { sendToUserAsync } from "./../push";
 import { rideExpiryTag } from "@shared/ride-expiry";
 import {
-  riderId, isStaffSession, canManageRide, actorName, clientIp,
-  requireRole, requireAuth, requireRoleWhenConfigured,
-  otpLimiter, paymentLimiter, parsePageParams, feedbackLimiter,
+  riderId,
+  isStaffSession,
+  canManageRide,
+  requireRole,
+  parsePageParams,
+  feedbackLimiter,
 } from "./context";
 
 export function registerRideRoutes(app: Express): void {
@@ -128,11 +104,9 @@ export function registerRideRoutes(app: Express): void {
     // clean close) — see use-active-ride-stream.tsx's watchdog.
     const heartbeat = setInterval(async () => {
       if (closed) return;
-      if (!closed) {
-        res.write(`event: heartbeat\ndata: ${Date.now()}\n\n`);
-        // push validates the session once; never double-read it per heartbeat.
-        void push();
-      }
+      res.write(`event: heartbeat\ndata: ${Date.now()}\n\n`);
+      // push validates the session once; never double-read it per heartbeat.
+      void push();
     }, SSE_HEARTBEAT_INTERVAL_MS);
 
     const cleanup = () => {
