@@ -1,0 +1,121 @@
+name: Node LTS integration and pinned image
+
+on: [pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-lts-integration-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-node24:
+    name: Node 24 PostgreSQL integration regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: takeride_admin_test
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install with strict engine compatibility
+        run: npm ci --engine-strict
+      - name: Administrative and rider data integration checks
+        env:
+          ADMIN_DATA_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/takeride_admin_test
+        run: npx tsx script/check-admin-data.ts
+      - name: Lock-only route and distance regressions
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/takeride_admin_test
+        run: npx tsx script/test-lock-tracks.ts
+      - name: Session write, CSRF and expiry regressions
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/takeride_admin_test
+        run: npx tsx script/test-session-store.ts
+
+  resolve-base:
+    name: Resolve candidate base from Docker Registry
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      digest: ${{ steps.resolve.outputs.digest }}
+    steps:
+      - name: Pull official Node 24 image and capture registry digest
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull node:24-bookworm-slim
+          REF=$(docker image inspect node:24-bookworm-slim --format '{{index .RepoDigests 0}}')
+          DIGEST=${REF##*@}
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "Resolved candidate: node:24-bookworm-slim@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+  pinned-container:
+    name: Node 24 pinned base ${{ needs.resolve-base.outputs.digest }}
+    needs: resolve-base
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      NODE24_DIGEST: ${{ needs.resolve-base.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Derive a digest-pinned candidate without editing production
+        run: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+          digest = os.environ['NODE24_DIGEST']
+          if not re.fullmatch(r'sha256:[a-f0-9]{64}', digest):
+              raise SystemExit('Invalid registry digest')
+          source = pathlib.Path('Dockerfile').read_text()
+          candidate, count = re.subn(
+              r'node:20-bookworm-slim@sha256:[a-f0-9]{64}',
+              f'node:24-bookworm-slim@{digest}',
+              source,
+          )
+          if count != 2:
+              raise SystemExit(f'Expected two pinned Node 20 stages, found {count}')
+          (pathlib.Path(os.environ['RUNNER_TEMP']) / 'Dockerfile.node24-pinned').write_text(candidate)
+          PY
+      - name: Build exact candidate base
+        run: |
+          docker build \
+            --file "$RUNNER_TEMP/Dockerfile.node24-pinned" \
+            --build-arg BUILD_ID="$GITHUB_SHA" \
+            --tag baltcircle-node24-pinned:ci .
+      - name: Verify pinned candidate runtime
+        run: |
+          docker run --rm --network none --entrypoint node baltcircle-node24-pinned:ci -e '
+            const assert = require("node:assert/strict");
+            const fs = require("node:fs");
+            assert.equal(process.versions.node.split(".")[0], "24");
+            assert.equal(process.getuid(), 1000);
+            for (const path of ["dist/index.cjs", "dist/omni.cjs", "migrations"]) {
+              assert.ok(fs.existsSync(path), `Missing ${path}`);
+            }
+            assert.ok(process.env.NODE_EXTRA_CA_CERTS);
+            assert.match(fs.readFileSync(process.env.NODE_EXTRA_CA_CERTS, "utf8"), /BEGIN CERTIFICATE/);
+            console.log(`Pinned candidate verified: Node ${process.versions.node}, uid ${process.getuid()}`);
+          '
