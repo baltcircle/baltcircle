@@ -1,25 +1,39 @@
+import type { Request, RequestHandler } from "express";
 import { csrfSync } from "csrf-sync";
 
-// Synchronizer Token Pattern (session-backed) — chosen over the double-submit
-// cookie pattern because the app already runs `express-session` with a
-// server-side store, so the token can live in `req.session` and never touch
-// the client except as an explicit header value.
-//
-// Endpoints below are POST but are never called with a browser session
-// cookie, so a synchronizer token can never be attached to them — CSRF does
-// not apply:
-//  - /api/payments/tbank/notification — T-Bank's server-to-server webhook,
-//    authenticated by a shared secret token verified in the request body
-//    (see verifyNotificationToken in server/http/payments.ts).
-//  - /api/telemetry/bike — HTTP fallback ingest for trackers that can't speak
-//    the OMNI TCP protocol, authenticated by a bearer device token
-//    (TELEMETRY_INGEST_TOKEN), not a rider session.
+// Only independently authenticated service endpoints are exempt. No prefix match.
 const CSRF_EXEMPT_PATHS = new Set<string>([
   "/api/payments/tbank/notification",
   "/api/telemetry/bike",
 ]);
+const SAFE_METHODS = ["GET", "HEAD", "OPTIONS"] as const;
+const safeMethods = new Set<string>(SAFE_METHODS);
 
-export const { csrfSynchronisedProtection, generateToken } = csrfSync({
-  getTokenFromRequest: (req) => req.headers["x-csrf-token"] as string | undefined,
+const csrf = csrfSync({
+  ignoredMethods: [...SAFE_METHODS],
+  getTokenFromRequest: (req) => {
+    const token = req.headers["x-csrf-token"];
+    return typeof token === "string" ? token : undefined;
+  },
   skipCsrfProtection: (req) => CSRF_EXEMPT_PATHS.has(req.path),
 });
+
+export const generateToken = csrf.generateToken;
+
+// Keep validation in csrf-sync, but make the session-token dependency explicit
+// at the registered middleware boundary for review, tests and static analysis.
+function validateSessionCsrfToken(token: unknown, req: Request): boolean {
+  return typeof token === "string" && csrf.isRequestValid(req);
+}
+
+export const csrfSynchronisedProtection: RequestHandler = (req, res, next) => {
+  if (
+    !safeMethods.has(req.method) &&
+    !CSRF_EXEMPT_PATHS.has(req.path) &&
+    !validateSessionCsrfToken(req.session?.csrfToken, req)
+  ) {
+    return next(csrf.invalidCsrfTokenError);
+  }
+  // Preserve csrf-sync's request helper, error object and actual enforcement.
+  return csrf.csrfSynchronisedProtection(req, res, next);
+};
