@@ -20,11 +20,11 @@ describe("external uptime probe", () => {
 
   it("restricts incident mutations to main and isolates diagnostic concurrency", () => {
     const workflow = readFileSync(new URL("../.github/workflows/uptime-monitor.yml", import.meta.url), "utf8");
-    const steps = workflow.split(/^      - name:/m);
+    const steps = workflow.split(/^ {6}- name:/m);
     for (const command of ["gh label create", "gh issue create", "gh issue comment", "gh issue close"]) {
       const step = steps.find((block) => block.includes(command));
       expect(step).toBeDefined();
-      expect(step).toMatch(/^        if:.*github\.ref == 'refs\/heads\/main'/m);
+      expect(step).toMatch(/^ {8}if:.*github\.ref == 'refs\/heads\/main'/m);
     }
     expect(workflow).toContain("group: uptime-monitor-${{ github.ref }}");
   });
