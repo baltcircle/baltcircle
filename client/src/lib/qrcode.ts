@@ -384,7 +384,7 @@ export function qrToSvg(
   const offsetX = (px - qrAreaPx) / 2;
   const quietPx = quiet * moduleSize;
   const darkBottomPx = qrAreaPx - quietPx; // bottom edge of the actual dark modules
-  const gapPx = moduleSize * 0.06; // tight explicit breathing room — well under a full quiet zone
+  const gapPx = moduleSize * 0.70; // small label gap; QR geometry and font size stay unchanged
   const labelTopPx = darkBottomPx + gapPx;
   // Font size is pinned to a fixed fraction of the whole canvas (not of the
   // shrinking label band) so tuning labelFrac/gapPx never changes the code's
