@@ -1,17 +1,9 @@
 name: Uptime Monitor
 
-# Audit HIGH #23 (zero-budget variant) — the app runs on a single Yandex
-# Cloud VM with no failover (explicit decision: horizontal scaling is
-# deferred to 1-2 months before launch, no extra compute spend for now).
-# This is a best-effort external fallback, not a five-minute SLA.
-# Scheduled runs were observed hours apart despite the requested interval;
-# an independent uptime provider is required for reliable polling cadence.
-#
-# Runs on a GitHub-hosted runner (NOT the self-hosted baltcircle-prod
-# runner) on purpose: if the prod VM itself is down, a check running ON
-# that VM would never get a chance to report it. Checking from GitHub's
-# infrastructure over the public internet is what makes this a real
-# external health check. Free for public repos (unlimited Actions minutes).
+# Audit HIGH #23 (zero-budget variant) — keep the health check external.
+# GitHub-hosted schedule is best-effort, not a five-minute SLA: actual runs
+# have occurred hours apart. An independent provider is needed for reliable
+# cadence. Do not move this onto the production VM to make a failed check green.
 on:
   schedule:
     - cron: "2-59/5 * * * *"
@@ -22,7 +14,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: uptime-monitor
+  # A diagnostic branch must not block the main monitoring queue.
+  group: uptime-monitor-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -31,66 +24,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
+      - name: Checkout probe
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Probe takeride.ru
         id: probe
-        run: |
-          set +e
-          ok=1
-          for url in "https://takeride.ru/api/bikes" "https://www.takeride.ru/api/bikes"; do
-            # 3 attempts per URL, short timeouts — tolerate a single transient
-            # blip (deploy in progress, brief network hiccup) without
-            # crying wolf, but still catch a real outage within ~1 minute.
-            attempt_ok=0
-            for i in 1 2 3; do
-              if curl --fail --silent --max-time 10 "$url" >/dev/null; then
-                attempt_ok=1
-                break
-              fi
-              sleep 10
-            done
-            if [ "$attempt_ok" -eq 0 ]; then
-              echo "UNREACHABLE: $url"
-              ok=0
-            else
-              echo "OK: $url"
-            fi
-          done
+        run: python3 scripts/probe_production_health.py
 
-          # audit #5 (pmtiles hardening): a plain 200 doesn't rule out a
-          # truncated/corrupt file (the exact failure mode a non-atomic
-          # regen write could produce) or a regressed filesystem permission
-          # (the 2026-09-11 pmtiles-403 incident). Pull the first 7 bytes via
-          # a real byte-Range request — same request shape MapLibre's
-          # PMTiles protocol issues — and check both the HTTP status and the
-          # PMTiles v3 magic ("PMTiles" ASCII header).
-          pmtiles_ok=1
-          for f in kaliningrad.pmtiles addresses.pmtiles; do
-            attempt_ok=0
-            for i in 1 2 3; do
-              status=$(curl --silent --max-time 10 --range 0-6 \
-                --write-out "%{http_code}" --output /tmp/pmtiles_magic \
-                "https://takeride.ru/$f")
-              magic=$(cat /tmp/pmtiles_magic 2>/dev/null || echo "")
-              if [ "$status" = "206" ] && [ "$magic" = "PMTiles" ]; then
-                attempt_ok=1
-                break
-              fi
-              sleep 10
-            done
-            if [ "$attempt_ok" -eq 0 ]; then
-              echo "PMTILES BROKEN: $f (status=$status, magic='$magic')"
-              pmtiles_ok=0
-              ok=0
-            else
-              echo "OK: $f"
-            fi
-          done
-          echo "pmtiles_healthy=$pmtiles_ok" >> "$GITHUB_OUTPUT"
-          echo "healthy=$ok" >> "$GITHUB_OUTPUT"
-
+      # Dispatching this existing workflow on a diagnostic branch is read-only:
+      # no production issue is opened, commented on or closed from that branch.
       - name: Find existing incident issue
         id: find
-        if: always()
+        if: always() && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -100,49 +47,57 @@ jobs:
           echo "issue_number=$num" >> "$GITHUB_OUTPUT"
 
       - name: Ensure incident label exists
-        if: steps.probe.outputs.healthy == '0' && steps.find.outputs.issue_number == ''
+        if: github.ref == 'refs/heads/main' && steps.probe.outputs.healthy == '0' && steps.find.outputs.issue_number == ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Idempotent recovery: a deleted/missing label must not prevent
-          # recording the next outage. No user data enters the issue.
           gh label create incident --repo "${{ github.repository }}" \
             --color B60205 --description "Production availability incident" --force
 
       - name: Open incident issue
-        if: steps.probe.outputs.healthy == '0' && steps.find.outputs.issue_number == ''
+        if: github.ref == 'refs/heads/main' && steps.probe.outputs.healthy == '0' && steps.find.outputs.issue_number == ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NETWORK_PROBLEM: ${{ steps.probe.outputs.network_problem }}
+          PROBE_PROBLEM: ${{ steps.probe.outputs.probe_problem }}
+          API_HEALTHY: ${{ steps.probe.outputs.api_healthy }}
+          PMTILES_RESPONSE_PROBLEM: ${{ steps.probe.outputs.pmtiles_response_problem }}
+          PROBE_SUMMARY: ${{ steps.probe.outputs.failure_summary }}
         run: |
-          # Distinguish "API unreachable" from "map data broken" (audit #5) —
-          # they have different causes and different runbook steps, and the
-          # site can be up with only the map broken (or vice versa).
           detail="Автоматический мониторинг (uptime-monitor.yml) обнаружил проблему."
-          if [ "${{ steps.probe.outputs.pmtiles_healthy }}" = "0" ]; then
-            detail="$detail\n\n🗺️ **Карта:** /kaliningrad.pmtiles и/или /addresses.pmtiles не отвечают корректно (ожидался 206 + PMTiles magic-байты) — см. лог прогона."
+          if [ "$NETWORK_PROBLEM" = "1" ]; then
+            detail="$detail\n\n**Сеть:** внешний runner не получил HTTP-ответ. Это не подтверждает повреждение файлов карты; код выхода curl, ошибка, DNS, IP и тайминги записаны в Probe."
           fi
+          if [ "$PROBE_PROBLEM" = "1" ]; then
+            detail="$detail\n\n**Проверка:** сбой инструмента мониторинга; доступность сайта не определена. См. Probe."
+          fi
+          if [ "$API_HEALTHY" = "0" ]; then
+            detail="$detail\n\n**API:** один или оба домена не прошли проверку HTTP 200; см. классификацию в Probe."
+          fi
+          if [ "$PMTILES_RESPONSE_PROBLEM" = "1" ]; then
+            detail="$detail\n\n**Карта:** получен неверный или неполный ответ на Range для kaliningrad.pmtiles, addresses.pmtiles или addresses-v2.pmtiles. Требуются HTTP 206, точный диапазон 0-6 и семь байт PMTiles."
+          fi
+          detail="$detail\n\n**Неудачные проверки:** $PROBE_SUMMARY"
           gh issue create --repo "${{ github.repository }}" \
             --title "🔴 Prod incident: takeride.ru" \
             --label incident \
             --body "$(printf '%b' "$detail")
 
           **Обнаружено:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-          **Прогон:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} (подробности — в логе шага Probe)
+          **Прогон:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-          Единая точка отказа (HIGH #23, zero-budget вариант) — на проде одна VM без failover, горизонтальное масштабирование отложено до старта проекта. См. docs/runbook-incident-response.md для порядка восстановления.
+          Единая точка отказа — одна production VM без failover. Порядок диагностики: docs/runbook-incident-response.md.
 
-          Этот issue закроется автоматически, когда мониторинг снова увидит здоровый ответ."
+          Issue закроется автоматически только после успешной проверки обоих API и всех трёх архивов с внешнего runner."
 
-      # Keep one incident open during an outage. Do not send a comment/email
-      # on every poll; recovery below still closes the incident explicitly.
-
+      # Keep one incident open; do not comment or email on every failed poll.
       - name: Close incident issue on recovery
-        if: steps.probe.outputs.healthy == '1' && steps.find.outputs.issue_number != ''
+        if: github.ref == 'refs/heads/main' && steps.probe.outputs.healthy == '1' && steps.find.outputs.issue_number != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh issue comment "${{ steps.find.outputs.issue_number }}" --repo "${{ github.repository }}" \
-            --body "✅ Восстановлено: $(date -u '+%Y-%m-%d %H:%M:%S UTC'). Мониторинг снова получает здоровый ответ от обоих доменов."
+            --body "Восстановлено: $(date -u '+%Y-%m-%d %H:%M:%S UTC'). Внешний мониторинг успешно проверил оба API и kaliningrad.pmtiles, addresses.pmtiles, addresses-v2.pmtiles."
           gh issue close "${{ steps.find.outputs.issue_number }}" --repo "${{ github.repository }}"
 
       - name: Fail the run if unhealthy
