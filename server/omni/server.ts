@@ -10,7 +10,9 @@
 // tests against a fake store without a live Postgres.
 import { createServer, type Server, type Socket } from "node:net";
 import type { Logger } from "pino";
-import { realToMap, GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS } from "@shared/geo";
+import {
+  realToMap, GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS, MAX_GPS_CLOCK_AHEAD_MS, MAX_GPS_CLOCK_BEHIND_MS,
+} from "@shared/geo";
 import type { BikeStatus } from "@shared/schema";
 import {
   OmniFramer, batteryPercent, buildAck, buildServerPacket, decodeMessage,
@@ -87,8 +89,6 @@ export interface OmniServerOptions {
   writer?: TelemetryWriterOptions;
 }
 
-/** A GPS date more than this far from now is treated as a bad device clock. */
-const MAX_CLOCK_SKEW_MS = 7 * 24 * 60 * 60 * 1000;
 /** How long a resolved IMEI -> bike mapping is trusted before re-reading. */
 const IMEI_CACHE_TTL_MS = 60_000;
 /** How long an unknown IMEI is remembered, to keep reconnect loops off the DB. */
@@ -953,7 +953,11 @@ export function buildTelemetry(
       const fix = message.fix;
       // Trust the GPS clock only when it is plausible; a lock that has not got
       // a date yet can report 1970 or 2080 and would corrupt the ride window.
-      const fixedAt = fix.fixedAt !== null && Math.abs(fix.fixedAt - receivedAt) <= MAX_CLOCK_SKEW_MS
+      // Future dates get a tight bound (MAX_GPS_CLOCK_AHEAD_MS): a fix stamped
+      // hours ahead would otherwise look "fresh" to every time-window query.
+      const fixedAt = fix.fixedAt !== null
+        && fix.fixedAt - receivedAt <= MAX_GPS_CLOCK_AHEAD_MS
+        && receivedAt - fix.fixedAt <= MAX_GPS_CLOCK_BEHIND_MS
         ? fix.fixedAt
         : receivedAt;
 

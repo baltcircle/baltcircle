@@ -734,6 +734,30 @@ describe("endRide — lock-equipped bike geofence smoothing (GPS accuracy item 4
     expect(result).toEqual(completedRide);
   });
 
+  it("queries only accepted, non-future fixes for the end gate (production incident, 2026-11-09)", async () => {
+    const activeRide = makeRide();
+    const bike = makeBike({ lockImei: IMEI });
+    const freshLock = makeLock();
+    const parking = makeParkingForRealPoint(LOCK_REAL_LAT, LOCK_REAL_LNG);
+    const completedRide = makeRide({ endedAt: NOW.getTime(), status: "completed" });
+    const { tx } = makeTxWithTelemetry([[activeRide], [bike], [parking], [freshLock], [completedRide]], []);
+    const telemetrySql: string[] = [];
+    const wrapped = tx.execute.getMockImplementation()!;
+    tx.execute.mockImplementation((query: unknown) => {
+      const chunks = (query as { queryChunks?: { value?: unknown[] }[] })?.queryChunks ?? [];
+      const text = chunks.flatMap((c) => (Array.isArray(c?.value) ? c.value : [])).filter((v) => typeof v === "string").join("");
+      if (text.includes("bike_telemetry")) telemetrySql.push(text);
+      return wrapped(query);
+    });
+    dbMock.transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await storage.endRide(activeRide.id);
+
+    expect(telemetrySql).toHaveLength(1);
+    expect(telemetrySql[0]).toContain("x IS NOT NULL AND y IS NOT NULL");
+    expect(telemetrySql[0]).toMatch(/AND t <= /);
+  });
+
   it("falls back to the single locks.last_* point when telemetry has no recent hdop-acceptable rows", async () => {
     const activeRide = makeRide();
     const bike = makeBike({ lockImei: IMEI });

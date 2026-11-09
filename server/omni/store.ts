@@ -20,6 +20,7 @@ import { consumePendingEnd } from "./pending-end-registry";
 import {
   recordMovementAlarm, resetMovementAlarmStreak, MOVEMENT_ALARM_THEFT_THRESHOLD,
 } from "./theft-registry";
+import { recordJumpRejectedFix, resetRelocationCandidate } from "./relocation-registry";
 import {
   rideEvents,
   pendingEndEvents, LOCK_CLOSED_FOR_END, type LockClosedForEndPayload,
@@ -274,7 +275,14 @@ export class PgOmniStore implements OmniStore {
           const jumpM = prevLat != null && prevLng != null
             ? haversineM(prevLat, prevLng, message.fix.lat, message.fix.lng)
             : null;
-          if (jumpM !== null && jumpM > MAX_PLAUSIBLE_GPS_JUMP_M) {
+          const relocated = jumpM !== null && jumpM > MAX_PLAUSIBLE_GPS_JUMP_M
+            && recordJumpRejectedFix(imei, message.fix.lat, message.fix.lng, at);
+          if (relocated) {
+            logger.warn(
+              { imei, jumpM: Math.round(jumpM!) },
+              "omni: re-anchored GPS after a consistent run of accurate fixes (relocation)",
+            );
+          } else if (jumpM !== null && jumpM > MAX_PLAUSIBLE_GPS_JUMP_M) {
             logger.warn(
               {
                 imei, jumpM: Math.round(jumpM),
@@ -285,6 +293,8 @@ export class PgOmniStore implements OmniStore {
             );
             await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
             return false;
+          } else {
+            resetRelocationCandidate(imei);
           }
           await pool.query(`UPDATE locks SET ${base}, last_latitude = $3,
             last_longitude = $4, last_location_at = $2 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
