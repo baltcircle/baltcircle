@@ -1,59 +1,129 @@
+# TEMPORARY DIAGNOSTIC BRANCH ONLY. Do not merge this override into main.
 name: Capacity snapshot (read-only)
+run-name: BC-002 ride-end GPS audit (read-only)
 on:
   workflow_dispatch: {}
 permissions: {}
+concurrency:
+  group: bc002-readonly-audit-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   snapshot:
+    name: Read-only BC-002 end audit
     environment: production
     runs-on: [self-hosted, baltcircle-prod]
-    timeout-minutes: 5
+    timeout-minutes: 3
     steps:
-      - name: Aggregate resources only (no identities or application logs)
+      - name: Inspect current container without restart or device commands
         shell: bash
         run: |
           set -euo pipefail
-          echo "=== UTC / CPU count / memory bytes ==="
-          date -u +%FT%TZ
-          nproc
-          free -b
-          echo "=== Root disk aggregate ==="
-          df -B1 --output=size,used,avail,pcent /
-          echo "=== Container limits and lifecycle ==="
-          docker inspect baltcircle-mvp --format 'MemoryLimit={{.HostConfig.Memory}} NanoCPUs={{.HostConfig.NanoCpus}} OOMKilled={{.State.OOMKilled}} RestartCount={{.RestartCount}} StartedAt={{.State.StartedAt}}'
-          echo "=== Host CPU / memory / IO sample (first line since boot) ==="
-          vmstat 1 10
-          echo "=== Container resource samples, 12 over roughly 2 minutes ==="
-          for i in $(seq 1 12); do
-            date -u +%FT%TZ
-            docker stats --no-stream --format 'CPU={{.CPUPerc}} RAM={{.MemUsage}} RAMPercent={{.MemPerc}} PIDs={{.PIDs}}' baltcircle-mvp
-            awk '/^MemAvailable:|^SwapFree:/{print}' /proc/meminfo
-            sleep 8
-          done
-          echo "=== Established connections: aggregate count only ==="
-          for port in 443 5000 5100; do
-            count=$(ss -Htn state established "( sport = :$port )" | wc -l)
-            printf 'port=%s count=%s\n' "$port" "$count"
-          done
-          echo "=== Database aggregate / read-only query ==="
           docker exec -i baltcircle-mvp node <<'NODE'
           const { Client } = require('pg');
+          const fs = require('node:fs');
+          const TARGET = 'BC-002';
+          const LIVE_MS = 300000;
+          const INCIDENT_FROM = Date.parse('2026-11-09T20:24:00Z');
+          const INCIDENT_TO = Date.parse('2026-11-09T20:44:00Z');
+          const PREFIX = 'BC002_RIDE_END_AUDIT ';
+          const n = value => value == null ? null : Number(value);
+          const age = (now, value) => value == null || !Number.isFinite(n(value)) ? null : Math.round((now - n(value)) / 1000);
+          const safeCode = error => /^[A-Za-z0-9_]{1,32}$/.test(String(error?.code || '')) ? error.code : 'unknown';
+          const print = report => console.log(PREFIX + JSON.stringify(report));
+          process.on('uncaughtException', () => { print({ target: TARGET, audit_error: 'unexpected_child_error' }); process.exit(1); });
+          process.on('unhandledRejection', () => { print({ target: TARGET, audit_error: 'unexpected_child_rejection' }); process.exit(1); });
           (async () => {
-            const client = new Client({ connectionString: process.env.DATABASE_URL, statement_timeout: 5000 });
+            let client;
+            let stage = 'configuration';
             try {
+              if (!process.env.DATABASE_URL) throw Object.assign(new Error(), { code: 'NO_DATABASE_URL' });
+              client = new Client({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 5000,
+                                    statement_timeout: 5000, query_timeout: 6000 });
+              client.on('error', () => {});
+              stage = 'connect';
               await client.connect();
               await client.query('BEGIN READ ONLY');
-              const result = await client.query(`SELECT
-                (SELECT count(*)::int FROM bikes) AS bikes,
-                (SELECT count(*)::int FROM rides WHERE status IN ('active','paused')) AS active_rides,
-                (SELECT count(*)::int FROM rides) AS total_rides,
-                (SELECT count(*)::int FROM pg_stat_activity WHERE datname=current_database()) AS db_connections,
-                (SELECT count(*)::int FROM pg_stat_activity WHERE datname=current_database() AND state='active') AS db_active_connections,
-                pg_database_size(current_database()) AS database_bytes,
-                current_setting('max_connections') AS max_connections`);
-              console.log(JSON.stringify(result.rows[0]));
+              stage = 'database_clock';
+              const clock = (await client.query("SELECT (extract(epoch from clock_timestamp()) * 1000)::bigint::text AS db_ms")).rows[0];
+              const now = Date.now();
+              stage = 'bike';
+              const bike = (await client.query('SELECT id, status, lock_imei FROM bikes WHERE id = $1 LIMIT 1', [TARGET])).rows[0];
+              if (!bike) {
+                await client.query('ROLLBACK');
+                print({ target: TARGET, bike_found: false, read_only: true });
+                return;
+              }
+              stage = 'lock';
+              const lock = bike.lock_imei ? (await client.query(`SELECT last_lock_state, last_seen_at::text,
+                last_location_at::text, (last_latitude IS NOT NULL AND last_longitude IS NOT NULL) AS has_coords
+                FROM locks WHERE imei = $1 LIMIT 1`, [bike.lock_imei])).rows[0] : null;
+              stage = 'active_rides';
+              const rides = (await client.query(`SELECT id, paused_at::text, physically_locked_at::text, is_test
+                FROM rides WHERE bike_id = $1 AND status = 'active' ORDER BY started_at DESC LIMIT 3`, [TARGET])).rows;
+              stage = 'end_gps_source';
+              const samples = (await client.query(`SELECT t::text AS t, pg_typeof(t)::text AS t_type
+                FROM bike_telemetry WHERE bike_id = $1 AND lat IS NOT NULL AND lng IS NOT NULL
+                  AND (hdop IS NULL OR hdop <= 10) AND t >= $2
+                ORDER BY t DESC LIMIT 3`, [TARGET, now - LIVE_MS])).rows;
+              stage = 'recent_telemetry';
+              const recent = (await client.query(`SELECT cmd, count(*)::int AS rows,
+                count(*) FILTER (WHERE lat IS NOT NULL AND lng IS NOT NULL)::int AS coordinate_rows,
+                count(*) FILTER (WHERE x IS NOT NULL AND y IS NOT NULL)::int AS projected_rows,
+                count(*) FILTER (WHERE hdop > 10)::int AS poor_accuracy_rows,
+                max(t)::text AS latest_t
+                FROM bike_telemetry WHERE bike_id = $1 AND t >= $2 GROUP BY cmd ORDER BY cmd`,
+                [TARGET, now - 20 * 60 * 1000])).rows;
+              stage = 'incident_telemetry';
+              const incident = (await client.query(`SELECT cmd, count(*)::int AS rows,
+                count(*) FILTER (WHERE lat IS NOT NULL AND lng IS NOT NULL)::int AS coordinate_rows,
+                count(*) FILTER (WHERE x IS NOT NULL AND y IS NOT NULL)::int AS projected_rows,
+                count(*) FILTER (WHERE hdop > 10)::int AS poor_accuracy_rows,
+                max(t)::text AS latest_t
+                FROM bike_telemetry WHERE bike_id = $1 AND t >= $2 AND t <= $3 GROUP BY cmd ORDER BY cmd`,
+                [TARGET, INCIDENT_FROM, INCIDENT_TO])).rows;
+              stage = 'latest_telemetry';
+              const latest = (await client.query(`SELECT cmd, t::text AS t,
+                (lat IS NOT NULL AND lng IS NOT NULL) AS has_coords,
+                (x IS NOT NULL AND y IS NOT NULL) AS has_projection
+                FROM bike_telemetry WHERE bike_id = $1 ORDER BY t DESC LIMIT 1`, [TARGET])).rows[0];
               await client.query('ROLLBACK');
+              const selectedAt = samples.length ? Math.max(...samples.map(row => n(row.t))) : n(lock?.last_location_at);
+              const coordsPresent = samples.length > 0 || lock?.has_coords === true;
+              const gpsFresh = coordsPresent && selectedAt != null && Number.isFinite(selectedAt) && now - selectedAt <= LIVE_MS;
+              let buildId = null;
+              try { const value = JSON.parse(fs.readFileSync('/app/dist/public/version.json', 'utf8')).buildId; if (typeof value === 'string' && /^[a-f0-9]{7,64}$/i.test(value)) buildId = value; } catch {}
+              print({ target: TARGET, read_only: true, checked_at: new Date(now).toISOString(), bike_found: true,
+                bike_status: bike.status, has_bound_lock: Boolean(bike.lock_imei), container_build_id: buildId,
+                server_minus_database_clock_ms: n(clock?.db_ms) == null ? null : now - n(clock.db_ms),
+                lock: lock ? { state: lock.last_lock_state, seen_age_seconds: age(now, lock.last_seen_at),
+                               gps_age_seconds: age(now, lock.last_location_at), has_coordinates: lock.has_coords } : null,
+                active_ride_count: rides.length,
+                active_rides: rides.map(ride => ({ paused: ride.paused_at != null,
+                  physical_close_recorded: ride.physically_locked_at != null, is_test: ride.is_test,
+                  pause_age_seconds: age(now, ride.paused_at), physical_close_age_seconds: age(now, ride.physically_locked_at),
+                  request_end_fast_path: !bike.lock_imei || ride.paused_at != null || ride.physically_locked_at != null })),
+                end_gps_gate: { applicable: Boolean(bike.lock_imei), source: samples.length ? 'bike_telemetry' : 'locks',
+                  selected_sample_count: samples.length, sample_age_seconds: samples.map(row => age(now, row.t)),
+                  timestamp_types: [...new Set(samples.map(row => row.t_type))], coords_present: coordsPresent,
+                  selected_age_seconds: age(now, selectedAt), would_pass_freshness: gpsFresh,
+                  limits: { live_ms: LIVE_MS, max_hdop: 10, smoothing_samples: 3 }, parking_not_evaluated: true },
+                telemetry_last_20_minutes: recent.map(row => ({ cmd: row.cmd, rows: row.rows,
+                  coordinate_rows: row.coordinate_rows, projected_rows: row.projected_rows,
+                  poor_accuracy_rows: row.poor_accuracy_rows, newest_age_seconds: age(now, row.latest_t) })),
+                reported_test_window: { from_utc: new Date(INCIDENT_FROM).toISOString(),
+                  to_utc: new Date(INCIDENT_TO).toISOString(),
+                  telemetry: incident.map(row => ({ cmd: row.cmd, rows: row.rows,
+                    coordinate_rows: row.coordinate_rows, projected_rows: row.projected_rows,
+                    poor_accuracy_rows: row.poor_accuracy_rows, newest_age_seconds: age(now, row.latest_t) })) },
+                latest_telemetry: latest ? { cmd: latest.cmd, age_seconds: age(now, latest.t),
+                  has_coordinates: latest.has_coords, has_projection: latest.has_projection } : null,
+                closure_reports_are_not_stored_as_position_telemetry: true });
             } catch (error) {
-              console.log(JSON.stringify({ database_snapshot_unavailable: true, error_code: error.code || 'unknown' }));
-            } finally { await client.end(); }
+              if (client) { try { await client.query('ROLLBACK'); } catch {} }
+              print({ target: TARGET, read_only: true, audit_error: true, stage, error_code: safeCode(error) });
+              process.exitCode = 1;
+            } finally {
+              if (client) { try { await client.end(); } catch {} }
+            }
           })();
           NODE
