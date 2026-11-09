@@ -44,3 +44,19 @@ export function recordJumpRejectedFix(imei: string, lat: number, lng: number, at
 export function resetRelocationCandidate(imei: string): void {
   candidates.delete(imei);
 }
+
+// Locks whose stored anchor just moved discontinuously (relocation re-anchor,
+// or a poisoned out-of-service-area anchor healed by the first trusted fix).
+// The gateway consumes the flag on that same report to recompute the bike's
+// parking from the new position; otherwise parkingId stays whatever it was
+// computed from the stale/poisoned position (BC-002, 2026-11-10).
+const anchorRestored = new Set<string>();
+
+export function markAnchorRestored(imei: string): void {
+  anchorRestored.add(imei);
+}
+
+/** Returns true once per markAnchorRestored() call. */
+export function consumeAnchorRestored(imei: string): boolean {
+  return anchorRestored.delete(imei);
+}

@@ -135,7 +135,7 @@ vi.mock("../db/bootstrap", () => ({
 
 import { PgOmniStore } from "./store";
 import { resetMovementAlarmStreak } from "./theft-registry";
-import { resetRelocationCandidate } from "./relocation-registry";
+import { consumeAnchorRestored, resetRelocationCandidate } from "./relocation-registry";
 import {
   lockAlarmEvents, LOCK_FALL_ALARM, type LockFallAlarmPayload,
   LOCK_MOVEMENT_ALARM, type LockMovementAlarmPayload,
@@ -154,6 +154,7 @@ beforeEach(() => {
   // never leak a partial streak into a later test.
   resetMovementAlarmStreak(IMEI);
   resetRelocationCandidate(IMEI);
+  consumeAnchorRestored(IMEI);
 });
 
 describe("persistLockReport ordering guard (audit F-08)", () => {
@@ -253,6 +254,7 @@ describe("persistLockReport relocation re-anchor (production incident, 2026-11-0
     expect(fake.locks.get(IMEI)).toMatchObject({
       last_latitude: ZLG.lat + 0.0004, last_longitude: ZLG.lng, last_location_at: 120_000,
     });
+    expect(consumeAnchorRestored(IMEI)).toBe(true);
     // Normal tracking resumes from the new anchor.
     expect(await store.persistLockReport(IMEI, fix(ZLG.lat + 0.0006, ZLG.lng), 130_000)).toBe(true);
   });
@@ -291,6 +293,49 @@ describe("persistLockReport relocation re-anchor (production incident, 2026-11-0
     expect(await store.persistLockReport(IMEI, fix(KGD.lat, KGD.lng), 115_000)).toBe(true);
     expect(await store.persistLockReport(IMEI, fix(ZLG.lat, ZLG.lng), 125_000)).toBe(false);
     expect(fake.locks.get(IMEI)).toMatchObject({ last_latitude: KGD.lat, last_longitude: KGD.lng });
+  });
+});
+
+describe("persistLockReport service-area guard (production incident, 2026-11-10)", () => {
+  const ZLG = { lat: 54.9590, lng: 20.4806 };
+  // Self-consistent spoofed cluster ~800 km east of the region — exactly the
+  // pattern that re-anchored BC-002 off the map.
+  const SPOOF = { lat: 54.1705, lng: 33.2331 };
+  const fix = (lat: number, lng: number, hdop = 1.0): OmniMessage => ({
+    type: "position", cmd: "D0", tracking: true, valid: true,
+    fix: { lat, lng, satellites: 10, hdop, altitudeM: 10, fixedAt: null },
+  });
+
+  it("never re-anchors to a consistent run of spoofed fixes outside the service area", async () => {
+    await store.persistLockReport(IMEI, fix(ZLG.lat, ZLG.lng), 1_000);
+    let at = 100_000;
+    for (let i = 0; i < 10; i++) {
+      expect(await store.persistLockReport(IMEI, fix(SPOOF.lat + i * 0.0001, SPOOF.lng), at)).toBe(false);
+      at += 10_000;
+    }
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_latitude: ZLG.lat, last_longitude: ZLG.lng, last_seen_at: at - 10_000 });
+    expect(consumeAnchorRestored(IMEI)).toBe(false);
+  });
+
+  it("rejects an out-of-area fix even as the very first fix ever", async () => {
+    expect(await store.persistLockReport(IMEI, fix(SPOOF.lat, SPOOF.lng), 1_000)).toBe(false);
+    expect(fake.locks.get(IMEI)?.last_latitude ?? null).toBeNull();
+  });
+
+  it("heals a poisoned out-of-area anchor with the first accurate in-area fix", async () => {
+    fake.locks.set(IMEI, { ...(fake.locks.get(IMEI) ?? {}), last_latitude: SPOOF.lat, last_longitude: SPOOF.lng, last_seen_at: 500 });
+    expect(await store.persistLockReport(IMEI, fix(ZLG.lat, ZLG.lng), 1_000)).toBe(true);
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_latitude: ZLG.lat, last_longitude: ZLG.lng, last_location_at: 1_000 });
+    expect(consumeAnchorRestored(IMEI)).toBe(true);
+    // Subsequent normal tracking does not re-flag.
+    expect(await store.persistLockReport(IMEI, fix(ZLG.lat + 0.0001, ZLG.lng), 2_000)).toBe(true);
+    expect(consumeAnchorRestored(IMEI)).toBe(false);
+  });
+
+  it("still requires good accuracy for the healing fix", async () => {
+    fake.locks.set(IMEI, { ...(fake.locks.get(IMEI) ?? {}), last_latitude: SPOOF.lat, last_longitude: SPOOF.lng, last_seen_at: 500 });
+    expect(await store.persistLockReport(IMEI, fix(ZLG.lat, ZLG.lng, 15), 1_000)).toBe(false);
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_latitude: SPOOF.lat, last_longitude: SPOOF.lng });
   });
 });
 

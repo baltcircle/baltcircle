@@ -49,6 +49,10 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/takeride_admin_test
         run: npx tsx script/test-maintenance-reason.ts
+      - name: Spoofed GPS position repair regressions
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/takeride_admin_test
+        run: npx tsx script/test-spoofed-position-repair.ts
       - name: Session write, CSRF and expiry regressions
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/takeride_admin_test

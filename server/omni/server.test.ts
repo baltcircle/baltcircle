@@ -18,6 +18,7 @@ vi.mock("../db/bootstrap", () => ({
 
 import { OmniTcpServer, type OmniServerOptions } from "./server";
 import { MockLock } from "./mockLock";
+import { markAnchorRestored, consumeAnchorRestored } from "./relocation-registry";
 import { TelemetryWriter, type BikeLiveUpdate, type LockAuthResult, type OmniStore, type TelemetryRow } from "./store";
 import type { OmniMessage } from "@shared/omni/protocol";
 
@@ -670,6 +671,43 @@ describe("syncGpsTrackingForStatus (bike-status lifecycle spec, 2026-09)", () =>
     const sent = server.syncGpsTrackingForStatus(UNKNOWN_IMEI, "bike-x", "available");
 
     expect(sent).toBe(false);
+  });
+});
+
+describe("onAnchorRestored (GNSS spoofing heal, 2026-11-10)", () => {
+  it("fires once with the accepted fix after the store restored the anchor", async () => {
+    consumeAnchorRestored(IMEI_A);
+    const onAnchorRestored = vi.fn();
+    const { store, lock } = await harness({ onAnchorRestored });
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+
+    markAnchorRestored(IMEI_A);
+    device.sendPosition(54.9442, 20.1561);
+    await waitFor(() => onAnchorRestored.mock.calls.length === 1);
+    expect(onAnchorRestored).toHaveBeenCalledWith("bike-a", expect.any(Number), expect.any(Number));
+
+    device.sendPosition(54.9443, 20.1562);
+    await waitFor(() => store.rowsFor("D0").length === 2);
+    expect(onAnchorRestored).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire for a rejected fix and keeps the flag for the next accepted one", async () => {
+    consumeAnchorRestored(IMEI_A);
+    const onAnchorRestored = vi.fn();
+    const { store, lock } = await harness({ onAnchorRestored });
+    const device = await lock(IMEI_A);
+
+    markAnchorRestored(IMEI_A);
+    store.rejectNextPosition.add(IMEI_A);
+    device.sendPosition(54.9442, 20.1561);
+    await waitFor(() => store.rowsFor("D0").length === 1);
+    expect(onAnchorRestored).not.toHaveBeenCalled();
+
+    device.sendPosition(54.9443, 20.1562);
+    await waitFor(() => onAnchorRestored.mock.calls.length === 1);
+    consumeAnchorRestored(IMEI_A);
   });
 });
 

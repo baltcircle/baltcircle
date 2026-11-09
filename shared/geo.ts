@@ -186,6 +186,27 @@ export const MAX_PLAUSIBLE_GPS_JUMP_M = 15_000;
 // with each other. After this many consecutive accurate jump-rejected fixes,
 // each within RELOCATION_CLUSTER_RADIUS_M of the previous one and spanning at
 // least RELOCATION_MIN_SPAN_MS, the newest fix is accepted as the new anchor.
+// Service-area guard (production incident, 2026-11-10: BC-002's lock reported
+// a long, self-consistent run of accurate-looking fixes ~800 km east of the
+// Kaliningrad region — classic GNSS spoofing, which also explains the
+// far-future GPS dates seen the same evening. The relocation re-anchor
+// accepted that run as a "move" and the bike vanished from the map).
+// Every bike operates inside the Kaliningrad oblast, so any fix outside this
+// generous bbox is treated as untrusted: it is never stored, never counts
+// toward a relocation, and a stored anchor outside it is ignored.
+export const SERVICE_AREA_BOUNDS = {
+  minLat: 54.25,
+  maxLat: 55.40,
+  minLng: 19.55,
+  maxLng: 22.95,
+} as const;
+
+export function isInServiceArea(lat: number, lng: number): boolean {
+  return Number.isFinite(lat) && Number.isFinite(lng)
+    && lat >= SERVICE_AREA_BOUNDS.minLat && lat <= SERVICE_AREA_BOUNDS.maxLat
+    && lng >= SERVICE_AREA_BOUNDS.minLng && lng <= SERVICE_AREA_BOUNDS.maxLng;
+}
+
 export const RELOCATION_CONFIRM_FIXES = 3;
 export const RELOCATION_CLUSTER_RADIUS_M = 300;
 export const RELOCATION_MIN_SPAN_MS = 20 * 1000;

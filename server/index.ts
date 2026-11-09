@@ -372,6 +372,19 @@ app.use((req, res, next) => {
         logger.error({ err, bikeId }, "post-status-change parking recalc failed");
       });
     },
+    // GNSS spoofing / relocation (BC-002, 2026-11-10): once a lock's anchor
+    // jumps to a trusted new position, parkingId must follow it. Only for
+    // bikes sitting in the rental pool — a rented/reserved bike gets its
+    // parking from endRide, and service statuses don't carry one.
+    onAnchorRestored: (bikeId, lat, lng) => {
+      (async () => {
+        const bike = await storage.getBike(bikeId);
+        if (!bike || bike.status !== "available") return;
+        await storage.recalculateBikeParking({ id: bikeId, lat, lng });
+      })().catch((err) => {
+        logger.error({ err, bikeId }, "post-anchor-restore parking recalc failed");
+      });
+    },
     // Audit: lock-open-while-available (2026-09 production incident,
     // BC-001). A late/unsolicited positive unlock echo means the lock is
     // physically open right now, regardless of whatever status the bike
