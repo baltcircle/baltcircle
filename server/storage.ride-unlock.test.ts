@@ -281,6 +281,48 @@ describe("startRide physical unlock gate (audit F-04)", () => {
 // open. isLockReportedClosed's fail-closed read must divert to "maintenance"
 // instead, and raise the same critical alert reconcileUnattendedOpenLock
 // uses.
+describe("startRide outside a parking zone (product decision, 2026-11-10)", () => {
+  it("starts a ride on a bike left outside every parking zone and records no start parking", async () => {
+    const bike = makeBike({ lockImei: null });
+    const { tx, calls } = makeTx([[bike], [], []]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: true });
+
+    expect(result).not.toHaveProperty("error");
+    const rideInsert = calls.insertValues.find((v: any) => v && "bikeId" in v && "startedAt" in v);
+    expect(rideInsert).toMatchObject({ startParkingId: null });
+    expect(calls.updateSets).toContainEqual(expect.objectContaining({ status: "rented", parkingId: null }));
+  });
+
+  it("still records the start parking when the bike is inside one", async () => {
+    const bike = makeBike({ lockImei: null });
+    const { tx, calls } = makeTx([[bike], [], [makeParking()]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+
+    await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: true });
+
+    const rideInsert = calls.insertValues.find((v: any) => v && "bikeId" in v && "startedAt" in v);
+    expect(rideInsert).toMatchObject({ startParkingId: "P-1" });
+  });
+
+  it("ignores a spoofed out-of-service-area lock anchor and uses the bike's stored position", async () => {
+    const bike = makeBike({ lockImei: "868000000000001" });
+    // NUMERIC comes back from node-postgres as strings.
+    const spoofedLock = { imei: "868000000000001", lastLatitude: "54.1705", lastLongitude: "33.2331", lastLocationAt: NOW.getTime() };
+    const { tx, calls } = makeTx([[bike], [], [spoofedLock], [makeParking({ radius: 50 })]]);
+    dbMock.transaction.mockImplementation(async (cb: any) => cb(tx));
+    sendUnlockCommandMock.mockResolvedValue({ success: true });
+    getLockGatewayMock.mockReturnValue({ sendUnlockCommand: sendUnlockCommandMock, syncGpsTrackingForStatus: vi.fn().mockReturnValue(true) });
+
+    const result = await storage.startRide({ bikeId: "BC-01", userId: "user-1", tariff: "h1", prepaid: true });
+
+    expect(result).not.toHaveProperty("error");
+    const rideInsert = calls.insertValues.find((v: any) => v && "bikeId" in v && "startedAt" in v);
+    expect(rideInsert).toMatchObject({ startLat: bike.lat, startLng: bike.lng, startParkingId: "P-1" });
+  });
+});
+
 describe("abortUnstartedRide lock-state guard (audit: lock-open-while-available, 2026-09)", () => {
   it("diverts the bike to maintenance and fires the critical alert when the lock is not reported closed", async () => {
     const bike = makeBike({ lockImei: "868000000000001" });

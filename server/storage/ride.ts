@@ -6,7 +6,7 @@ import {
   findNearestParkingWithinRadius, findNearestParkingWithinRadiusFromRealCoords,
   LOCK_GPS_LIVE_MS, PAUSE_ARM_TTL_MS, END_ARM_TTL_MS,
   RIDE_END_AWAITING_LOCK_GPS_ERROR, MAX_ACCEPTABLE_HDOP, END_GEOFENCE_SMOOTHING_SAMPLES,
-  MAX_GPS_CLOCK_AHEAD_MS,
+  MAX_GPS_CLOCK_AHEAD_MS, isInServiceArea,
   LOW_BATTERY_AUTO_OFFLINE_THRESHOLD, MAX_ACTIVE_RIDES_PER_USER, PAUSE_FREE_GRACE_MS,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
@@ -384,29 +384,30 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             let activeSlot = 1;
             while (usedSlots.has(activeSlot)) activeSlot++;
 
-            // Radius-gating (rental spec): a bike may only be started from inside
-            // an active parking zone. The lock's GPS is the authoritative source
-            // when we have ANY fix at all — tracking only runs during a ride, so
-            // "fresh" doesn't apply here; the last fix is simply wherever the bike
-            // was dropped off, and nothing moves it between rides. Only fall back
-            // to the bike's stored map-space position (bikes.lat/lng) when the lock
-            // has never reported a single fix yet (brand-new/never-ridden lock).
+            // Start is allowed anywhere (product decision, 2026-11-10): support can
+            // let a rider leave a bike outside a parking zone, and the next rider
+            // must still be able to take it. The parking match is still recorded
+            // (startParkingId / bikes.parkingId, the 5-minute refund rule) when
+            // the bike happens to be inside one. Only the END stays geofenced.
+            //
+            // Position source: the lock's last accepted fix, unless it lies
+            // outside the service area — such an anchor was poisoned by GNSS
+            // spoofing before the guard existed (BC-002, 2026-11-10) and is not
+            // a real position; fall back to the bike's stored map position.
             let lockRow: Lock | undefined;
             if (bike.lockImei) {
               lockRow = (await tx.select().from(locks).where(eq(locks.imei, bike.lockImei)).limit(1))[0] as Lock | undefined;
             }
-            const hasLockFix = lockRow?.lastLatitude != null && lockRow?.lastLongitude != null;
+            const hasLockFix = lockRow?.lastLatitude != null && lockRow?.lastLongitude != null
+              && isInServiceArea(Number(lockRow.lastLatitude), Number(lockRow.lastLongitude));
             const parkingRowsForStart = (await tx.select().from(parkings)) as Parking[];
             const startParkingMatch = hasLockFix
-              ? findNearestParkingWithinRadiusFromRealCoords(lockRow!.lastLatitude!, lockRow!.lastLongitude!, parkingRowsForStart)
+              ? findNearestParkingWithinRadiusFromRealCoords(Number(lockRow!.lastLatitude), Number(lockRow!.lastLongitude), parkingRowsForStart)
               : findNearestParkingWithinRadius(bike.lat, bike.lng, parkingRowsForStart);
-            if (!startParkingMatch) {
-              return { error: "Велосипед сейчас не в зоне парковки — начать поездку нельзя. Переместите велосипед в парковочную зону или обратитесь в поддержку." };
-            }
             // Keep bikes.lat/lng (the fallback position source used when a lock has
-            // no fix) in step with the lock's real GPS on every status change this
-            // bike goes through, starting here.
-            const syncedPos = hasLockFix ? realToMap(lockRow!.lastLatitude!, lockRow!.lastLongitude!) : null;
+            // no trusted fix) in step with the lock's real GPS on every status
+            // change this bike goes through, starting here.
+            const syncedPos = hasLockFix ? realToMap(Number(lockRow!.lastLatitude), Number(lockRow!.lastLongitude)) : null;
             const startLat = syncedPos ? syncedPos.y : bike.lat;
             const startLng = syncedPos ? syncedPos.x : bike.lng;
 
@@ -458,7 +459,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
               track: JSON.stringify(track), distanceM: 0, cost: costKopecks, tariff, status: "active",
               totalTariffHours: windowHours,
               totalTariffMs: windowMs,
-              paidUntilAt, startParkingId: startParkingMatch.id,
+              paidUntilAt, startParkingId: startParkingMatch?.id ?? null,
               // The per-bike isTestBike flag was removed (no more designated
               // test units) — isTest is now set solely from the isTest param
               // above, which only POST /api/rides/start-test (requireRole
@@ -468,7 +469,7 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
             }).returning())[0] as Ride;
             await tx.update(bikes).set({
               status: "rented",
-              lat: startLat, lng: startLng, parkingId: startParkingMatch.id,
+              lat: startLat, lng: startLng, parkingId: startParkingMatch?.id ?? null,
             } as any).where(eq(bikes.id, bikeId));
             // No synthetic/phone seed: wait for this ride's first lock fix.
             if (claimedReservationId != null) {
