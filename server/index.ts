@@ -321,6 +321,21 @@ app.use((req, res, next) => {
   const rideExpiryTimer = setInterval(runRideExpirySweep, RIDE_EXPIRY_SWEEP_INTERVAL_MS);
   shutdownTasks.push(() => { clearTimeout(initialRideExpiryTimer); clearInterval(rideExpiryTimer); });
 
+  // gps_stale dashboard alert (2026-11-10, BC-002 GNSS spoofing): lock on air
+  // but no accepted fix for GPS_STALE_ALERT_MS. Minute cadence, offset from
+  // the sweeps above; confirmation window lives in gps-stale-registry.ts.
+  const runGpsStaleSweep = () => {
+    void storage.sweepStaleGpsAlerts(Date.now())
+      .then((count) => {
+        if (count > 0) logger.warn({ count }, "gps_stale alerts raised");
+      })
+      .catch((err) => logger.error({ err }, "gps stale sweep failed"));
+  };
+  const GPS_STALE_SWEEP_INTERVAL_MS = 60 * 1000;
+  const initialGpsStaleTimer = setTimeout(runGpsStaleSweep, 30_000);
+  const gpsStaleTimer = setInterval(runGpsStaleSweep, GPS_STALE_SWEEP_INTERVAL_MS);
+  shutdownTasks.push(() => { clearTimeout(initialGpsStaleTimer); clearInterval(gpsStaleTimer); });
+
   // Audit (scalability): bike_telemetry (lock heartbeat/GPS check-ins) had no
   // retention policy and grows without bound as the fleet and ping rate grow
   // — unlike ride_points (permanent per-ride track), it's disposable noise

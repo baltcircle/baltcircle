@@ -5,6 +5,10 @@ import { db } from "../db/bootstrap";
 import type { Constructor } from "./mixin";
 import type { IAlertStorage } from "./interfaces";
 import { bikeEvents, BIKE_EVENT_CHANNEL } from "./events";
+import {
+  GPS_STALE_ALERT_MS, GPS_STALE_ALERT_STATUSES, GPS_STALE_LOCK_ONLINE_MS,
+} from "@shared/geo";
+import { confirmStaleGps } from "./gps-stale-registry";
 
 function rowToAlert(row: Record<string, unknown>): Alert {
   return {
@@ -131,6 +135,48 @@ export function AlertMixin<TBase extends Constructor>(Base: TBase) {
         bikeId, "lock_open_unattended", "critical",
         `Велосипед ${bikeId}: замок открыт, но статус «доступен» — автоматически снят с публикации`, at,
       );
+    }
+
+    /**
+     * Bikes on a fast GPS cadence whose lock is on air (reported within
+     * GPS_STALE_LOCK_ONLINE_MS) but whose last ACCEPTED fix is older than
+     * GPS_STALE_ALERT_MS — every report in between was rejected (spoofed,
+     * jammed, low accuracy) or carried no fix. Timestamps are server receive
+     * times (locks.last_seen_at / last_location_at), never GPS-reported time,
+     * so a spoofed GNSS clock cannot hide or fake the condition.
+     */
+    async findStaleGpsBikeIds(now: number): Promise<string[]> {
+      const statuses = sql.join(GPS_STALE_ALERT_STATUSES.map((st) => sql`${st}`), sql`, `);
+      const result = await db.execute(sql`
+        SELECT DISTINCT b.id
+        FROM bikes AS b
+        JOIN locks AS l ON l.bike_id = b.id
+        WHERE b.status IN (${statuses})
+          AND l.last_seen_at >= ${now - GPS_STALE_LOCK_ONLINE_MS}
+          AND (l.last_location_at IS NULL OR l.last_location_at < ${now - GPS_STALE_ALERT_MS})
+        ORDER BY b.id
+      `);
+      return (result.rows as { id: string }[]).map((r) => r.id);
+    }
+
+    /** Best-effort, dedup-on-insert (same as fall/low_battery). */
+    async createGpsStaleAlert(bikeId: string, at: number): Promise<Alert | null> {
+      const minutes = Math.round(GPS_STALE_ALERT_MS / 60_000);
+      return this.createAlertRow(
+        bikeId, "gps_stale", "high",
+        `Велосипед ${bikeId}: замок на связи, но свежих GPS-координат нет больше ${minutes} мин — возможны глушение или подмена сигнала`,
+        at,
+      );
+    }
+
+    /** Scheduler entry point (server/index.ts, every minute). Returns alerts created. */
+    async sweepStaleGpsAlerts(now: number): Promise<number> {
+      const confirmed = confirmStaleGps(await this.findStaleGpsBikeIds(now), now);
+      let created = 0;
+      for (const bikeId of confirmed) {
+        if (await this.createGpsStaleAlert(bikeId, now)) created += 1;
+      }
+      return created;
     }
 
     async listAlerts(opts?: { includeAcknowledged?: boolean }): Promise<Alert[]> {
