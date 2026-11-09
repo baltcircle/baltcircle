@@ -155,6 +155,13 @@
       "when": 1794263000000,
       "tag": "0021_clear_stale_maintenance_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794264000000,
+      "tag": "0022_restore_spoofed_bike_positions",
+      "breakpoints": true
     }
   ]
 }

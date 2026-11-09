@@ -11,7 +11,7 @@
 // flush window.
 import type { OmniMessage } from "@shared/omni/protocol";
 import {
-  haversineM, MAX_PLAUSIBLE_GPS_JUMP_M, MAX_ACCEPTABLE_HDOP, LOW_BATTERY_AUTO_OFFLINE_THRESHOLD,
+  haversineM, isInServiceArea, MAX_PLAUSIBLE_GPS_JUMP_M, MAX_ACCEPTABLE_HDOP, LOW_BATTERY_AUTO_OFFLINE_THRESHOLD,
 } from "@shared/geo";
 import { pool } from "../db/bootstrap";
 import { logger } from "../logger";
@@ -20,7 +20,7 @@ import { consumePendingEnd } from "./pending-end-registry";
 import {
   recordMovementAlarm, resetMovementAlarmStreak, MOVEMENT_ALARM_THEFT_THRESHOLD,
 } from "./theft-registry";
-import { recordJumpRejectedFix, resetRelocationCandidate } from "./relocation-registry";
+import { markAnchorRestored, recordJumpRejectedFix, resetRelocationCandidate } from "./relocation-registry";
 import {
   rideEvents,
   pendingEndEvents, LOCK_CLOSED_FOR_END, type LockClosedForEndPayload,
@@ -252,6 +252,17 @@ export class PgOmniStore implements OmniStore {
             await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
             return false;
           }
+          // Service-area gate (see SERVICE_AREA_BOUNDS): a fix outside the
+          // operating region is spoofed/garbage by definition. Checked before
+          // the jump/relocation logic so a spoofed run can never re-anchor.
+          if (!isInServiceArea(message.fix.lat, message.fix.lng)) {
+            logger.warn(
+              { imei, hdop: message.fix.hdop, satellites: message.fix.satellites },
+              "omni: rejected GPS fix outside the service area (likely GNSS spoofing)",
+            );
+            await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
+            return false;
+          }
           // Sanity-bound the fix against the lock's own last stored position
           // before trusting it (production incident, 2026-08-23: a single
           // structurally-valid-but-wrong "flyaway" fix — passes nmeaToDecimal's
@@ -270,13 +281,24 @@ export class PgOmniStore implements OmniStore {
             "SELECT last_latitude, last_longitude FROM locks WHERE imei = $1",
             [imei],
           )).rows[0];
-          const prevLat = prevRow?.last_latitude != null ? Number(prevRow.last_latitude) : null;
-          const prevLng = prevRow?.last_longitude != null ? Number(prevRow.last_longitude) : null;
+          const storedLat = prevRow?.last_latitude != null ? Number(prevRow.last_latitude) : null;
+          const storedLng = prevRow?.last_longitude != null ? Number(prevRow.last_longitude) : null;
+          // A stored anchor outside the service area was itself poisoned
+          // (pre-guard spoofing): treat it as "no anchor" so the first
+          // accurate in-area fix heals the lock instead of being rejected
+          // forever as a >15 km jump.
+          const anchorTrusted = storedLat != null && storedLng != null && isInServiceArea(storedLat, storedLng);
+          const prevLat = anchorTrusted ? storedLat : null;
+          const prevLng = anchorTrusted ? storedLng : null;
           const jumpM = prevLat != null && prevLng != null
             ? haversineM(prevLat, prevLng, message.fix.lat, message.fix.lng)
             : null;
           const relocated = jumpM !== null && jumpM > MAX_PLAUSIBLE_GPS_JUMP_M
             && recordJumpRejectedFix(imei, message.fix.lat, message.fix.lng, at);
+          const healedPoisonedAnchor = storedLat != null && storedLng != null && !anchorTrusted;
+          if (healedPoisonedAnchor) {
+            logger.warn({ imei }, "omni: replaced an out-of-service-area GPS anchor with a trusted fix");
+          }
           if (relocated) {
             logger.warn(
               { imei, jumpM: Math.round(jumpM!) },
@@ -296,9 +318,10 @@ export class PgOmniStore implements OmniStore {
           } else {
             resetRelocationCandidate(imei);
           }
-          await pool.query(`UPDATE locks SET ${base}, last_latitude = $3,
-            last_longitude = $4, last_location_at = $2 WHERE imei = $1 ${NEWEST_REPORT_GUARD}`,
+          const anchorWrite = await pool.query(`UPDATE locks SET ${base}, last_latitude = $3,
+            last_longitude = $4, last_location_at = $2 WHERE imei = $1 ${NEWEST_REPORT_GUARD} RETURNING bike_id`,
             [imei, at, message.fix.lat, message.fix.lng]);
+          if ((relocated || healedPoisonedAnchor) && anchorWrite.rows.length > 0) markAnchorRestored(imei);
         } else {
           await pool.query(`UPDATE locks SET ${base} WHERE imei = $1 ${NEWEST_REPORT_GUARD}`, [imei, at]);
         }

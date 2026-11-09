@@ -8,6 +8,7 @@
 // This module is deliberately side-effect free at import time and takes its
 // store/logger by injection, so the whole thing can be driven end-to-end in
 // tests against a fake store without a live Postgres.
+import { consumeAnchorRestored } from "./relocation-registry";
 import { createServer, type Server, type Socket } from "node:net";
 import type { Logger } from "pino";
 import {
@@ -36,6 +37,14 @@ export interface OmniServerOptions {
    * still be driven end-to-end in tests without a live Postgres.
    */
   onParkingRecalcFix?: (bikeId: string, lat: number, lng: number) => void;
+  /**
+   * Best-effort, fired on the accepted fix that discontinuously moved a lock's
+   * stored GPS anchor (relocation re-anchor, or a poisoned out-of-area anchor
+   * healed — see SERVICE_AREA_BOUNDS). lat/lng are map coordinates (y/x),
+   * same convention as onParkingRecalcFix. The callee decides whether the
+   * bike's current status warrants a parking recompute.
+   */
+  onAnchorRestored?: (bikeId: string, lat: number, lng: number) => void;
   /**
    * Audit: lock-open-while-available (2026-09). Fired whenever a positive
    * unlockResult echo arrives for an IMEI this server has no pending unlock
@@ -113,7 +122,7 @@ export class OmniTcpServer {
   private readonly server: Server;
   private readonly log: Logger;
   private readonly writer: TelemetryWriter;
-  private readonly opts: Required<Omit<OmniServerOptions, "store" | "logger" | "writer" | "host" | "onParkingRecalcFix" | "onUnsolicitedUnlockEcho">>
+  private readonly opts: Required<Omit<OmniServerOptions, "store" | "logger" | "writer" | "host" | "onParkingRecalcFix" | "onAnchorRestored" | "onUnsolicitedUnlockEcho">>
     & { host: string };
 
   /** Live sockets keyed by IMEI. At most one connection per device. */
@@ -580,6 +589,10 @@ export class OmniTcpServer {
       if (pendingBikeId) {
         this.pendingParkingRecalc.delete(imei);
         this.options.onParkingRecalcFix?.(pendingBikeId, built.live.y, built.live.x);
+      }
+      if (consumeAnchorRestored(imei)) {
+        this.log.info({ imei, bikeId }, "gps anchor restored: recomputing parking");
+        this.options.onAnchorRestored?.(bikeId, built.live.y, built.live.x);
       }
     }
 
