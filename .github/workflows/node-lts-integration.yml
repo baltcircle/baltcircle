@@ -45,6 +45,10 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/takeride_admin_test
         run: npx tsx script/test-lock-tracks.ts
+      - name: Bike maintenance_reason invariant regressions
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/takeride_admin_test
+        run: npx tsx script/test-maintenance-reason.ts
       - name: Session write, CSRF and expiry regressions
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/takeride_admin_test

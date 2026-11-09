@@ -325,6 +325,9 @@ export function BikeMixin<TBase extends Constructor>(Base: TBase) {
 
       const set: Partial<Bike> = {};
       if (patch.status !== undefined) set.status = patch.status;
+      // A manual status change replaces any automatic reason; DB trigger
+      // (migration 0021) additionally clears it outside maintenance/offline.
+      if (patch.status !== undefined && patch.status !== existing.status) set.maintenanceReason = null;
       if (patch.battery !== undefined) set.battery = patch.battery;
       // Radius-gating (Phase 2): AdminUpdateBikeInput carries no lat/lng field
       // at all, so any status transition is free to sync from the lock's own
