@@ -135,6 +135,7 @@ vi.mock("../db/bootstrap", () => ({
 
 import { PgOmniStore } from "./store";
 import { resetMovementAlarmStreak } from "./theft-registry";
+import { resetRelocationCandidate } from "./relocation-registry";
 import {
   lockAlarmEvents, LOCK_FALL_ALARM, type LockFallAlarmPayload,
   LOCK_MOVEMENT_ALARM, type LockMovementAlarmPayload,
@@ -152,6 +153,7 @@ beforeEach(() => {
   // tests earlier in this file (which also send code=1/2 alarms for IMEI)
   // never leak a partial streak into a later test.
   resetMovementAlarmStreak(IMEI);
+  resetRelocationCandidate(IMEI);
 });
 
 describe("persistLockReport ordering guard (audit F-08)", () => {
@@ -231,6 +233,64 @@ describe("persistLockReport ordering guard (audit F-08)", () => {
     expect(fake.locks.get(IMEI)).toMatchObject({
       last_latitude: 54.7104, last_longitude: 20.4522, last_seen_at: 1000,
     });
+  });
+});
+
+describe("persistLockReport relocation re-anchor (production incident, 2026-11-09)", () => {
+  // Kaliningrad -> Zelenogradsk is ~28km: beyond MAX_PLAUSIBLE_GPS_JUMP_M.
+  const KGD = { lat: 54.7104, lng: 20.4522 };
+  const ZLG = { lat: 54.9590, lng: 20.4806 };
+  const fix = (lat: number, lng: number, hdop = 1.2): OmniMessage => ({
+    type: "position", cmd: "D0", tracking: true, valid: true,
+    fix: { lat, lng, satellites: 9, hdop, altitudeM: 10, fixedAt: null },
+  });
+
+  it("re-anchors after a consistent run of accurate fixes at the new location", async () => {
+    await store.persistLockReport(IMEI, fix(KGD.lat, KGD.lng), 1_000);
+    expect(await store.persistLockReport(IMEI, fix(ZLG.lat, ZLG.lng), 100_000)).toBe(false);
+    expect(await store.persistLockReport(IMEI, fix(ZLG.lat + 0.0002, ZLG.lng), 110_000)).toBe(false);
+    expect(await store.persistLockReport(IMEI, fix(ZLG.lat + 0.0004, ZLG.lng), 120_000)).toBe(true);
+    expect(fake.locks.get(IMEI)).toMatchObject({
+      last_latitude: ZLG.lat + 0.0004, last_longitude: ZLG.lng, last_location_at: 120_000,
+    });
+    // Normal tracking resumes from the new anchor.
+    expect(await store.persistLockReport(IMEI, fix(ZLG.lat + 0.0006, ZLG.lng), 130_000)).toBe(true);
+  });
+
+  it("does not re-anchor on a quick burst shorter than RELOCATION_MIN_SPAN_MS", async () => {
+    await store.persistLockReport(IMEI, fix(KGD.lat, KGD.lng), 1_000);
+    for (const at of [100_000, 102_000, 104_000, 106_000]) {
+      expect(await store.persistLockReport(IMEI, fix(ZLG.lat, ZLG.lng), at)).toBe(false);
+    }
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_latitude: KGD.lat, last_longitude: KGD.lng });
+  });
+
+  it("keeps rejecting scattered flyaway fixes that do not agree with each other", async () => {
+    await store.persistLockReport(IMEI, fix(KGD.lat, KGD.lng), 1_000);
+    const scattered = [[60.5, 30.5], [55.9, 37.6], [59.9, 30.3], [52.2, 21.0]];
+    let at = 100_000;
+    for (const [lat, lng] of scattered) {
+      expect(await store.persistLockReport(IMEI, fix(lat, lng), at)).toBe(false);
+      at += 10_000;
+    }
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_latitude: KGD.lat, last_longitude: KGD.lng });
+  });
+
+  it("never counts low-accuracy fixes towards a relocation", async () => {
+    await store.persistLockReport(IMEI, fix(KGD.lat, KGD.lng), 1_000);
+    for (const at of [100_000, 110_000, 120_000, 130_000]) {
+      expect(await store.persistLockReport(IMEI, fix(ZLG.lat, ZLG.lng, 15), at)).toBe(false);
+    }
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_latitude: KGD.lat, last_longitude: KGD.lng });
+  });
+
+  it("a normally accepted fix clears a partial relocation run", async () => {
+    await store.persistLockReport(IMEI, fix(KGD.lat, KGD.lng), 1_000);
+    await store.persistLockReport(IMEI, fix(ZLG.lat, ZLG.lng), 100_000);
+    await store.persistLockReport(IMEI, fix(ZLG.lat, ZLG.lng), 110_000);
+    expect(await store.persistLockReport(IMEI, fix(KGD.lat, KGD.lng), 115_000)).toBe(true);
+    expect(await store.persistLockReport(IMEI, fix(ZLG.lat, ZLG.lng), 125_000)).toBe(false);
+    expect(fake.locks.get(IMEI)).toMatchObject({ last_latitude: KGD.lat, last_longitude: KGD.lng });
   });
 });
 

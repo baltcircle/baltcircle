@@ -177,6 +177,28 @@ export const RIDE_END_AWAITING_LOCK_GPS_ERROR =
 // always accepted (see persistLockReport in server/omni/store.ts).
 export const MAX_PLAUSIBLE_GPS_JUMP_M = 15_000;
 
+// Re-anchoring after a genuine relocation (production incident, 2026-11-09:
+// BC-002 was trucked ~30km between service towns, every later fix exceeded
+// MAX_PLAUSIBLE_GPS_JUMP_M from the stale stored point, and since rejected
+// fixes never advance that point the lock stayed "stuck" — ride end then
+// failed the lock-GPS gate indefinitely). A flyaway artifact is a single or
+// erratic fix; a real relocation produces a run of accurate fixes that agree
+// with each other. After this many consecutive accurate jump-rejected fixes,
+// each within RELOCATION_CLUSTER_RADIUS_M of the previous one and spanning at
+// least RELOCATION_MIN_SPAN_MS, the newest fix is accepted as the new anchor.
+export const RELOCATION_CONFIRM_FIXES = 3;
+export const RELOCATION_CLUSTER_RADIUS_M = 300;
+export const RELOCATION_MIN_SPAN_MS = 20 * 1000;
+
+// A GNSS module without a settled almanac can report a structurally valid but
+// wrong date (production, 2026-11-09: a fix stamped ~29.7h in the future).
+// Fixes are uploaded live, so a GPS timestamp ahead of server receipt by more
+// than this is a bad device clock: the receipt time is used instead. Past
+// timestamps keep the wider MAX_GPS_CLOCK_BEHIND_MS window so legitimately
+// delayed uploads keep their real fix time.
+export const MAX_GPS_CLOCK_AHEAD_MS = 2 * 60 * 1000;
+export const MAX_GPS_CLOCK_BEHIND_MS = 7 * 24 * 60 * 60 * 1000;
+
 // GPS accuracy gate (HDOP = Horizontal Dilution of Precision; lower is
 // better). A fix can be structurally "valid" (NMEA A) yet practically
 // useless — obstructed antenna, multipath in dense tree cover or an

@@ -6,6 +6,7 @@ import {
   findNearestParkingWithinRadius, findNearestParkingWithinRadiusFromRealCoords,
   LOCK_GPS_LIVE_MS, PAUSE_ARM_TTL_MS, END_ARM_TTL_MS,
   RIDE_END_AWAITING_LOCK_GPS_ERROR, MAX_ACCEPTABLE_HDOP, END_GEOFENCE_SMOOTHING_SAMPLES,
+  MAX_GPS_CLOCK_AHEAD_MS,
   LOW_BATTERY_AUTO_OFFLINE_THRESHOLD, MAX_ACTIVE_RIDES_PER_USER, PAUSE_FREE_GRACE_MS,
 } from "@shared/geo";
 import { computeOverage, finalRideCost, formatKopecksAsRubles } from "@shared/billing";
@@ -755,11 +756,17 @@ export function RideMixin<TBase extends Constructor>(Base: TBase) {
           // when telemetry has nothing recent enough (e.g. test doubles, or a
           // lock that has never reported into bike_telemetry) so behaviour is
           // unchanged in that case.
+          // Accepted (projected) fixes only, and never future-dated ones: a fix
+          // rejected by the ingest plausibility gate or stamped by a bad GNSS
+          // clock must not satisfy the freshness check below.
+          const gpsNow = Date.now();
           const smoothingRows = (await tx.execute(
             sql`SELECT lat, lng, t FROM bike_telemetry
                 WHERE bike_id = ${r.bikeId} AND lat IS NOT NULL AND lng IS NOT NULL
                   AND (hdop IS NULL OR hdop <= ${MAX_ACCEPTABLE_HDOP})
-                  AND t >= ${Date.now() - LOCK_GPS_LIVE_MS}
+                  AND x IS NOT NULL AND y IS NOT NULL
+                  AND t >= ${gpsNow - LOCK_GPS_LIVE_MS}
+                  AND t <= ${gpsNow + MAX_GPS_CLOCK_AHEAD_MS}
                 ORDER BY t DESC LIMIT ${END_GEOFENCE_SMOOTHING_SAMPLES}`,
           )).rows as { lat: number; lng: number; t: number }[];
           const median = (nums: number[]): number => {
