@@ -400,7 +400,9 @@ export type Alert = typeof alerts.$inferSelect;
 // "illegal movement" alarms with no reset auto-transition a bike to "lost"
 // (server/omni/theft-registry.ts + store.ts) — distinct from the raw
 // per-report "movement_alarm" above, which fires on every single alarm.
-export const ALERT_KINDS = ["movement_alarm", "low_battery", "fall", "overage_charge_failed", "theft", "lock_open_unattended"] as const;
+// "gps_stale" (2026-11-10): lock on air but no accepted GPS fix for
+// GPS_STALE_ALERT_MS (jamming/spoofing/no sky view) — see storage/alert.ts.
+export const ALERT_KINDS = ["movement_alarm", "low_battery", "fall", "overage_charge_failed", "theft", "lock_open_unattended", "gps_stale"] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
 export type UnassignedLock = typeof unassignedLocks.$inferSelect;
 

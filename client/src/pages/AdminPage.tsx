@@ -10,7 +10,7 @@ import {
   Wrench,
   Bike as BikeIcon, AlertTriangle, CheckCircle2, Activity,
   LifeBuoy, MessageSquare, AlertOctagon, ShieldAlert, PowerOff, Unlock,
-  BatteryWarning,
+  BatteryWarning, SatelliteDish,
 } from "lucide-react";
 import { useSupportUnread } from "@/hooks/use-support-unread";
 import { playSupportChime, primeAudio } from "@/lib/support-notify";
@@ -74,6 +74,9 @@ export function AdminPage() {
   // но при этом статус позволял (или почти позволил) сдать его в аренду
   // повторно. Критичнее кражи: замок буквально стоит открытым на улице.
   const unattendedUnlockAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "lock_open_unattended");
+  // gps_stale (2026-11-10, BC-002 GNSS spoofing): замок на связи, но принятых
+  // GPS-точек нет больше 10 минут — позиция на карте устарела.
+  const gpsStaleAlerts = (fleetAlertsQ.data ?? []).filter((a) => a.kind === "gps_stale");
 
   // Звуковое уведомление при новой краже (тот же паттерн, что и useSupportUnread).
   useEffect(() => {
@@ -119,9 +122,10 @@ export function AdminPage() {
   ]);
 
   // Статус шапки завязан на неподтверждённых (не квитированных) тостах под картой:
-  // открытые без присмотра, падения, кража, автооффлайн по низкому заряду.
+  // открытые без присмотра, падения, кража, автооффлайн по низкому заряду, нет свежего GPS.
   const totalUnackedAlerts =
-    unattendedUnlockAlerts.length + fallAlerts.length + theftAlerts.length + offlineAlerts.length;
+    unattendedUnlockAlerts.length + fallAlerts.length + theftAlerts.length + offlineAlerts.length
+    + gpsStaleAlerts.length;
   // Серьёзно: больше двух неподтверждённых любого рода, либо единственный — но кража.
   const hasSeriousAlert =
     totalUnackedAlerts > 2 || (totalUnackedAlerts === 1 && theftAlerts.length === 1);
@@ -474,6 +478,56 @@ export function AdminPage() {
                     disabled={ackAlertMut.isPending}
                     onClick={() => ackAlertMut.mutate(a.id)}
                     data-testid={`ack-offline-alert-${a.id}`}
+                  >
+                    Подтвердить
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        {/* gps_stale: замок на связи, но свежих GPS-координат нет (глушение/подмена сигнала), manual ack */}
+        <Card className="p-5" data-testid="dashboard-gps-stale-alerts">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-display text-lg font-light flex items-center gap-2">
+              <SatelliteDish className={`w-4 h-4 ${gpsStaleAlerts.length ? "text-amber-500" : "text-muted-foreground"}`} />
+              Нет свежего GPS
+            </h2>
+            {gpsStaleAlerts.length > 0 && <Badge variant="destructive">{gpsStaleAlerts.length}</Badge>}
+          </div>
+          {fleetAlertsQ.isLoading ? (
+            <div className="text-sm text-muted-foreground py-4">Загружаем данные…</div>
+          ) : gpsStaleAlerts.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-4" data-testid="dashboard-gps-stale-alerts-empty">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              Позиции всех велосипедов на связи свежие.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {gpsStaleAlerts.map((a) => (
+                <div
+                  key={a.id}
+                  className="flex items-center gap-3 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 p-3"
+                  data-testid={`dashboard-gps-stale-alert-${a.id}`}
+                >
+                  <span className="flex items-center justify-center w-8 h-8 rounded-full shrink-0 bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                    <SatelliteDish className="w-4 h-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <Link href="/admin/bikes" className="text-sm font-medium hover:underline">
+                      {a.bikeId}
+                    </Link>
+                    <div className="text-xs text-muted-foreground truncate" title={a.message}>
+                      GPS не обновляется, замечено {fmtRelative(a.createdAt)}
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={ackAlertMut.isPending}
+                    onClick={() => ackAlertMut.mutate(a.id)}
+                    data-testid={`ack-gps-stale-alert-${a.id}`}
                   >
                     Подтвердить
                   </Button>

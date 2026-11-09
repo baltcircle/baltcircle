@@ -265,6 +265,11 @@ export interface IAlertStorage {
   createOverageChargeFailedAlert(bikeId: string, rideId: number, userId: string, amountKopecks: number, reason: string, at: number): Promise<Alert | null>;
   /** Best-effort, dedup-on-insert. See server/storage/alert.ts for details. */
   createLockOpenUnattendedAlert(bikeId: string, at: number): Promise<Alert | null>;
+  /** Lock on air, no accepted GPS fix for GPS_STALE_ALERT_MS. See server/storage/alert.ts. */
+  findStaleGpsBikeIds(now: number): Promise<string[]>;
+  /** Best-effort, dedup-on-insert. See server/storage/alert.ts for details. */
+  createGpsStaleAlert(bikeId: string, at: number): Promise<Alert | null>;
+  sweepStaleGpsAlerts(now: number): Promise<number>;
   listAlerts(opts?: { includeAcknowledged?: boolean }): Promise<Alert[]>;
   acknowledgeAlert(id: number, by: string): Promise<Alert | undefined>;
 }

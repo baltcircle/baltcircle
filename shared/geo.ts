@@ -201,6 +201,20 @@ export const SERVICE_AREA_BOUNDS = {
   maxLng: 22.95,
 } as const;
 
+// Dashboard "Нет свежего GPS" alert (gps_stale, 2026-11-10). A lock that keeps
+// talking to the gateway but yields no accepted fix for GPS_STALE_ALERT_MS is
+// either jammed/spoofed (see SERVICE_AREA_BOUNDS) or has lost sky view — in
+// both cases the map position is stale and the operator must know. Only for
+// statuses on fast (<= 120 s) D1 cadence; service statuses report hourly.
+export const GPS_STALE_ALERT_MS = 10 * 60 * 1000;
+// "On air": locks heartbeat every ~4 min, so 6 min covers one missed beat.
+export const GPS_STALE_LOCK_ONLINE_MS = 6 * 60 * 1000;
+// The condition must hold on consecutive sweeps for this long before alerting,
+// so a status change out of an hourly-cadence status (last fix legitimately
+// old) gets time for its first fresh fix instead of a false alarm.
+export const GPS_STALE_CONFIRM_MS = 5 * 60 * 1000;
+export const GPS_STALE_ALERT_STATUSES = ["available", "reserved", "rented", "lost"] as const;
+
 export function isInServiceArea(lat: number, lng: number): boolean {
   return Number.isFinite(lat) && Number.isFinite(lng)
     && lat >= SERVICE_AREA_BOUNDS.minLat && lat <= SERVICE_AREA_BOUNDS.maxLat
