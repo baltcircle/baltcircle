@@ -1,59 +1,57 @@
+# TEMPORARY DIAGNOSTIC BRANCH ONLY. Do not merge this override into main.
 name: Capacity snapshot (read-only)
+run-name: BC-002 unlock audit (read-only)
 on:
   workflow_dispatch: {}
 permissions: {}
 jobs:
   snapshot:
+    name: Read-only BC-002 unlock audit
     environment: production
     runs-on: [self-hosted, baltcircle-prod]
-    timeout-minutes: 5
+    timeout-minutes: 4
     steps:
-      - name: Aggregate resources only (no identities or application logs)
+      - name: Inspect without restart or device commands
         shell: bash
         run: |
-          set -euo pipefail
-          echo "=== UTC / CPU count / memory bytes ==="
-          date -u +%FT%TZ
-          nproc
-          free -b
-          echo "=== Root disk aggregate ==="
-          df -B1 --output=size,used,avail,pcent /
-          echo "=== Container limits and lifecycle ==="
-          docker inspect baltcircle-mvp --format 'MemoryLimit={{.HostConfig.Memory}} NanoCPUs={{.HostConfig.NanoCpus}} OOMKilled={{.State.OOMKilled}} RestartCount={{.RestartCount}} StartedAt={{.State.StartedAt}}'
-          echo "=== Host CPU / memory / IO sample (first line since boot) ==="
-          vmstat 1 10
-          echo "=== Container resource samples, 12 over roughly 2 minutes ==="
-          for i in $(seq 1 12); do
-            date -u +%FT%TZ
-            docker stats --no-stream --format 'CPU={{.CPUPerc}} RAM={{.MemUsage}} RAMPercent={{.MemPerc}} PIDs={{.PIDs}}' baltcircle-mvp
-            awk '/^MemAvailable:|^SwapFree:/{print}' /proc/meminfo
-            sleep 8
-          done
-          echo "=== Established connections: aggregate count only ==="
-          for port in 443 5000 5100; do
-            count=$(ss -Htn state established "( sport = :$port )" | wc -l)
-            printf 'port=%s count=%s\n' "$port" "$count"
-          done
-          echo "=== Database aggregate / read-only query ==="
+          set -uo pipefail
+          mask() { sed -E 's/[0-9]{10,}/<id>/g; s/-?[0-9]{1,3}\.[0-9]{4,}/<num>/g'; }
+          echo "=== UTC ==="; date -u +%FT%TZ
+          echo "=== Container ==="
+          docker inspect baltcircle-mvp --format 'Status={{.State.Status}} Health={{if .State.Health}}{{.State.Health.Status}}{{end}} OOM={{.State.OOMKilled}} Restarts={{.RestartCount}} StartedAt={{.State.StartedAt}}'
+          docker ps --format '{{.Names}} {{.Status}}' | mask
+          echo "=== Local HTTP ==="
+          curl -sS -o /dev/null -m 10 -w 'local:5000 %{http_code} %{time_total}\n' http://127.0.0.1:5000/version.json || true
+          curl -sS -o /dev/null -m 10 -w 'public %{http_code} %{time_total}\n' https://takeride.ru/version.json || true
+          echo "=== Established TCP per port ==="
+          for port in 443 5000 5100; do printf 'port=%s count=%s\n' "$port" "$(ss -Htn state established "( sport = :$port )" | wc -l)"; done
+          ss -Hltn | awk '{print $4}' | grep -E ':(5100|5000|443)$' || echo "no listener match"
+          echo "=== DB state BC-002 ==="
           docker exec -i baltcircle-mvp node <<'NODE'
           const { Client } = require('pg');
           (async () => {
-            const client = new Client({ connectionString: process.env.DATABASE_URL, statement_timeout: 5000 });
+            const c = new Client({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 5000, statement_timeout: 5000 });
+            c.on('error', () => {});
             try {
-              await client.connect();
-              await client.query('BEGIN READ ONLY');
-              const result = await client.query(`SELECT
-                (SELECT count(*)::int FROM bikes) AS bikes,
-                (SELECT count(*)::int FROM rides WHERE status IN ('active','paused')) AS active_rides,
-                (SELECT count(*)::int FROM rides) AS total_rides,
-                (SELECT count(*)::int FROM pg_stat_activity WHERE datname=current_database()) AS db_connections,
-                (SELECT count(*)::int FROM pg_stat_activity WHERE datname=current_database() AND state='active') AS db_active_connections,
-                pg_database_size(current_database()) AS database_bytes,
-                current_setting('max_connections') AS max_connections`);
-              console.log(JSON.stringify(result.rows[0]));
-              await client.query('ROLLBACK');
-            } catch (error) {
-              console.log(JSON.stringify({ database_snapshot_unavailable: true, error_code: error.code || 'unknown' }));
-            } finally { await client.end(); }
+              await c.connect(); await c.query('BEGIN READ ONLY');
+              const now = Date.now();
+              const age = v => v == null ? null : Math.round((now - (typeof v === 'object' ? v.getTime() : (isNaN(Number(v)) ? Date.parse(v) : Number(v)))) / 1000);
+              const b = (await c.query("SELECT * FROM bikes WHERE id='BC-002'")).rows[0];
+              const l = b?.lock_imei ? (await c.query('SELECT * FROM locks WHERE imei=$1', [b.lock_imei])).rows[0] : null;
+              const pick = (o, keys) => Object.fromEntries(keys.filter(k => o && k in o).map(k => [k, /(_at|seen)$/.test(k) ? age(o[k]) : o[k]]));
+              console.log('bike', JSON.stringify({ ...pick(b, ['status','lock_online','battery','battery_level','maintenance_reason','lock_last_seen','lock_last_seen_at','updated_at']), has_lock: !!b?.lock_imei, parking_id_set: b?.parking_id != null }));
+              console.log('lock', JSON.stringify(pick(l, ['last_lock_state','last_seen_at','last_location_at','battery_voltage','battery_percent','signal','gsm_signal','firmware','online','created_at','updated_at'])));
+              console.log('lock_columns', Object.keys(l || {}).filter(k => !/imei|lat|lng|long|x$|y$/.test(k)).join(','));
+              const rides = (await c.query("SELECT id,status,started_at,ended_at,is_test FROM rides WHERE bike_id='BC-002' ORDER BY id DESC LIMIT 6")).rows;
+              for (const r of rides) console.log('ride', JSON.stringify({ id: r.id, status: r.status, started_age_s: age(r.started_at), ended_age_s: age(r.ended_at), is_test: r.is_test }));
+              const tel = (await c.query("SELECT cmd,count(*)::int n,max(t)::text mx FROM bike_telemetry WHERE bike_id='BC-002' AND t >= $1 GROUP BY cmd ORDER BY cmd", [now - 6*3600e3])).rows;
+              for (const r of tel) console.log('telemetry_6h', JSON.stringify({ cmd: r.cmd, n: r.n, newest_age_s: age(r.mx) }));
+              await c.query('ROLLBACK');
+            } catch (e) { console.log('db_error', /^[A-Za-z0-9_]{1,32}$/.test(String(e.code||'')) ? e.code : 'unknown', String(e.message||'').slice(0,120).replace(/[0-9]{10,}/g,'<id>')); }
+            finally { try { await c.end(); } catch {} }
           })();
           NODE
+          echo "=== Logs last 6h: lock/unlock/gateway (masked) ==="
+          docker logs --since 6h baltcircle-mvp 2>&1 | grep -iE 'startRide|unlock|not connected|gateway|lock socket|handshake|idle timeout|auth|login|L0|omni.*(error|warn)|EADDR|listen' | grep -viE 'GET /|password|token' | mask | tail -80
+          echo "=== Error/crash lines last 6h (masked) ==="
+          docker logs --since 6h baltcircle-mvp 2>&1 | grep -iE 'error|fatal|uncaught|ECONN|ETIMEDOUT' | grep -viE 'password|token' | mask | tail -30
