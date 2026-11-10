@@ -9,7 +9,7 @@ jobs:
     name: Read-only BC-002 unlock audit
     environment: production
     runs-on: [self-hosted, baltcircle-prod]
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       - name: Inspect without restart or device commands
         shell: bash
@@ -26,6 +26,22 @@ jobs:
           echo "=== Established TCP per port ==="
           for port in 443 5000 5100; do printf 'port=%s count=%s\n' "$port" "$(ss -Htn state established "( sport = :$port )" | wc -l)"; done
           ss -Hltn | awk '{print $4}' | grep -E ':(5100|5000|443)$' || echo "no listener match"
+          echo "=== Docker log config ==="
+          docker inspect baltcircle-mvp --format 'LogDriver={{.HostConfig.LogConfig.Type}} RestartPolicy={{.HostConfig.RestartPolicy.Name}} ExitCode={{.State.ExitCode}} Error={{.State.Error}} FinishedAt={{.State.FinishedAt}} Created={{.Created}}'
+          L=/tmp/bc-mvp-logs.txt
+          docker logs --since 26h baltcircle-mvp > "$L" 2>&1 || echo "docker logs failed rc=$?"
+          echo "log_lines=$(wc -l < "$L")"
+          echo "=== Docker die/restart events 26h ==="
+          timeout 10 docker events --since 26h --until "$(date -u +%FT%TZ)" --filter container=baltcircle-mvp --filter event=die --filter event=oom --filter event=start --format '{{.Time}} {{.Action}} exit={{index .Actor.Attributes "exitCode"}}' 2>&1 | tail -40 || true
+          echo "=== Lines before each process start (crash context, masked) ==="
+          grep -nE 'serving on|listening|Server running|lock gateway listening|OMNI.*listen' "$L" | mask | tail -20 || true
+          grep -nE 'serving on|listening on|Server running' "$L" | cut -d: -f1 | tail -14 | while read n; do s=$((n>12?n-12:1)); echo "--- before line $n"; sed -n "${s},$((n-1))p" "$L" | grep -viE 'password|token|GET /|POST /|HEAD /' | mask | cut -c1-400; done || true
+          echo "=== Fatal/uncaught 26h (masked) ==="
+          grep -iE 'fatal|uncaught|unhandled|heap|SIGTERM|SIGKILL|exit(ed)? with|ERR_|throw' "$L" | grep -viE 'password|token' | mask | cut -c1-400 | tail -40 || true
+          echo "=== Lock gateway / unlock lines 2h (masked) ==="
+          docker logs --since 2h baltcircle-mvp 2>&1 | grep -iE 'startRide|unlock|not connected|gateway|socket|handshake|idle|omni|lock' | grep -viE 'password|token|GET /|HEAD /' | mask | cut -c1-400 | tail -80 || true
+          echo "=== Established 5100 sampling (60s) ==="
+          for i in $(seq 1 6); do printf '%s 5100=%s\n' "$(date -u +%T)" "$(ss -Htn state established '( sport = :5100 )' | wc -l)"; sleep 10; done
           echo "=== DB state BC-002 ==="
           docker exec -i baltcircle-mvp node <<'NODE'
           const { Client } = require('pg');
@@ -51,7 +67,3 @@ jobs:
             finally { try { await c.end(); } catch {} }
           })();
           NODE
-          echo "=== Logs last 6h: lock/unlock/gateway (masked) ==="
-          docker logs --since 6h baltcircle-mvp 2>&1 | grep -iE 'startRide|unlock|not connected|gateway|lock socket|handshake|idle timeout|auth|login|L0|omni.*(error|warn)|EADDR|listen' | grep -viE 'GET /|password|token' | mask | tail -80
-          echo "=== Error/crash lines last 6h (masked) ==="
-          docker logs --since 6h baltcircle-mvp 2>&1 | grep -iE 'error|fatal|uncaught|ECONN|ETIMEDOUT' | grep -viE 'password|token' | mask | tail -30
