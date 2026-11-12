@@ -16,6 +16,7 @@ import type {
   BikeAutoOfflinePayload,
 } from "./storage/events";
 import { log } from "./logger";
+import { handleMovementAlarm } from "./storage/movement-alarm-bridge";
 import { END_SETTLE_RETRY_INTERVAL_MS, END_SETTLE_RETRY_WINDOW_MS, RIDE_END_AWAITING_LOCK_GPS_ERROR } from "@shared/geo";
 import { getLockGateway } from "./omni/gateway";
 export { rideEvents };
@@ -110,11 +111,12 @@ lockAlarmEvents.on(LOCK_FALL_ALARM, (payload: LockFallAlarmPayload) => {
 });
 
 // Bridge: server/omni/store.ts detects OMNI alarm code 1 ("illegal movement")
-// and emits here — mirrors the fall-alarm bridge above. Best-effort: must
-// never crash the OMNI TCP process on a transient DB hiccup.
+// and emits here — mirrors the fall-alarm bridge above. Temporarily also
+// raises the "fall" alert on the first signal (MOVEMENT_ALARM_AS_FALL, see
+// storage/movement-alarm-bridge.ts). Best-effort: must never crash the OMNI
+// TCP process on a transient DB hiccup.
 lockAlarmEvents.on(LOCK_MOVEMENT_ALARM, (payload: LockMovementAlarmPayload) => {
-  storage.createMovementAlert(payload.bikeId, payload.at)
-    .catch((err) => log(`movement-alert create failed: bike=${payload.bikeId} ${(err as Error).message}`));
+  void handleMovementAlarm(storage, payload, log);
 });
 
 // Bridge: server/omni/store.ts flips a bike straight to "lost" once 6
