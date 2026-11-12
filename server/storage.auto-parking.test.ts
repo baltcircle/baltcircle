@@ -229,8 +229,10 @@ describe("one-shot parking recalc arming on the into-available transition (bike-
     expect(armParkingRecalc).toHaveBeenCalledWith("IMEI-1", "BC-01");
   });
 
-  it("does not arm a recalc entering available from an already-fast-cadence status (reserved, 10s)", async () => {
-    const bike = bikeRow({ status: "reserved", lockImei: "IMEI-1" });
+  // "lost" (3s) is never slower than "available" — also while available is
+  // temporarily set to 3s for the administration demo (shared/geo.ts).
+  it("does not arm a recalc entering available from an already-fast-cadence status (lost, 3s)", async () => {
+    const bike = bikeRow({ status: "lost", lockImei: "IMEI-1" });
     const updated = bikeRow({ status: "available", lockImei: "IMEI-1", parkingId: "P-new" });
     const selectResults: unknown[][] = [[bike], [lockRow()], [], [parkingRow()], [], [updated]];
     dbMock.select.mockImplementation(() => selectFrom(selectResults.shift() ?? []));

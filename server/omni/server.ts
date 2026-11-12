@@ -91,6 +91,8 @@ export interface OmniServerOptions {
   frameBucketCapacity?: number;
   /** Minimum spacing between persisted positionless status rows, per bike. */
   statusMinIntervalMs?: number;
+  /** Delay before re-sending the status D1 interval after a lock (re)connects. */
+  gpsResyncDelayMs?: number;
   /** Mark an active lock offline after this quiet period. */
   offlineAfterMs?: number;
   /** How often to scan persisted lock presence. */
@@ -100,6 +102,8 @@ export interface OmniServerOptions {
 
 /** How long a resolved IMEI -> bike mapping is trusted before re-reading. */
 const IMEI_CACHE_TTL_MS = 60_000;
+/** Delay before re-sending D1 after a (re)connect — lets the socket settle, same as the diag probe. */
+export const GPS_RESYNC_ON_CONNECT_DELAY_MS = 5_000;
 /** How long an unknown IMEI is remembered, to keep reconnect loops off the DB. */
 const IMEI_NEGATIVE_TTL_MS = 300_000;
 /**
@@ -191,6 +195,7 @@ export class OmniTcpServer {
       maxFramesPerSecond: options.maxFramesPerSecond ?? 5,
       frameBucketCapacity: options.frameBucketCapacity ?? 20,
       statusMinIntervalMs: options.statusMinIntervalMs ?? 60_000,
+      gpsResyncDelayMs: options.gpsResyncDelayMs ?? GPS_RESYNC_ON_CONNECT_DELAY_MS,
       offlineAfterMs: options.offlineAfterMs ?? 10 * 60_000,
       offlineSweepIntervalMs: options.offlineSweepIntervalMs ?? 60_000,
     };
@@ -478,7 +483,31 @@ export class OmniTcpServer {
     }
     this.log.info({ imei, bikeId, connId: conn.id, remote: conn.remote }, "lock connected");
     this.maybeProbeOmniDiagD1(imei);
+    this.scheduleGpsTrackingResync(imei, conn);
     return true;
+  }
+
+  /**
+   * D1 cadence is otherwise only sent on a bike-status transition, so a lock
+   * that was offline at that moment (or reconnected after a gateway restart)
+   * would keep running whatever interval it last received. Re-send the
+   * status-appropriate interval shortly after every (re)connect. Best-effort:
+   * reads the status fresh (not from the IMEI auth cache), skips unassigned
+   * locks and sockets that have since closed or been replaced, never throws.
+   */
+  private scheduleGpsTrackingResync(imei: string, conn: OmniConnection): void {
+    const findStatus = this.options.store.findBikeStatusByImei?.bind(this.options.store);
+    if (!findStatus) return;
+    const timer = setTimeout(() => {
+      if (conn.isClosed || this.byImei.get(imei) !== conn) return;
+      findStatus(imei)
+        .then((status) => {
+          if (!status || conn.isClosed || this.byImei.get(imei) !== conn || !conn.bikeId) return;
+          this.syncGpsTrackingForStatus(imei, conn.bikeId, status);
+        })
+        .catch((err) => this.log.warn({ err, imei }, "gps-sync: status lookup on connect failed"));
+    }, this.opts.gpsResyncDelayMs);
+    timer.unref?.();
   }
 
   /**

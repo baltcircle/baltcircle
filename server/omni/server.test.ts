@@ -1,3 +1,4 @@
+import type { BikeStatus } from "@shared/schema";
 // End-to-end tests for the OMNI lock TCP ingest server.
 //
 // These drive real TCP sockets: MockLock (server/omni/mockLock.ts) speaks the
@@ -56,6 +57,15 @@ class FakeStore implements OmniStore {
    *  (returns false, skips lat/lng), mirroring PgOmniStore's plausibility
    *  guard without needing real haversine math in this unit-level fake. */
   readonly rejectNextPosition = new Set<string>();
+
+  /** Bike status per IMEI for the connect-time D1 resync; absent → null (no resync). */
+  readonly bikeStatuses = new Map<string, BikeStatus>();
+  statusLookupError: Error | null = null;
+
+  async findBikeStatusByImei(imei: string): Promise<BikeStatus | null> {
+    if (this.statusLookupError) throw this.statusLookupError;
+    return this.bikeStatuses.get(imei) ?? null;
+  }
 
   async findBikeIdByImei(imei: string): Promise<string | null> {
     if (this.lookupGate) await this.lookupGate;
@@ -645,7 +655,7 @@ describe("acknowledgements", () => {
 
 describe("syncGpsTrackingForStatus (bike-status lifecycle spec, 2026-09)", () => {
   it.each([
-    ["available", 120],
+    ["available", 3],
     ["rented", 10],
     ["reserved", 10],
     ["maintenance", 3600],
@@ -671,6 +681,43 @@ describe("syncGpsTrackingForStatus (bike-status lifecycle spec, 2026-09)", () =>
     const sent = server.syncGpsTrackingForStatus(UNKNOWN_IMEI, "bike-x", "available");
 
     expect(sent).toBe(false);
+  });
+});
+
+describe("D1 resync on (re)connect", () => {
+  it("re-sends the current status interval after a lock connects", async () => {
+    const { store, lock } = await harness({ gpsResyncDelayMs: 10 });
+    store.bikeStatuses.set(IMEI_A, "available");
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    expect(await device.nextCommand()).toEqual({ cmd: "D1", params: ["3"] });
+  });
+
+  it("uses the fresh status, e.g. rented", async () => {
+    const { store, lock } = await harness({ gpsResyncDelayMs: 10 });
+    store.bikeStatuses.set(IMEI_A, "rented");
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    expect(await device.nextCommand()).toEqual({ cmd: "D1", params: ["10"] });
+  });
+
+  it("sends nothing for an unassigned/unknown status and survives a lookup error", async () => {
+    const { server, store, lock } = await harness({ gpsResyncDelayMs: 10 });
+    const device = await lock(IMEI_A);
+    device.sendCheckin();
+    await waitFor(() => store.onlineCalls.length === 1);
+    await new Promise((r) => setTimeout(r, 50));
+    // No resync D1 was queued: the next command is the one we send explicitly.
+    server.syncGpsTrackingForStatus(IMEI_A, "bike-a", "lost");
+    expect(await device.nextCommand()).toEqual({ cmd: "D1", params: ["3"] });
+
+    store.statusLookupError = new Error("db down");
+    const deviceB = await lock(IMEI_B);
+    deviceB.sendCheckin();
+    await waitFor(() => store.onlineCalls.some((c) => c.imei === IMEI_B));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(server.syncGpsTrackingForStatus(IMEI_B, "bike-b", "maintenance")).toBe(true);
+    expect(await deviceB.nextCommand()).toEqual({ cmd: "D1", params: ["3600"] });
   });
 });
 
