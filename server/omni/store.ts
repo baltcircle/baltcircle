@@ -12,7 +12,9 @@
 import type { OmniMessage } from "@shared/omni/protocol";
 import {
   haversineM, isInServiceArea, MAX_PLAUSIBLE_GPS_JUMP_M, MAX_ACCEPTABLE_HDOP, LOW_BATTERY_AUTO_OFFLINE_THRESHOLD,
+  GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS,
 } from "@shared/geo";
+import type { BikeStatus } from "@shared/schema";
 import { pool } from "../db/bootstrap";
 import { logger } from "../logger";
 import { consumePendingPause } from "./pause-registry";
@@ -103,6 +105,12 @@ export interface OmniStore {
    */
   resolveLock?(imei: string, at: number): Promise<LockAuthResult>;
   /**
+   * Current status of the bike this lock is fitted to (uncached), or null when
+   * unassigned. Used to re-send the status-appropriate D1 tracking interval
+   * every time a lock (re)connects. Optional for test doubles.
+   */
+  findBikeStatusByImei?(imei: string): Promise<BikeStatus | null>;
+  /**
    * Returns `false` when a "position" message's fix was rejected as an
    * implausible jump (see MAX_PLAUSIBLE_GPS_JUMP_M) and therefore NOT written
    * to locks.last_latitude/last_longitude — the caller (server.ts `record()`)
@@ -126,6 +134,16 @@ const TELEMETRY_COLUMNS = [
 const MAX_INSERT_ROWS = Math.floor(65535 / TELEMETRY_COLUMNS.length);
 
 export class PgOmniStore implements OmniStore {
+  async findBikeStatusByImei(imei: string): Promise<BikeStatus | null> {
+    const rows = (await pool.query<{ status: string | null }>(
+      `SELECT b.status FROM locks l JOIN bikes b ON b.id = l.bike_id WHERE l.imei = $1 LIMIT 1`,
+      [imei],
+    )).rows;
+    const status = rows[0]?.status ?? null;
+    return status !== null && Object.prototype.hasOwnProperty.call(GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS, status)
+      ? (status as BikeStatus) : null;
+  }
+
   async findBikeIdByImei(imei: string): Promise<string | null> {
     const rows = (await pool.query<{ bike_id: string | null }>(
       "SELECT bike_id FROM locks WHERE imei = $1 LIMIT 1",

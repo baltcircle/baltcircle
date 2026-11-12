@@ -124,8 +124,11 @@ export const LOCK_GPS_LIVE_MS = 5 * 60 * 1000;
 //   - maintenance/offline/storage/archived: out of rotation — hourly is
 //     enough to notice the bike has moved without paying continuous cost.
 //   - lost: suspected theft — fastest cadence to maximise recovery odds.
+// TEMPORARY (administration presentation, 2026-11): "available" runs at 3s
+// instead of the normal 120s so parked bikes update live on the map during
+// the demo. Revert to 120 after the presentation — costs lock battery.
 export const GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS: Record<BikeStatus, number> = {
-  available: 120,
+  available: 3,
   rented: 10,
   reserved: 10,
   maintenance: 3600,
