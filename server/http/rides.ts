@@ -3,7 +3,7 @@ import { streamSessionValid } from "./stream-session";
 import { storage, rideEvents } from "../storage";
 import { feedbackPage } from "../storage/admin-read";
 import { z } from "zod";
-import { realToMap, SSE_HEARTBEAT_INTERVAL_MS } from "@shared/geo";
+import { realToMap, SSE_HEARTBEAT_INTERVAL_MS, trustedDeviceTimestamp } from "@shared/geo";
 import { lockTrackPage, legacyLockTrack } from "../storage/lock-track";
 import { timingSafeEqual } from "node:crypto";
 import { createRideFeedbackSchema, startTestRideSchema } from "@shared/schema";
@@ -267,7 +267,9 @@ export function registerRideRoutes(app: Express): void {
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
     const { bikeId, lat, lng } = parsed.data;
     const { x, y } = realToMap(lat, lng);
-    await storage.insertBikeTelemetry(bikeId, x, y, parsed.data.ts ?? Date.now());
+    // Same clock guard as the OMNI ingest: a client-supplied ts far in the
+    // future would look "fresh" to every time-window query until it passes.
+    await storage.insertBikeTelemetry(bikeId, x, y, trustedDeviceTimestamp(parsed.data.ts, Date.now()));
     res.json({ ok: true });
   });
 

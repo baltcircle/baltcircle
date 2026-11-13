@@ -617,11 +617,31 @@ describe("POST /api/telemetry/bike", () => {
     const res = response();
 
     await post.get("/api/telemetry/bike")!(
-      { get: () => "Bearer secret-token", body: { bikeId: "b1", lat: 54.7, lng: 20.5, ts: 12345 } }, res,
+      { get: () => "Bearer secret-token", body: { bikeId: "b1", lat: 54.7, lng: 20.5, ts: Date.now() - 5_000 } }, res,
     );
 
-    expect(storageMock.insertBikeTelemetry).toHaveBeenCalledWith("b1", expect.any(Number), expect.any(Number), 12345);
+    const t = storageMock.insertBikeTelemetry.mock.calls.at(-1)![3] as number;
+    expect(storageMock.insertBikeTelemetry).toHaveBeenCalledWith("b1", expect.any(Number), expect.any(Number), t);
+    expect(Date.now() - t).toBeGreaterThanOrEqual(5_000);
+    expect(Date.now() - t).toBeLessThan(60_000);
     expect(res.body).toEqual({ ok: true });
+  });
+
+  it.each([
+    ["six hours in the future", () => Date.now() + 6 * 3600_000],
+    ["the 1970 epoch", () => 12345],
+  ])("replaces a client ts from %s with the receipt time", async (_label, ts) => {
+    process.env.TELEMETRY_INGEST_TOKEN = "secret-token";
+    const { post } = routeApp();
+    const before = Date.now();
+
+    await post.get("/api/telemetry/bike")!(
+      { get: () => "Bearer secret-token", body: { bikeId: "b1", lat: 54.7, lng: 20.5, ts: ts() } }, response(),
+    );
+
+    const t = storageMock.insertBikeTelemetry.mock.calls.at(-1)![3] as number;
+    expect(t).toBeGreaterThanOrEqual(before);
+    expect(t).toBeLessThanOrEqual(Date.now());
   });
 });
 
