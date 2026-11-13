@@ -237,6 +237,20 @@ export const RELOCATION_MIN_SPAN_MS = 20 * 1000;
 export const MAX_GPS_CLOCK_AHEAD_MS = 2 * 60 * 1000;
 export const MAX_GPS_CLOCK_BEHIND_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * Single source of truth for "may we store the device-reported time?".
+ * Returns `deviceAt` when it lies within [receivedAt - BEHIND, receivedAt +
+ * AHEAD], otherwise the server receipt time. GNSS spoofing/jamming also shifts
+ * the GPS clock (production, 2026-11-10: fixes stamped ~6h ahead), so a device
+ * clock is never trusted further ahead than MAX_GPS_CLOCK_AHEAD_MS.
+ */
+export function trustedDeviceTimestamp(deviceAt: number | null | undefined, receivedAt: number): number {
+  if (deviceAt == null || !Number.isFinite(deviceAt)) return receivedAt;
+  if (deviceAt - receivedAt > MAX_GPS_CLOCK_AHEAD_MS) return receivedAt;
+  if (receivedAt - deviceAt > MAX_GPS_CLOCK_BEHIND_MS) return receivedAt;
+  return deviceAt;
+}
+
 // GPS accuracy gate (HDOP = Horizontal Dilution of Precision; lower is
 // better). A fix can be structurally "valid" (NMEA A) yet practically
 // useless — obstructed antenna, multipath in dense tree cover or an

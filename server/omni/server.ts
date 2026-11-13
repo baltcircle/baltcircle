@@ -12,7 +12,7 @@ import { consumeAnchorRestored } from "./relocation-registry";
 import { createServer, type Server, type Socket } from "node:net";
 import type { Logger } from "pino";
 import {
-  realToMap, GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS, MAX_GPS_CLOCK_AHEAD_MS, MAX_GPS_CLOCK_BEHIND_MS,
+  realToMap, GPS_TRACKING_INTERVAL_SECONDS_BY_STATUS, trustedDeviceTimestamp,
 } from "@shared/geo";
 import type { BikeStatus } from "@shared/schema";
 import {
@@ -997,11 +997,7 @@ export function buildTelemetry(
       // a date yet can report 1970 or 2080 and would corrupt the ride window.
       // Future dates get a tight bound (MAX_GPS_CLOCK_AHEAD_MS): a fix stamped
       // hours ahead would otherwise look "fresh" to every time-window query.
-      const fixedAt = fix.fixedAt !== null
-        && fix.fixedAt - receivedAt <= MAX_GPS_CLOCK_AHEAD_MS
-        && receivedAt - fix.fixedAt <= MAX_GPS_CLOCK_BEHIND_MS
-        ? fix.fixedAt
-        : receivedAt;
+      const fixedAt = trustedDeviceTimestamp(fix.fixedAt, receivedAt);
 
       const { x, y } = realToMap(fix.lat, fix.lng);
       const row = emptyRow(bikeId, imei, message.cmd, fixedAt);
