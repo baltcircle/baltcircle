@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Bike } from "@shared/schema";
 import { BrowserQRCodeReader, type IScannerControls } from "@zxing/browser";
 import { Button } from "@/components/ui/button";
@@ -129,7 +129,24 @@ export function QrScanModal({
   // Guards against double-resolving a bike from rapid successive decodes.
   const handledRef = useRef(false);
 
+  // Latest props, read at call time. The camera lifecycle below must depend
+  // on `open` ONLY: the parent re-renders every few seconds (bike/ride
+  // polling, SSE, geolocation) and passes fresh array/function identities;
+  // when those fed resolveCode -> startCamera -> the open effect, every parent
+  // render tore the stream down and restarted it ("Запуск камеры…"), reset
+  // the view to "scan" (manual keypad slid away) and switched the torch off.
+  const propsRef = useRef({ myActiveRideBikeIds, myReservationBikeIds, onBikeSelected, onOpenChange });
+  useLayoutEffect(() => {
+    propsRef.current = { myActiveRideBikeIds, myReservationBikeIds, onBikeSelected, onOpenChange };
+  });
+
+  // Bumped on every start/stop so a slower, superseded start (e.g. close ->
+  // reopen while getUserMedia is still pending) releases its own stream
+  // instead of attaching it over the newer one or leaving the camera on.
+  const startSeqRef = useRef(0);
+
   const stopCamera = useCallback(() => {
+    startSeqRef.current += 1;
     controlsRef.current?.stop();
     controlsRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -162,19 +179,21 @@ export function QrScanModal({
         setError("Велосипед с таким кодом не найден");
         return false;
       }
+      const latest = propsRef.current;
       const result = classifyBikeForScan(bike, {
-        myActiveRideBikeIds, myReservationBikeIds,
+        myActiveRideBikeIds: latest.myActiveRideBikeIds,
+        myReservationBikeIds: latest.myReservationBikeIds,
       });
       if ("error" in result) {
         setError(result.error);
         return false;
       }
       stopCamera();
-      onOpenChange(false);
-      onBikeSelected(result.bike);
+      latest.onOpenChange(false);
+      latest.onBikeSelected(result.bike);
       return true;
     },
-    [myActiveRideBikeIds, myReservationBikeIds, onBikeSelected, onOpenChange, stopCamera],
+    [stopCamera],
   );
 
   // Wait until the video element is actually decoding frames. The blank/white
@@ -210,6 +229,11 @@ export function QrScanModal({
   );
 
   const startCamera = useCallback(async () => {
+    // Tear down any prior attempt first; stopCamera bumps the sequence, so the
+    // token for THIS start is taken right after it.
+    stopCamera();
+    const seq = ++startSeqRef.current;
+    const stale = () => seq !== startSeqRef.current;
     setCameraError(null);
     setError(null);
     setPermissionDenied(false);
@@ -230,6 +254,7 @@ export function QrScanModal({
       const status = await (navigator.permissions as Permissions | undefined)?.query({
         name: "camera" as PermissionName,
       });
+      if (stale()) return;
       if (status?.state === "denied") {
         setCameraState("error");
         setPermissionDenied(true);
@@ -240,15 +265,16 @@ export function QrScanModal({
       // Permissions API недоступен — продолжаем обычным путём.
     }
 
-    // Tear down any prior attempt before acquiring a fresh stream.
-    stopCamera();
-
     try {
       // Own the stream ourselves so we control attach/play/first-frame timing.
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" } },
         audio: false,
       });
+      if (stale()) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       streamRef.current = stream;
 
       const track = stream.getVideoTracks()[0];
@@ -272,6 +298,7 @@ export function QrScanModal({
       }
 
       const ready = await waitForFirstFrame(video);
+      if (stale()) return;
       if (!ready) {
         stopCamera();
         setCameraState("error");
@@ -284,7 +311,7 @@ export function QrScanModal({
       // Hand the already-playing element to the decoder. It reads frames from
       // the element we set up, so it never re-attaches or resets the stream.
       const reader = new BrowserQRCodeReader();
-      controlsRef.current = await reader.decodeFromVideoElement(video, (result) => {
+      const controls = await reader.decodeFromVideoElement(video, (result) => {
         if (!result || handledRef.current) return;
         handledRef.current = true;
         void resolveCode(result.getText()).then((ok) => {
@@ -292,7 +319,13 @@ export function QrScanModal({
           if (!ok) handledRef.current = false;
         });
       });
+      if (stale()) {
+        controls.stop();
+        return;
+      }
+      controlsRef.current = controls;
     } catch (err) {
+      if (stale()) return;
       stopCamera();
       setCameraState("error");
       const name = (err as { name?: string })?.name;
@@ -330,7 +363,7 @@ export function QrScanModal({
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onOpenChange(false);
+      if (e.key === "Escape") propsRef.current.onOpenChange(false);
     };
     document.addEventListener("keydown", onKeyDown);
     // Belt-and-suspenders on top of `overflow: hidden` + `position: fixed`:
@@ -361,7 +394,7 @@ export function QrScanModal({
       body.style.width = prev.bodyWidth;
       html.style.overflow = prev.htmlOverflow;
     };
-  }, [open, onOpenChange]);
+  }, [open]);
 
   const toggleTorch = useCallback(async () => {
     const track = streamRef.current?.getVideoTracks()[0];

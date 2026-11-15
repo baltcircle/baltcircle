@@ -39,6 +39,9 @@ import { ScanAndPaymentBanner } from "./map/ScanAndPaymentBanner";
 import { ReservationBanner } from "./map/ReservationBanner";
 
 const ACTIVE_RIDES_KEY = ["/api/rides/active"] as const;
+// Shared empty fallback: `?? []` would mint a new array every render and bust
+// every memo keyed on activeRides.
+const NO_RIDES: Ride[] = [];
 
 // Карта во время аренды больше не «прилипает» к геопозиции (followUser выключен),
 // поэтому точка отсчёта возвращается одним фокусом после паузы в действиях пользователя.
@@ -68,7 +71,7 @@ export function MapPage() {
   // Живое обновление доступности велосипедов на карте (статусы).
   useFleetStream();
 
-  const activeRides = activeQ.data ?? [];
+  const activeRides = activeQ.data ?? NO_RIDES;
   // Фиксированные "слоты" по позиции в массиве (не по фокусу) — трекер/поллер
   // не должны перемонтироваться, когда рядер просто переключает фокус между
   // двумя уже идущими поездками; каждый хук сам сбрасывает историю по ride.id.
@@ -170,6 +173,10 @@ export function MapPage() {
     () => new Set(reservations.map((r) => r.bikeId)),
     [reservations]
   );
+  // Stable array props for QrScanModal (fresh arrays on every render used to
+  // restart its camera every few seconds).
+  const scanActiveRideBikeIds = useMemo(() => Array.from(myActiveBikeIds), [myActiveBikeIds]);
+  const scanReservationBikeIds = useMemo(() => Array.from(myReservationBikeIds), [myReservationBikeIds]);
   const mapBikes = useMemo(
     () => bikesQ.data?.filter(
       (b) => b.status === "available"
@@ -829,8 +836,8 @@ export function MapPage() {
       <QrScanModal
         open={scanOpen}
         onOpenChange={setScanOpen}
-        myActiveRideBikeIds={activeRides.map((r) => r.bikeId)}
-        myReservationBikeIds={Array.from(myReservationBikeIds)}
+        myActiveRideBikeIds={scanActiveRideBikeIds}
+        myReservationBikeIds={scanReservationBikeIds}
         onBikeSelected={onBikeScanned}
       />
 
