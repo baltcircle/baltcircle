@@ -18,6 +18,9 @@ import { closeReservationNotifications } from "@/lib/push";
  * случаях. use-active-ride-stream.tsx инвалидирует этот кэш на каждое
  * изменение активных поездок (старт claim'ит бронь, конец освобождает бюджет).
  */
+// Shared empty fallback so consumers' memos stay stable while there is no data.
+const NO_RESERVATIONS: Reservation[] = [];
+
 export function useReservationBanner(isRegistered: boolean) {
   const toast = useToast();
   const reservationsQ = useQuery<Reservation[]>({
@@ -61,7 +64,7 @@ export function useReservationBanner(isRegistered: boolean) {
 
   return {
     query: reservationsQ,
-    reservations: reservationsQ.data ?? [],
+    reservations: reservationsQ.data ?? NO_RESERVATIONS,
     cancelling: cancelMut.isPending,
     cancelReservation: (id: number) => cancelMut.mutate(id),
     onExpire,
